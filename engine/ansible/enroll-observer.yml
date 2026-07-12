@@ -30,6 +30,14 @@
         shell: /usr/sbin/nologin
         password_lock: true
 
+    - name: Garder le parent de stockage neutre
+      ansible.builtin.file:
+        path: /var/lib/your-cloud
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Créer le stockage privé du daemon
       ansible.builtin.file:
         path: "{{ observer_state_dir }}"
@@ -43,8 +51,8 @@
         path: /etc/your-cloud
         state: directory
         owner: root
-        group: "{{ observer_user }}"
-        mode: "0750"
+        group: root
+        mode: "0755"
 
     - name: Installer le daemon natif
       ansible.builtin.copy:

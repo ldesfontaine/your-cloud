@@ -1,7 +1,7 @@
 # Télémétrie V1
 
-> État : collecte et file locale confirmées par P2 ; transport et conservation
-> du coordinateur à confirmer par P4.
+> État : collecte et file locale confirmées par P2 ; transport, conservation
+> bornée et reprise du coordinateur confirmés par P4.
 
 ## État collecté
 

@@ -486,6 +486,150 @@ func (x *SignedEnvelope) GetSignature() []byte {
 	return nil
 }
 
+type PublishAck struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SchemaVersion  uint32                 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	MachineId      string                 `protobuf:"bytes,2,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
+	Stream         TelemetryStream        `protobuf:"varint,3,opt,name=stream,proto3,enum=yourcloud.telemetry.v1.TelemetryStream" json:"stream,omitempty"`
+	Sequence       uint64                 `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	AlreadyPresent bool                   `protobuf:"varint,5,opt,name=already_present,json=alreadyPresent,proto3" json:"already_present,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PublishAck) Reset() {
+	*x = PublishAck{}
+	mi := &file_telemetrie_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublishAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublishAck) ProtoMessage() {}
+
+func (x *PublishAck) ProtoReflect() protoreflect.Message {
+	mi := &file_telemetrie_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublishAck.ProtoReflect.Descriptor instead.
+func (*PublishAck) Descriptor() ([]byte, []int) {
+	return file_telemetrie_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PublishAck) GetSchemaVersion() uint32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *PublishAck) GetMachineId() string {
+	if x != nil {
+		return x.MachineId
+	}
+	return ""
+}
+
+func (x *PublishAck) GetStream() TelemetryStream {
+	if x != nil {
+		return x.Stream
+	}
+	return TelemetryStream_TELEMETRY_STREAM_UNSPECIFIED
+}
+
+func (x *PublishAck) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *PublishAck) GetAlreadyPresent() bool {
+	if x != nil {
+		return x.AlreadyPresent
+	}
+	return false
+}
+
+type EnvelopePage struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SchemaVersion     uint32                 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	Envelopes         []*SignedEnvelope      `protobuf:"bytes,2,rep,name=envelopes,proto3" json:"envelopes,omitempty"`
+	NextAfterSequence uint64                 `protobuf:"varint,3,opt,name=next_after_sequence,json=nextAfterSequence,proto3" json:"next_after_sequence,omitempty"`
+	HasMore           bool                   `protobuf:"varint,4,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *EnvelopePage) Reset() {
+	*x = EnvelopePage{}
+	mi := &file_telemetrie_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvelopePage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvelopePage) ProtoMessage() {}
+
+func (x *EnvelopePage) ProtoReflect() protoreflect.Message {
+	mi := &file_telemetrie_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvelopePage.ProtoReflect.Descriptor instead.
+func (*EnvelopePage) Descriptor() ([]byte, []int) {
+	return file_telemetrie_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *EnvelopePage) GetSchemaVersion() uint32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *EnvelopePage) GetEnvelopes() []*SignedEnvelope {
+	if x != nil {
+		return x.Envelopes
+	}
+	return nil
+}
+
+func (x *EnvelopePage) GetNextAfterSequence() uint64 {
+	if x != nil {
+		return x.NextAfterSequence
+	}
+	return 0
+}
+
+func (x *EnvelopePage) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
+}
+
 var File_telemetrie_proto protoreflect.FileDescriptor
 
 const file_telemetrie_proto_rawDesc = "" +
@@ -531,7 +675,20 @@ const file_telemetrie_proto_rawDesc = "" +
 	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12?\n" +
 	"\x06stream\x18\x03 \x01(\x0e2'.yourcloud.telemetry.v1.TelemetryStreamR\x06stream\x12\x18\n" +
 	"\apayload\x18\x04 \x01(\fR\apayload\x12\x1c\n" +
-	"\tsignature\x18\x05 \x01(\fR\tsignature*k\n" +
+	"\tsignature\x18\x05 \x01(\fR\tsignature\"\xd8\x01\n" +
+	"\n" +
+	"PublishAck\x12%\n" +
+	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12\x1d\n" +
+	"\n" +
+	"machine_id\x18\x02 \x01(\tR\tmachineId\x12?\n" +
+	"\x06stream\x18\x03 \x01(\x0e2'.yourcloud.telemetry.v1.TelemetryStreamR\x06stream\x12\x1a\n" +
+	"\bsequence\x18\x04 \x01(\x04R\bsequence\x12'\n" +
+	"\x0falready_present\x18\x05 \x01(\bR\x0ealreadyPresent\"\xc6\x01\n" +
+	"\fEnvelopePage\x12%\n" +
+	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12D\n" +
+	"\tenvelopes\x18\x02 \x03(\v2&.yourcloud.telemetry.v1.SignedEnvelopeR\tenvelopes\x12.\n" +
+	"\x13next_after_sequence\x18\x03 \x01(\x04R\x11nextAfterSequence\x12\x19\n" +
+	"\bhas_more\x18\x04 \x01(\bR\ahasMore*k\n" +
 	"\x0fTelemetryStream\x12 \n" +
 	"\x1cTELEMETRY_STREAM_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TELEMETRY_STREAM_STATE\x10\x01\x12\x1a\n" +
@@ -550,22 +707,26 @@ func file_telemetrie_proto_rawDescGZIP() []byte {
 }
 
 var file_telemetrie_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_telemetrie_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_telemetrie_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_telemetrie_proto_goTypes = []any{
 	(TelemetryStream)(0),   // 0: yourcloud.telemetry.v1.TelemetryStream
 	(*UnitState)(nil),      // 1: yourcloud.telemetry.v1.UnitState
 	(*MachineState)(nil),   // 2: yourcloud.telemetry.v1.MachineState
 	(*MachineEvent)(nil),   // 3: yourcloud.telemetry.v1.MachineEvent
 	(*SignedEnvelope)(nil), // 4: yourcloud.telemetry.v1.SignedEnvelope
+	(*PublishAck)(nil),     // 5: yourcloud.telemetry.v1.PublishAck
+	(*EnvelopePage)(nil),   // 6: yourcloud.telemetry.v1.EnvelopePage
 }
 var file_telemetrie_proto_depIdxs = []int32{
 	1, // 0: yourcloud.telemetry.v1.MachineState.units:type_name -> yourcloud.telemetry.v1.UnitState
 	0, // 1: yourcloud.telemetry.v1.SignedEnvelope.stream:type_name -> yourcloud.telemetry.v1.TelemetryStream
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	0, // 2: yourcloud.telemetry.v1.PublishAck.stream:type_name -> yourcloud.telemetry.v1.TelemetryStream
+	4, // 3: yourcloud.telemetry.v1.EnvelopePage.envelopes:type_name -> yourcloud.telemetry.v1.SignedEnvelope
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_telemetrie_proto_init() }
@@ -579,7 +740,7 @@ func file_telemetrie_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_telemetrie_proto_rawDesc), len(file_telemetrie_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

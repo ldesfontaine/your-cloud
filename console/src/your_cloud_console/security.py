@@ -96,12 +96,17 @@ def _ssh_with_identity(
     ipv6: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     target_address = address or machine.address
+    if address is None and not ipv6:
+        admin = administration_machine(machine, identity_file)
+        return _run([*ssh_command(admin, known_hosts), command], timeout=20)
     options = [
         "ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
         "-o", "StrictHostKeyChecking=yes", "-o", f"UserKnownHostsFile={known_hosts}",
         "-o", "GlobalKnownHostsFile=/dev/null", "-o", "ConnectTimeout=8",
-        "-o", f"HostKeyAlias={machine.address}", "-i", str(identity_file), "-p", str(machine.port),
+        "-i", str(identity_file), "-p", str(machine.port),
     ]
+    if target_address != machine.address:
+        options.extend(("-o", f"HostKeyAlias={machine.address}"))
     if ipv6:
         options.append("-6")
     options.extend((f"{ADMINISTRATION_USER}@{target_address}", command))
@@ -249,14 +254,14 @@ def security_plan(
     ipv4_cidr: str,
     ipv6_cidr: str,
     out_of_band: str,
+    coordinator_port: int = 0,
 ) -> str:
     disposition = {
         "absent": "nouveau profil, aucune autorité your-cloud existante",
         "clean": "profil déjà possédé et sans dérive",
         "drift": "REFUS : dérive sur un fichier possédé, aucune correction automatique",
     }[status]
-    return "\n".join(
-        (
+    lines = [
             f"Plan pour sécuriser {machine.id} :",
             f"  - autorité : {disposition}",
             f"  - accès hors bande confirmé : {out_of_band}",
@@ -268,8 +273,12 @@ def security_plan(
             "  - conserver les sorties et ICMP/ICMPv6 nécessaires",
             "  - désactiver les redirections réseau par sysctl",
             "  - proposer les correctifs de sécurité sans les activer ni redémarrer",
+    ]
+    if coordinator_port:
+        lines.append(
+            f"  - autoriser le coordinateur local sur TCP {coordinator_port} depuis les mêmes réseaux d'administration"
         )
-    )
+    return "\n".join(lines)
 
 
 class BootstrapControl(AbstractContextManager["BootstrapControl"]):
@@ -344,8 +353,9 @@ def apply_security_profile(
     ipv4_cidr: str,
     ipv6_cidr: str,
     ipv6_address: str,
+    coordinator_port: int = 0,
 ) -> str:
-    rollback_id = "initial-profile"
+    rollback_id = "initial-profile" if coordinator_port == 0 else f"coordinator-{coordinator_port}"
     playbook = engine_dir / "ansible" / "apply-linux-profile.yml"
     if not playbook.is_file():
         raise SecurityError(f"playbook absent : {playbook}")
@@ -373,6 +383,7 @@ def apply_security_profile(
                     "administration_ipv6_cidr": ipv6_cidr,
                     "nftables_package_version": NFTABLES_PACKAGE_VERSION,
                     "rollback_id": rollback_id,
+                    "coordinator_port": coordinator_port,
                 }
             ),
             str(playbook),

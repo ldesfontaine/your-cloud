@@ -14,16 +14,18 @@ import (
 	"github.com/lucas-desfontaine/your-cloud/daemon/internal/collect"
 	"github.com/lucas-desfontaine/your-cloud/daemon/internal/config"
 	"github.com/lucas-desfontaine/your-cloud/daemon/internal/identity"
+	"github.com/lucas-desfontaine/your-cloud/daemon/internal/publisher"
 	"github.com/lucas-desfontaine/your-cloud/daemon/internal/store"
 	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
 )
 
-const Version = "0.2.0"
+const Version = "0.4.0"
 
 type App struct {
-	config   config.Config
-	identity *identity.Identity
-	store    *store.Store
+	config    config.Config
+	identity  *identity.Identity
+	store     *store.Store
+	publisher *publisher.Publisher
 }
 
 func Open(cfg config.Config) (*App, error) {
@@ -35,7 +37,12 @@ func Open(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{config: cfg, identity: id, store: database}, nil
+	transport, err := publisher.New(cfg.MachineID, cfg.Coordinators, database)
+	if err != nil {
+		database.Close()
+		return nil, err
+	}
+	return &App{config: cfg, identity: id, store: database, publisher: transport}, nil
 }
 
 func (a *App) Close() error { return a.store.Close() }
@@ -135,6 +142,7 @@ func (a *App) Run(ctx context.Context) error {
 	if err := a.CollectOnce(ctx); err != nil {
 		return err
 	}
+	go a.publisher.Run(ctx)
 	ticker := time.NewTicker(time.Duration(a.config.IntervalSeconds) * time.Second)
 	defer ticker.Stop()
 	for {

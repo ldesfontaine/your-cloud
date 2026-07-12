@@ -11,6 +11,7 @@ from typing import Iterator
 
 from .api import serve
 from .audit import render_human, render_json, run_audit
+from .coordination import coordination_plan, fetch_current, fetch_events, install_local_coordinator
 from .errors import ConsoleError
 from .enrollment import enroll, enrollment_plan, remote_observer
 from .model import (
@@ -34,7 +35,8 @@ from .security import (
 )
 from .ssh import verify_or_pin_host_key
 from .storage import HostKeyStore
-from .telemetry import IdentityStore, decode_envelope, state_to_dict, verify_state
+from .telemetry import IdentityStore, decode_envelope, state_to_dict, verify_event, verify_state
+from .transport import TransportStore
 
 
 def default_declaration_path() -> Path:
@@ -142,7 +144,35 @@ def build_parser() -> argparse.ArgumentParser:
     machine_secure.add_argument("--ipv6-address", required=True)
     machine_secure.add_argument("--dedicated", action="store_true")
     machine_secure.add_argument("--out-of-band", required=True)
+    machine_secure.add_argument("--coordinator-port", type=int, default=0)
     machine_secure.add_argument("--approve", action="store_true")
+
+    coordination = subcommands.add_parser("coordination", help="conserver l'observation sans la console")
+    coordination_commands = coordination.add_subparsers(dest="coordination_command", required=True)
+    coordination_install = coordination_commands.add_parser("install-local")
+    coordination_install.add_argument("id")
+    coordination_install.add_argument("--address", required=True)
+    coordination_install.add_argument("--port", type=int, default=8443)
+    coordination_install.add_argument("--coordinator-binary", type=Path, required=True)
+    coordination_install.add_argument("--daemon-binary", type=Path, required=True)
+    coordination_install.add_argument("--engine-dir", type=Path, required=True)
+    coordination_install.add_argument("--recovery-kit", type=Path, required=True)
+    coordination_install.add_argument("--passphrase-file", type=Path)
+    coordination_install.add_argument("--approve", action="store_true")
+
+    coordination_inspect = coordination_commands.add_parser("inspect")
+    coordination_inspect.add_argument("id")
+    coordination_inspect.add_argument("--url", required=True)
+    coordination_inspect.add_argument("--passphrase-file", type=Path)
+    coordination_inspect.add_argument("--json", action="store_true")
+
+    coordination_journal = coordination_commands.add_parser("journal")
+    coordination_journal.add_argument("id")
+    coordination_journal.add_argument("--url", required=True)
+    coordination_journal.add_argument("--after", type=int, default=0)
+    coordination_journal.add_argument("--limit", type=int, default=64)
+    coordination_journal.add_argument("--passphrase-file", type=Path)
+    coordination_journal.add_argument("--json", action="store_true")
 
     serve_parser = subcommands.add_parser("serve", help="servir l'API locale en lecture seule")
     serve_parser.add_argument("--socket", type=Path, required=True)
@@ -284,6 +314,8 @@ def run(args: argparse.Namespace) -> int:
             raise ConsoleError("la sécurisation exige la confirmation explicite --dedicated")
         if not args.out_of_band.strip():
             raise ConsoleError("un accès hors bande explicite est requis")
+        if args.coordinator_port != 0 and not 1024 <= args.coordinator_port <= 65535:
+            raise ConsoleError("le port du coordinateur doit être nul ou non privilégié")
         try:
             ipv4_cidr = str(ipaddress.IPv4Network(args.admin_ipv4_cidr, strict=False))
             ipv6_cidr = str(ipaddress.IPv6Network(args.admin_ipv6_cidr, strict=False))
@@ -303,6 +335,7 @@ def run(args: argparse.Namespace) -> int:
             ipv4_cidr,
             ipv6_cidr,
             args.out_of_band,
+            args.coordinator_port,
         ))
         if status == "drift":
             return 3
@@ -319,8 +352,93 @@ def run(args: argparse.Namespace) -> int:
             ipv4_cidr=ipv4_cidr,
             ipv6_cidr=ipv6_cidr,
             ipv6_address=args.ipv6_address,
+            coordinator_port=args.coordinator_port,
         )
         print(result)
+        return 0
+    if args.command == "coordination" and args.coordination_command == "install-local":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        print(coordination_plan(machine, args.address, args.port))
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après préparation du pare-feu.")
+            return 3
+        passphrase = read_passphrase(args.passphrase_file, confirm=False)
+        key_store = AdminKeyStore(args.state_dir)
+        with key_store.materialize(machine.id, passphrase) as identity_file:
+            admin = administration_machine(machine, identity_file)
+            result = install_local_coordinator(
+                admin,
+                HostKeyStore(args.state_dir),
+                TransportStore(args.state_dir),
+                passphrase,
+                state_dir=args.state_dir,
+                engine_dir=args.engine_dir,
+                coordinator_binary=args.coordinator_binary,
+                observer_binary=args.daemon_binary,
+                recovery_kit=args.recovery_kit,
+                address=args.address,
+                port=args.port,
+            )
+        print(result)
+        return 0
+    if args.command == "coordination" and args.coordination_command == "inspect":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        passphrase = read_passphrase(args.passphrase_file, confirm=False)
+        encoded = fetch_current(
+            machine.id, args.url, TransportStore(args.state_dir), passphrase
+        )
+        state = verify_state(machine.id, encoded, IdentityStore(args.state_dir))
+        rendered = state_to_dict(state, machine.infrastructure_id)
+        if args.json:
+            print(json.dumps(rendered, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Machine : {rendered['machine_id']}\n"
+                f"Provenance : coordinateur-mtls + {rendered['provenance']}\n"
+                f"État : {rendered['freshness']} (séquence {rendered['sequence']}, "
+                f"observé {rendered['observed_at']})"
+            )
+        return 0
+    if args.command == "coordination" and args.coordination_command == "journal":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        passphrase = read_passphrase(args.passphrase_file, confirm=False)
+        encoded, next_sequence, has_more = fetch_events(
+            machine.id,
+            args.url,
+            TransportStore(args.state_dir),
+            passphrase,
+            after=args.after,
+            limit=args.limit,
+        )
+        identity_store = IdentityStore(args.state_dir)
+        events = [verify_event(machine.id, item, identity_store) for item in encoded]
+        rendered = {
+            "machine_id": machine.id,
+            "events": [
+                {
+                    "sequence": event.sequence,
+                    "observed_at_unix": event.observed_at_unix,
+                    "kind": event.kind,
+                    "detail": event.detail,
+                    "gap_from_sequence": event.gap_from_sequence,
+                    "gap_to_sequence": event.gap_to_sequence,
+                    "provenance": "signature-ed25519-verified",
+                }
+                for event in events
+            ],
+            "next_after_sequence": next_sequence,
+            "has_more": has_more,
+        }
+        if args.json:
+            print(json.dumps(rendered, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Journal de {machine.id} : {len(events)} événement(s) signé(s), "
+                f"suite après {next_sequence}, autre page : {'oui' if has_more else 'non'}"
+            )
         return 0
     if args.command == "serve":
         serve(args.socket, args.declaration)

@@ -1,0 +1,202 @@
+---
+- name: Installer le coordinateur local et relier le daemon
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    coordinator_user: your-cloud-coordinator
+    coordinator_state_dir: /var/lib/your-cloud/coordinator
+    observer_user: your-cloud-observer
+  pre_tasks:
+    - name: Valider les paramètres et artefacts locaux
+      ansible.builtin.assert:
+        that:
+          - machine_id is match('^[a-z0-9][a-z0-9-]{0,62}$')
+          - coordinator_address is string
+          - coordinator_address | length > 0
+          - coordinator_address is not search('\\s')
+          - coordinator_port | int >= 1024
+          - coordinator_port | int <= 65535
+          - coordinator_binary is file
+          - observer_binary is file
+          - transport_ca is file
+          - coordinator_certificate is file
+          - coordinator_private_key is file
+          - daemon_certificate is file
+          - daemon_private_key is file
+          - identity_registry is file
+        fail_msg: Paramètres du coordinateur local invalides
+
+    - name: Vérifier l'autorité existante du profil Linux
+      ansible.builtin.command:
+        argv: [sha256sum, --check, /var/lib/your-cloud/profile/manifest.sha256]
+      changed_when: false
+
+    - name: Lire la chaîne d'entrée nftables possédée
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, list, chain, inet, your_cloud, input]
+      register: nft_input
+      changed_when: false
+
+    - name: Refuser un port de coordination non préparé
+      ansible.builtin.assert:
+        that:
+          - nft_input.stdout is regex('tcp dport ' ~ (coordinator_port | string) ~ ' accept')
+        fail_msg: Le profil Linux doit autoriser explicitement le port local du coordinateur avant installation
+
+    - name: Lire la configuration existante du daemon
+      ansible.builtin.slurp:
+        src: /etc/your-cloud/observer.json
+      register: observer_configuration
+
+  tasks:
+    - name: Garder le parent de configuration neutre
+      ansible.builtin.file:
+        path: /etc/your-cloud
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Garder le parent de stockage neutre
+      ansible.builtin.file:
+        path: /var/lib/your-cloud
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Créer le groupe séparé du coordinateur
+      ansible.builtin.group:
+        name: "{{ coordinator_user }}"
+        system: true
+
+    - name: Créer le compte non interactif du coordinateur
+      ansible.builtin.user:
+        name: "{{ coordinator_user }}"
+        group: "{{ coordinator_user }}"
+        system: true
+        create_home: false
+        home: "{{ coordinator_state_dir }}"
+        shell: /usr/sbin/nologin
+        password_lock: true
+
+    - name: Créer les stockages privés séparés
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "0700"
+      loop:
+        - {path: /var/lib/your-cloud/coordinator, owner: your-cloud-coordinator}
+        - {path: /etc/your-cloud/coordinator-tls, owner: your-cloud-coordinator}
+        - {path: /etc/your-cloud/observer-tls, owner: your-cloud-observer}
+
+    - name: Installer les binaires natifs
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - {src: "{{ coordinator_binary }}", dest: /usr/libexec/your-cloud-coordinator}
+        - {src: "{{ observer_binary }}", dest: /usr/libexec/your-cloud-observer}
+      notify:
+        - Redémarrer le coordinateur
+        - Redémarrer le daemon
+
+    - name: Installer les identités mTLS séparées
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "0400"
+      loop:
+        - {src: "{{ transport_ca }}", dest: /etc/your-cloud/coordinator-tls/ca.crt, owner: your-cloud-coordinator}
+        - {src: "{{ coordinator_certificate }}", dest: /etc/your-cloud/coordinator-tls/tls.crt, owner: your-cloud-coordinator}
+        - {src: "{{ coordinator_private_key }}", dest: /etc/your-cloud/coordinator-tls/tls.key, owner: your-cloud-coordinator}
+        - {src: "{{ transport_ca }}", dest: /etc/your-cloud/observer-tls/ca.crt, owner: your-cloud-observer}
+        - {src: "{{ daemon_certificate }}", dest: /etc/your-cloud/observer-tls/tls.crt, owner: your-cloud-observer}
+        - {src: "{{ daemon_private_key }}", dest: /etc/your-cloud/observer-tls/tls.key, owner: your-cloud-observer}
+      notify:
+        - Redémarrer le coordinateur
+        - Redémarrer le daemon
+
+    - name: Installer le registre public dérivé
+      ansible.builtin.copy:
+        src: "{{ identity_registry }}"
+        dest: /etc/your-cloud/coordinator-identities.json
+        owner: root
+        group: "{{ coordinator_user }}"
+        mode: "0440"
+      notify: Redémarrer le coordinateur
+
+    - name: Installer la configuration du coordinateur
+      ansible.builtin.template:
+        src: coordinator.json.j2
+        dest: /etc/your-cloud/coordinator.json
+        owner: root
+        group: "{{ coordinator_user }}"
+        mode: "0640"
+      notify: Redémarrer le coordinateur
+
+    - name: Ajouter uniquement le point de coordination autorisé au daemon
+      ansible.builtin.copy:
+        content: >-
+          {{ (observer_configuration.content | b64decode | from_json) | combine({
+            'units': (((observer_configuration.content | b64decode | from_json).units | default([])) + ['your-cloud-coordinator.service']) | unique | list,
+            'coordinators': [{
+              'url': 'https://' ~ coordinator_address ~ ':' ~ (coordinator_port | string),
+              'ca_file': '/etc/your-cloud/observer-tls/ca.crt',
+              'certificate_file': '/etc/your-cloud/observer-tls/tls.crt',
+              'private_key_file': '/etc/your-cloud/observer-tls/tls.key'
+            }]
+          }) | to_nice_json }}
+        dest: /etc/your-cloud/observer.json
+        owner: root
+        group: "{{ observer_user }}"
+        mode: "0640"
+      notify: Redémarrer le daemon
+
+    - name: Installer les unités systemd durcies
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {src: your-cloud-coordinator.service, dest: /etc/systemd/system/your-cloud-coordinator.service}
+        - {src: your-cloud-observer.service, dest: /etc/systemd/system/your-cloud-observer.service}
+      notify:
+        - Recharger systemd
+        - Redémarrer le coordinateur
+        - Redémarrer le daemon
+
+    - name: Activer les deux composants d'observation
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - your-cloud-coordinator.service
+        - your-cloud-observer.service
+
+  handlers:
+    - name: Recharger systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Redémarrer le coordinateur
+      ansible.builtin.systemd_service:
+        name: your-cloud-coordinator.service
+        state: restarted
+
+    - name: Redémarrer le daemon
+      ansible.builtin.systemd_service:
+        name: your-cloud-observer.service
+        state: restarted

@@ -46,5 +46,6 @@ engine/        contenu Ansible exécuté depuis la console dans le LAB
 tools/         contrôleurs d’atelier, distincts du produit
 ```
 
-Le coordinateur conserve seulement son contrat de frontière jusqu’à P4. Les
-preuves exécutées des paliers terminés vivent dans `docs/lab/`.
+Le coordinateur local, le transport mTLS et la reprise après coupure sont
+implémentés depuis P4. Les preuves exécutées des paliers terminés vivent dans
+`docs/lab/`.

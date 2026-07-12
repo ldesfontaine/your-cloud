@@ -1,7 +1,8 @@
 # LAB de développement V1
 
 > État : topologie `quick` créée puis utilisée pour le premier contact, la
-> machine observable et la première sécurisation le 2026-07-12.
+> machine observable, la première sécurisation et le coordinateur local le
+> 2026-07-12.
 > La topologie `v1-full` reste à valider ; aucun de ses gabarits n'est présenté
 > comme attesté avant une création réelle.
 
@@ -51,7 +52,8 @@ fausser le parcours jour zéro.
 
 La création du LAB, le [premier contact](p1-premier-contact.md), la
 [machine observable](p2-machine-observable.md) et la
-[sécurisation sans perte d'accès](securiser-une-machine.md) sont prouvés.
+[sécurisation sans perte d'accès](securiser-une-machine.md), puis
+[l'observation continue locale](p4-observation-continue-locale.md) sont prouvés.
 
 ## LAB V1 complet
 
@@ -103,6 +105,9 @@ labctl topology destroy quick
 labctl topology create v1-full
 labctl topology inspect v1-full
 labctl topology destroy v1-full
+
+labctl stop lab-console
+labctl start lab-console
 ```
 
 Une nouvelle golden base ne sera créée que si un coût réel et mesuré la

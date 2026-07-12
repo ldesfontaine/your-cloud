@@ -220,6 +220,56 @@ def verify_state(
     return state
 
 
+def verify_event(
+    machine_id: str,
+    envelope_bytes: bytes,
+    store: IdentityStore,
+    *,
+    record_sequence: bool = True,
+) -> telemetrie_pb2.MachineEvent:
+    if not envelope_bytes or len(envelope_bytes) > MAX_ENVELOPE_BYTES:
+        raise TelemetryError("taille d'enveloppe invalide")
+    envelope = telemetrie_pb2.SignedEnvelope()
+    try:
+        envelope.ParseFromString(envelope_bytes)
+    except DecodeError as error:
+        raise TelemetryError("enveloppe Protobuf invalide") from error
+    if envelope.schema_version != 1 or envelope.stream != telemetrie_pb2.TELEMETRY_STREAM_EVENT:
+        raise TelemetryError("version ou flux d'enveloppe refusé")
+    identity = store.get(machine_id)
+    if envelope.key_id != identity.key_id:
+        raise TelemetryError("identité d'enveloppe inconnue ou remplacée")
+    public = Ed25519PublicKey.from_public_bytes(_decode_public_key(identity.public_key))
+    try:
+        public.verify(
+            envelope.signature,
+            SIGNATURE_DOMAIN + bytes((envelope.stream,)) + envelope.payload,
+        )
+    except InvalidSignature as error:
+        raise TelemetryError("signature de télémétrie invalide") from error
+    event = telemetrie_pb2.MachineEvent()
+    try:
+        event.ParseFromString(envelope.payload)
+    except DecodeError as error:
+        raise TelemetryError("événement Protobuf invalide") from error
+    if (
+        event.schema_version != 1
+        or event.machine_id != machine_id
+        or event.sequence < 1
+        or not event.kind
+        or len(event.kind) > 128
+        or len(event.detail) > 1024
+    ):
+        raise TelemetryError("événement signé incohérent avec la machine")
+    if event.kind == "telemetry-gap" and (
+        event.gap_from_sequence < 1 or event.gap_to_sequence < event.gap_from_sequence
+    ):
+        raise TelemetryError("marqueur de lacune incohérent")
+    if record_sequence:
+        store.accept_sequence(machine_id, envelope.stream, event.sequence)
+    return event
+
+
 def state_to_dict(state: telemetrie_pb2.MachineState, infrastructure_id: str | None) -> dict[str, Any]:
     age = max(0, int(datetime.now(timezone.utc).timestamp()) - state.observed_at_unix)
     return {

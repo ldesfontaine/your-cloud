@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from your_cloud_console.errors import TelemetryError
 from your_cloud_console.protocol import telemetrie_pb2
-from your_cloud_console.telemetry import IdentityStore, SIGNATURE_DOMAIN, verify_state
+from your_cloud_console.telemetry import IdentityStore, SIGNATURE_DOMAIN, verify_event, verify_state
 
 
 class TelemetryTests(unittest.TestCase):
@@ -72,6 +72,29 @@ class TelemetryTests(unittest.TestCase):
         self.store.revoke("machine-1")
         with self.assertRaisesRegex(TelemetryError, "révoquée"):
             verify_state("machine-1", encoded, self.store)
+
+    def test_accepts_signed_event(self):
+        event = telemetrie_pb2.MachineEvent(
+            schema_version=1,
+            machine_id="machine-1",
+            sequence=1,
+            observed_at_unix=1,
+            kind="observer-started",
+            detail="test",
+        )
+        payload = event.SerializeToString(deterministic=True)
+        stream = telemetrie_pb2.TELEMETRY_STREAM_EVENT
+        envelope = telemetrie_pb2.SignedEnvelope(
+            schema_version=1,
+            key_id=self.key_id,
+            stream=stream,
+            payload=payload,
+            signature=self.private.sign(SIGNATURE_DOMAIN + bytes((stream,)) + payload),
+        )
+        verified = verify_event(
+            "machine-1", envelope.SerializeToString(deterministic=True), self.store
+        )
+        self.assertEqual(verified.kind, "observer-started")
 
 
 if __name__ == "__main__":

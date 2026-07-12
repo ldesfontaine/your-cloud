@@ -24,3 +24,7 @@ class TelemetryError(ConsoleError):
 
 class SecurityError(ConsoleError):
     pass
+
+
+class CoordinationError(ConsoleError):
+    pass

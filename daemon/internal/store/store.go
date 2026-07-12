@@ -128,6 +128,41 @@ func (s *Store) Current(ctx context.Context) ([]byte, error) {
 	return envelope, nil
 }
 
+func (s *Store) PendingEvents(ctx context.Context, limit int) ([][]byte, error) {
+	if limit < 1 || limit > 64 {
+		return nil, fmt.Errorf("limite d'événements invalide")
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT envelope FROM events ORDER BY sequence LIMIT ?", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result [][]byte
+	for rows.Next() {
+		var envelope []byte
+		if err := rows.Scan(&envelope); err != nil {
+			return nil, err
+		}
+		result = append(result, envelope)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) AcknowledgeEvent(ctx context.Context, sequence uint64) error {
+	result, err := s.db.ExecContext(ctx, "DELETE FROM events WHERE sequence = ?", sequence)
+	if err != nil {
+		return fmt.Errorf("purger l'événement confirmé: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted != 1 {
+		return fmt.Errorf("événement confirmé absent: %d", sequence)
+	}
+	return nil
+}
+
 func (s *Store) SignificantDigest(ctx context.Context) (string, error) {
 	var digest string
 	if err := s.db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'significant_digest'").Scan(&digest); err != nil {

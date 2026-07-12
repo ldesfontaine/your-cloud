@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 )
 
@@ -20,11 +22,19 @@ var (
 )
 
 type Config struct {
-	MachineID       string   `json:"machine_id"`
-	StateDir        string   `json:"state_dir"`
-	IntervalSeconds int      `json:"interval_seconds"`
-	QueueLimitBytes int64    `json:"queue_limit_bytes"`
-	Units           []string `json:"units"`
+	MachineID       string        `json:"machine_id"`
+	StateDir        string        `json:"state_dir"`
+	IntervalSeconds int           `json:"interval_seconds"`
+	QueueLimitBytes int64         `json:"queue_limit_bytes"`
+	Units           []string      `json:"units"`
+	Coordinators    []Coordinator `json:"coordinators"`
+}
+
+type Coordinator struct {
+	URL             string `json:"url"`
+	CAFile          string `json:"ca_file"`
+	CertificateFile string `json:"certificate_file"`
+	PrivateKeyFile  string `json:"private_key_file"`
 }
 
 func Load(path string) (Config, error) {
@@ -65,6 +75,29 @@ func Load(path string) (Config, error) {
 			return Config{}, fmt.Errorf("unité systemd invalide ou dupliquée: %q", unit)
 		}
 		seen[unit] = true
+	}
+	if len(cfg.Coordinators) > 2 {
+		return Config{}, fmt.Errorf("trop de coordinateurs autorisés")
+	}
+	seenURLs := make(map[string]bool)
+	for _, coordinator := range cfg.Coordinators {
+		endpoint, err := url.Parse(coordinator.URL)
+		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return Config{}, fmt.Errorf("URL de coordinateur invalide")
+		}
+		if seenURLs[coordinator.URL] {
+			return Config{}, fmt.Errorf("coordinateur dupliqué")
+		}
+		seenURLs[coordinator.URL] = true
+		for label, value := range map[string]string{
+			"ca_file":          coordinator.CAFile,
+			"certificate_file": coordinator.CertificateFile,
+			"private_key_file": coordinator.PrivateKeyFile,
+		} {
+			if !filepath.IsAbs(value) {
+				return Config{}, fmt.Errorf("%s du coordinateur doit être absolu", label)
+			}
+		}
 	}
 	return cfg, nil
 }

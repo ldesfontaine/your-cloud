@@ -325,6 +325,18 @@ set_domain_metadata() {
     --set "$value" --config --live >/dev/null
 }
 
+ensure_persistent_domain() {
+  local name="$1" persistent xml
+  persistent=$(LC_ALL=C "${VIRSH[@]}" dominfo "$name" | sed -n 's/^Persistent:[[:space:]]*//p')
+  [[ "$persistent" == "yes" ]] && return 0
+  xml=$(mktemp)
+  "${VIRSH[@]}" dumpxml "$name" > "$xml"
+  "${VIRSH[@]}" define "$xml" >/dev/null
+  rm -f "$xml"
+  persistent=$(LC_ALL=C "${VIRSH[@]}" dominfo "$name" | sed -n 's/^Persistent:[[:space:]]*//p')
+  [[ "$persistent" == "yes" ]] || die "impossible de rendre '$name' persistante"
+}
+
 create_domain() {
   local name="$1" template="$2" topology="$3"
   shift 3
@@ -383,6 +395,7 @@ create_domain() {
     volume_delete "$seed_volume" || true
     die "métadonnées de garde impossibles pour '$name' ; VM supprimée"
   }
+  ensure_persistent_domain "$name"
 
   local ip
   ensure_clean_snapshot "$name"
@@ -552,6 +565,82 @@ cmd_snap() {
 
 cmd_ip() { require_managed_domain "$1"; get_ip "$1"; }
 
+cmd_start() {
+  local name="${1:?usage: labctl start <vm>}" state ip
+  if ! domain_exists "$name"; then
+    recover_known_domain "$name"
+    return 0
+  fi
+  require_managed_domain "$name"
+  ensure_persistent_domain "$name"
+  state=$(LC_ALL=C "${VIRSH[@]}" domstate "$name")
+  if [[ "$state" != "shut off" ]]; then
+    guard_forbidden_ip "$name"
+    echo "→ '$name' déjà démarrée"
+    return 0
+  fi
+  "${VIRSH[@]}" start "$name" >/dev/null
+  ip=$(wait_ip "$name") || die "pas d'IP après démarrage de '$name'"
+  guard_forbidden_ip "$name"
+  echo "✔ '$name' démarrée — $ip"
+}
+
+recover_known_domain() {
+  local name="$1" topology row candidate template networks found=0
+  valid_name "$name"
+  for topology in "${TOPOLOGIES[@]}"; do
+    while IFS='|' read -r candidate template networks; do
+      [[ "$candidate" == "$name" ]] || continue
+      found=$((found + 1))
+      row="$template|$topology|$networks"
+    done < <(topology_domains "$topology")
+  done
+  [[ "$found" -eq 1 ]] || die "'$name' absente et impossible à rattacher sans ambiguïté à une topologie connue"
+  IFS='|' read -r template topology networks <<<"$row"
+  require_template "$template"
+  require_topology "$topology"
+  volume_exists "$name.qcow2" && volume_exists "$name-seed.iso" \
+    || die "volumes gérés incomplets pour restaurer la définition de '$name'"
+  local network network_args=()
+  IFS=',' read -r -a requested_networks <<<"$networks"
+  for network in "${requested_networks[@]}"; do
+    network_exists "$network" && network_is_managed "$network" "$topology" \
+      || die "réseau géré '$network' absent ou incompatible"
+    network_args+=(--network "network=$network,model=virtio")
+  done
+  info "Restauration de la définition persistante de '$name' depuis ses volumes gérés"
+  virt-install --connect qemu:///system --name "$name" \
+    --memory "${TEMPLATE_RAM[$template]}" --vcpus "${TEMPLATE_VCPUS[$template]}" \
+    --disk "vol=$POOL/$name.qcow2" --disk "vol=$POOL/$name-seed.iso,readonly=on,bus=virtio" \
+    --import --osinfo debian13 "${network_args[@]}" --noautoconsole >/dev/null \
+    || die "restauration de définition impossible pour '$name'"
+  set_domain_metadata "$name" "$template" "$topology" \
+    || die "métadonnées de garde impossibles après restauration de '$name'"
+  ensure_persistent_domain "$name"
+  local ip
+  ip=$(wait_ip "$name") || die "pas d'IP après restauration de '$name'"
+  guard_forbidden_ip "$name"
+  echo "✔ '$name' redéfinie persistante et démarrée — $ip"
+}
+
+cmd_stop() {
+  local name="${1:?usage: labctl stop <vm>}" state attempt
+  guard_mutation "$name"
+  ensure_persistent_domain "$name"
+  state=$(LC_ALL=C "${VIRSH[@]}" domstate "$name")
+  if [[ "$state" == "shut off" ]]; then
+    echo "→ '$name' déjà arrêtée"
+    return 0
+  fi
+  "${VIRSH[@]}" shutdown "$name" >/dev/null
+  for attempt in $(seq 1 30); do
+    state=$(LC_ALL=C "${VIRSH[@]}" domstate "$name")
+    [[ "$state" == "shut off" ]] && { echo "✔ '$name' arrêtée proprement"; return 0; }
+    sleep 2
+  done
+  die "arrêt propre de '$name' non confirmé ; aucune extinction forcée"
+}
+
 cmd_ssh() {
   local name="${1:?usage: labctl ssh <vm> [commande...]}" ip
   shift
@@ -578,6 +667,8 @@ labctl v6 — LAB your-cloud borné
   labctl list
   labctl revert  <vm> [snapshot]
   labctl snap    <vm> <snapshot>
+  labctl start   <vm>
+  labctl stop    <vm>
   labctl ip      <vm>
   labctl ssh     <vm> [commande...]
   labctl console <vm>
@@ -596,6 +687,8 @@ case "$command" in
   list) cmd_list ;;
   revert) cmd_revert "$@" ;;
   snap) cmd_snap "$@" ;;
+  start) cmd_start "$@" ;;
+  stop) cmd_stop "$@" ;;
   ip) cmd_ip "$@" ;;
   ssh) cmd_ssh "$@" ;;
   console) cmd_console "$@" ;;

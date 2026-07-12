@@ -10,6 +10,7 @@ from pathlib import Path
 import tempfile
 from typing import Any, Iterator
 
+from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -133,11 +134,16 @@ class AdminKeyStore:
             raw = json.loads(kit_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError) as error:
             raise SecurityError(f"kit de récupération illisible : {kit_path}") from error
-        expected = {
+        expected_v1 = {
             "schema_version", "created_at", "machine_id", "encrypted_admin_key",
             "admin_public_key", "declaration", "host_keys", "machine_identities",
         }
-        if not isinstance(raw, dict) or set(raw) != expected or raw["schema_version"] != 1:
+        expected_v2 = {*expected_v1, "transport_authority"}
+        if (
+            not isinstance(raw, dict)
+            or raw.get("schema_version") not in {1, 2}
+            or set(raw) != (expected_v1 if raw.get("schema_version") == 1 else expected_v2)
+        ):
             raise SecurityError("kit de récupération incomplet ou de version inconnue")
         try:
             encrypted = base64.b64decode(raw["encrypted_admin_key"], validate=True)
@@ -152,7 +158,69 @@ class AdminKeyStore:
         ).decode("ascii")
         if public != raw["admin_public_key"]:
             raise SecurityError("clé publique incohérente dans le kit")
+        if raw["schema_version"] == 2:
+            authority = raw["transport_authority"]
+            if not isinstance(authority, dict) or set(authority) != {
+                "encrypted_private_key", "certificate_pem"
+            }:
+                raise SecurityError("autorité de transport invalide dans le kit")
+            try:
+                authority_private = serialization.load_pem_private_key(
+                    base64.b64decode(authority["encrypted_private_key"], validate=True),
+                    password=passphrase,
+                )
+                authority_certificate = x509.load_pem_x509_certificate(
+                    authority["certificate_pem"].encode("ascii")
+                )
+            except (ValueError, TypeError, UnicodeError) as error:
+                raise SecurityError("autorité de transport illisible dans le kit") from error
+            if not isinstance(authority_private, Ed25519PrivateKey):
+                raise SecurityError("algorithme de l'autorité de transport refusé")
+            private_public = authority_private.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+            certificate_public = authority_certificate.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+            if private_public != certificate_public:
+                raise SecurityError("certificat incohérent avec l'autorité de transport")
         return public
+
+    def attach_transport_authority(
+        self,
+        kit_path: Path,
+        passphrase: bytes,
+        encrypted_private_key: Path,
+        certificate_path: Path,
+    ) -> None:
+        self.verify_recovery_kit(kit_path, passphrase)
+        try:
+            raw = json.loads(kit_path.read_text(encoding="utf-8"))
+            encrypted = encrypted_private_key.read_bytes()
+            certificate_pem = certificate_path.read_text(encoding="ascii")
+            private = serialization.load_pem_private_key(encrypted, password=passphrase)
+            certificate = x509.load_pem_x509_certificate(certificate_pem.encode("ascii"))
+        except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError) as error:
+            raise SecurityError("autorité de transport impossible à joindre au kit") from error
+        if not isinstance(private, Ed25519PrivateKey):
+            raise SecurityError("algorithme de l'autorité de transport refusé")
+        attachment = {
+            "encrypted_private_key": base64.b64encode(encrypted).decode("ascii"),
+            "certificate_pem": certificate_pem,
+        }
+        if raw["schema_version"] == 2:
+            if raw["transport_authority"] != attachment:
+                raise SecurityError("le kit contient une autre autorité de transport")
+            return
+        raw["schema_version"] = 2
+        raw["transport_authority"] = attachment
+        temporary = kit_path.with_name(f".{kit_path.name}.tmp")
+        temporary.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(kit_path)
+        self.verify_recovery_kit(kit_path, passphrase)
 
     def public_key(self, machine_id: str, passphrase: bytes) -> str:
         private = self._load_private(machine_id, passphrase)

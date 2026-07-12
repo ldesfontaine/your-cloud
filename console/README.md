@@ -20,6 +20,13 @@ session existante, prépare le rollback, puis applique SSH key-only, nftables et
 les réglages système. L'audit et l'inspection utilisent automatiquement ce
 nouveau chemin lorsque la clé chiffrée existe.
 
+L'observation continue ajoute une autorité de transport chiffrée, des
+certificats mTLS distincts pour console, daemon et coordinateur, un plan
+d'installation locale et deux lectures bornées : état courant et journal. La
+console revérifie toujours la signature Ed25519 d'origine après le relais.
+L'autorité privée de transport reste chiffrée et rejoint le kit de récupération
+vérifié lors de l'installation.
+
 ## Développement dans le LAB
 
 Depuis la racine de `console/`, dans `lab-console` uniquement :
@@ -29,5 +36,5 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 PYTHONPATH=src python3 -m your_cloud_console --help
 ```
 
-Les parcours de preuve sont documentés dans `docs/lab/p1-premier-contact.md` et
-`docs/lab/p2-machine-observable.md`.
+Les parcours de preuve sont documentés dans `docs/lab/`, jusqu'à
+`p4-observation-continue-locale.md`.

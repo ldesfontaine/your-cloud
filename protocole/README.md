@@ -4,6 +4,6 @@
 enveloppes signées. Les sorties Go et Python sont générées dans le LAB avec
 `protoc` 3.21.12 et `protoc-gen-go` v1.36.6, puis versionnées.
 
-Le protocole ne transporte aucune commande V1. La machine observable prouve la signature et
-l'inspection ponctuelle ; le transport HTTPS/mTLS et les accusés durables du
-coordinateur appartiennent à P4.
+Le protocole ne transporte aucune commande V1. P4 confirme le transport
+HTTPS/mTLS, les accusés durables idempotents et les pages bornées d'enveloppes
+originales servies à la console.

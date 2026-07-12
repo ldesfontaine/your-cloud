@@ -120,6 +120,10 @@ Une connexion SSH réellement nouvelle et `sudo` sont prouvés avant fermeture d
 
 ## P4 — Observation continue locale
 
+> État : terminé le 2026-07-12. Le coordinateur local, les identités mTLS
+> séparées, les accusés durables, la coupure du coordinateur et l'extinction de
+> la console sont prouvés dans le LAB `quick`.
+
 ### But
 
 Conserver l’état des machines lorsque le laptop est éteint, sans imposer un VPS.
@@ -136,6 +140,8 @@ Conserver l’état des machines lorsque le laptop est éteint, sans imposer un 
 ### Preuve de sortie
 
 Le laptop est arrêté pendant plusieurs cycles, puis la console retrouve l’état et le journal. Une coupure du coordinateur ne provoque aucun arrêt de service ; le daemon conserve ses événements et republie l’état courant à la reprise.
+
+Voir la [preuve LAB P4](lab/p4-observation-continue-locale.md).
 
 ## P5 — Mode distant et multi-infrastructures
 

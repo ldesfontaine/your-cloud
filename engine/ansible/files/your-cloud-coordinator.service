@@ -1,12 +1,13 @@
 [Unit]
-Description=your-cloud daemon d'observation
-After=local-fs.target
+Description=your-cloud coordinateur de télémétrie
+After=local-fs.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=your-cloud-observer
-Group=your-cloud-observer
-ExecStart=/usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json run
+User=your-cloud-coordinator
+Group=your-cloud-coordinator
+ExecStart=/usr/libexec/your-cloud-coordinator --config /etc/your-cloud/coordinator.json run
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=yes
@@ -18,7 +19,7 @@ ProtectKernelLogs=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/your-cloud/observer
+ReadWritePaths=/var/lib/your-cloud/coordinator
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes

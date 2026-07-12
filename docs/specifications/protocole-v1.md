@@ -1,7 +1,7 @@
 # Protocole de télémétrie V1
 
-> État : messages et signatures confirmés par P2 ; transport et accusés à
-> confirmer par P4.
+> État : messages et signatures confirmés par P2 ; transport, rôles mTLS,
+> accusés durables et pagination confirmés par P4.
 
 ## Transport
 
@@ -38,6 +38,11 @@ enveloppe d'état ne peut pas être réinterprétée comme événement.
 Le contrat source est généré avec `protoc` 3.21.12 et `protoc-gen-go` v1.36.6.
 Les runtimes restent épinglés par `go.mod`, `go.sum` et le `pyproject.toml` de
 la console.
+
+À P4, l'autorité privée de transport Ed25519 reste chiffrée dans la console et
+dans le kit de récupération vérifié. Les certificats de service distincts
+portent les rôles `daemon:<machine>`, `coordinator:<machine>` et
+`console:<identité>` ; leur chaîne inclut les identifiants de clés X.509 requis.
 
 ## Séquences et accusés
 

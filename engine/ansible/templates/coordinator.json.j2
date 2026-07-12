@@ -1,0 +1,10 @@
+{
+  "listen_address": {{ (coordinator_address ~ ':' ~ (coordinator_port | string)) | to_json }},
+  "state_dir": "/var/lib/your-cloud/coordinator",
+  "database_limit_bytes": 67108864,
+  "event_retention_days": 30,
+  "certificate_file": "/etc/your-cloud/coordinator-tls/tls.crt",
+  "private_key_file": "/etc/your-cloud/coordinator-tls/tls.key",
+  "client_ca_file": "/etc/your-cloud/coordinator-tls/ca.crt",
+  "identity_registry": "/etc/your-cloud/coordinator-identities.json"
+}

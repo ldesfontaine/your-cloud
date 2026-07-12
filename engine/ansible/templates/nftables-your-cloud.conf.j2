@@ -13,6 +13,10 @@ table inet your_cloud {
     ip6 nexthdr ipv6-icmp accept
     ip saddr {{ administration_ipv4_cidr }} tcp dport 22 accept
     ip6 saddr {{ administration_ipv6_cidr }} tcp dport 22 accept
+{% if coordinator_port | int > 0 %}
+    ip saddr {{ administration_ipv4_cidr }} tcp dport {{ coordinator_port }} accept
+    ip6 saddr {{ administration_ipv6_cidr }} tcp dport {{ coordinator_port }} accept
+{% endif %}
   }
 
   chain forward {

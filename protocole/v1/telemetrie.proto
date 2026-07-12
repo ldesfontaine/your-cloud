@@ -55,3 +55,18 @@ message SignedEnvelope {
   bytes payload = 4;
   bytes signature = 5;
 }
+
+message PublishAck {
+  uint32 schema_version = 1;
+  string machine_id = 2;
+  TelemetryStream stream = 3;
+  uint64 sequence = 4;
+  bool already_present = 5;
+}
+
+message EnvelopePage {
+  uint32 schema_version = 1;
+  repeated SignedEnvelope envelopes = 2;
+  uint64 next_after_sequence = 3;
+  bool has_more = 4;
+}
