@@ -21,6 +21,7 @@ var (
 	unitPattern      = regexp.MustCompile(`^[A-Za-z0-9_.@:-]{1,128}$`)
 )
 
+// Config regroupe les paramètres bornés de collecte, stockage et publication.
 type Config struct {
 	MachineID       string        `json:"machine_id"`
 	StateDir        string        `json:"state_dir"`
@@ -30,6 +31,7 @@ type Config struct {
 	Coordinators    []Coordinator `json:"coordinators"`
 }
 
+// Coordinator décrit un point de publication mTLS explicitement autorisé.
 type Coordinator struct {
 	URL             string `json:"url"`
 	CAFile          string `json:"ca_file"`
@@ -37,6 +39,7 @@ type Coordinator struct {
 	PrivateKeyFile  string `json:"private_key_file"`
 }
 
+// Load charge la configuration stricte du daemon et applique les bornes V1.
 func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

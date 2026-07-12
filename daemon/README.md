@@ -9,3 +9,6 @@ unité systemd durcie. Il n'ouvre aucun port et ne reçoit aucune commande. À P
 il publie d'abord l'état courant puis les événements en attente vers au plus
 deux coordinateurs explicitement autorisés, avec reprise exponentielle bornée.
 Une donnée locale n'est purgée qu'après un accusé mTLS durable et cohérent.
+
+Voir l'[Anatomie du projet](../docs/ANATOMIE-DU-PROJET.md) pour suivre la
+collecte, la signature, la file locale, la publication et la reprise.

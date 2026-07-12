@@ -1,3 +1,5 @@
+"""Autorité X.509 chiffrée et identités mTLS séparées par rôle."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -17,6 +19,8 @@ from .errors import CoordinationError
 
 
 class TransportStore:
+    """Gère l'autorité privée et les certificats de transport de la console."""
+
     def __init__(self, state_dir: Path):
         self.root = state_dir / "transport"
         self.leaves = self.root / "leaves"
@@ -32,9 +36,13 @@ class TransportStore:
         return self.leaves / f"{role}-{identity}.key"
 
     def certificate_path(self, role: str, identity: str) -> Path:
+        """Retourne le chemin public stable d'un certificat de rôle."""
+
         return self.leaves / f"{role}-{identity}.crt"
 
     def ensure(self, passphrase: bytes, coordinator_id: str, address: str, machine_ids: tuple[str, ...]) -> None:
+        """Crée l'autorité et les identités manquantes sans rotation implicite."""
+
         self._protect()
         if not self.ca_key.exists() and not self.ca_certificate.exists():
             self._create_ca(passphrase)
@@ -55,6 +63,8 @@ class TransportStore:
             )
 
     def _create_ca(self, passphrase: bytes) -> None:
+        """Crée une autorité Ed25519 privée immédiatement chiffrée sur disque."""
+
         private = Ed25519PrivateKey.generate()
         now = datetime.now(timezone.utc)
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "your-cloud transport CA")])
@@ -104,6 +114,8 @@ class TransportStore:
         *,
         server_address: str | None = None,
     ) -> None:
+        """Émet une identité cliente ou serveur liée à un rôle explicite."""
+
         private_path = self._private_path(role, identity)
         certificate_path = self.certificate_path(role, identity)
         if private_path.exists() and certificate_path.exists():
@@ -164,6 +176,8 @@ class TransportStore:
 
     @contextmanager
     def materialize_private(self, role: str, identity: str, passphrase: bytes) -> Iterator[Path]:
+        """Matérialise une clé mTLS claire uniquement pendant son utilisation."""
+
         path = self._private_path(role, identity)
         try:
             private = serialization.load_pem_private_key(path.read_bytes(), password=passphrase)

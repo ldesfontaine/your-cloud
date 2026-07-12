@@ -1,3 +1,5 @@
+"""Secrets chiffrés de la console et kit de récupération vérifiable."""
+
 from __future__ import annotations
 
 import base64
@@ -23,6 +25,8 @@ MAX_PASSPHRASE_BYTES = 1024
 
 
 def read_passphrase(path: Path | None, *, confirm: bool) -> bytes:
+    """Lit un mot de passe interactif ou un fichier local strictement privé."""
+
     if path is None:
         first = getpass.getpass("Mot de passe du stockage chiffré : ").encode("utf-8")
         if confirm:
@@ -48,11 +52,15 @@ def read_passphrase(path: Path | None, *, confirm: bool) -> bytes:
 
 
 class AdminKeyStore:
+    """Conserve les clés d'administration chiffrées hors de la déclaration."""
+
     def __init__(self, state_dir: Path):
         self.state_dir = state_dir
         self.keys_dir = state_dir / "admin_keys"
 
     def private_path(self, machine_id: str) -> Path:
+        """Retourne le chemin durable de la clé chiffrée d'une machine."""
+
         return self.keys_dir / f"{machine_id}.key"
 
     def _protect_dirs(self) -> None:
@@ -68,6 +76,8 @@ class AdminKeyStore:
         kit_path: Path,
         passphrase: bytes,
     ) -> str:
+        """Crée une clé dédiée et un kit vérifié avant de publier la clé."""
+
         self._protect_dirs()
         private_path = self.private_path(machine_id)
         if private_path.exists():
@@ -130,6 +140,8 @@ class AdminKeyStore:
         return self._load_public_json(path, "registre public")
 
     def verify_recovery_kit(self, kit_path: Path, passphrase: bytes) -> str:
+        """Prouve que le kit peut restaurer ses clés et certificats chiffrés."""
+
         try:
             raw = json.loads(kit_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError) as error:
@@ -193,6 +205,8 @@ class AdminKeyStore:
         encrypted_private_key: Path,
         certificate_path: Path,
     ) -> None:
+        """Migre le kit pour y joindre l'autorité mTLS encore chiffrée."""
+
         self.verify_recovery_kit(kit_path, passphrase)
         try:
             raw = json.loads(kit_path.read_text(encoding="utf-8"))
@@ -223,6 +237,8 @@ class AdminKeyStore:
         self.verify_recovery_kit(kit_path, passphrase)
 
     def public_key(self, machine_id: str, passphrase: bytes) -> str:
+        """Dérive la clé publique depuis le secret chiffré vérifié."""
+
         private = self._load_private(machine_id, passphrase)
         return private.public_key().public_bytes(
             serialization.Encoding.OpenSSH,
@@ -243,6 +259,8 @@ class AdminKeyStore:
 
     @contextmanager
     def materialize(self, machine_id: str, passphrase: bytes) -> Iterator[Path]:
+        """Expose brièvement une clé SSH claire puis détruit son fichier temporaire."""
+
         private = self._load_private(machine_id, passphrase)
         clear = private.private_bytes(
             serialization.Encoding.PEM,

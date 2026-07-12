@@ -22,11 +22,13 @@ type document struct {
 	Identities    map[string]entry `json:"identities"`
 }
 
+// Registry contient uniquement les clés publiques actives dérivées de la console.
 type Registry struct {
 	keys map[string]ed25519.PublicKey
 	ids  map[string]string
 }
 
+// Load valide la copie publique des identités sans accepter de secret de flotte.
 func Load(path string) (*Registry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -61,6 +63,7 @@ func Load(path string) (*Registry, error) {
 	return result, nil
 }
 
+// Identity retourne la clé active attendue pour une machine autorisée.
 func (r *Registry) Identity(machineID string) (string, ed25519.PublicKey, bool) {
 	key, ok := r.keys[machineID]
 	return r.ids[machineID], key, ok

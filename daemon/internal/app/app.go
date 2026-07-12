@@ -21,6 +21,7 @@ import (
 
 const Version = "0.4.0"
 
+// App orchestre la collecte, la signature, la persistance et la publication.
 type App struct {
 	config    config.Config
 	identity  *identity.Identity
@@ -28,6 +29,7 @@ type App struct {
 	publisher *publisher.Publisher
 }
 
+// Open assemble identité, stockage et publication sans démarrer la collecte.
 func Open(cfg config.Config) (*App, error) {
 	id, err := identity.LoadOrCreate(cfg.StateDir)
 	if err != nil {
@@ -45,8 +47,10 @@ func Open(cfg config.Config) (*App, error) {
 	return &App{config: cfg, identity: id, store: database, publisher: transport}, nil
 }
 
+// Close libère le stockage durable du daemon.
 func (a *App) Close() error { return a.store.Close() }
 
+// envelope sérialise puis signe un payload sans représentation intermédiaire.
 func (a *App) envelope(stream telemetryv1.TelemetryStream, message proto.Message) ([]byte, error) {
 	payload, err := proto.MarshalOptions{Deterministic: true}.Marshal(message)
 	if err != nil {
@@ -59,6 +63,7 @@ func (a *App) envelope(stream telemetryv1.TelemetryStream, message proto.Message
 	return proto.MarshalOptions{Deterministic: true}.Marshal(envelope)
 }
 
+// significantDigest isole les champs dont un changement mérite un événement.
 func significantDigest(state *telemetryv1.MachineState) (string, error) {
 	view := struct {
 		BootID string                   `json:"boot_id"`
@@ -74,6 +79,7 @@ func significantDigest(state *telemetryv1.MachineState) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// CollectOnce produit un nouvel état et journalise uniquement les changements significatifs.
 func (a *App) CollectOnce(ctx context.Context) error {
 	sequence, err := a.store.NextSequence(ctx, telemetryv1.TelemetryStream_TELEMETRY_STREAM_STATE)
 	if err != nil {
@@ -113,6 +119,7 @@ func (a *App) CollectOnce(ctx context.Context) error {
 	return nil
 }
 
+// enqueueEvent signe un événement et transforme tout débordement en lacune explicite.
 func (a *App) enqueueEvent(ctx context.Context, kind, detail string, gapFrom, gapTo uint64) error {
 	for attempts := 0; attempts < 3; attempts++ {
 		sequence, err := a.store.NextSequence(ctx, telemetryv1.TelemetryStream_TELEMETRY_STREAM_EVENT)
@@ -138,6 +145,7 @@ func (a *App) enqueueEvent(ctx context.Context, kind, detail string, gapFrom, ga
 	return fmt.Errorf("impossible d'enregistrer un marqueur de lacune borné")
 }
 
+// Run collecte immédiatement puis poursuit collecte et publication jusqu'à l'arrêt.
 func (a *App) Run(ctx context.Context) error {
 	if err := a.CollectOnce(ctx); err != nil {
 		return err
@@ -157,6 +165,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+// ExportCurrent encode l'enveloppe courante pour l'inspection ponctuelle par SSH.
 func (a *App) ExportCurrent(ctx context.Context) (string, error) {
 	value, err := a.store.Current(ctx)
 	if err != nil {
@@ -165,10 +174,12 @@ func (a *App) ExportCurrent(ctx context.Context) (string, error) {
 	return base64.StdEncoding.EncodeToString(value), nil
 }
 
+// PublicIdentity expose les seules données nécessaires à l'approbation par la console.
 func (a *App) PublicIdentity() map[string]string {
 	return map[string]string{"algorithm": "Ed25519", "key_id": a.identity.KeyID(), "public_key": a.identity.PublicBase64()}
 }
 
+// DatabaseUsage retourne le bornage et l'occupation de la file locale.
 func (a *App) DatabaseUsage(ctx context.Context) (map[string]int64, error) {
 	pages, pageSize, err := a.store.PageUsage(ctx)
 	if err != nil {

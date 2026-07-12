@@ -27,6 +27,9 @@ console revérifie toujours la signature Ed25519 d'origine après le relais.
 L'autorité privée de transport reste chiffrée et rejoint le kit de récupération
 vérifié lors de l'installation.
 
+Le parcours complet et ses liens avec les autres composants sont détaillés
+dans l'[Anatomie du projet](../docs/ANATOMIE-DU-PROJET.md).
+
 ## Développement dans le LAB
 
 Depuis la racine de `console/`, dans `lab-console` uniquement :

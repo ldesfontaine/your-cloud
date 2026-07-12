@@ -1,3 +1,5 @@
+"""Interface en ligne de commande qui orchestre les plans et leurs preuves."""
+
 from __future__ import annotations
 
 import argparse
@@ -40,6 +42,8 @@ from .transport import TransportStore
 
 
 def default_declaration_path() -> Path:
+    """Retourne le chemin déclaré ou l'emplacement XDG par défaut."""
+
     return Path(
         os.environ.get(
             "YOUR_CLOUD_DECLARATION",
@@ -49,6 +53,8 @@ def default_declaration_path() -> Path:
 
 
 def default_state_dir() -> Path:
+    """Retourne le stockage runtime déclaré ou l'emplacement XDG par défaut."""
+
     return Path(
         os.environ.get(
             "YOUR_CLOUD_STATE_DIR",
@@ -63,6 +69,8 @@ def machine_access(
     state_dir: Path,
     passphrase_file: Path | None,
 ) -> Iterator[Machine]:
+    """Matérialise temporairement la clé d'administration lorsqu'elle existe."""
+
     key_store = AdminKeyStore(state_dir)
     if not key_store.private_path(machine.id).exists():
         yield machine
@@ -73,6 +81,8 @@ def machine_access(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Construit la grammaire complète de la CLI et ses validations de forme."""
+
     parser = argparse.ArgumentParser(prog="your-cloud", description="Console d'infrastructure your-cloud")
     parser.add_argument("--declaration", type=Path, default=default_declaration_path())
     parser.add_argument("--state-dir", type=Path, default=default_state_dir())
@@ -190,6 +200,8 @@ def _add_infrastructure(path: Path, infrastructure_id: str, name: str) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
+    """Exécute une commande déjà analysée en conservant plan et mutation séparés."""
+
     if args.command == "init":
         save_declaration(args.declaration, empty_declaration(), refuse_existing=True)
         print(f"Déclaration créée : {args.declaration}")
@@ -447,6 +459,8 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Traduit les refus attendus en messages courts et codes de sortie stables."""
+
     parser = build_parser()
     try:
         return run(parser.parse_args(argv))

@@ -1,3 +1,5 @@
+"""Préparation et application prudente du premier profil Linux possédé."""
+
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
@@ -41,6 +43,8 @@ def _run(
 
 
 def administration_plan(machine: Machine, kit_path: Path) -> str:
+    """Présente la création du chemin non-root et de son filet de récupération."""
+
     return "\n".join(
         (
             f"Plan pour préparer l'administration de {machine.id} ({machine.endpoint}) :",
@@ -70,6 +74,8 @@ def _ansible_environment(engine_dir: Path, known_hosts: Path) -> dict[str, str]:
 
 
 def _syntax_checked_apply(command: list[str], env: dict[str, str], label: str) -> str:
+    """Exige un syntax-check Ansible réussi avant d'autoriser le playbook réel."""
+
     syntax = _run([*command[:-1], "--syntax-check", command[-1]], env=env)
     if syntax.returncode != 0:
         raise SecurityError(f"syntax-check {label} refusé : {syntax.stderr.strip() or syntax.stdout.strip()}")
@@ -121,6 +127,8 @@ def prove_administration(
     address: str | None = None,
     ipv6: bool = False,
 ) -> None:
+    """Prouve une nouvelle session non-root et une élévation sudo distincte."""
+
     command = "test \"$(id -u)\" -ne 0 && test \"$(sudo -n id -u)\" = 0"
     completed = _ssh_with_identity(
         machine,
@@ -146,6 +154,8 @@ def prepare_administration(
     engine_dir: Path,
     kit_path: Path,
 ) -> str:
+    """Crée ou reprend l'accès dédié sans fermer le chemin de bootstrap."""
+
     key_exists = key_store.private_path(machine.id).exists()
     if key_exists:
         public = key_store.public_key(machine.id, passphrase)
@@ -204,6 +214,8 @@ def prepare_administration(
 
 
 def administration_machine(machine: Machine, identity_file: Path) -> Machine:
+    """Projette une machine déclarée sur son accès d'administration temporaire."""
+
     return Machine(
         id=machine.id,
         address=machine.address,
@@ -235,6 +247,8 @@ def profile_status(
     host_store: HostKeyStore,
     identity_file: Path,
 ) -> str:
+    """Classe le profil comme absent, intact ou dérivé sans le réparer."""
+
     output = _remote_admin(
         machine,
         host_store,
@@ -256,6 +270,8 @@ def security_plan(
     out_of_band: str,
     coordinator_port: int = 0,
 ) -> str:
+    """Présente le profil Linux et l'éventuelle ouverture locale du coordinateur."""
+
     disposition = {
         "absent": "nouveau profil, aucune autorité your-cloud existante",
         "clean": "profil déjà possédé et sans dérive",
@@ -282,6 +298,8 @@ def security_plan(
 
 
 class BootstrapControl(AbstractContextManager["BootstrapControl"]):
+    """Maintient une session SSH de secours pendant les mutations à risque."""
+
     def __init__(
         self,
         machine: Machine,
@@ -318,6 +336,8 @@ class BootstrapControl(AbstractContextManager["BootstrapControl"]):
         raise SecurityError("session bootstrap non établie dans le délai")
 
     def rollback(self, rollback_id: str) -> None:
+        """Déclenche le rollback préparé au travers de la session conservée."""
+
         rollback = f"sh /var/lib/your-cloud/profile/rollback/{rollback_id}/rollback.sh"
         if self.rollback_with_sudo:
             rollback = "sudo -n " + rollback
@@ -330,6 +350,8 @@ class BootstrapControl(AbstractContextManager["BootstrapControl"]):
             raise SecurityError(f"rollback par la session conservée en échec : {completed.stderr.strip()}")
 
     def close(self) -> None:
+        """Ferme proprement la session de contrôle et son répertoire temporaire."""
+
         if self.process is not None and self.process.poll() is None:
             _run(["ssh", "-F", "/dev/null", "-S", str(self.socket), "-O", "exit", self.base[-1]])
             try:
@@ -355,6 +377,8 @@ def apply_security_profile(
     ipv6_address: str,
     coordinator_port: int = 0,
 ) -> str:
+    """Applique le profil après contrôle d'autorité, puis reprouve les accès."""
+
     rollback_id = "initial-profile" if coordinator_port == 0 else f"coordinator-{coordinator_port}"
     playbook = engine_dir / "ansible" / "apply-linux-profile.yml"
     if not playbook.is_file():

@@ -1,3 +1,5 @@
+"""Audit SSH read-only utilisé avant toute décision sur une machine."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -130,6 +132,8 @@ field profile_managed "$profile_managed"
 
 @dataclass(frozen=True)
 class AuditResult:
+    """Résultat structuré d'un audit, avec preuves, limites et refus visibles."""
+
     schema_version: int
     machine_id: str
     target: str
@@ -145,10 +149,14 @@ class AuditResult:
     mutation_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        """Convertit le résultat en vue sérialisable sans perdre les preuves."""
+
         return asdict(self)
 
 
 def _parse_remote_fields(output: bytes) -> dict[str, str]:
+    """Décode la réponse NUL-delimited et refuse tout champ ambigu ou manquant."""
+
     parts = output.split(b"\0")
     if parts and parts[-1] == b"":
         parts.pop()
@@ -196,6 +204,8 @@ def _lines(value: str) -> list[str]:
 
 
 def run_audit(machine: Machine, store: HostKeyStore, host_key: PinnedHostKey) -> AuditResult:
+    """Observe une cible par SSH sans la modifier et classe ses incompatibilités."""
+
     known_hosts = store.render_known_hosts()
     command = [*ssh_command(machine, known_hosts), "sh", "-s"]
     try:
@@ -313,6 +323,8 @@ def run_audit(machine: Machine, store: HostKeyStore, host_key: PinnedHostKey) ->
 
 
 def render_human(result: AuditResult) -> str:
+    """Présente l'audit dans un format lisible par un opérateur."""
+
     observed = result.observed
     os_data = observed["os"]
     sources = observed["configuration_sources"]
@@ -350,4 +362,6 @@ def render_human(result: AuditResult) -> str:
 
 
 def render_json(result: AuditResult) -> str:
+    """Présente exactement le même audit sous forme JSON."""
+
     return json.dumps(result.to_dict(), ensure_ascii=False, indent=2)

@@ -202,6 +202,8 @@ La génération « infrastructure complète » intégrera progressivement les ad
 
 - [`VISION.md`](VISION.md) donne la direction en quelques minutes.
 - Ce guide raconte le produit et le parcours utilisateur.
+- [`ANATOMIE-DU-PROJET.md`](ANATOMIE-DU-PROJET.md) suit les composants,
+  messages, réseaux et preuves dans l'ordre réel d'exécution.
 - [`ROADMAP.md`](ROADMAP.md) décrit l’ordre de construction et les preuves attendues.
 - [`RELEASES.md`](RELEASES.md) fixe ce qu’un tag doit réellement garantir.
 - [`../CONTEXT.md`](../CONTEXT.md) définit le vocabulaire partagé.

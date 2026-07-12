@@ -14,6 +14,7 @@ const (
 	DefaultEventRetentionDays = 30
 )
 
+// Config décrit l'écoute explicite, le stockage borné et les identités mTLS.
 type Config struct {
 	ListenAddress      string `json:"listen_address"`
 	StateDir           string `json:"state_dir"`
@@ -25,6 +26,7 @@ type Config struct {
 	IdentityRegistry   string `json:"identity_registry"`
 }
 
+// Load charge la configuration stricte et refuse toute écoute non bornée.
 func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

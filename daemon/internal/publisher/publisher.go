@@ -28,12 +28,14 @@ type endpoint struct {
 	client *http.Client
 }
 
+// Publisher relaie la file locale vers les coordinateurs préautorisés.
 type Publisher struct {
 	machineID string
 	endpoints []endpoint
 	store     *store.Store
 }
 
+// New construit les clients mTLS des seuls coordinateurs déclarés.
 func New(machineID string, coordinators []config.Coordinator, database *store.Store) (*Publisher, error) {
 	result := &Publisher{machineID: machineID, store: database}
 	for _, coordinator := range coordinators {
@@ -62,6 +64,7 @@ func New(machineID string, coordinators []config.Coordinator, database *store.St
 	return result, nil
 }
 
+// Run republie avec une temporisation exponentielle bornée tant que le daemon vit.
 func (p *Publisher) Run(ctx context.Context) {
 	if len(p.endpoints) == 0 {
 		return
@@ -104,6 +107,7 @@ func jitter(delay time.Duration) time.Duration {
 	return delay + time.Duration(value.Int64())
 }
 
+// publishAll envoie toujours l'état courant avant les événements encore présents.
 func (p *Publisher) publishAll(ctx context.Context) error {
 	current, err := p.store.Current(ctx)
 	if err != nil {
@@ -128,6 +132,7 @@ func (p *Publisher) publishAll(ctx context.Context) error {
 	return nil
 }
 
+// publish accepte uniquement un accusé Protobuf cohérent reçu par le canal mTLS.
 func (p *Publisher) publish(ctx context.Context, encoded []byte) (*telemetryv1.PublishAck, error) {
 	var last error
 	for _, target := range p.endpoints {

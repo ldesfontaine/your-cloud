@@ -20,6 +20,7 @@ func main() {
 	}
 }
 
+// run ouvre le daemon puis limite la CLI à ses diagnostics locaux autorisés.
 func run() error {
 	flags := flag.NewFlagSet("your-cloud-observer", flag.ContinueOnError)
 	configPath := flags.String("config", "/etc/your-cloud/observer.json", "configuration du daemon")

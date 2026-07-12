@@ -1,3 +1,5 @@
+"""API HTTP locale et strictement read-only de la console."""
+
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler
@@ -15,6 +17,8 @@ from .model import load_declaration
 
 
 class UnixHTTPServer(socketserver.UnixStreamServer):
+    """Serveur local qui expose l'API uniquement sur un socket Unix privé."""
+
     allow_reuse_address = True
 
     def __init__(self, socket_path: Path, declaration_path: Path):
@@ -23,17 +27,25 @@ class UnixHTTPServer(socketserver.UnixStreamServer):
         super().__init__(str(socket_path), ApiHandler)
 
     def server_bind(self) -> None:
+        """Crée le socket puis le réserve à l'utilisateur de la console."""
+
         super().server_bind()
         os.chmod(self.socket_path, 0o600)
 
 
 class ApiHandler(BaseHTTPRequestHandler):
+    """Sert les vues locales sans offrir de route de mutation."""
+
     server: UnixHTTPServer
 
     def address_string(self) -> str:
+        """Masque toute notion d'adresse réseau dans les journaux HTTP."""
+
         return "local-unix-socket"
 
     def log_message(self, format: str, *args: Any) -> None:
+        """Désactive les journaux HTTP par défaut, inutiles sur le socket local."""
+
         return
 
     def _json(self, status: int, payload: dict[str, Any]) -> None:
@@ -45,6 +57,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
+        """Retourne les vues bornées de la déclaration et de l'état de l'API."""
+
         path = urlsplit(self.path).path
         try:
             declaration = load_declaration(self.server.declaration_path)
@@ -75,10 +89,14 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._json(422, {"error": str(error)})
 
     def do_POST(self) -> None:
+        """Refuse explicitement toute mutation par l'API locale."""
+
         self._json(405, {"error": "l'API locale reste en lecture seule"})
 
 
 def serve(socket_path: Path, declaration_path: Path) -> None:
+    """Sert l'API locale et nettoie uniquement le socket qu'elle possède."""
+
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists() or socket_path.is_symlink():
         mode = socket_path.lstat().st_mode

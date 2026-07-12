@@ -1,3 +1,5 @@
+"""Installation et lecture du coordinateur par des chemins explicitement autorisés."""
+
 from __future__ import annotations
 
 from contextlib import ExitStack
@@ -22,6 +24,8 @@ from .protocol import telemetrie_pb2
 
 
 def coordination_plan(machine: Machine, address: str, port: int) -> str:
+    """Décrit la colocalisation locale et ses frontières avant tout effet."""
+
     return "\n".join((
         f"Plan pour conserver l'observation via {machine.id} :",
         "  - installer le coordinateur sous un compte distinct sans sudo",
@@ -56,6 +60,8 @@ def install_local_coordinator(
     address: str,
     port: int,
 ) -> str:
+    """Installe le coordinateur local, les identités mTLS et le publisher du daemon."""
+
     if address != machine.address:
         raise CoordinationError("le coordinateur local doit écouter sur l'adresse déclarée de sa machine")
     try:
@@ -129,6 +135,8 @@ def fetch_current(
     transport_store: TransportStore,
     passphrase: bytes,
 ) -> bytes:
+    """Récupère une enveloppe d'état via une identité mTLS de console read-only."""
+
     with transport_store.materialize_private("console", "local", passphrase) as private_key:
         context = ssl.create_default_context(cafile=str(transport_store.ca_certificate))
         context.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -158,6 +166,8 @@ def fetch_events(
     after: int = 0,
     limit: int = 64,
 ) -> tuple[list[bytes], int, bool]:
+    """Récupère une page bornée d'événements sans valider leur signature finale."""
+
     if after < 0 or not 1 <= limit <= 64:
         raise CoordinationError("pagination du journal invalide")
     query = urlencode({"after": after, "limit": limit})

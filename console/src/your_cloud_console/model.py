@@ -1,3 +1,5 @@
+"""Modèle strict de la déclaration durable des machines et infrastructures."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -20,12 +22,16 @@ DNS_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class Infrastructure:
+    """Regroupement logique auquel une machine peut être affectée."""
+
     id: str
     name: str
 
 
 @dataclass(frozen=True)
 class Machine:
+    """Machine logique et chemin SSH déclaré pour l'administration."""
+
     id: str
     address: str
     port: int
@@ -35,22 +41,30 @@ class Machine:
 
     @property
     def endpoint(self) -> str:
+        """Retourne la cible SSH sous une forme stable et comparable."""
+
         return f"{self.address}:{self.port}"
 
 
 @dataclass(frozen=True)
 class Declaration:
+    """Déclaration versionnée, lisible et indépendante de l'état runtime."""
+
     schema_version: int
     machines: tuple[Machine, ...]
     infrastructures: tuple[Infrastructure, ...]
 
     def machine(self, machine_id: str) -> Machine:
+        """Retourne une machine connue ou refuse un identifiant inconnu."""
+
         for machine in self.machines:
             if machine.id == machine_id:
                 return machine
         raise DeclarationError(f"machine inconnue : {machine_id}")
 
     def to_dict(self) -> dict[str, Any]:
+        """Produit la représentation JSON canonique de la déclaration."""
+
         return {
             "schema_version": self.schema_version,
             "machines": [asdict(machine) for machine in self.machines],
@@ -59,6 +73,8 @@ class Declaration:
 
 
 def empty_declaration() -> Declaration:
+    """Crée une déclaration vide au schéma actuellement pris en charge."""
+
     return Declaration(SCHEMA_VERSION, (), ())
 
 
@@ -123,6 +139,8 @@ def _parse_machine(raw: Any, index: int) -> Machine:
 
 
 def parse_declaration(raw: Any) -> Declaration:
+    """Valide entièrement une déclaration avant de construire son modèle."""
+
     root = _require_object(raw, "déclaration")
     _require_exact_keys(root, {"schema_version", "machines", "infrastructures"}, "déclaration")
     if root["schema_version"] != SCHEMA_VERSION:
@@ -157,6 +175,8 @@ def parse_declaration(raw: Any) -> Declaration:
 
 
 def load_declaration(path: Path) -> Declaration:
+    """Charge puis valide une déclaration JSON depuis un chemin explicite."""
+
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -167,6 +187,8 @@ def load_declaration(path: Path) -> Declaration:
 
 
 def save_declaration(path: Path, declaration: Declaration, *, refuse_existing: bool = False) -> None:
+    """Écrit atomiquement une déclaration, avec refus optionnel d'écrasement."""
+
     if refuse_existing and path.exists():
         raise DeclarationError(f"refus d'écraser la déclaration existante : {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +201,8 @@ def save_declaration(path: Path, declaration: Declaration, *, refuse_existing: b
 
 
 def add_machine(declaration: Declaration, machine: Machine) -> Declaration:
+    """Ajoute une machine en repassant par toutes les validations du schéma."""
+
     candidate = Declaration(
         declaration.schema_version,
         (*declaration.machines, machine),

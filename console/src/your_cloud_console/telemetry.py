@@ -1,3 +1,5 @@
+"""Registre d'identités et vérification indépendante de la télémétrie signée."""
+
 from __future__ import annotations
 
 import base64
@@ -25,6 +27,8 @@ SIGNATURE_DOMAIN = b"your-cloud.telemetry.v1\x00"
 
 @dataclass(frozen=True)
 class MachineIdentity:
+    """Identité publique approuvée et dernières séquences acceptées d'une machine."""
+
     key_id: str
     algorithm: str
     public_key: str
@@ -36,6 +40,8 @@ class MachineIdentity:
 
 
 class IdentityStore:
+    """Autorité locale sur les identités actives, remplacées et révoquées."""
+
     def __init__(self, state_dir: Path):
         self.state_dir = state_dir
         self.path = state_dir / "machine_identities.json"
@@ -44,6 +50,8 @@ class IdentityStore:
         return {"schema_version": IDENTITY_SCHEMA_VERSION, "identities": {}}
 
     def load(self) -> dict[str, Any]:
+        """Charge le registre et valide chaque identité avant utilisation."""
+
         if not self.path.exists():
             return self._empty()
         try:
@@ -78,6 +86,8 @@ class IdentityStore:
         return MachineIdentity(**item)
 
     def get(self, machine_id: str, *, require_active: bool = True) -> MachineIdentity:
+        """Retourne l'identité connue en refusant par défaut toute révocation."""
+
         item = self.load()["identities"].get(machine_id)
         if item is None:
             raise TelemetryError(f"machine non enrôlée : {machine_id}")
@@ -87,6 +97,8 @@ class IdentityStore:
         return identity
 
     def approve(self, machine_id: str, *, key_id: str, algorithm: str, public_key: str) -> MachineIdentity:
+        """Approuve une première identité sans permettre son remplacement implicite."""
+
         if algorithm != "Ed25519":
             raise TelemetryError(f"algorithme d'identité refusé : {algorithm}")
         public = _decode_public_key(public_key)
@@ -117,6 +129,8 @@ class IdentityStore:
         return identity
 
     def revoke(self, machine_id: str) -> MachineIdentity:
+        """Révoque localement une identité sans muter la machine distante."""
+
         raw = self.load()
         current = self.get(machine_id, require_active=False)
         if current.status == "revoked":
@@ -129,6 +143,8 @@ class IdentityStore:
         return revoked
 
     def accept_sequence(self, machine_id: str, stream: int, sequence: int) -> None:
+        """Avance une séquence persistante et refuse rejeu ou retour arrière."""
+
         raw = self.load()
         current = self.get(machine_id)
         field = {
@@ -167,6 +183,8 @@ def _decode_public_key(value: str) -> bytes:
 
 
 def decode_envelope(value: str | bytes) -> bytes:
+    """Décode une enveloppe base64 bornée issue de l'inspection ponctuelle."""
+
     encoded = value.encode("ascii") if isinstance(value, str) else value
     try:
         raw = base64.b64decode(encoded, validate=True)
@@ -184,6 +202,8 @@ def verify_state(
     *,
     record_sequence: bool = True,
 ) -> telemetrie_pb2.MachineState:
+    """Vérifie identité, signature, contenu et séquence d'un état machine."""
+
     if not envelope_bytes or len(envelope_bytes) > MAX_ENVELOPE_BYTES:
         raise TelemetryError("taille d'enveloppe invalide")
     envelope = telemetrie_pb2.SignedEnvelope()
@@ -227,6 +247,8 @@ def verify_event(
     *,
     record_sequence: bool = True,
 ) -> telemetrie_pb2.MachineEvent:
+    """Vérifie un événement signé et la cohérence d'un éventuel marqueur de lacune."""
+
     if not envelope_bytes or len(envelope_bytes) > MAX_ENVELOPE_BYTES:
         raise TelemetryError("taille d'enveloppe invalide")
     envelope = telemetrie_pb2.SignedEnvelope()
@@ -271,6 +293,8 @@ def verify_event(
 
 
 def state_to_dict(state: telemetrie_pb2.MachineState, infrastructure_id: str | None) -> dict[str, Any]:
+    """Produit la vue lisible d'un état déjà authentifié par la console."""
+
     age = max(0, int(datetime.now(timezone.utc).timestamp()) - state.observed_at_unix)
     return {
         "machine_id": state.machine_id,

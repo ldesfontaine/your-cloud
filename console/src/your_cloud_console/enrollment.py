@@ -1,3 +1,5 @@
+"""Enrôlement vérifié du daemon d'observation par le chemin d'administration."""
+
 from __future__ import annotations
 
 import json
@@ -19,6 +21,8 @@ OBSERVER_USER = "your-cloud-observer"
 
 
 def enrollment_plan(machine: Machine, daemon_binary: Path, units: tuple[str, ...]) -> str:
+    """Décrit les effets attendus avant toute installation du daemon."""
+
     return "\n".join(
         (
             f"Plan pour rendre {machine.id} observable ({machine.endpoint}) :",
@@ -46,6 +50,8 @@ def _ansible_command(
     daemon_binary: Path,
     units: tuple[str, ...],
 ) -> tuple[list[str], dict[str, str]]:
+    """Construit une invocation Ansible isolée des fichiers SSH personnels."""
+
     known_hosts = host_store.render_known_hosts()
     playbook = engine_dir / "ansible" / "enroll-observer.yml"
     if not playbook.is_file() or not daemon_binary.is_file():
@@ -82,6 +88,8 @@ def enroll(
     daemon_binary: Path,
     units: tuple[str, ...],
 ) -> str:
+    """Installe le daemon puis approuve son identité et son premier état signé."""
+
     audit = run_audit(machine, host_store, pinned_host_key)
     if audit.decision != "eligible":
         raise EnrollmentError("l'audit préalable n'autorise pas l'enrôlement")
@@ -113,6 +121,8 @@ def enroll(
 
 
 def remote_observer(machine: Machine, host_store: HostKeyStore, command: str) -> str:
+    """Exécute une commande locale bornée du daemon via le chemin SSH vérifié."""
+
     if command not in {"public-identity", "export-current", "db-usage"}:
         raise EnrollmentError("commande d'observation distante refusée")
     ssh = ssh_command(machine, host_store.render_known_hosts())

@@ -1,3 +1,5 @@
+"""Confiance SSH isolée des fichiers personnels de l'opérateur."""
+
 from __future__ import annotations
 
 import base64
@@ -14,6 +16,8 @@ from .storage import HostKeyStore, PinnedHostKey
 
 @dataclass(frozen=True)
 class ScannedHostKey:
+    """Clé d'hôte observée avec sa cible et son empreinte calculée."""
+
     endpoint: str
     key_type: str
     key: str
@@ -21,10 +25,14 @@ class ScannedHostKey:
 
 
 def known_hosts_endpoint(address: str, port: int) -> str:
+    """Formate une cible comme OpenSSH l'attend dans un known_hosts dédié."""
+
     return address if port == 22 else f"[{address}]:{port}"
 
 
 def fingerprint_public_key(key: str) -> str:
+    """Calcule l'empreinte SHA-256 visible d'une clé publique SSH."""
+
     try:
         decoded = base64.b64decode(key.encode("ascii"), validate=True)
     except (ValueError, UnicodeEncodeError, binascii.Error) as error:
@@ -34,6 +42,8 @@ def fingerprint_public_key(key: str) -> str:
 
 
 def scan_host_key(machine: Machine, timeout: int = 5) -> ScannedHostKey:
+    """Observe une unique clé d'hôte Ed25519 sans encore lui faire confiance."""
+
     command = [
         "ssh-keyscan",
         "-T",
@@ -67,6 +77,8 @@ def verify_or_pin_host_key(
     accept_tofu: bool = False,
     expected_fingerprint: str | None = None,
 ) -> PinnedHostKey:
+    """Vérifie une clé connue ou exige une première approbation explicite."""
+
     scanned = scan_host_key(machine)
     pinned = store.get(machine.id)
     if pinned is not None:
@@ -109,6 +121,8 @@ def verify_or_pin_host_key(
 
 
 def ssh_command(machine: Machine, known_hosts: Path) -> list[str]:
+    """Construit une commande SSH stricte liée aux clés dédiées du projet."""
+
     identity = Path(machine.identity_file)
     if not identity.is_file():
         raise AuditError(f"clé de bootstrap absente : {identity}")

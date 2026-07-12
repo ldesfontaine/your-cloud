@@ -15,12 +15,14 @@ import (
 
 const signatureDomain = "your-cloud.telemetry.v1\x00"
 
+// Identity détient la clé privée propre à une machine et son identifiant public.
 type Identity struct {
 	private ed25519.PrivateKey
 	public  ed25519.PublicKey
 	keyID   string
 }
 
+// LoadOrCreate reprend l'identité locale ou en crée une sans exporter sa clé privée.
 func LoadOrCreate(stateDir string) (*Identity, error) {
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		return nil, fmt.Errorf("créer le stockage d'identité: %w", err)
@@ -58,12 +60,15 @@ func LoadOrCreate(stateDir string) (*Identity, error) {
 	return &Identity{private: private, public: public, keyID: hex.EncodeToString(digest[:])}, nil
 }
 
+// KeyID retourne l'empreinte stable qui désigne la clé publique.
 func (i *Identity) KeyID() string { return i.keyID }
 
+// PublicBase64 expose uniquement la partie publique de l'identité.
 func (i *Identity) PublicBase64() string {
 	return base64.StdEncoding.EncodeToString(i.public)
 }
 
+// signingInput sépare le domaine et le flux avant de joindre le payload exact.
 func signingInput(stream telemetryv1.TelemetryStream, payload []byte) []byte {
 	input := make([]byte, 0, len(signatureDomain)+1+len(payload))
 	input = append(input, []byte(signatureDomain)...)
@@ -72,10 +77,12 @@ func signingInput(stream telemetryv1.TelemetryStream, payload []byte) []byte {
 	return input
 }
 
+// Sign signe les octets exacts d'un payload pour un flux donné.
 func (i *Identity) Sign(stream telemetryv1.TelemetryStream, payload []byte) []byte {
 	return ed25519.Sign(i.private, signingInput(stream, payload))
 }
 
+// Verify contrôle une signature avec la même séparation de domaine que Sign.
 func Verify(public ed25519.PublicKey, stream telemetryv1.TelemetryStream, payload, signature []byte) bool {
 	return ed25519.Verify(public, signingInput(stream, payload), signature)
 }

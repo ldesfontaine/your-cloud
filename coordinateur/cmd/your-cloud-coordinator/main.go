@@ -25,6 +25,7 @@ func main() {
 	}
 }
 
+// run câble configuration, registre et stockage avant de démarrer le serveur.
 func run() error {
 	flags := flag.NewFlagSet("your-cloud-coordinator", flag.ContinueOnError)
 	configPath := flags.String("config", "/etc/your-cloud/coordinator.json", "configuration du coordinateur")

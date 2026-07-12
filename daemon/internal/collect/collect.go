@@ -15,6 +15,7 @@ import (
 	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
 )
 
+// State collecte uniquement la télémétrie V1 bornée et les unités choisies.
 func State(ctx context.Context, machineID, daemonVersion string, sequence uint64, units []string) (*telemetryv1.MachineState, error) {
 	version, err := osReleaseVersion()
 	if err != nil {

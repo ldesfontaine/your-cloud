@@ -17,8 +17,17 @@ La V1 repose sur trois composants :
 Le chemin de changement reste séparé : la console présente un plan puis atteint
 directement les machines par SSH et Ansible après approbation.
 
+## Comprendre le fonctionnement pas à pas
+
+L'[Anatomie du projet](docs/ANATOMIE-DU-PROJET.md) suit le code depuis le
+premier audit SSH jusqu'à la publication mTLS, la seconde vérification des
+signatures et la reprise après coupure. Une
+[édition HTML interactive](docs/anatomie-du-projet.html) permet d'explorer les
+flux installation, publication, lecture et panne.
+
 ## Lire le projet
 
+- [Anatomie technique](docs/ANATOMIE-DU-PROJET.md)
 - [Vision](docs/VISION.md)
 - [Guide du bâtisseur](docs/GUIDE-DU-BATISSEUR.md)
 - [Roadmap](docs/ROADMAP.md)

@@ -31,6 +31,7 @@ const (
 
 var signatureDomain = []byte("your-cloud.telemetry.v1\x00")
 
+// Server termine le mTLS et sépare publication daemon et lecture console.
 type Server struct {
 	config   config.Config
 	registry *registry.Registry
@@ -38,6 +39,7 @@ type Server struct {
 	http     *http.Server
 }
 
+// New construit les routes bornées et la politique TLS du coordinateur.
 func New(cfg config.Config, identities *registry.Registry, database *store.Store) (*Server, error) {
 	tlsConfig, err := transportTLS(cfg)
 	if err != nil {
@@ -57,6 +59,7 @@ func New(cfg config.Config, identities *registry.Registry, database *store.Store
 	return result, nil
 }
 
+// transportTLS exige TLS 1.3 et un certificat client issu de l'autorité approuvée.
 func transportTLS(cfg config.Config) (*tls.Config, error) {
 	certificate, err := tls.LoadX509KeyPair(cfg.CertificateFile, cfg.PrivateKeyFile)
 	if err != nil {
@@ -77,6 +80,7 @@ func transportTLS(cfg config.Config) (*tls.Config, error) {
 	}, nil
 }
 
+// Run sert le protocole jusqu'à un arrêt explicite du processus.
 func (s *Server) Run() error {
 	err := s.http.ListenAndServeTLS("", "")
 	if errors.Is(err, http.ErrServerClosed) {
@@ -85,6 +89,7 @@ func (s *Server) Run() error {
 	return err
 }
 
+// Shutdown termine les connexions dans le délai transmis par l'appelant.
 func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
 
 func clientName(request *http.Request) (string, bool) {
@@ -107,6 +112,7 @@ func protobufResponse(writer http.ResponseWriter, status int, message proto.Mess
 	_, _ = writer.Write(body)
 }
 
+// publish n'accuse une enveloppe qu'après validation et transaction durable.
 func (s *Server) publish(writer http.ResponseWriter, request *http.Request) {
 	machineID := request.PathValue("machine")
 	name, ok := clientName(request)
@@ -141,6 +147,7 @@ func (s *Server) publish(writer http.ResponseWriter, request *http.Request) {
 	})
 }
 
+// validateEnvelope vérifie rôle, clé, signature et cohérence du payload exact.
 func validateEnvelope(machineID, keyID string, public ed25519.PublicKey, body []byte) (*telemetryv1.SignedEnvelope, uint64, int64, error) {
 	envelope := &telemetryv1.SignedEnvelope{}
 	if err := proto.Unmarshal(body, envelope); err != nil {
@@ -179,6 +186,7 @@ func consoleAllowed(request *http.Request) bool {
 	return ok && strings.HasPrefix(name, "console:") && len(name) > len("console:")
 }
 
+// current sert l'enveloppe originale uniquement à une identité de console.
 func (s *Server) current(writer http.ResponseWriter, request *http.Request) {
 	if !consoleAllowed(request) {
 		http.Error(writer, "identité de lecture refusée", http.StatusForbidden)
@@ -199,6 +207,7 @@ func (s *Server) current(writer http.ResponseWriter, request *http.Request) {
 	_, _ = writer.Write(body)
 }
 
+// events sert une page bornée sans retirer ni réinterpréter les signatures.
 func (s *Server) events(writer http.ResponseWriter, request *http.Request) {
 	if !consoleAllowed(request) {
 		http.Error(writer, "identité de lecture refusée", http.StatusForbidden)

@@ -13,11 +13,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Store conserve l'état courant et l'historique borné reçu des machines.
 type Store struct {
 	db            *sql.DB
 	retentionDays int
 }
 
+// Open initialise la base dérivée avec rétention et limite dure de pages.
 func Open(stateDir string, limitBytes int64, retentionDays int) (*Store, error) {
 	db, err := sql.Open("sqlite", filepath.Join(stateDir, "telemetry.db"))
 	if err != nil {
@@ -60,8 +62,10 @@ CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at);`
 	return &Store{db: db, retentionDays: retentionDays}, nil
 }
 
+// Close ferme la base locale du coordinateur.
 func (s *Store) Close() error { return s.db.Close() }
 
+// Save rend une publication durable et idempotente avant tout accusé.
 func (s *Store) Save(ctx context.Context, machineID, keyID string, stream telemetryv1.TelemetryStream, sequence uint64, observedAt int64, envelope []byte) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -122,6 +126,7 @@ sequence=excluded.sequence,observed_at=excluded.observed_at,envelope=excluded.en
 	return already, nil
 }
 
+// Current retourne l'enveloppe originale du dernier état d'une machine.
 func (s *Store) Current(ctx context.Context, machineID string) ([]byte, error) {
 	var envelope []byte
 	if err := s.db.QueryRowContext(ctx, "SELECT envelope FROM current_states WHERE machine_id = ?", machineID).Scan(&envelope); err != nil {
@@ -130,6 +135,7 @@ func (s *Store) Current(ctx context.Context, machineID string) ([]byte, error) {
 	return envelope, nil
 }
 
+// Events retourne une page ordonnée et indique explicitement s'il reste des données.
 func (s *Store) Events(ctx context.Context, machineID string, after uint64, limit int) ([][]byte, uint64, bool, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT sequence,envelope FROM events WHERE machine_id = ? AND sequence > ? ORDER BY sequence LIMIT ?", machineID, after, limit+1)
 	if err != nil {
@@ -160,6 +166,7 @@ func (s *Store) Events(ctx context.Context, machineID string, after uint64, limi
 	return envelopes, next, hasMore, nil
 }
 
+// PageUsage mesure l'occupation SQLite sans exposer la télémétrie conservée.
 func (s *Store) PageUsage(ctx context.Context) (int64, int64, error) {
 	var pages, size int64
 	if err := s.db.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pages); err != nil {

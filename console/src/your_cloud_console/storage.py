@@ -1,3 +1,5 @@
+"""Stockage privé des clés d'hôte SSH approuvées par la console."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -15,6 +17,8 @@ RUNTIME_SCHEMA_VERSION = 1
 
 @dataclass(frozen=True)
 class PinnedHostKey:
+    """Clé d'hôte SSH approuvée avec sa provenance et son instant d'acceptation."""
+
     endpoint: str
     key_type: str
     key: str
@@ -32,6 +36,8 @@ class PinnedHostKey:
         fingerprint: str,
         source: str,
     ) -> "PinnedHostKey":
+        """Construit une approbation horodatée depuis une preuve explicite."""
+
         return cls(
             endpoint=endpoint,
             key_type=key_type,
@@ -43,6 +49,8 @@ class PinnedHostKey:
 
 
 class HostKeyStore:
+    """Registre privé qui rend un known_hosts dédié au projet."""
+
     def __init__(self, state_dir: Path):
         self.state_dir = state_dir
         self.registry_path = state_dir / "host_keys.json"
@@ -52,6 +60,8 @@ class HostKeyStore:
         return {"schema_version": RUNTIME_SCHEMA_VERSION, "host_keys": {}}
 
     def load(self) -> dict[str, Any]:
+        """Charge le registre en refusant les schémas incomplets ou inconnus."""
+
         if not self.registry_path.exists():
             return self._empty()
         try:
@@ -81,18 +91,24 @@ class HostKeyStore:
             raise HostKeyError(f"entrée de clé d'hôte invalide pour {machine_id}") from error
 
     def get(self, machine_id: str) -> PinnedHostKey | None:
+        """Retourne la clé approuvée d'une machine lorsqu'elle existe."""
+
         item = self.load()["host_keys"].get(machine_id)
         if item is None:
             return None
         return self._parse_item(machine_id, item)
 
     def pin(self, machine_id: str, host_key: PinnedHostKey) -> None:
+        """Enregistre une clé approuvée puis régénère le known_hosts privé."""
+
         raw = self.load()
         raw["host_keys"][machine_id] = asdict(host_key)
         self._write_json(self.registry_path, raw)
         self.render_known_hosts()
 
     def render_known_hosts(self) -> Path:
+        """Rend atomiquement le fichier OpenSSH depuis le registre validé."""
+
         raw = self.load()
         lines = []
         for machine_id in sorted(raw["host_keys"]):

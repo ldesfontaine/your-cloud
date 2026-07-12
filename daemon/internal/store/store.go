@@ -12,16 +12,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Store conserve l'état courant et la file bornée d'événements du daemon.
 type Store struct {
 	db          *sql.DB
 	eventBudget int64
 }
 
+// Gap décrit une plage d'événements supprimés par la limite locale.
 type Gap struct {
 	From uint64
 	To   uint64
 }
 
+// Open initialise la file SQLite avec durabilité forte et limite dure de pages.
 func Open(stateDir string, limitBytes int64) (*Store, error) {
 	path := filepath.Join(stateDir, "telemetry.db")
 	db, err := sql.Open("sqlite", path)
@@ -72,8 +75,10 @@ CREATE TABLE IF NOT EXISTS events (
 	return &Store{db: db, eventBudget: limitBytes / 2}, nil
 }
 
+// Close ferme la base locale du daemon.
 func (s *Store) Close() error { return s.db.Close() }
 
+// NextSequence avance atomiquement la séquence persistante d'un flux.
 func (s *Store) NextSequence(ctx context.Context, stream telemetryv1.TelemetryStream) (uint64, error) {
 	key := ""
 	switch stream {
@@ -107,6 +112,7 @@ func (s *Store) NextSequence(ctx context.Context, stream telemetryv1.TelemetrySt
 	return next, nil
 }
 
+// SaveCurrent remplace l'état courant sans alimenter le journal périodique.
 func (s *Store) SaveCurrent(ctx context.Context, sequence uint64, observedAt int64, envelope []byte) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO current_state(singleton, sequence, observed_at, envelope)
 VALUES(1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET sequence=excluded.sequence,
@@ -117,6 +123,7 @@ observed_at=excluded.observed_at, envelope=excluded.envelope`, sequence, observe
 	return nil
 }
 
+// Current retourne l'enveloppe d'état la plus récente à publier en priorité.
 func (s *Store) Current(ctx context.Context) ([]byte, error) {
 	var envelope []byte
 	if err := s.db.QueryRowContext(ctx, "SELECT envelope FROM current_state WHERE singleton = 1").Scan(&envelope); err != nil {
@@ -128,6 +135,7 @@ func (s *Store) Current(ctx context.Context) ([]byte, error) {
 	return envelope, nil
 }
 
+// PendingEvents retourne une page ordonnée des événements encore non confirmés.
 func (s *Store) PendingEvents(ctx context.Context, limit int) ([][]byte, error) {
 	if limit < 1 || limit > 64 {
 		return nil, fmt.Errorf("limite d'événements invalide")
@@ -148,6 +156,7 @@ func (s *Store) PendingEvents(ctx context.Context, limit int) ([][]byte, error) 
 	return result, rows.Err()
 }
 
+// AcknowledgeEvent purge uniquement l'événement confirmé par un coordinateur.
 func (s *Store) AcknowledgeEvent(ctx context.Context, sequence uint64) error {
 	result, err := s.db.ExecContext(ctx, "DELETE FROM events WHERE sequence = ?", sequence)
 	if err != nil {
@@ -163,6 +172,7 @@ func (s *Store) AcknowledgeEvent(ctx context.Context, sequence uint64) error {
 	return nil
 }
 
+// SignificantDigest retourne l'empreinte du dernier état significatif observé.
 func (s *Store) SignificantDigest(ctx context.Context) (string, error) {
 	var digest string
 	if err := s.db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'significant_digest'").Scan(&digest); err != nil {
@@ -171,11 +181,13 @@ func (s *Store) SignificantDigest(ctx context.Context) (string, error) {
 	return digest, nil
 }
 
+// SetSignificantDigest mémorise l'état significatif après création de son événement.
 func (s *Store) SetSignificantDigest(ctx context.Context, digest string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE meta SET value = ? WHERE key = 'significant_digest'", digest)
 	return err
 }
 
+// EnqueueEvent ajoute un événement et signale toute plage supprimée par débordement.
 func (s *Store) EnqueueEvent(ctx context.Context, sequence uint64, observedAt int64, kind string, envelope []byte) (*Gap, error) {
 	if int64(len(envelope)) > s.eventBudget/2 {
 		return nil, fmt.Errorf("événement trop grand pour la file bornée")
@@ -215,6 +227,7 @@ func (s *Store) EnqueueEvent(ctx context.Context, sequence uint64, observedAt in
 	return gap, nil
 }
 
+// PageUsage mesure l'espace SQLite alloué sans lire le contenu des événements.
 func (s *Store) PageUsage(ctx context.Context) (int64, int64, error) {
 	var pages, size int64
 	if err := s.db.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pages); err != nil {

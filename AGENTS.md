@@ -66,6 +66,10 @@ le parcours et les décisions techniques vivent dans la documentation.
 
 - Sécurité par séparation des autorités et moindre privilège avant tout.
 - Épingler dépendances, images, collections et binaires ; jamais `latest`.
+- Ajouter au fil du développement des docstrings Python et GoDoc courtes sur
+  les API et la logique importante, sans commenter les évidences.
+- Mettre à jour `docs/ANATOMIE-DU-PROJET.md` et son édition HTML lorsque les
+  flux changent, se précisent ou deviennent plus complexes.
 - Vérifier proportionnellement au risque et dans le LAB approprié. Ne jamais
   présenter comme testée une preuve qui ne l’a pas été.
 - `CONTEXT.md` reste un glossaire. Créer un ADR seulement pour une décision
