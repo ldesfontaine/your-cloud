@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lucas-desfontaine/your-cloud/coordinateur/internal/config"
-	"github.com/lucas-desfontaine/your-cloud/coordinateur/internal/registry"
-	"github.com/lucas-desfontaine/your-cloud/coordinateur/internal/server"
-	"github.com/lucas-desfontaine/your-cloud/coordinateur/internal/store"
+	"github.com/ldesfontaine/yourcloud/coordinateur/internal/config"
+	"github.com/ldesfontaine/yourcloud/coordinateur/internal/registry"
+	"github.com/ldesfontaine/yourcloud/coordinateur/internal/server"
+	"github.com/ldesfontaine/yourcloud/coordinateur/internal/store"
 )
 
 const version = "1.0.0-rc.2"

@@ -11,12 +11,12 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lucas-desfontaine/your-cloud/daemon/internal/collect"
-	"github.com/lucas-desfontaine/your-cloud/daemon/internal/config"
-	"github.com/lucas-desfontaine/your-cloud/daemon/internal/identity"
-	"github.com/lucas-desfontaine/your-cloud/daemon/internal/publisher"
-	"github.com/lucas-desfontaine/your-cloud/daemon/internal/store"
-	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
+	"github.com/ldesfontaine/yourcloud/daemon/internal/collect"
+	"github.com/ldesfontaine/yourcloud/daemon/internal/config"
+	"github.com/ldesfontaine/yourcloud/daemon/internal/identity"
+	"github.com/ldesfontaine/yourcloud/daemon/internal/publisher"
+	"github.com/ldesfontaine/yourcloud/daemon/internal/store"
+	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
 )
 
 const Version = "1.0.0-rc.2"

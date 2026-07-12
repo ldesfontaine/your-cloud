@@ -2,9 +2,8 @@
 
 Le nouveau projet ne possède encore aucun runbook opérationnel exécutable.
 
-Les procédures de l’ancien wrapper restent sur la branche `old-project`. Elles
-conservent une valeur historique, mais leurs commandes ne s’appliquent ni à la
-console, ni au daemon, ni au coordinateur de la nouvelle architecture.
+Les procédures d'un ancien produit archivé séparément ne s'appliquent ni à la
+console, ni au daemon, ni au coordinateur de cette architecture.
 
 Un runbook rejoint `main` seulement lorsque la capacité correspondante a été
 implémentée et prouvée dans le LAB. Les premiers candidats sont :

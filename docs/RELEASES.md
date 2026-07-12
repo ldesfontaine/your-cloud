@@ -8,7 +8,9 @@ Une release GitHub doit fournir plus qu’une archive du dépôt : documentation
 
 ## Histoire précédente
 
-Les tags `v0.1.0` à `v0.9.0` restent dans l’ancien dépôt comme traces de l’ancienne lignée. Le nouveau dépôt privé conserve l’historique des commits au moyen de sa branche principale et de la branche d’archive `old-project`, sans importer ces anciens tags.
+Les tags `v0.1.0` à `v0.9.0` appartiennent à un ancien produit archivé
+séparément. Ce dépôt commence sa propre histoire de releases et n'importe ni
+ces tags ni une branche d'archive sans rapport avec son code courant.
 
 ## Première release stable
 

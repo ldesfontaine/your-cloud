@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
+	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
 )
 
 func TestStateIsIdempotentAndRejectsCollision(t *testing.T) {

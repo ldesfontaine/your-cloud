@@ -14,6 +14,6 @@ signature Ed25519 produite par OpenSSL et les instructions de vérification. La
 preuve LAB utilise une clé synthétique. Une publication réelle exige une clé et
 une empreinte approuvées hors du lot publié.
 
-Le tag `v1.0.0` et toute release GitHub restent interdits avant le GO explicite
-de Lucas pour cette référence exacte, même lorsque toutes les preuves LAB sont
-vertes.
+Le tag `v1.0.0` et toute release GitHub exigent une approbation explicite de la
+référence exacte par la personne responsable de la publication, même lorsque
+toutes les preuves LAB sont vertes.

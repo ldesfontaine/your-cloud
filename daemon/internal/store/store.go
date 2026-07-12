@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
+	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
 	_ "modernc.org/sqlite"
 )
 

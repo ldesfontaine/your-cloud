@@ -1,8 +1,7 @@
 # Registre des décisions
 
-Ce registre appartient uniquement à la nouvelle lignée. Les ADR de l’ancien
-wrapper Ansible/k3s restent consultables sur la branche `old-project` et ne
-gouvernent pas ce `main`.
+Ce registre appartient uniquement au produit courant. Les décisions d'un
+ancien produit archivé séparément ne gouvernent pas ce dépôt.
 
 Une décision reçoit un ADR lorsqu’elle est difficile à renverser, surprenante
 et issue d’un compromis réel. Les seuils, champs, commandes et contrats précis

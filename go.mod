@@ -1,4 +1,4 @@
-module github.com/lucas-desfontaine/your-cloud
+module github.com/ldesfontaine/yourcloud
 
 go 1.24.0
 

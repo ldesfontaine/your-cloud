@@ -29,7 +29,10 @@ Une panne de la console ou du coordinateur peut retarder l’observation et les 
 - Le cœur reste léger ; les intégrations avancées ne deviennent pas des dépendances obligatoires.
 - Les données de configuration sont durables et lisibles ; la télémétrie est dérivée et reconstructible.
 - Les débutants reçoivent un parcours guidé ; les utilisateurs avancés gardent accès aux mêmes concepts et preuves.
-- Le produit final pourra exécuter sa console publiée sur un poste Linux approuvé ou dans une VM d’administration. Le laptop de développement de Lucas reste un poste d’édition et de contrôle : aucun build, binaire de travail, test, playbook, service ou dépendance exécutable du projet n’y est lancé ; ces exécutions restent dans le LAB.
+- La console publiée s'exécute sur un poste Linux approuvé ou dans une VM
+  d'administration. Un poste de développement reste réservé à l'édition, Git,
+  l'inspection et au contrôle du LAB ; builds, tests, playbooks et composants du
+  projet s'exécutent dans un environnement isolé.
 
 ## Première étape utile
 

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
+	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
 )
 
 // State collecte uniquement la télémétrie V1 bornée et les unités choisies.

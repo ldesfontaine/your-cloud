@@ -30,7 +30,7 @@ refuse aussi un daemon, un coordinateur ou un wheel dont la version interne ne
 correspond pas au nom demandé. Le build final a produit :
 
 ```text
-Ran 39 tests in 3.949s
+Ran 39 tests in 3.595s
 OK
 tests Go : OK
 Signature Verified Successfully
@@ -39,10 +39,10 @@ Release candidate 1.0.0-rc.2 construite et vérifiée
 
 | Artefact | SHA-256 |
 |---|---|
-| console wheel | `e2289766b21972d56ceb955579d21db37260841d3696215f3566b20aaa0769fb` |
+| console wheel | `199802bf324fc781910e1801ba9710a0f552fcc08cb5d855b48778b93f11f2c0` |
 | engine Ansible | `4b3003f6f0802f1c5a778c5262ab4df61826dcda29c26a8f48b72c49a6708dad` |
-| coordinateur amd64 | `2e92d7024921c3cf57cc7713d2d2f8af44ffa052b5bc0e06805b8dad28ade9e0` |
-| observer amd64 | `eb4793f06f25f90c9f957f83c08ffa88ed64409f77965752257632bfa1b2fbfe` |
+| coordinateur amd64 | `989d6670479335badfbeba555f9b3f3d7db1575e3e7197a5bf0427469c2788de` |
+| observer amd64 | `6dc78fb3e4d14c10644795ff2c5e4c98db675ba90ebb01deb586968a2baa2074` |
 
 ## Installation depuis le seul lot
 

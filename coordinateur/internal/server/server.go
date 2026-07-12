@@ -17,10 +17,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lucas-desfontaine/your-cloud/coordinateur/internal/config"
-	"github.com/lucas-desfontaine/your-cloud/coordinateur/internal/registry"
-	"github.com/lucas-desfontaine/your-cloud/coordinateur/internal/store"
-	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
+	"github.com/ldesfontaine/yourcloud/coordinateur/internal/config"
+	"github.com/ldesfontaine/yourcloud/coordinateur/internal/registry"
+	"github.com/ldesfontaine/yourcloud/coordinateur/internal/store"
+	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
 )
 
 const (

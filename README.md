@@ -38,11 +38,9 @@ flux installation, publication, lecture et panne.
 - [Registre des décisions](docs/adr/REGISTRE.md)
 - [Spécifications](docs/specifications/README.md)
 - [Laboratoire](docs/lab/README.md)
-- [Audit de réemploi de l’ancienne lignée](docs/audits/reemploi-old-project.md)
 
-Le développement suit la roadmap par paliers. Aucun code de l’ancien wrapper
-Ansible/k3s n’est repris par défaut ; son histoire reste disponible sur la
-branche `old-project`.
+Le développement suit la roadmap par paliers. Aucun code de l’ancienne lignée
+n’est repris par défaut ; son archive reste séparée de ce produit.
 
 ## Arborescence de construction
 

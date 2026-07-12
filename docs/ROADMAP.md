@@ -18,7 +18,7 @@ flowchart LR
 
 | Palier | Résultat visible pour l’utilisateur | Difficulté nouvelle | Preuve de sortie |
 |---|---|---|---|
-| P0 | Le nouveau projet est compréhensible et développable en sécurité | Repartir proprement sans perdre l’histoire | Nouveau dépôt privé, branche `old-project`, LAB documenté, aucun code mort repris |
+| P0 | Le nouveau projet est compréhensible et développable en sécurité | Repartir proprement sans perdre l’histoire | Nouvelle lignée isolée de son archive, LAB documenté, aucun code mort repris |
 | P1 | La console examine une machine sans la modifier | Établir le premier lien de confiance SSH | Audit d’une VM neuve, clé d’hôte enregistrée, seconde exécution identique, zéro mutation |
 | P2 | Une machine apparaît comme disponible et observable | Identité persistante et daemon read-only | Enrôlement d’une VM, état signé vérifié, aucun port entrant du daemon |
 | P3 | La machine peut être sécurisée sans perdre l’accès | Première mutation à risque et retour maîtrisé | Nouvelle session SSH, pare-feu dual-stack, re-run `changed=0`, dérive détectée |
@@ -28,8 +28,8 @@ flowchart LR
 
 ## P0 — Atelier propre
 
-> État : terminé le 2026-07-12. La nouvelle lignée, le LAB, l’audit de
-> réemploi et les ADR 0001 à 0011 ont été relus et ratifiés.
+> État : terminé le 2026-07-12. La nouvelle lignée, le LAB et les ADR 0001 à
+> 0011 ont été relus et ratifiés.
 
 ### But
 
@@ -37,17 +37,15 @@ Créer la nouvelle lignée sans transporter le code mort de l’ancien wrapper A
 
 ### À accomplir
 
-- créer le nouveau dépôt privé en conservant l’historique Git ;
-- placer l’ancienne tête sur la branche `old-project` ;
+- créer une nouvelle lignée sans mélanger l'archive de l'ancien produit ;
 - repartir d’une branche principale propre avec les documents du nouveau produit ;
-- réécrire `AGENTS.md` dans un ton humain, avec deux rôles simples et les garde-fous réellement utiles ;
 - définir l’arborescence console, daemon, coordinateur, protocole et engine Ansible ;
 - mettre à niveau les gabarits `labctl` vers Debian 13 et documenter le LAB rapide puis le LAB complet ;
-- décider ce qui est réutilisé de l’ancien code après audit, sans déplacement massif par défaut.
+- ne reprendre aucun code historique sans une décision explicite et prouvée.
 
 ### Preuve de sortie
 
-L’historique ancien reste consultable, le nouveau `main` ne contient aucun composant applicatif mort et un nouveau contributeur comprend la direction depuis le guide. Aucun binaire ou test du projet n’a été exécuté sur le laptop.
+L’archive ancienne reste séparée, le nouveau `main` ne contient aucun composant applicatif mort et un nouveau contributeur comprend la direction depuis le guide. Aucun binaire ou test du projet n’a été exécuté sur le poste de développement.
 
 ## P1 — Premier contact en lecture seule
 
