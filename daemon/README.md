@@ -10,5 +10,9 @@ il publie d'abord l'état courant puis les événements en attente vers au plus
 deux coordinateurs explicitement autorisés, avec reprise exponentielle bornée.
 Une donnée locale n'est purgée qu'après un accusé mTLS durable et cohérent.
 
+À P5, un nouveau point est placé avant l'ancien pendant la migration d'un
+pilote. Deux points au plus sont acceptés ; leur découverte reste interdite et
+le retrait de l'ancien endpoint forme un plan SSH/Ansible séparé.
+
 Voir l'[Anatomie du projet](../docs/ANATOMIE-DU-PROJET.md) pour suivre la
 collecte, la signature, la file locale, la publication et la reprise.

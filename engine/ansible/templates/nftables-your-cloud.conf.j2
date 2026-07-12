@@ -14,8 +14,8 @@ table inet your_cloud {
     ip saddr {{ administration_ipv4_cidr }} tcp dport 22 accept
     ip6 saddr {{ administration_ipv6_cidr }} tcp dport 22 accept
 {% if coordinator_port | int > 0 %}
-    ip saddr {{ administration_ipv4_cidr }} tcp dport {{ coordinator_port }} accept
-    ip6 saddr {{ administration_ipv6_cidr }} tcp dport {{ coordinator_port }} accept
+    ip saddr {{ coordinator_ipv4_cidr }} tcp dport {{ coordinator_port }} accept
+    ip6 saddr {{ coordinator_ipv6_cidr }} tcp dport {{ coordinator_port }} accept
 {% endif %}
   }
 

@@ -1,0 +1,148 @@
+---
+- name: Installer le coordinateur distant sans migrer de machine
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    coordinator_user: your-cloud-coordinator
+    coordinator_state_dir: /var/lib/your-cloud/coordinator
+  pre_tasks:
+    - name: Valider les paramètres et artefacts locaux
+      ansible.builtin.assert:
+        that:
+          - machine_id is match('^[a-z0-9][a-z0-9-]{0,62}$')
+          - coordinator_address is string
+          - coordinator_address | length > 0
+          - coordinator_address is not search('\\s')
+          - coordinator_address not in ['0.0.0.0', '::']
+          - coordinator_port | int >= 1024
+          - coordinator_port | int <= 65535
+          - coordinator_binary is file
+          - transport_ca is file
+          - coordinator_certificate is file
+          - coordinator_private_key is file
+          - identity_registry is file
+        fail_msg: Paramètres du coordinateur distant invalides
+
+    - name: Vérifier l'autorité existante du profil Linux
+      ansible.builtin.command:
+        argv: [sha256sum, --check, /var/lib/your-cloud/profile/manifest.sha256]
+      changed_when: false
+
+    - name: Lire la chaîne d'entrée nftables possédée
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, list, chain, inet, your_cloud, input]
+      register: nft_input
+      changed_when: false
+
+    - name: Refuser un port public non préparé
+      ansible.builtin.assert:
+        that:
+          - nft_input.stdout is regex('tcp dport ' ~ (coordinator_port | string) ~ ' accept')
+        fail_msg: Le profil Linux doit autoriser explicitement le port du coordinateur avant installation
+
+  tasks:
+    - name: Garder les parents de configuration et de stockage neutres
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/your-cloud
+        - /var/lib/your-cloud
+
+    - name: Créer le groupe séparé du coordinateur
+      ansible.builtin.group:
+        name: "{{ coordinator_user }}"
+        system: true
+
+    - name: Créer le compte non interactif du coordinateur
+      ansible.builtin.user:
+        name: "{{ coordinator_user }}"
+        group: "{{ coordinator_user }}"
+        system: true
+        create_home: false
+        home: "{{ coordinator_state_dir }}"
+        shell: /usr/sbin/nologin
+        password_lock: true
+
+    - name: Créer les stockages privés du coordinateur
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ coordinator_user }}"
+        group: "{{ coordinator_user }}"
+        mode: "0700"
+      loop:
+        - /var/lib/your-cloud/coordinator
+        - /etc/your-cloud/coordinator-tls
+
+    - name: Installer le binaire natif du coordinateur
+      ansible.builtin.copy:
+        src: "{{ coordinator_binary }}"
+        dest: /usr/libexec/your-cloud-coordinator
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Redémarrer le coordinateur
+
+    - name: Installer l'identité serveur mTLS
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ coordinator_user }}"
+        group: "{{ coordinator_user }}"
+        mode: "0400"
+      loop:
+        - {src: "{{ transport_ca }}", dest: /etc/your-cloud/coordinator-tls/ca.crt}
+        - {src: "{{ coordinator_certificate }}", dest: /etc/your-cloud/coordinator-tls/tls.crt}
+        - {src: "{{ coordinator_private_key }}", dest: /etc/your-cloud/coordinator-tls/tls.key}
+      notify: Redémarrer le coordinateur
+
+    - name: Installer le registre public dérivé
+      ansible.builtin.copy:
+        src: "{{ identity_registry }}"
+        dest: /etc/your-cloud/coordinator-identities.json
+        owner: root
+        group: "{{ coordinator_user }}"
+        mode: "0440"
+      notify: Redémarrer le coordinateur
+
+    - name: Installer la configuration du coordinateur
+      ansible.builtin.template:
+        src: coordinator.json.j2
+        dest: /etc/your-cloud/coordinator.json
+        owner: root
+        group: "{{ coordinator_user }}"
+        mode: "0640"
+      notify: Redémarrer le coordinateur
+
+    - name: Installer l'unité systemd durcie
+      ansible.builtin.copy:
+        src: your-cloud-coordinator.service
+        dest: /etc/systemd/system/your-cloud-coordinator.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Recharger systemd
+        - Redémarrer le coordinateur
+
+    - name: Activer le coordinateur
+      ansible.builtin.systemd_service:
+        name: your-cloud-coordinator.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Recharger systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Redémarrer le coordinateur
+      ansible.builtin.systemd_service:
+        name: your-cloud-coordinator.service
+        state: restarted

@@ -9,5 +9,10 @@ console en lecture seule. Son compte, ses certificats, sa base limitée à
 64 Mio et ses ressources systemd restent séparés du daemon lorsqu'ils sont
 colocalisés. Il ne détient aucun secret d'administration.
 
+Le même binaire 0.5.0 sert le mode local et le mode distant. Sur un point
+public, son certificat est lié à une IP ou à un nom DNS facultatif, le pare-feu
+est préparé avant l'installation et aucune route anonyme n'est ajoutée. Sa base
+reste dérivée : sa reconstruction repose sur la republication des daemons.
+
 Voir l'[Anatomie du projet](../docs/ANATOMIE-DU-PROJET.md) pour les routes,
 messages, rôles mTLS, transactions et vérifications de bout en bout.

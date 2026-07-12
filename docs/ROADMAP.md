@@ -145,6 +145,10 @@ Voir la [preuve LAB P4](lab/p4-observation-continue-locale.md).
 
 ## P5 — Mode distant et multi-infrastructures
 
+> État : terminé le 2026-07-12. Flux distant, NAT, deux infrastructures,
+> migration pilote, fallback, reconstruction, retrait séparé et schéma 2 des
+> domaines de panne sont prouvés dans le LAB `v1-full`.
+
 ### But
 
 Observer plusieurs sites à travers Internet sans ouvrir le LAN et sans imposer un domaine.
@@ -162,6 +166,8 @@ Observer plusieurs sites à travers Internet sans ouvrir le LAN et sans imposer 
 ### Preuve de sortie
 
 Le LAB complet contient une console, un coordinateur public simulé, une passerelle et au moins deux machines privées réparties dans deux infrastructures. Aucune machine privée n’accepte de connexion de télémétrie entrante. La perte du coordinateur est affichée honnêtement et sa reconstruction permet aux daemons de revenir.
+
+Voir la [preuve LAB P5](lab/p5-mode-distant.md).
 
 ## P6 — Release V1 complète
 

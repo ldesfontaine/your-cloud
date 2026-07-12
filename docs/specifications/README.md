@@ -8,6 +8,7 @@ preuves LAB.
 - [Télémétrie V1](telemetrie-v1.md)
 - [Protocole V1](protocole-v1.md)
 - [Profil Linux V1](profil-linux-v1.md)
+- [Déclaration V2 et domaines de panne](declaration-v2.md)
 - [LAB V1](../lab/README.md)
 
 Chaque document indique si son contrat reste une cible ou s'il possède déjà une

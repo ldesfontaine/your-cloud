@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from google.protobuf.message import DecodeError
 
 from .errors import CoordinationError
-from .model import Machine
+from .model import DNS_PATTERN, Machine
 from .secrets import AdminKeyStore
 from .storage import HostKeyStore
 from .transport import TransportStore
@@ -37,6 +37,81 @@ def coordination_plan(machine: Machine, address: str, port: int) -> str:
         "  - republier l'état courant avant le journal après une coupure",
         "  - ne fournir aucune commande ni secret d'administration au coordinateur",
     ))
+
+
+def distant_coordination_plan(
+    coordinator: Machine,
+    endpoint: str,
+    listen_address: str,
+    port: int,
+) -> str:
+    """Décrit l'installation distante sans lui associer encore de pilote."""
+
+    _validate_endpoint(endpoint, port)
+    return "\n".join((
+        f"Plan pour préparer {coordinator.id} comme coordinateur distant :",
+        "  - réutiliser le même binaire, le même stockage et le même protocole que le mode local",
+        "  - vérifier le profil Linux possédé avant toute installation",
+        "  - installer uniquement le coordinateur sous son compte séparé sans sudo",
+        f"  - écouter sur l'adresse locale explicite {listen_address}:{port}",
+        f"  - lier l'identité TLS au point public {endpoint}:{port}, IP ou DNS facultatif",
+        "  - n'exposer aucune route anonyme et ne détenir aucun secret d'administration",
+        "  - ne migrer aucune machine dans ce plan ; un pilote fera l'objet d'un second plan",
+    ))
+
+
+def pilot_migration_plan(pilot: Machine, coordinator_id: str, endpoint: str, port: int) -> str:
+    """Décrit l'ajout progressif d'un point distant à une machine pilote."""
+
+    _validate_endpoint(endpoint, port)
+    return "\n".join((
+        f"Plan pour migrer la machine pilote {pilot.id} :",
+        f"  - autoriser le point {coordinator_id} à {_endpoint_url(endpoint, port)}",
+        "  - essayer le nouveau point en premier et conserver l'ancien comme secours",
+        "  - refuser la migration si deux points différents sont déjà autorisés",
+        "  - installer uniquement l'identité mTLS propre à cette machine",
+        "  - redémarrer le daemon d'observation sans lui ajouter de commande ni de port entrant",
+        "  - attendre plusieurs échanges et accusés valides avant toute extension au site",
+        "  - retirer l'ancien point uniquement dans un futur plan séparé",
+    ))
+
+
+def point_retirement_plan(machine: Machine, endpoint: str, port: int) -> str:
+    """Décrit le retrait séparé d'un ancien point après preuve du nouveau."""
+
+    _validate_endpoint(endpoint, port)
+    return "\n".join((
+        f"Plan pour retirer un ancien point de {machine.id} :",
+        f"  - retirer uniquement {_endpoint_url(endpoint, port)} de la configuration du daemon",
+        "  - refuser de retirer le dernier point de coordination autorisé",
+        "  - conserver les identités, l'historique et les fichiers du coordinateur",
+        "  - ne modifier ni le pare-feu ni les services hébergés dans ce plan",
+    ))
+
+
+def _validate_endpoint(endpoint: str, port: int) -> None:
+    if not endpoint or endpoint != endpoint.strip() or any(char.isspace() for char in endpoint):
+        raise CoordinationError("le point de coordination doit être une IP ou un nom DNS sans espace")
+    try:
+        parsed = ipaddress.ip_address(endpoint)
+        if parsed.is_unspecified:
+            raise CoordinationError("le point de coordination refuse une adresse non spécifiée")
+    except ValueError:
+        if not DNS_PATTERN.fullmatch(endpoint):
+            raise CoordinationError("le point de coordination est invalide") from None
+    if not 1024 <= port <= 65535:
+        raise CoordinationError("le port du coordinateur doit être non privilégié")
+
+
+def _endpoint_url(endpoint: str, port: int) -> str:
+    """Construit une URL HTTPS non ambiguë pour une IP ou un nom DNS validé."""
+
+    try:
+        is_ipv6 = ipaddress.ip_address(endpoint).version == 6
+    except ValueError:
+        is_ipv6 = False
+    host = f"[{endpoint}]" if is_ipv6 else endpoint
+    return f"https://{host}:{port}"
 
 
 def _run(command: list[str], env: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
@@ -129,6 +204,201 @@ def install_local_coordinator(
     return f"Coordinateur local installé sur {address}:{port}. Ansible : {' '.join(recap.split())}"
 
 
+def install_distant_coordinator(
+    coordinator: Machine,
+    host_store: HostKeyStore,
+    transport_store: TransportStore,
+    passphrase: bytes,
+    *,
+    state_dir: Path,
+    engine_dir: Path,
+    coordinator_binary: Path,
+    recovery_kit: Path,
+    endpoint: str,
+    listen_address: str,
+    port: int,
+) -> str:
+    """Installe le coordinateur distant sans reconfigurer encore les daemons."""
+
+    _validate_endpoint(endpoint, port)
+    try:
+        local_ip = ipaddress.ip_address(listen_address)
+    except ValueError as error:
+        raise CoordinationError("l'écoute distante exige une adresse IP locale explicite") from error
+    if local_ip.is_unspecified:
+        raise CoordinationError("le coordinateur refuse une écoute sur toutes les interfaces")
+    for path, label in (
+        (coordinator_binary, "binaire du coordinateur"),
+        (engine_dir / "ansible" / "install-distant-coordinator.yml", "playbook"),
+        (state_dir / "machine_identities.json", "registre public"),
+    ):
+        if not path.is_file():
+            raise CoordinationError(f"{label} absent : {path}")
+    transport_store.ensure(passphrase, coordinator.id, endpoint, ())
+    AdminKeyStore(state_dir).attach_transport_authority(
+        recovery_kit,
+        passphrase,
+        transport_store.ca_key,
+        transport_store.ca_certificate,
+    )
+    with transport_store.materialize_private(
+        "coordinator", coordinator.id, passphrase
+    ) as coordinator_key:
+        command = [
+            "ansible-playbook", "-i", f"{coordinator.address},", "--user", coordinator.user,
+            "--private-key", coordinator.identity_file,
+            "--extra-vars", f"ansible_port={coordinator.port}",
+            "--extra-vars", json.dumps({
+                "machine_id": coordinator.id,
+                "coordinator_address": listen_address,
+                "coordinator_port": port,
+                "coordinator_binary": str(coordinator_binary),
+                "transport_ca": str(transport_store.ca_certificate),
+                "coordinator_certificate": str(
+                    transport_store.certificate_path("coordinator", coordinator.id)
+                ),
+                "coordinator_private_key": str(coordinator_key),
+                "identity_registry": str(state_dir / "machine_identities.json"),
+            }),
+            str(engine_dir / "ansible" / "install-distant-coordinator.yml"),
+        ]
+        env = dict(os.environ)
+        env["ANSIBLE_CONFIG"] = str(engine_dir / "ansible" / "ansible.cfg")
+        env["ANSIBLE_SSH_COMMON_ARGS"] = " ".join((
+            "-F /dev/null", "-o IdentitiesOnly=yes", "-o StrictHostKeyChecking=yes",
+            f"-o UserKnownHostsFile={host_store.render_known_hosts()}",
+            "-o GlobalKnownHostsFile=/dev/null",
+        ))
+        syntax = _run([*command[:-1], "--syntax-check", command[-1]], env, 120)
+        if syntax.returncode != 0:
+            raise CoordinationError(
+                f"syntax-check coordinateur distant refusé : {syntax.stderr.strip() or syntax.stdout.strip()}"
+            )
+        applied = _run(command, env, 300)
+        if applied.returncode != 0:
+            raise CoordinationError(
+                f"installation du coordinateur distant refusée : {applied.stderr.strip() or applied.stdout.strip()}"
+            )
+    recap = next(
+        (line for line in reversed(applied.stdout.splitlines()) if "changed=" in line),
+        "récapitulatif absent",
+    )
+    return (
+        f"Coordinateur distant installé sur {endpoint}:{port}, sans migration de machine. "
+        f"Ansible : {' '.join(recap.split())}"
+    )
+
+
+def authorize_pilot_coordinator(
+    pilot: Machine,
+    coordinator_id: str,
+    endpoint: str,
+    port: int,
+    host_store: HostKeyStore,
+    transport_store: TransportStore,
+    passphrase: bytes,
+    *,
+    engine_dir: Path,
+) -> str:
+    """Ajoute un point distant préautorisé au pilote sans retirer l'ancien."""
+
+    _validate_endpoint(endpoint, port)
+    playbook = engine_dir / "ansible" / "authorize-coordinator.yml"
+    if not playbook.is_file():
+        raise CoordinationError(f"playbook absent : {playbook}")
+    transport_store.ensure(passphrase, coordinator_id, endpoint, (pilot.id,))
+    with transport_store.materialize_private("daemon", pilot.id, passphrase) as daemon_key:
+        command = [
+            "ansible-playbook", "-i", f"{pilot.address},", "--user", pilot.user,
+            "--private-key", pilot.identity_file, "--extra-vars", f"ansible_port={pilot.port}",
+            "--extra-vars", json.dumps({
+                "machine_id": pilot.id,
+                "coordinator_url": _endpoint_url(endpoint, port),
+                "transport_ca": str(transport_store.ca_certificate),
+                "daemon_certificate": str(
+                    transport_store.certificate_path("daemon", pilot.id)
+                ),
+                "daemon_private_key": str(daemon_key),
+            }),
+            str(playbook),
+        ]
+        env = dict(os.environ)
+        env["ANSIBLE_CONFIG"] = str(engine_dir / "ansible" / "ansible.cfg")
+        env["ANSIBLE_SSH_COMMON_ARGS"] = " ".join((
+            "-F /dev/null", "-o IdentitiesOnly=yes", "-o StrictHostKeyChecking=yes",
+            f"-o UserKnownHostsFile={host_store.render_known_hosts()}",
+            "-o GlobalKnownHostsFile=/dev/null",
+        ))
+        syntax = _run([*command[:-1], "--syntax-check", command[-1]], env, 120)
+        if syntax.returncode != 0:
+            raise CoordinationError(
+                f"syntax-check migration pilote refusé : {syntax.stderr.strip() or syntax.stdout.strip()}"
+            )
+        applied = _run(command, env, 300)
+        if applied.returncode != 0:
+            raise CoordinationError(
+                f"migration pilote refusée : {applied.stderr.strip() or applied.stdout.strip()}"
+            )
+    recap = next(
+        (line for line in reversed(applied.stdout.splitlines()) if "changed=" in line),
+        "récapitulatif absent",
+    )
+    return (
+        f"Point distant autorisé sur le pilote {pilot.id}; ancien point conservé. "
+        f"Ansible : {' '.join(recap.split())}"
+    )
+
+
+def retire_coordinator_point(
+    machine: Machine,
+    endpoint: str,
+    port: int,
+    host_store: HostKeyStore,
+    *,
+    engine_dir: Path,
+) -> str:
+    """Retire un ancien endpoint sans désinstaller son coordinateur."""
+
+    _validate_endpoint(endpoint, port)
+    playbook = engine_dir / "ansible" / "retire-coordinator.yml"
+    if not playbook.is_file():
+        raise CoordinationError(f"playbook absent : {playbook}")
+    command = [
+        "ansible-playbook", "-i", f"{machine.address},", "--user", machine.user,
+        "--private-key", machine.identity_file, "--extra-vars", f"ansible_port={machine.port}",
+        "--extra-vars", json.dumps({
+            "machine_id": machine.id,
+            "coordinator_url": _endpoint_url(endpoint, port),
+        }),
+        str(playbook),
+    ]
+    env = dict(os.environ)
+    env["ANSIBLE_CONFIG"] = str(engine_dir / "ansible" / "ansible.cfg")
+    env["ANSIBLE_SSH_COMMON_ARGS"] = " ".join((
+        "-F /dev/null", "-o IdentitiesOnly=yes", "-o StrictHostKeyChecking=yes",
+        f"-o UserKnownHostsFile={host_store.render_known_hosts()}",
+        "-o GlobalKnownHostsFile=/dev/null",
+    ))
+    syntax = _run([*command[:-1], "--syntax-check", command[-1]], env, 120)
+    if syntax.returncode != 0:
+        raise CoordinationError(
+            f"syntax-check retrait du point refusé : {syntax.stderr.strip() or syntax.stdout.strip()}"
+        )
+    applied = _run(command, env, 300)
+    if applied.returncode != 0:
+        raise CoordinationError(
+            f"retrait du point refusé : {applied.stderr.strip() or applied.stdout.strip()}"
+        )
+    recap = next(
+        (line for line in reversed(applied.stdout.splitlines()) if "changed=" in line),
+        "récapitulatif absent",
+    )
+    return (
+        f"Ancien point retiré de {machine.id}, sans désinstallation distante. "
+        f"Ansible : {' '.join(recap.split())}"
+    )
+
+
 def fetch_current(
     machine_id: str,
     base_url: str,
@@ -150,8 +420,12 @@ def fetch_current(
                 if response.headers.get_content_type() != "application/x-protobuf":
                     raise CoordinationError("type de réponse du coordinateur refusé")
                 body = response.read(256 * 1024 + 1)
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError) as error:
+        except HTTPError as error:
             raise CoordinationError("lecture mTLS du coordinateur refusée") from error
+        except (URLError, TimeoutError, ssl.SSLError) as error:
+            raise CoordinationError(
+                "pilotage indisponible : coordinateur injoignable ; état de la machine et des services inconnu"
+            ) from error
     if not body or len(body) > 256 * 1024:
         raise CoordinationError("état relayé absent ou trop grand")
     return body
@@ -184,8 +458,12 @@ def fetch_events(
                 if response.headers.get_content_type() != "application/x-protobuf":
                     raise CoordinationError("type de réponse du coordinateur refusé")
                 body = response.read(1024 * 1024 + 1)
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError) as error:
+        except HTTPError as error:
             raise CoordinationError("lecture mTLS du journal refusée") from error
+        except (URLError, TimeoutError, ssl.SSLError) as error:
+            raise CoordinationError(
+                "pilotage indisponible : coordinateur injoignable ; journal temporairement inaccessible"
+            ) from error
     if not body or len(body) > 1024 * 1024:
         raise CoordinationError("page de journal absente ou trop grande")
     page = telemetrie_pb2.EnvelopePage()

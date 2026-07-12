@@ -72,6 +72,10 @@ le parcours et les décisions techniques vivent dans la documentation.
   flux changent, se précisent ou deviennent plus complexes.
 - Vérifier proportionnellement au risque et dans le LAB approprié. Ne jamais
   présenter comme testée une preuve qui ne l’a pas été.
+- Rédiger les preuves de palier comme des rapports visuels : texte court,
+  schéma de placement, commandes CLI et résultats significatifs, puis captures
+  annotées lorsque cela aide à voir ce qui se passe sur chaque machine. Masquer
+  systématiquement secrets, clés, jetons et données sensibles.
 - `CONTEXT.md` reste un glossaire. Créer un ADR seulement pour une décision
   difficile à renverser, surprenante et issue d’un vrai compromis.
 - À la fin : résumer simplement les changements, preuves, limites et prochaine

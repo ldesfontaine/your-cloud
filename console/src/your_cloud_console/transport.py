@@ -119,6 +119,11 @@ class TransportStore:
         private_path = self._private_path(role, identity)
         certificate_path = self.certificate_path(role, identity)
         if private_path.exists() and certificate_path.exists():
+            self._validate_existing_leaf(
+                certificate_path,
+                common_name,
+                server_address=server_address,
+            )
             return
         if private_path.exists() or certificate_path.exists():
             raise CoordinationError(f"identité de transport incomplète : {role}:{identity}")
@@ -156,6 +161,37 @@ class TransportStore:
         certificate = builder.sign(ca_private, algorithm=None)
         self._write_private(private_path, private, passphrase)
         self._write_public(certificate_path, certificate.public_bytes(serialization.Encoding.PEM))
+
+    def _validate_existing_leaf(
+        self,
+        certificate_path: Path,
+        common_name: str,
+        *,
+        server_address: str | None,
+    ) -> None:
+        """Refuse de réutiliser silencieusement une identité pour un autre point."""
+
+        try:
+            certificate = x509.load_pem_x509_certificate(certificate_path.read_bytes())
+            names = certificate.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+            if len(names) != 1 or names[0].value != common_name:
+                raise ValueError("nom de rôle différent")
+            if server_address is not None:
+                alternative_names = certificate.extensions.get_extension_for_class(
+                    x509.SubjectAlternativeName
+                ).value
+                try:
+                    expected: x509.GeneralName = x509.IPAddress(
+                        ipaddress.ip_address(server_address)
+                    )
+                except ValueError:
+                    expected = x509.DNSName(server_address)
+                if expected not in alternative_names:
+                    raise ValueError("point réseau différent")
+        except (ValueError, x509.ExtensionNotFound) as error:
+            raise CoordinationError(
+                f"identité de transport existante incompatible : {common_name}"
+            ) from error
 
     def _write_private(self, path: Path, private: Ed25519PrivateKey, passphrase: bytes) -> None:
         value = private.private_bytes(

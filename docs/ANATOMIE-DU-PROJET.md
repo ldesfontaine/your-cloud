@@ -1,8 +1,8 @@
 # Anatomie du projet
 
-> État décrit : P1 à P4, prouvés dans le LAB `quick` le 2026-07-12. P5 est
-> indiqué comme futur lorsqu’il aide à comprendre une frontière, jamais comme
-> une capacité déjà livrée.
+> État décrit : P1 à P4 prouvés dans `quick`, puis P5 complet prouvé dans
+> `v1-full` le 2026-07-12, y compris la migration explicite du schéma 2 et la
+> séparation entre domaine déclaré et détection runtime sourcée.
 
 Ce guide explique le chemin réellement suivi par les données et les autorités.
 Les [ADR](adr/REGISTRE.md) et les [spécifications](specifications/README.md)
@@ -141,6 +141,8 @@ rollback dédié.
 Le profil possède explicitement ses fichiers SSH, nftables, sysctl et sudoers.
 Il configure SSH key-only, bloque root en nouvelle connexion, borne le pare-feu
 en IPv4 et IPv6 et refuse toute dérive au lieu de la réparer silencieusement.
+Les CIDR autorisés à publier vers un coordinateur distant sont distincts des
+CIDR d'administration SSH ; le mode local réutilise ces derniers par défaut.
 Une nouvelle connexion IPv4, une nouvelle connexion IPv6 et sudo sont prouvés
 avant de relâcher le filet de récupération.
 
@@ -171,9 +173,19 @@ Ansible crée `your-cloud-coordinator`, ses répertoires privés, une SQLite bor
 à 64 Mio et une unité systemd distincte. Le pare-feu doit déjà autoriser le port
 local choisi ; le playbook refuse sinon de poursuivre.
 
+P5 réemploie exactement ce serveur sur une machine distante déjà auditée,
+enrôlée et sécurisée. L'installation du point public et la migration d'un
+daemon forment deux plans différents. La migration place le nouveau point en
+premier et conserve au plus un ancien point comme secours. Après plusieurs
+échanges, un troisième plan peut retirer cet ancien endpoint sans désinstaller
+le coordinateur ni renouveler l'identité de la machine.
+
 **Code :** [`transport.py`](../console/src/your_cloud_console/transport.py),
 [`coordination.py`](../console/src/your_cloud_console/coordination.py),
-[`install-local-coordinator.yml`](../engine/ansible/install-local-coordinator.yml).
+[`install-local-coordinator.yml`](../engine/ansible/install-local-coordinator.yml),
+[`install-distant-coordinator.yml`](../engine/ansible/install-distant-coordinator.yml),
+[`authorize-coordinator.yml`](../engine/ansible/authorize-coordinator.yml),
+[`retire-coordinator.yml`](../engine/ansible/retire-coordinator.yml).
 
 ## 7. Publier et accuser durablement
 
@@ -234,6 +246,7 @@ rejouée. Le JSON affiché n’est produit qu’après cette validation.
 | Réseau coupé | collecte et file locale | publications et lectures | backoff puis retransmission idempotente |
 | Daemon arrêté | services et administration SSH | nouveaux états | collecte immédiate au redémarrage |
 | Base coordinateur perdue | autorités, déclarations, services | historique dérivé | les daemons republient leur état courant |
+| Point distant perdu pendant une migration | services et anciens points autorisés | lecture distante | la console annonce le pilotage indisponible sans diagnostiquer les services |
 
 Une absence de données n’est jamais transformée automatiquement en diagnostic
 de panne d’un service.
@@ -256,13 +269,25 @@ de panne d’un service.
 | Machine observable | `MachineState`, `MachineEvent`, `SignedEnvelope` | inspection SSH ponctuelle | signature Ed25519 machine | SQLite daemon + registre console |
 | Mutation sûre | plan et récapitulatif Ansible | SSH direct | nouvelle session, sudo, rollback | manifeste du profil + secrets chiffrés |
 | Observation continue | `PublishAck`, `EnvelopePage` | HTTPS/mTLS | rôles X.509 puis seconde vérification Ed25519 | SQLite daemon et coordinateur |
+| Mode distant | mêmes messages, endpoint IP ou DNS | HTTPS/mTLS sortant à travers NAT | pilote, ancien point conservé puis retrait séparé | aucune nouvelle autorité durable |
 
-## Ce qui change à P5
+## Ce que P5 a changé
 
-P1 à P4 prouvent un coordinateur local colocalisé. P5 devra reprendre le même
-binaire et le même protocole sur un point distant, puis prouver NAT, exposition
-publique bornée, migration progressive et plusieurs infrastructures. Il ne doit
-ajouter ni commande au daemon, ni entrée de télémétrie vers les LAN privés.
+P5 reprend le même binaire et le même protocole sur un point distant par IP,
+sans DNS obligatoire. Dans `v1-full`, deux pilotes appartenant à `site-a` et
+`site-b` ont gardé leur ancien point local pendant la bascule, puis l'ont retiré
+par un plan séparé. Le coordinateur public reconstruit après perte de sa base
+dérivée a reçu de nouveaux états sans réenrôlement. Les machines privées ont
+terminé sans listener de télémétrie et le réseau public ne pouvait pas ouvrir
+8443 vers elles.
+
+La topologie a aussi montré une frontière honnête : deux infrastructures
+logiques peuvent partager un domaine de panne. Le schéma 2 conserve uniquement
+le domaine déclaré ; un registre runtime privé conserve séparément le domaine
+détecté, sa source, sa preuve et son instant. La vue distingue `unknown`,
+`declared`, `detected`, `confirmed` et `conflict`. Dans le LAB, `site-a` et
+`site-b` sont confirmés dans le même domaine `lab-site-private` : aucune
+indépendance n'est inventée depuis leur nom logique.
 
 Pour la direction produit, lire le [Guide du bâtisseur](GUIDE-DU-BATISSEUR.md).
 Pour les preuves exécutées, lire la [documentation du LAB](lab/README.md).

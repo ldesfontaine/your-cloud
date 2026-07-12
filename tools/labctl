@@ -7,7 +7,9 @@ POOL_DIR="/var/lib/libvirt/images"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/your-cloud/labctl"
 SSH_KEY="$CACHE_DIR/id_ed25519"
 ORIGIN="your-cloud/labctl"
-CONTROLLER_VERSION="6"
+CONTROLLER_VERSION="7"
+NFTABLES_VERSION="1.1.3-1"
+LIBJANSSON_VERSION="2.14-2+b3"
 META_URI="urn:your-cloud:lab"
 NAME_RE='^[a-z0-9][a-z0-9-]*$'
 ROOT_PASSWORD="lab-only"
@@ -501,6 +503,212 @@ cmd_topology_inspect() {
   done < <(topology_domains "$topology")
 }
 
+lab_ssh() {
+  local name="$1" ip
+  shift
+  require_managed_domain "$name"
+  guard_forbidden_ip "$name"
+  ip=$(get_ip "$name")
+  [[ -n "$ip" ]] || die "pas d'IP pour '$name'"
+  ssh "${SSH_OPTS[@]:1}" "root@$ip" "$@"
+}
+
+require_v1_full_domains() {
+  local row name template networks
+  while IFS='|' read -r name template networks; do
+    require_managed_domain "$name"
+    [[ "$(metadata_attr "$name" template)" == "$template" \
+      && "$(metadata_attr "$name" topology)" == "v1-full" \
+      && "$(domain_networks "$name")" == "$(normalize_networks "$networks")" ]] \
+      || die "frontières v1-full inattendues pour '$name'"
+    guard_forbidden_ip "$name"
+  done < <(topology_domains v1-full)
+}
+
+cmd_topology_prepare() {
+  local topology="${1:?usage: labctl topology prepare v1-full}"
+  [[ "$topology" == "v1-full" ]] || die "seule la topologie v1-full exige une préparation réseau"
+  require_v1_full_domains
+
+  lab_ssh lab-gateway 'bash -s' <<'GATEWAY_LINKS'
+set -euo pipefail
+for interface in enp1s0 enp2s0 enp3s0; do
+  [[ -e "/sys/class/net/$interface" ]] || { echo "interface $interface absente" >&2; exit 1; }
+done
+install -d -m 0755 /etc/systemd/network
+install -d -m 0755 /etc/systemd/network/10-netplan-enp1s0.network.d
+cat >/etc/systemd/network/10-netplan-enp1s0.network.d/40-your-cloud-lab-address.conf <<'EOF'
+[Network]
+Address=fd66:241::1/64
+EOF
+cat >/etc/systemd/network/20-your-cloud-lab-public.network <<'EOF'
+[Match]
+Name=enp2s0
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=no
+Address=fd66:242::1/64
+EOF
+cat >/etc/systemd/network/20-your-cloud-lab-private.network <<'EOF'
+[Match]
+Name=enp3s0
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=no
+Address=fd66:243::1/64
+EOF
+networkctl reload
+networkctl reconfigure enp1s0 enp2s0 enp3s0
+for attempt in $(seq 1 30); do
+  public=$(ip -4 -o address show dev enp2s0 | awk '{split($4, value, "/"); print value[1]}')
+  private=$(ip -4 -o address show dev enp3s0 | awk '{split($4, value, "/"); print value[1]}')
+  [[ -n "$public" && -n "$private" ]] && exit 0
+  sleep 1
+done
+echo "adresses publique ou privée absentes sur la passerelle" >&2
+exit 1
+GATEWAY_LINKS
+
+  local gateway_operator gateway_public gateway_private
+  gateway_operator=$(lab_ssh lab-gateway "ip -4 -o address show dev enp1s0 | awk '{split(\$4, value, \"/\"); print value[1]}'")
+  gateway_public=$(lab_ssh lab-gateway "ip -4 -o address show dev enp2s0 | awk '{split(\$4, value, \"/\"); print value[1]}'")
+  gateway_private=$(lab_ssh lab-gateway "ip -4 -o address show dev enp3s0 | awk '{split(\$4, value, \"/\"); print value[1]}'")
+  for value in "$gateway_operator" "$gateway_public" "$gateway_private"; do
+    [[ -n "$value" ]] || die "adresse de passerelle incomplète"
+    for forbidden in "${FORBIDDEN_IPS[@]}"; do
+      [[ "$value" != "$forbidden" ]] || die "adresse interdite $value sur la passerelle"
+    done
+  done
+
+  lab_ssh lab-gateway bash -s -- "$NFTABLES_VERSION" "$LIBJANSSON_VERSION" <<'GATEWAY_POLICY'
+set -euo pipefail
+version="$1"
+jansson_version="$2"
+if ! command -v nft >/dev/null; then
+  timeout 180 apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive timeout 180 apt-get install -y -qq --no-install-recommends \
+    -o Dpkg::Options::=--force-confold \
+    "nftables=$version" "libnftables1=$version" "libjansson4=$jansson_version" </dev/null
+fi
+[[ "$(dpkg-query -W -f='${Version}' nftables)" == "$version" \
+  && "$(dpkg-query -W -f='${Version}' libnftables1)" == "$version" \
+  && "$(dpkg-query -W -f='${Version}' libjansson4)" == "$jansson_version" ]] \
+  || { echo "version nftables inattendue" >&2; exit 1; }
+cat >/etc/nftables.conf <<'EOF'
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet your_cloud_lab {
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+    ct state established,related accept
+    iifname "enp1s0" oifname { "enp2s0", "enp3s0" } accept
+    iifname "enp3s0" oifname "enp2s0" udp dport 53 accept
+    iifname "enp3s0" oifname "enp2s0" tcp dport { 53, 80, 443, 8443 } accept
+  }
+}
+
+table ip your_cloud_lab_nat {
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    oifname "enp2s0" ip saddr { 192.168.241.0/24, 192.168.243.0/24 } masquerade
+  }
+}
+EOF
+/usr/sbin/nft --check --file /etc/nftables.conf
+systemctl enable --now nftables.service >/dev/null
+/usr/sbin/nft --file /etc/nftables.conf
+cat >/etc/sysctl.d/90-your-cloud-lab-gateway.conf <<'EOF'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+/usr/sbin/sysctl -w net.ipv4.ip_forward=1 >/dev/null
+/usr/sbin/sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
+GATEWAY_POLICY
+
+  lab_ssh lab-console bash -s -- "$gateway_operator" "fd66:241::193/64" "fd66:241::1" <<'CLIENT_ROUTE'
+set -euo pipefail
+gateway="$1"
+ipv6_address="$2"
+ipv6_gateway="$3"
+install -d -m 0755 /etc/systemd/network/10-netplan-enp1s0.network.d
+cat >/etc/systemd/network/10-netplan-enp1s0.network.d/50-your-cloud-lab-route.conf <<EOF
+[Network]
+DNS=192.168.242.1
+Domains=~.
+Address=$ipv6_address
+
+[Route]
+Destination=0.0.0.0/0
+Gateway=$gateway
+Metric=50
+
+[Route]
+Destination=::/0
+Gateway=$ipv6_gateway
+Metric=50
+EOF
+networkctl reload
+networkctl reconfigure enp1s0
+CLIENT_ROUTE
+
+  local machine ipv6_address
+  for machine in lab-machine-1 lab-machine-2; do
+    case "$machine" in
+      lab-machine-1) ipv6_address="fd66:243::153/64" ;;
+      lab-machine-2) ipv6_address="fd66:243::158/64" ;;
+    esac
+    lab_ssh "$machine" bash -s -- "$gateway_private" "$ipv6_address" "fd66:243::1" <<'CLIENT_ROUTE'
+set -euo pipefail
+gateway="$1"
+ipv6_address="$2"
+ipv6_gateway="$3"
+install -d -m 0755 /etc/systemd/network/10-netplan-enp1s0.network.d
+cat >/etc/systemd/network/10-netplan-enp1s0.network.d/50-your-cloud-lab-route.conf <<EOF
+[Network]
+DNS=192.168.242.1
+Domains=~.
+Address=$ipv6_address
+
+[Route]
+Destination=0.0.0.0/0
+Gateway=$gateway
+Metric=50
+
+[Route]
+Destination=::/0
+Gateway=$ipv6_gateway
+Metric=50
+EOF
+networkctl reload
+networkctl reconfigure enp1s0
+CLIENT_ROUTE
+  done
+
+  lab_ssh lab-coordinateur 'bash -s' <<'COORDINATOR_ROUTE'
+set -euo pipefail
+install -d -m 0755 /etc/systemd/network/10-netplan-enp1s0.network.d
+cat >/etc/systemd/network/10-netplan-enp1s0.network.d/50-your-cloud-lab-route.conf <<'EOF'
+[Network]
+Address=fd66:242::103/64
+
+[Route]
+Destination=fd66:241::/64
+Gateway=fd66:242::1
+
+[Route]
+Destination=fd66:243::/64
+Gateway=fd66:242::1
+EOF
+networkctl reload
+networkctl reconfigure enp1s0
+COORDINATOR_ROUTE
+
+  echo "✔ v1-full préparé — NAT sortant $gateway_public — aucune redirection vers le site privé"
+}
+
 cmd_topology_destroy() {
   local topology="${1:?usage: labctl topology destroy <quick|v1-full>}"
   require_topology "$topology"
@@ -523,8 +731,9 @@ cmd_topology() {
   case "$action" in
     create) cmd_topology_create "$@" ;;
     inspect) cmd_topology_inspect "$@" ;;
+    prepare) cmd_topology_prepare "$@" ;;
     destroy) cmd_topology_destroy "$@" ;;
-    *) die "usage: labctl topology <create|inspect|destroy> <quick|v1-full>" ;;
+    *) die "usage: labctl topology <create|inspect|prepare|destroy> <quick|v1-full>" ;;
   esac
 }
 
@@ -663,6 +872,7 @@ labctl v6 — LAB your-cloud borné
 
   labctl topology create  <quick|v1-full>
   labctl topology inspect <quick|v1-full>
+  labctl topology prepare v1-full
   labctl topology destroy <quick|v1-full>
   labctl list
   labctl revert  <vm> [snapshot]

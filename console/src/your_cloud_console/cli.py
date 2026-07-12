@@ -13,18 +13,33 @@ from typing import Iterator
 
 from .api import serve
 from .audit import render_human, render_json, run_audit
-from .coordination import coordination_plan, fetch_current, fetch_events, install_local_coordinator
+from .coordination import (
+    authorize_pilot_coordinator,
+    coordination_plan,
+    distant_coordination_plan,
+    fetch_current,
+    fetch_events,
+    install_distant_coordinator,
+    install_local_coordinator,
+    pilot_migration_plan,
+    point_retirement_plan,
+    retire_coordinator_point,
+)
 from .errors import ConsoleError
 from .enrollment import enroll, enrollment_plan, remote_observer
+from .failure_domains import FailureDomainStore, failure_domain_view
 from .model import (
     Declaration,
     Infrastructure,
     Machine,
     add_machine,
+    assign_machine,
     empty_declaration,
     load_declaration,
+    load_migration_candidate,
     parse_declaration,
     save_declaration,
+    set_failure_domain,
 )
 from .secrets import AdminKeyStore, read_passphrase
 from .security import (
@@ -90,11 +105,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands.add_parser("init", help="créer une déclaration vide au schéma courant")
 
+    declaration = subcommands.add_parser("declaration", help="gérer le schéma de déclaration")
+    declaration_commands = declaration.add_subparsers(
+        dest="declaration_command", required=True
+    )
+    declaration_migrate = declaration_commands.add_parser(
+        "migrate", help="migrer explicitement la déclaration vers le schéma courant"
+    )
+    declaration_migrate.add_argument("--approve", action="store_true")
+
     infrastructure = subcommands.add_parser("infrastructure", help="gérer les infrastructures déclarées")
     infrastructure_commands = infrastructure.add_subparsers(dest="infrastructure_command", required=True)
     infrastructure_add = infrastructure_commands.add_parser("add")
     infrastructure_add.add_argument("id")
     infrastructure_add.add_argument("--name", required=True)
+    infrastructure_add.add_argument("--failure-domain")
+
+    infrastructure_status = infrastructure_commands.add_parser(
+        "status", help="distinguer domaine déclaré, détecté ou inconnu"
+    )
+    infrastructure_status.add_argument("id", nargs="?")
+    infrastructure_status.add_argument("--json", action="store_true")
+
+    infrastructure_domain = infrastructure_commands.add_parser(
+        "set-failure-domain", help="déclarer ou oublier un domaine de panne"
+    )
+    infrastructure_domain.add_argument("id")
+    domain_value = infrastructure_domain.add_mutually_exclusive_group(required=True)
+    domain_value.add_argument("--domain")
+    domain_value.add_argument("--unknown", action="store_true")
+    infrastructure_domain.add_argument("--approve", action="store_true")
 
     machine = subcommands.add_parser("machine", help="gérer et auditer les machines")
     machine_commands = machine.add_subparsers(dest="machine_command", required=True)
@@ -105,6 +145,15 @@ def build_parser() -> argparse.ArgumentParser:
     machine_add.add_argument("--user", required=True)
     machine_add.add_argument("--identity-file", type=Path, required=True)
     machine_add.add_argument("--infrastructure")
+
+    machine_assign = machine_commands.add_parser(
+        "assign", help="affecter ou rendre disponible une machine"
+    )
+    machine_assign.add_argument("id")
+    assignment = machine_assign.add_mutually_exclusive_group(required=True)
+    assignment.add_argument("--infrastructure")
+    assignment.add_argument("--available", action="store_true")
+    machine_assign.add_argument("--approve", action="store_true")
 
     machine_audit = machine_commands.add_parser("audit")
     machine_audit.add_argument("id")
@@ -155,6 +204,8 @@ def build_parser() -> argparse.ArgumentParser:
     machine_secure.add_argument("--dedicated", action="store_true")
     machine_secure.add_argument("--out-of-band", required=True)
     machine_secure.add_argument("--coordinator-port", type=int, default=0)
+    machine_secure.add_argument("--coordinator-ipv4-cidr")
+    machine_secure.add_argument("--coordinator-ipv6-cidr")
     machine_secure.add_argument("--approve", action="store_true")
 
     coordination = subcommands.add_parser("coordination", help="conserver l'observation sans la console")
@@ -169,6 +220,40 @@ def build_parser() -> argparse.ArgumentParser:
     coordination_install.add_argument("--recovery-kit", type=Path, required=True)
     coordination_install.add_argument("--passphrase-file", type=Path)
     coordination_install.add_argument("--approve", action="store_true")
+
+    coordination_distant = coordination_commands.add_parser(
+        "install-distant", help="préparer le même coordinateur sur un point public"
+    )
+    coordination_distant.add_argument("id")
+    coordination_distant.add_argument("--endpoint", required=True)
+    coordination_distant.add_argument("--listen-address", required=True)
+    coordination_distant.add_argument("--port", type=int, default=8443)
+    coordination_distant.add_argument("--coordinator-binary", type=Path, required=True)
+    coordination_distant.add_argument("--engine-dir", type=Path, required=True)
+    coordination_distant.add_argument("--recovery-kit", type=Path, required=True)
+    coordination_distant.add_argument("--passphrase-file", type=Path)
+    coordination_distant.add_argument("--approve", action="store_true")
+
+    coordination_pilot = coordination_commands.add_parser(
+        "migrate-pilot", help="autoriser le point distant sur une seule machine"
+    )
+    coordination_pilot.add_argument("id")
+    coordination_pilot.add_argument("--coordinator", required=True)
+    coordination_pilot.add_argument("--endpoint", required=True)
+    coordination_pilot.add_argument("--port", type=int, default=8443)
+    coordination_pilot.add_argument("--engine-dir", type=Path, required=True)
+    coordination_pilot.add_argument("--passphrase-file", type=Path)
+    coordination_pilot.add_argument("--approve", action="store_true")
+
+    coordination_retire = coordination_commands.add_parser(
+        "retire-point", help="retirer un ancien point dans un plan séparé"
+    )
+    coordination_retire.add_argument("id")
+    coordination_retire.add_argument("--endpoint", required=True)
+    coordination_retire.add_argument("--port", type=int, default=8443)
+    coordination_retire.add_argument("--engine-dir", type=Path, required=True)
+    coordination_retire.add_argument("--passphrase-file", type=Path)
+    coordination_retire.add_argument("--approve", action="store_true")
 
     coordination_inspect = coordination_commands.add_parser("inspect")
     coordination_inspect.add_argument("id")
@@ -189,12 +274,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_infrastructure(path: Path, infrastructure_id: str, name: str) -> None:
+def _add_infrastructure(
+    path: Path,
+    infrastructure_id: str,
+    name: str,
+    failure_domain: str | None,
+) -> None:
     declaration = load_declaration(path)
     candidate = Declaration(
         declaration.schema_version,
         declaration.machines,
-        (*declaration.infrastructures, Infrastructure(infrastructure_id, name)),
+        (*declaration.infrastructures, Infrastructure(infrastructure_id, name, failure_domain)),
     )
     save_declaration(path, parse_declaration(candidate.to_dict()))
 
@@ -206,9 +296,108 @@ def run(args: argparse.Namespace) -> int:
         save_declaration(args.declaration, empty_declaration(), refuse_existing=True)
         print(f"Déclaration créée : {args.declaration}")
         return 0
+    if args.command == "declaration" and args.declaration_command == "migrate":
+        candidate = load_migration_candidate(args.declaration)
+        print(
+            f"Plan de migration de la déclaration : schéma 1 -> {candidate.schema_version}.\n"
+            f"  - conserver {len(candidate.machines)} machine(s) et "
+            f"{len(candidate.infrastructures)} infrastructure(s)\n"
+            "  - ajouter failure_domain=null à chaque infrastructure\n"
+            "  - ne créer aucune détection ni déduire un domaine depuis une adresse\n"
+            "  - ne modifier aucune machine, identité ou donnée runtime"
+        )
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification.")
+            return 3
+        save_declaration(args.declaration, candidate)
+        print(f"Déclaration migrée explicitement au schéma {candidate.schema_version}.")
+        return 0
     if args.command == "infrastructure" and args.infrastructure_command == "add":
-        _add_infrastructure(args.declaration, args.id, args.name)
+        _add_infrastructure(
+            args.declaration,
+            args.id,
+            args.name,
+            args.failure_domain,
+        )
         print(f"Infrastructure déclarée : {args.id}")
+        return 0
+    if args.command == "infrastructure" and args.infrastructure_command == "status":
+        declaration = load_declaration(args.declaration)
+        if args.id is None:
+            infrastructures = declaration.infrastructures
+        else:
+            infrastructures = tuple(
+                item for item in declaration.infrastructures if item.id == args.id
+            )
+            if not infrastructures:
+                raise ConsoleError(f"infrastructure inconnue : {args.id}")
+        store = FailureDomainStore(args.state_dir)
+        rendered = []
+        for infrastructure in infrastructures:
+            view = failure_domain_view(infrastructure, store.get(infrastructure.id))
+            rendered.append({
+                "id": infrastructure.id,
+                "name": infrastructure.name,
+                "machines": [
+                    machine.id
+                    for machine in declaration.machines
+                    if machine.infrastructure_id == infrastructure.id
+                ],
+                "failure_domain": view,
+            })
+        if args.json:
+            print(json.dumps({"infrastructures": rendered}, ensure_ascii=False, indent=2))
+        else:
+            for item in rendered:
+                domain = item["failure_domain"]
+                if domain["status"] == "unknown":
+                    detail = "inconnu : aucune déclaration ni détection"
+                elif domain["status"] == "declared":
+                    detail = f"déclaré : {domain['declared']}"
+                elif domain["status"] == "detected":
+                    detail = f"détecté : {domain['detected']['name']}"
+                elif domain["status"] == "confirmed":
+                    detail = f"confirmé déclaré + détecté : {domain['declared']}"
+                else:
+                    detail = (
+                        f"CONFLIT : déclaré {domain['declared']}, "
+                        f"détecté {domain['detected']['name']}"
+                    )
+                print(
+                    f"Infrastructure {item['id']} ({item['name']}) — "
+                    f"domaine de panne {detail} — {len(item['machines'])} machine(s)"
+                )
+        return 0
+    if (
+        args.command == "infrastructure"
+        and args.infrastructure_command == "set-failure-domain"
+    ):
+        declaration = load_declaration(args.declaration)
+        current = next(
+            (item for item in declaration.infrastructures if item.id == args.id),
+            None,
+        )
+        if current is None:
+            raise ConsoleError(f"infrastructure inconnue : {args.id}")
+        target = None if args.unknown else args.domain
+        if current.failure_domain == target:
+            print(f"Domaine déjà conforme pour {args.id} : {target or 'inconnu'}")
+            return 0
+        print(
+            f"Plan pour le domaine de panne de {args.id} : "
+            f"{current.failure_domain or 'inconnu'} -> {target or 'inconnu'}.\n"
+            "  - modifier uniquement l'intention déclarée\n"
+            "  - conserver séparément toute détection et sa preuve\n"
+            "  - ne déplacer aucune machine ni aucun service"
+        )
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification.")
+            return 3
+        save_declaration(
+            args.declaration,
+            set_failure_domain(declaration, args.id, target),
+        )
+        print(f"Domaine déclaré pour {args.id} : {target or 'inconnu'}")
         return 0
     if args.command == "machine" and args.machine_command == "add":
         declaration = load_declaration(args.declaration)
@@ -222,6 +411,34 @@ def run(args: argparse.Namespace) -> int:
         )
         save_declaration(args.declaration, add_machine(declaration, machine))
         print(f"Machine déclarée : {args.id} ({machine.endpoint})")
+        return 0
+    if args.command == "machine" and args.machine_command == "assign":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        target = None if args.available else args.infrastructure
+        if target == machine.infrastructure_id:
+            destination = target or "disponible"
+            print(f"Affectation déjà conforme pour {machine.id} : {destination}")
+            return 0
+        if target is not None and target not in {
+            infrastructure.id for infrastructure in declaration.infrastructures
+        }:
+            raise ConsoleError(f"infrastructure inconnue : {target}")
+        source = machine.infrastructure_id or "disponible"
+        destination = target or "disponible"
+        print(
+            f"Plan d'affectation pour {machine.id} : {source} -> {destination}.\n"
+            "  - conserver l'identité, l'historique et les accès de la machine\n"
+            "  - ne déplacer ni service ni donnée et n'attribuer aucun rôle automatiquement"
+        )
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification.")
+            return 3
+        save_declaration(
+            args.declaration,
+            assign_machine(declaration, machine.id, target),
+        )
+        print(f"Machine {machine.id} affectée à : {destination}")
         return 0
     if args.command == "machine" and args.machine_command == "audit":
         declaration = load_declaration(args.declaration)
@@ -331,10 +548,18 @@ def run(args: argparse.Namespace) -> int:
         try:
             ipv4_cidr = str(ipaddress.IPv4Network(args.admin_ipv4_cidr, strict=False))
             ipv6_cidr = str(ipaddress.IPv6Network(args.admin_ipv6_cidr, strict=False))
-            ipaddress.IPv6Address(args.ipv6_address.split("%", 1)[0])
+            coordinator_ipv4_cidr = str(ipaddress.IPv4Network(
+                args.coordinator_ipv4_cidr or args.admin_ipv4_cidr,
+                strict=False,
+            ))
+            coordinator_ipv6_cidr = str(ipaddress.IPv6Network(
+                args.coordinator_ipv6_cidr or args.admin_ipv6_cidr,
+                strict=False,
+            ))
+            ipv6_address = ipaddress.IPv6Address(args.ipv6_address.split("%", 1)[0])
         except ValueError as error:
             raise ConsoleError(f"adresse ou réseau d'administration invalide : {error}") from error
-        if "%" not in args.ipv6_address:
+        if ipv6_address.is_link_local and "%" not in args.ipv6_address:
             raise ConsoleError("l'adresse IPv6 link-local doit préciser son interface avec %")
         passphrase = read_passphrase(args.passphrase_file, confirm=False)
         host_store = HostKeyStore(args.state_dir)
@@ -348,6 +573,8 @@ def run(args: argparse.Namespace) -> int:
             ipv6_cidr,
             args.out_of_band,
             args.coordinator_port,
+            coordinator_ipv4_cidr,
+            coordinator_ipv6_cidr,
         ))
         if status == "drift":
             return 3
@@ -365,6 +592,8 @@ def run(args: argparse.Namespace) -> int:
             ipv6_cidr=ipv6_cidr,
             ipv6_address=args.ipv6_address,
             coordinator_port=args.coordinator_port,
+            coordinator_ipv4_cidr=coordinator_ipv4_cidr,
+            coordinator_ipv6_cidr=coordinator_ipv6_cidr,
         )
         print(result)
         return 0
@@ -391,6 +620,83 @@ def run(args: argparse.Namespace) -> int:
                 recovery_kit=args.recovery_kit,
                 address=args.address,
                 port=args.port,
+            )
+        print(result)
+        return 0
+    if args.command == "coordination" and args.coordination_command == "install-distant":
+        declaration = load_declaration(args.declaration)
+        coordinator = declaration.machine(args.id)
+        print(distant_coordination_plan(
+            coordinator,
+            args.endpoint,
+            args.listen_address,
+            args.port,
+        ))
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après préparation du pare-feu.")
+            return 3
+        passphrase = read_passphrase(args.passphrase_file, confirm=False)
+        key_store = AdminKeyStore(args.state_dir)
+        with key_store.materialize(coordinator.id, passphrase) as identity_file:
+            admin = administration_machine(coordinator, identity_file)
+            result = install_distant_coordinator(
+                admin,
+                HostKeyStore(args.state_dir),
+                TransportStore(args.state_dir),
+                passphrase,
+                state_dir=args.state_dir,
+                engine_dir=args.engine_dir,
+                coordinator_binary=args.coordinator_binary,
+                recovery_kit=args.recovery_kit,
+                endpoint=args.endpoint,
+                listen_address=args.listen_address,
+                port=args.port,
+            )
+        print(result)
+        return 0
+    if args.command == "coordination" and args.coordination_command == "migrate-pilot":
+        declaration = load_declaration(args.declaration)
+        pilot = declaration.machine(args.id)
+        coordinator = declaration.machine(args.coordinator)
+        if pilot.id == coordinator.id:
+            raise ConsoleError("le pilote distant doit être distinct du coordinateur")
+        print(pilot_migration_plan(pilot, coordinator.id, args.endpoint, args.port))
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification du pilote.")
+            return 3
+        passphrase = read_passphrase(args.passphrase_file, confirm=False)
+        key_store = AdminKeyStore(args.state_dir)
+        with key_store.materialize(pilot.id, passphrase) as identity_file:
+            admin = administration_machine(pilot, identity_file)
+            result = authorize_pilot_coordinator(
+                admin,
+                coordinator.id,
+                args.endpoint,
+                args.port,
+                HostKeyStore(args.state_dir),
+                TransportStore(args.state_dir),
+                passphrase,
+                engine_dir=args.engine_dir,
+            )
+        print(result)
+        return 0
+    if args.command == "coordination" and args.coordination_command == "retire-point":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        print(point_retirement_plan(machine, args.endpoint, args.port))
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après preuve du nouveau point.")
+            return 3
+        passphrase = read_passphrase(args.passphrase_file, confirm=False)
+        key_store = AdminKeyStore(args.state_dir)
+        with key_store.materialize(machine.id, passphrase) as identity_file:
+            admin = administration_machine(machine, identity_file)
+            result = retire_coordinator_point(
+                admin,
+                args.endpoint,
+                args.port,
+                HostKeyStore(args.state_dir),
+                engine_dir=args.engine_dir,
             )
         print(result)
         return 0

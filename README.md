@@ -56,5 +56,6 @@ tools/         contrôleurs d’atelier, distincts du produit
 ```
 
 Le coordinateur local, le transport mTLS et la reprise après coupure sont
-implémentés depuis P4. Les preuves exécutées des paliers terminés vivent dans
-`docs/lab/`.
+implémentés depuis P4. P5 ajoute le même point en mode distant, la migration par
+pilote avec ancien endpoint conservé, son retrait séparé et le LAB réseau
+complet. Les preuves exécutées vivent dans `docs/lab/`.

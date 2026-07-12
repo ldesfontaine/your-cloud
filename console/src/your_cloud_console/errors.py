@@ -44,3 +44,9 @@ class CoordinationError(ConsoleError):
     """Installation ou échange mTLS avec le coordinateur refusé."""
 
     pass
+
+
+class FailureDomainError(ConsoleError):
+    """Domaine de panne détecté ou preuve runtime invalide."""
+
+    pass

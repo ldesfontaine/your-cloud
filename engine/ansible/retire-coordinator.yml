@@ -1,0 +1,54 @@
+---
+- name: Retirer un ancien point de coordination dans un plan séparé
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    observer_user: your-cloud-observer
+  pre_tasks:
+    - name: Valider le point à retirer
+      ansible.builtin.assert:
+        that:
+          - machine_id is match('^[a-z0-9][a-z0-9-]{0,62}$')
+          - coordinator_url is match('^https://(\\[[0-9A-Fa-f:]+\\]|[A-Za-z0-9.-]+):[0-9]+$')
+        fail_msg: Paramètres de retrait du point invalides
+
+    - name: Lire la configuration existante du daemon
+      ansible.builtin.slurp:
+        src: /etc/your-cloud/observer.json
+      register: observer_configuration
+
+    - name: Préparer la configuration validée
+      ansible.builtin.set_fact:
+        observer_config: "{{ observer_configuration.content | b64decode | from_json }}"
+
+    - name: Refuser le retrait du dernier point autorisé
+      ansible.builtin.assert:
+        that:
+          - observer_config.machine_id == machine_id
+          - observer_config.coordinators | default([]) | length >= 1
+          - observer_config.coordinators | default([]) | length <= 2
+          - >-
+            (observer_config.coordinators | default([]) | selectattr('url', 'equalto', coordinator_url) | list | length == 0)
+            or (observer_config.coordinators | default([]) | length > 1)
+        fail_msg: Le dernier point autorisé ne peut pas être retiré
+
+  tasks:
+    - name: Retirer uniquement l'endpoint demandé
+      ansible.builtin.copy:
+        content: >-
+          {{ observer_config | combine({
+            'coordinators': (observer_config.coordinators | default([])
+              | rejectattr('url', 'equalto', coordinator_url) | list)
+          }) | to_nice_json }}
+        dest: /etc/your-cloud/observer.json
+        owner: root
+        group: "{{ observer_user }}"
+        mode: "0640"
+      notify: Redémarrer le daemon
+
+  handlers:
+    - name: Redémarrer le daemon
+      ansible.builtin.systemd_service:
+        name: your-cloud-observer.service
+        state: restarted

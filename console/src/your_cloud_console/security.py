@@ -269,6 +269,8 @@ def security_plan(
     ipv6_cidr: str,
     out_of_band: str,
     coordinator_port: int = 0,
+    coordinator_ipv4_cidr: str | None = None,
+    coordinator_ipv6_cidr: str | None = None,
 ) -> str:
     """Présente le profil Linux et l'éventuelle ouverture locale du coordinateur."""
 
@@ -292,7 +294,9 @@ def security_plan(
     ]
     if coordinator_port:
         lines.append(
-            f"  - autoriser le coordinateur local sur TCP {coordinator_port} depuis les mêmes réseaux d'administration"
+            f"  - autoriser le coordinateur sur TCP {coordinator_port} depuis "
+            f"{coordinator_ipv4_cidr or ipv4_cidr} et {coordinator_ipv6_cidr or ipv6_cidr}, "
+            "sans élargir SSH"
         )
     return "\n".join(lines)
 
@@ -376,6 +380,8 @@ def apply_security_profile(
     ipv6_cidr: str,
     ipv6_address: str,
     coordinator_port: int = 0,
+    coordinator_ipv4_cidr: str | None = None,
+    coordinator_ipv6_cidr: str | None = None,
 ) -> str:
     """Applique le profil après contrôle d'autorité, puis reprouve les accès."""
 
@@ -408,6 +414,8 @@ def apply_security_profile(
                     "nftables_package_version": NFTABLES_PACKAGE_VERSION,
                     "rollback_id": rollback_id,
                     "coordinator_port": coordinator_port,
+                    "coordinator_ipv4_cidr": coordinator_ipv4_cidr or ipv4_cidr,
+                    "coordinator_ipv6_cidr": coordinator_ipv6_cidr or ipv6_cidr,
                 }
             ),
             str(playbook),

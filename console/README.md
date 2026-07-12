@@ -27,6 +27,18 @@ console revérifie toujours la signature Ed25519 d'origine après le relais.
 L'autorité privée de transport reste chiffrée et rejoint le kit de récupération
 vérifié lors de l'installation.
 
+Le mode distant 0.5.0 sépare l'installation du coordinateur public, la
+migration d'une machine pilote et le retrait ultérieur de l'ancien endpoint.
+Un endpoint peut être une IP ou un DNS ; son certificat reste lié à cette
+localisation. La console annonce une perte du coordinateur comme un pilotage
+indisponible, jamais comme une panne certaine des machines ou services.
+
+Le schéma de déclaration 2 ajoute le domaine de panne déclaré à chaque
+infrastructure. Une déclaration v1 est refusée jusqu'au plan explicite
+`declaration migrate`. Les détections, leur source et leur preuve restent dans
+un registre runtime privé ; la console montre l'inconnu et les conflits au lieu
+de transformer une adresse ou un nom logique en fait déclaré.
+
 Le parcours complet et ses liens avec les autres composants sont détaillés
 dans l'[Anatomie du projet](../docs/ANATOMIE-DU-PROJET.md).
 
@@ -40,4 +52,5 @@ PYTHONPATH=src python3 -m your_cloud_console --help
 ```
 
 Les parcours de preuve sont documentés dans `docs/lab/`, jusqu'à
-`p4-observation-continue-locale.md`.
+`p4-observation-continue-locale.md`, puis au réseau et à la migration de
+`p5-mode-distant.md`.

@@ -6,6 +6,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
 from your_cloud_console.transport import TransportStore
+from your_cloud_console.errors import CoordinationError
 
 
 class TransportStoreTests(unittest.TestCase):
@@ -31,6 +32,31 @@ class TransportStoreTests(unittest.TestCase):
                 private = serialization.load_pem_private_key(clear.read_bytes(), password=None)
                 self.assertIsNotNone(private)
             self.assertFalse(clear.exists())
+
+    def test_existing_server_identity_cannot_silently_change_endpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TransportStore(Path(directory))
+            passphrase = b"synthetic-lab-passphrase"
+            store.ensure(passphrase, "coordinator-1", "192.0.2.10", ())
+            with self.assertRaisesRegex(CoordinationError, "incompatible"):
+                store.ensure(passphrase, "coordinator-1", "coordinator.example", ())
+
+    def test_dns_endpoint_is_bound_in_server_certificate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TransportStore(Path(directory))
+            store.ensure(
+                b"synthetic-lab-passphrase",
+                "coordinator-1",
+                "coordinator.example",
+                (),
+            )
+            certificate = x509.load_pem_x509_certificate(
+                store.certificate_path("coordinator", "coordinator-1").read_bytes()
+            )
+            names = certificate.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
+            self.assertEqual(names.get_values_for_type(x509.DNSName), ["coordinator.example"])
 
 
 if __name__ == "__main__":

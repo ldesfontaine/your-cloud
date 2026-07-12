@@ -1,10 +1,8 @@
 # LAB de développement V1
 
-> État : topologie `quick` créée puis utilisée pour le premier contact, la
-> machine observable, la première sécurisation et le coordinateur local le
-> 2026-07-12.
-> La topologie `v1-full` reste à valider ; aucun de ses gabarits n'est présenté
-> comme attesté avant une création réelle.
+> État : topologie `quick` utilisée pour P1 à P4, puis topologie `v1-full`
+> créée et utilisée pour le réseau distant, la migration progressive et la
+> reconstruction P5 le 2026-07-12.
 
 Le laptop de développement contrôle le LAB mais n’exécute jamais le projet. La
 console de développement, les tests, builds, playbooks, daemons et
@@ -71,6 +69,19 @@ connexion de télémétrie entrante n’est ouverte vers elles. Le chemin
 d’administration de la console reste distinct et les coupures peuvent être
 provoquées réseau par réseau.
 
+`labctl topology prepare v1-full` configure idempotemment les deux interfaces
+supplémentaires de la passerelle, les routes IPv4 et IPv6 ULA, le DNS du réseau
+public simulé, le forwarding et le NAT sortant. Sa politique nftables refuse le
+forwarding par défaut, autorise le chemin d'administration et ne crée aucune
+redirection du réseau public vers le site privé. `nftables` 1.1.3-1 et sa
+bibliothèque directe sont épinglés dans le contrôleur.
+
+La [preuve P5](p5-mode-distant.md) a utilisé cette topologie. `site-a` et
+`site-b` sont deux infrastructures logiques mais partagent volontairement le
+même réseau privé de LAB : cette topologie ne les présente donc pas comme deux
+domaines de panne indépendants. Le schéma 2 et la détection runtime issue des
+métadonnées `labctl` les confirment tous deux dans `lab-site-private`.
+
 ## Contrôleur `labctl`
 
 [`tools/labctl`](../../tools/labctl) adapte les mécanismes utiles de l’ancien
@@ -81,6 +92,8 @@ outil sans reprendre ses gabarits Debian 12 ni son réseau unique. Il fournit :
 - les topologies nommées `quick` et `v1-full` ;
 - la création reprenable, l’inspection et la destruction bornée de ces
   topologies ;
+- la préparation réseau idempotente de `v1-full`, refusée pour toute autre
+  topologie ;
 - des métadonnées libvirt portant l’origine, la version du contrôleur, le
   gabarit et la topologie de chaque VM ;
 - un refus avant mutation si ces métadonnées sont absentes ou incompatibles.
@@ -104,6 +117,7 @@ labctl topology destroy quick
 
 labctl topology create v1-full
 labctl topology inspect v1-full
+labctl topology prepare v1-full
 labctl topology destroy v1-full
 
 labctl stop lab-console

@@ -14,7 +14,7 @@ class AdminKeyStoreTests(unittest.TestCase):
             root = Path(temporary)
             state = root / "state"
             declaration = root / "declaration.json"
-            declaration.write_text('{"schema_version":1,"machines":[],"infrastructures":[]}\n')
+            declaration.write_text('{"schema_version":2,"machines":[],"infrastructures":[]}\n')
             kit = root / "recovery" / "kit.json"
             password = b"synthetic-password-for-tests"
             store = AdminKeyStore(state)
@@ -33,7 +33,7 @@ class AdminKeyStoreTests(unittest.TestCase):
             root = Path(temporary)
             state = root / "state"
             declaration = root / "declaration.json"
-            declaration.write_text('{"schema_version":1,"machines":[],"infrastructures":[]}\n')
+            declaration.write_text('{"schema_version":2,"machines":[],"infrastructures":[]}\n')
             kit = root / "kit.json"
             store = AdminKeyStore(state)
             store.create_with_recovery_kit(
@@ -47,7 +47,7 @@ class AdminKeyStoreTests(unittest.TestCase):
             root = Path(temporary)
             state = root / "state"
             declaration = root / "declaration.json"
-            declaration.write_text('{"schema_version":1,"machines":[],"infrastructures":[]}\n')
+            declaration.write_text('{"schema_version":2,"machines":[],"infrastructures":[]}\n')
             kit = root / "kit.json"
             password = b"synthetic-password-for-tests"
             store = AdminKeyStore(state)
