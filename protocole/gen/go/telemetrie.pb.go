@@ -692,7 +692,7 @@ const file_telemetrie_proto_rawDesc = "" +
 	"\x0fTelemetryStream\x12 \n" +
 	"\x1cTELEMETRY_STREAM_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TELEMETRY_STREAM_STATE\x10\x01\x12\x1a\n" +
-	"\x16TELEMETRY_STREAM_EVENT\x10\x02B@Z>github.com/ldesfontaine/yourcloud/protocole/gen/go;telemetryv1b\x06proto3"
+	"\x16TELEMETRY_STREAM_EVENT\x10\x02BAZ?github.com/ldesfontaine/your-cloud/protocole/gen/go;telemetryv1b\x06proto3"
 
 var (
 	file_telemetrie_proto_rawDescOnce sync.Once

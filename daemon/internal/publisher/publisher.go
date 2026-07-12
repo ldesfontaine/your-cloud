@@ -16,9 +16,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ldesfontaine/yourcloud/daemon/internal/config"
-	"github.com/ldesfontaine/yourcloud/daemon/internal/store"
-	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
+	"github.com/ldesfontaine/your-cloud/daemon/internal/config"
+	"github.com/ldesfontaine/your-cloud/daemon/internal/store"
+	telemetryv1 "github.com/ldesfontaine/your-cloud/protocole/gen/go"
 )
 
 const maxResponseBytes = 64 * 1024

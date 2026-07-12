@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
+	telemetryv1 "github.com/ldesfontaine/your-cloud/protocole/gen/go"
 )
 
 const signatureDomain = "your-cloud.telemetry.v1\x00"

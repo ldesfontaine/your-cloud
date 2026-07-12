@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
+	telemetryv1 "github.com/ldesfontaine/your-cloud/protocole/gen/go"
 	_ "modernc.org/sqlite"
 )
 

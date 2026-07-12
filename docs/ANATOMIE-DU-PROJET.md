@@ -310,8 +310,10 @@ met les coordinateurs avant les daemons et avance pilote par pilote.
 
 Les unités systemd bornent désormais CPU, mémoire et tâches. La console mesure
 ces cgroups et l'occupation SQLite sans ouvrir de diagnostic réseau. La release
-candidate assemble binaires, wheel, unités et métadonnées, signe `SHA256SUMS`
-avec OpenSSL puis revérifie chaque artefact avant livraison.
+candidate assemble binaires, wheel, unités, documentation et métadonnées dans
+une archive utilisateur par plateforme. Le builder signe le `SHA256SUMS` de
+cette archive avec OpenSSL puis la revérifie avant livraison. Les composants
+internes ne sont pas exposés comme autant de téléchargements concurrents.
 
 Le retrait reste séparé : désaffecter ne désenrôle pas, désenrôler ne désinstalle
 pas, et désinstaller l'observer ne touche ni aux services ni à leurs données.

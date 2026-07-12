@@ -4,7 +4,16 @@
 
 Une release désigne une version cohérente, installable et utilisable de bout en bout. Les étapes internes, prototypes et fonctionnalités isolées restent traçables par les commits et ne reçoivent pas automatiquement de tag.
 
-Une release GitHub doit fournir plus qu’une archive du dépôt : documentation d’installation, artefacts nécessaires, sommes de contrôle et preuves de vérification adaptées à chaque composant distribué.
+Une release GitHub doit fournir plus que les archives automatiques du dépôt :
+un lot installable par plateforme, sa documentation d'installation, une somme
+de contrôle et sa preuve de signature.
+
+Pour Debian 13 amd64, l'utilisateur ne choisit qu'une archive
+`your-cloud_X.Y.Z_linux_amd64.tar.gz`. Les binaires, le wheel, l'engine, les
+unités systemd et les métadonnées restent à l'intérieur. Seuls `SHA256SUMS`, sa
+signature et la clé publique de vérification l'accompagnent au premier niveau.
+Une release est préparée comme brouillon, reçoit tous ses fichiers, est
+revérifiée puis publiée ; elle n'est ensuite plus modifiée.
 
 ## Histoire précédente
 

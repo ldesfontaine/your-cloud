@@ -376,7 +376,7 @@
         <article class="step"><span class="step-no">8</span><div><h3>Lire et revérifier</h3><p>La console reçoit l’enveloppe originale puis vérifie encore la clé active, la signature, le flux et la séquence.</p></div><dl><dt>Page</dt><dd><code>EnvelopePage</code></dd><dt>Affichage</dt><dd>JSON après validation</dd></dl></article>
         <article class="step"><span class="step-no">9</span><div><h3>Couper et reprendre</h3><p>Sans console, le coordinateur conserve. Sans coordinateur, le daemon collecte et garde sa file. Les services continuent.</p></div><dl><dt>Ordre</dt><dd>état courant puis journal</dd><dt>Réseau</dt><dd>backoff exponentiel borné</dd></dl></article>
         <article class="step"><span class="step-no">10</span><div><h3>Actualiser et restaurer</h3><p>Le kit complet capture les autorités et identités mTLS chiffrées, la déclaration et les registres. Une console neuve valide tout avant écriture et reprend les mêmes machines logiques sans réenrôlement.</p></div><dl><dt>Schéma</dt><dd>kit de récupération 3</dd><dt>Refus</dt><dd>aucun écrasement d’un état existant</dd></dl></article>
-        <article class="step"><span class="step-no">11</span><div><h3>Renouveler et mettre à jour</h3><p>Une identité candidate et un binaire précédent restent disponibles jusqu’aux preuves signées et systemd. Coordinateur d’abord, puis daemon pilote, avec arrêt au premier échec.</p></div><dl><dt>Release</dt><dd>SHA-256 + signature Ed25519</dd><dt>Budgets</dt><dd>CPU, mémoire, tâches et SQLite</dd></dl></article>
+        <article class="step"><span class="step-no">11</span><div><h3>Renouveler et mettre à jour</h3><p>Une identité candidate et un binaire précédent restent disponibles jusqu’aux preuves signées et systemd. Coordinateur d’abord, puis daemon pilote, avec arrêt au premier échec.</p></div><dl><dt>Release</dt><dd>une archive par plateforme + SHA-256 signé</dd><dt>Budgets</dt><dd>CPU, mémoire, tâches et SQLite</dd></dl></article>
       </div>
     </section>
 
@@ -424,7 +424,7 @@
 
     <section id="p6">
       <div class="section-head"><span class="section-no">06 · preuve</span><div><h2>P6 ferme le cycle de vie et rend le lot adoptable.</h2></div></div>
-      <div class="boundary"><strong>P1 à P6 et adoption autonome prouvés</strong><p>Le mode distant traverse le NAT sans donner d’autorité d’administration au coordinateur. Une console neuve restaure la flotte sans réenrôlement, les mises à jour et retours arrière restent planifiés, et une cible Debian neuve peut être auditée puis enrôlée depuis le seul lot distribué. Le second passage Ansible termine à <code>changed=0</code>. Les candidates restent internes ; seul le lot stable reçoit un tag après validation et GO explicite.</p></div>
+      <div class="boundary"><strong>P1 à P6 et adoption autonome prouvés</strong><p>Le mode distant traverse le NAT sans donner d’autorité d’administration au coordinateur. Une console neuve restaure la flotte sans réenrôlement, les mises à jour et retours arrière restent planifiés, et une cible Debian neuve peut être auditée puis enrôlée depuis une archive utilisateur unique. Le second passage Ansible termine à <code>changed=0</code>. Les candidates restent internes ; seul le lot stable reçoit un tag après validation et GO explicite.</p></div>
     </section>
 
     <section id="sources">

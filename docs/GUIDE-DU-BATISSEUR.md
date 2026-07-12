@@ -203,7 +203,9 @@ La V1 ne cherche pas encore à déployer tout le homelab final. Elle doit prouve
 
 Le tag `v1.0.0` n’existe qu’après cette preuve de bout en bout. Les paliers et
 candidates intermédiaires restent dans les commits et les rapports LAB : seuls
-les tags stables sont publiés.
+les tags stables sont publiés. Une plateforme reçoit une archive installable
+unique ; les sommes de contrôle et la preuve de signature restent les seuls
+fichiers de vérification présentés à côté.
 
 ## Après la V1
 

@@ -1,8 +1,8 @@
-# Projet de console d’infrastructure
+# your-cloud
 
-> Le nom du produit reste à choisir. Le dépôt emploie temporairement une
-> description fonctionnelle afin de ne pas transformer un nom de travail en
-> décision de marque.
+> Le nom canonique du produit, de la commande, du dépôt et des artefacts est
+> `your-cloud`. Les underscores restent réservés aux identifiants Python qui ne
+> peuvent pas contenir de tiret.
 
 Ce projet construit une console souveraine qui enrôle, observe et fait évoluer
 des infrastructures Linux sans donner au chemin de télémétrie une autorité

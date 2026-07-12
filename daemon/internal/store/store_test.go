@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
+	telemetryv1 "github.com/ldesfontaine/your-cloud/protocole/gen/go"
 )
 
 func TestSequencesPersistAcrossReopen(t *testing.T) {

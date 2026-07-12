@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package yourcloud.telemetry.v1;
 
-option go_package = "github.com/ldesfontaine/yourcloud/protocole/gen/go;telemetryv1";
+option go_package = "github.com/ldesfontaine/your-cloud/protocole/gen/go;telemetryv1";
 
 enum TelemetryStream {
   TELEMETRY_STREAM_UNSPECIFIED = 0;

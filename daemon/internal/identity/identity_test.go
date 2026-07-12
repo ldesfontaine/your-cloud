@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"testing"
 
-	telemetryv1 "github.com/ldesfontaine/yourcloud/protocole/gen/go"
+	telemetryv1 "github.com/ldesfontaine/your-cloud/protocole/gen/go"
 )
 
 func TestIdentityPersistsAndSignsExactPayload(t *testing.T) {

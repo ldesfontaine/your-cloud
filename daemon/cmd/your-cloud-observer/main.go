@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ldesfontaine/yourcloud/daemon/internal/app"
-	"github.com/ldesfontaine/yourcloud/daemon/internal/config"
-	"github.com/ldesfontaine/yourcloud/daemon/internal/identity"
+	"github.com/ldesfontaine/your-cloud/daemon/internal/app"
+	"github.com/ldesfontaine/your-cloud/daemon/internal/config"
+	"github.com/ldesfontaine/your-cloud/daemon/internal/identity"
 )
 
 func main() {

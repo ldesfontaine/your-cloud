@@ -46,6 +46,13 @@ les métadonnées, les sommes, la clé publique et la signature sont identiques.
 | coordinateur amd64 | `aeaa8d11814831d5a7bcc24634f474b547f52c3681d188677ea9f92ee3cf59f9` |
 | observer amd64 | `351c363599b110ccbddd3f55726fd643f5f72e615782e38110bd8f02db722c8c` |
 
+Ces composants validés sont distribués ensemble dans
+`your-cloud_1.0.0_linux_amd64.tar.gz`, dont le SHA-256 est
+`0b4bd65d9698935a8111b963c7d3e06ff8d180f1f5121db8ff6c467698e9a84e`.
+La release présente uniquement cette archive, `SHA256SUMS`, sa signature et la
+clé publique de vérification. Les empreintes ci-dessus prouvent que le
+regroupement n'a remplacé aucun composant du lot validé.
+
 ## Installation neuve depuis le lot
 
 Sur `lab-console-recovery`, la signature et toutes les sommes ont d'abord été

@@ -7,32 +7,41 @@ La V1 cible Debian 13 `trixie` sur amd64. Les artefacts ne doivent jamais être
 choisis par un alias `latest` : l'opérateur sélectionne une version exacte et
 vérifie sa provenance avant installation.
 
-Après publication, le lot complet est attaché à la release GitHub `v1.0.0`.
-Avant publication, le responsable de la preuve remet exactement le même
-répertoire d'artefacts à l'opérateur.
+Après publication, la release GitHub `v1.0.0` fournit une archive unique pour
+Debian 13 amd64 et trois fichiers permettant de la vérifier. Les archives du
+code source ajoutées automatiquement par GitHub ne sont pas le paquet
+d'installation. Avant publication, le responsable de la preuve remet
+exactement ces quatre fichiers à l'opérateur.
 
 ## Vérifier le lot
 
-Le lot contient les binaires observer et coordinateur, le wheel de la
-console, l'archive versionnée de l'engine Ansible, les unités systemd,
-`RELEASE-METADATA.json`, `SHA256SUMS`, sa signature et la clé publique de la
-preuve.
+Télécharger uniquement :
 
-Dans les commandes suivantes, remplacer le chemin par celui du lot téléchargé
-ou remis pour la preuve :
+- `your-cloud_1.0.0_linux_amd64.tar.gz`, le lot installable ;
+- `SHA256SUMS`, son empreinte ;
+- `SHA256SUMS.sig`, la signature de cette empreinte ;
+- `release-signing-public.pem`, la clé publique de vérification.
+
+Le lot installable contient les binaires observer et coordinateur, le wheel de
+la console, l'archive versionnée de l'engine Ansible, les unités systemd, cette
+documentation et `RELEASE-METADATA.json`.
+
+Dans les commandes suivantes, partir d'un répertoire contenant les quatre
+fichiers téléchargés ou remis pour la preuve :
 
 ```text
-export RELEASE_DIR="$HOME/Downloads/your-cloud-1.0.0"
-cd "$RELEASE_DIR"
+cd "$HOME/Downloads"
 openssl pkeyutl -verify -rawin -pubin \
   -inkey release-signing-public.pem \
   -in SHA256SUMS -sigfile SHA256SUMS.sig
 sha256sum --check SHA256SUMS
+tar -xzf your-cloud_1.0.0_linux_amd64.tar.gz
+export RELEASE_DIR="$HOME/Downloads/your-cloud-1.0.0"
 ```
 
-Une clé publique livrée dans le même lot prouve la cohérence interne de la
-preuve LAB, pas encore la confiance d'une release publique. Pour une vraie
-release, son empreinte doit être publiée par un canal indépendant approuvé par
+Une clé publique téléchargée depuis la même release prouve la cohérence interne
+du lot, pas à elle seule l'identité de son auteur. Pour une release publique,
+son empreinte doit être publiée par un canal indépendant approuvé par
 l'opérateur.
 
 ## Installer la console
