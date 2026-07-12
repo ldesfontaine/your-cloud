@@ -1,6 +1,6 @@
 # Séparer bootstrap, administration et mutation risquée
 
-Statut : proposé · consolidation P0 du 2026-07-12
+Statut : accepté · ratification P0 du 2026-07-12
 
 ## Contexte
 

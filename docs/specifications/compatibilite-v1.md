@@ -1,6 +1,7 @@
 # Compatibilité V1
 
-> État : cible de construction P0, non encore prouvée.
+> État : premier contact Debian 13 amd64 prouvé à P1. La compatibilité des
+> installations, binaires et rôles des paliers suivants reste à prouver.
 
 La V1 prend officiellement en charge Debian 13 `trixie` sur amd64 uniquement.
 Une cible différente est refusée avant toute mutation ou enrôlement partiel.

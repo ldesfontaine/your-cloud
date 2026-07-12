@@ -1,6 +1,6 @@
 # Séparer déclaration versionnable et état runtime
 
-Statut : proposé · consolidation P0 du 2026-07-12
+Statut : accepté · ratification P0 du 2026-07-12
 
 ## Contexte
 

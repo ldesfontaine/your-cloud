@@ -1,6 +1,6 @@
 # Séparer les secrets, la déclaration et le kit de récupération
 
-Statut : proposé · consolidation P0 du 2026-07-12
+Statut : accepté · ratification P0 du 2026-07-12
 
 ## Contexte
 

@@ -1,7 +1,8 @@
 # LAB de développement V1
 
-> État : conception P0. Aucun gabarit ci-dessous n’est encore attesté par une
-> exécution de la nouvelle lignée.
+> État : topologie `quick` créée et reprise sans recréation le 2026-07-12.
+> La topologie `v1-full` reste à valider ; aucun de ses gabarits n'est présenté
+> comme attesté avant une création réelle.
 
 Le laptop de développement contrôle le LAB mais n’exécute jamais le projet. La
 console de développement, les tests, builds, playbooks, daemons et
@@ -27,10 +28,10 @@ minima produit. Les budgets publiés seront mesurés à P6.
 
 | Gabarit | vCPU | RAM | Disque | Image |
 |---|---:|---:|---:|---|
-| `console` | 2 | 2048 Mio | 20 Gio | Debian 13 amd64 épinglée |
-| `machine` | 1 | 1024 Mio | 10 Gio | Debian 13 amd64 épinglée |
-| `coordinateur` | 1 | 1024 Mio | 10 Gio | Debian 13 amd64 épinglée |
-| `passerelle` | 1 | 512 Mio | 5 Gio | Debian 13 amd64 épinglée |
+| `console` | 2 | 2048 Mio | 20 Gio | Debian 13 amd64, build `20260525-2489` |
+| `machine` | 1 | 1024 Mio | 10 Gio | Debian 13 amd64, build `20260525-2489` |
+| `coordinateur` | 1 | 1024 Mio | 10 Gio | Debian 13 amd64, build `20260525-2489` |
+| `passerelle` | 1 | 512 Mio | 5 Gio | Debian 13 amd64, build `20260525-2489` |
 
 Une modification de cette table et de l’implémentation `labctl` appartient au
 même changement. Aucun alias flou comme « petite VM » n’est accepté.
@@ -46,6 +47,9 @@ Topologie `quick` :
 Cette topologie couvre compilation, tests, premier contact, audit et
 enrôlement sur une image Debian 13 nue. Aucun artefact préinstallé ne doit
 fausser le parcours jour zéro.
+
+La création du LAB et le [premier contact P1](p1-premier-contact.md) sont
+prouvés. L'enrôlement appartient à P2 et n'est pas encore attesté.
 
 ## LAB V1 complet
 
@@ -63,24 +67,57 @@ connexion de télémétrie entrante n’est ouverte vers elles. Le chemin
 d’administration de la console reste distinct et les coupures peuvent être
 provoquées réseau par réseau.
 
-## Évolution attendue de `labctl`
+## Contrôleur `labctl`
 
-P0 adaptera l’outil existant au lieu de copier son état historique :
+[`tools/labctl`](../../tools/labctl) adapte les mécanismes utiles de l’ancien
+outil sans reprendre ses gabarits Debian 12 ni son réseau unique. Il fournit :
 
-1. remplacer les gabarits Debian 12 par la table Debian 13 ci-dessus ;
-2. conserver l’image par nom daté, URL et SHA512 vérifiés ;
-3. gérer explicitement les trois réseaux du LAB complet ;
-4. ajouter les topologies nommées `quick` et `v1-full` avec création,
-   inspection et destruction bornées ;
-5. inscrire l’origine et le gabarit dans les métadonnées libvirt afin que la
-   garde de cible puisse les établir sans supposition ;
-6. ne créer une nouvelle golden base que si un coût réel et mesuré la justifie.
+- l’image Debian 13 par nom daté, URL et SHA512 épinglés ;
+- les quatre gabarits de la table ci-dessus ;
+- les topologies nommées `quick` et `v1-full` ;
+- la création reprenable, l’inspection et la destruction bornée de ces
+  topologies ;
+- des métadonnées libvirt portant l’origine, la version du contrôleur, le
+  gabarit et la topologie de chaque VM ;
+- un refus avant mutation si ces métadonnées sont absentes ou incompatibles.
+
+Le réseau `lab-quick` et le réseau public simulé ont une sortie NAT. Les
+réseaux opérateur et site privé restent isolés. Les plages LAB sont dédiées :
+
+| Réseau | Plage | Rôle |
+|---|---|---|
+| `lab-quick` | `192.168.240.0/24` | boucle rapide avec sortie NAT |
+| `lab-operator` | `192.168.241.0/24` | chemin d’administration simulé |
+| `lab-public` | `192.168.242.0/24` | Internet simulé avec sortie NAT |
+| `lab-site-private` | `192.168.243.0/24` | machines privées sans sortie directe déclarée |
+
+Les commandes de cycle de vie sont volontairement peu nombreuses :
+
+```text
+labctl topology create quick
+labctl topology inspect quick
+labctl topology destroy quick
+
+labctl topology create v1-full
+labctl topology inspect v1-full
+labctl topology destroy v1-full
+```
+
+Une nouvelle golden base ne sera créée que si un coût réel et mesuré la
+justifie. L’image Debian nue reste la preuve de départ attendue pour P1.
 
 ## Garde de cible
 
 Avant toute mutation de VM : elle figure dans `labctl list`, son origine et son
 gabarit sont confirmés, puis son adresse est différente de `192.168.122.123` et
 `10.66.66.1`. Le moindre doute signifie production et interdit le geste.
+
+`labctl` applique également cette garde aux commandes mutantes. Cette défense
+ne remplace pas la lecture humaine de `labctl list` avant une intervention.
+
+Le contrôleur génère une clé SSH synthétique dédiée dans son cache local et
+l'utilise exclusivement pour les VM du LAB. Cette clé ne doit jamais entrer
+dans le dépôt ni être remplacée par une clé personnelle d'administration.
 
 Seuls des secrets synthétiques entrent dans le LAB. Un playbook réel reçoit
 d’abord un `--syntax-check`, puis son re-run doit donner `changed=0`, toujours

@@ -28,6 +28,9 @@ flowchart LR
 
 ## P0 — Atelier propre
 
+> État : terminé le 2026-07-12. La nouvelle lignée, le LAB, l’audit de
+> réemploi et les ADR 0001 à 0011 ont été relus et ratifiés.
+
 ### But
 
 Créer la nouvelle lignée sans transporter le code mort de l’ancien wrapper Ansible.
@@ -48,6 +51,9 @@ L’historique ancien reste consultable, le nouveau `main` ne contient aucun com
 
 ## P1 — Premier contact en lecture seule
 
+> État : terminé le 2026-07-12. Le premier contact, la répétabilité, le refus
+> d'ambiguïté et l'API locale sont prouvés dans le LAB `quick`.
+
 ### But
 
 Permettre à la console Python de connaître une cible sans lui faire confiance aveuglément et sans la modifier.
@@ -63,7 +69,7 @@ Permettre à la console Python de connaître une cible sans lui faire confiance 
 
 ### Preuve de sortie
 
-Sur une VM Debian 13 neuve, la console affiche l’audit et le plan potentiel. Une deuxième lecture produit le même résultat. Une cible incompatible ou ambiguë est refusée avant toute mutation.
+Sur une VM Debian 13 neuve, la console affiche l’audit et le plan potentiel. Une deuxième lecture produit le même résultat. Une cible incompatible ou ambiguë est refusée avant toute mutation. Voir la [preuve LAB P1](lab/p1-premier-contact.md).
 
 ## P2 — Machine observable
 

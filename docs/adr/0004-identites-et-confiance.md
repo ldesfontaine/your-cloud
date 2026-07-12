@@ -1,6 +1,6 @@
 # Utiliser des identités individuelles sans secret de flotte
 
-Statut : proposé · consolidation P0 du 2026-07-12
+Statut : accepté · ratification P0 du 2026-07-12
 
 ## Contexte
 

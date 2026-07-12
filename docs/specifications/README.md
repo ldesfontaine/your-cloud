@@ -10,5 +10,5 @@ preuves LAB.
 - [Profil Linux V1](profil-linux-v1.md)
 - [LAB V1](../lab/README.md)
 
-Ces documents définissent une cible de construction. Ils ne prétendent pas que
-la capacité est déjà implémentée ou testée.
+Chaque document indique si son contrat reste une cible ou s'il possède déjà une
+preuve LAB. Une preuve de palier ne vaut pas preuve de la V1 complète.

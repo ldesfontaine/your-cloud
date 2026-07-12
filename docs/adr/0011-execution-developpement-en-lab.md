@@ -1,6 +1,6 @@
 # Exécuter le développement exclusivement dans un LAB isolé
 
-Statut : proposé · consolidation P0 du 2026-07-12
+Statut : accepté · ratification P0 du 2026-07-12
 
 ## Contexte
 

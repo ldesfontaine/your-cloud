@@ -1,0 +1,604 @@
+#!/usr/bin/env bash
+# labctl v6 — contrôleur borné du LAB your-cloud (libvirt/KVM, zéro sudo)
+set -euo pipefail
+
+POOL="images"
+POOL_DIR="/var/lib/libvirt/images"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/your-cloud/labctl"
+SSH_KEY="$CACHE_DIR/id_ed25519"
+ORIGIN="your-cloud/labctl"
+CONTROLLER_VERSION="6"
+META_URI="urn:your-cloud:lab"
+NAME_RE='^[a-z0-9][a-z0-9-]*$'
+ROOT_PASSWORD="lab-only"
+FORBIDDEN_IPS=("192.168.122.123" "10.66.66.1")
+VIRSH=(virsh --connect qemu:///system)
+SSH_OPTS=(-n -i "$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+
+# Image Debian officielle, datée et vérifiée. Toute mise à jour de cette table
+# doit rester dans le même changement que docs/lab/README.md.
+declare -A IMG_FILE=(
+  [debian-13]="debian-13-genericcloud-amd64-20260525-2489.qcow2"
+)
+declare -A IMG_URL=(
+  [debian-13]="https://cloud.debian.org/images/cloud/trixie/20260525-2489/debian-13-genericcloud-amd64-20260525-2489.qcow2"
+)
+declare -A IMG_SHA512=(
+  [debian-13]="23999f64d896af10a8c12bc391856ffb2982d459c3e4c987c241cca920920c6d0fbdccab389fbb37aeecb2e21145f60d9d50bf317bdf47f7bc1388cd945aa1da"
+)
+
+declare -A TEMPLATE_VCPUS=(
+  [console]=2 [machine]=1 [coordinateur]=1 [passerelle]=1
+)
+declare -A TEMPLATE_RAM=(
+  [console]=2048 [machine]=1024 [coordinateur]=1024 [passerelle]=512
+)
+declare -A TEMPLATE_DISK=(
+  [console]=20G [machine]=10G [coordinateur]=10G [passerelle]=5G
+)
+declare -A TEMPLATE_IMAGE=(
+  [console]=debian-13 [machine]=debian-13
+  [coordinateur]=debian-13 [passerelle]=debian-13
+)
+TEMPLATES=(console machine coordinateur passerelle)
+TOPOLOGIES=(quick v1-full)
+
+die() { echo "ERREUR : $*" >&2; exit 1; }
+info() { echo "→ $*"; }
+
+valid_name() {
+  [[ "$1" =~ $NAME_RE ]] || die "nom invalide '$1' (attendu : $NAME_RE)"
+}
+
+require_command() {
+  command -v "$1" >/dev/null || die "commande requise absente : $1"
+}
+
+preflight_host() {
+  local command
+  for command in virsh virt-install qemu-img cloud-localds wget sha512sum ssh ssh-keygen timeout; do
+    require_command "$command"
+  done
+  "${VIRSH[@]}" pool-info "$POOL" >/dev/null \
+    || die "pool libvirt '$POOL' absent ou inaccessible"
+  ensure_ssh_key
+}
+
+template_table() {
+  local template
+  for template in "${TEMPLATES[@]}"; do
+    printf '  %-13s %s vCPU · %4s Mio · %3s · %s\n' \
+      "$template" "${TEMPLATE_VCPUS[$template]}" "${TEMPLATE_RAM[$template]}" \
+      "${TEMPLATE_DISK[$template]}" "${TEMPLATE_IMAGE[$template]}"
+  done
+}
+
+require_template() {
+  [[ -n "${TEMPLATE_IMAGE[$1]:-}" ]] && return 0
+  { echo "ERREUR : gabarit inconnu '$1' :"; template_table; } >&2
+  exit 1
+}
+
+require_topology() {
+  case "$1" in quick|v1-full) return 0 ;; esac
+  die "topologie inconnue '$1' (attendu : quick ou v1-full)"
+}
+
+ensure_ssh_key() {
+  mkdir -p "$CACHE_DIR"
+  if [[ -e "$SSH_KEY" || -e "$SSH_KEY.pub" ]]; then
+    [[ -r "$SSH_KEY" && -r "$SSH_KEY.pub" ]] \
+      || die "clé SSH LAB incomplète dans '$CACHE_DIR' ; inspection humaine requise"
+    return 0
+  fi
+  ssh-keygen -q -t ed25519 -N '' -C 'your-cloud labctl synthetic' -f "$SSH_KEY"
+  chmod 600 "$SSH_KEY"
+}
+
+ssh_pubkey() {
+  ensure_ssh_key
+  sed -n '1p' "$SSH_KEY.pub"
+}
+
+domain_exists() { "${VIRSH[@]}" dominfo "$1" &>/dev/null; }
+network_exists() { "${VIRSH[@]}" net-info "$1" &>/dev/null; }
+volume_exists() { "${VIRSH[@]}" vol-info --pool "$POOL" "$1" &>/dev/null; }
+snapshot_exists() { "${VIRSH[@]}" snapshot-info "$1" clean &>/dev/null; }
+
+metadata_xml() {
+  "${VIRSH[@]}" metadata "$1" --uri "$META_URI" 2>/dev/null || true
+}
+
+metadata_attr() {
+  local name="$1" attr="$2" xml
+  xml=$(metadata_xml "$name")
+  sed -n "s/.* $attr=\"\([^\"]*\)\".*/\1/p" <<<"$xml"
+}
+
+require_managed_domain() {
+  local name="$1" origin template topology
+  valid_name "$name"
+  domain_exists "$name" || die "'$name' n'existe pas dans libvirt"
+  origin=$(metadata_attr "$name" origin)
+  template=$(metadata_attr "$name" template)
+  topology=$(metadata_attr "$name" topology)
+  [[ "$origin" == "$ORIGIN" ]] || die "'$name' n'est pas gérée par $ORIGIN ; refus"
+  require_template "$template"
+  require_topology "$topology"
+}
+
+guard_forbidden_ip() {
+  local name="$1" ip forbidden
+  while IFS= read -r ip; do
+    [[ -n "$ip" ]] || continue
+    for forbidden in "${FORBIDDEN_IPS[@]}"; do
+      [[ "$ip" != "$forbidden" ]] || die "adresse interdite $ip pour '$name' ; cible traitée comme production"
+    done
+  done < <(get_ips "$name")
+}
+
+guard_mutation() {
+  require_managed_domain "$1"
+  guard_forbidden_ip "$1"
+}
+
+volume_push() {
+  local volume="$1" file="$2" format="$3" bytes
+  bytes=$(stat -c %s "$file")
+  "${VIRSH[@]}" vol-create-as "$POOL" "$volume" "$bytes" --format "$format" >/dev/null
+  if ! "${VIRSH[@]}" vol-upload --pool "$POOL" "$volume" "$file"; then
+    "${VIRSH[@]}" vol-delete --pool "$POOL" "$volume" >/dev/null 2>&1 || true
+    return 1
+  fi
+}
+
+volume_delete() {
+  "${VIRSH[@]}" vol-delete --pool "$POOL" "$1" >/dev/null
+}
+
+download_pinned() {
+  local url="$1" destination="$2"
+  wget -q -O "$destination" "$url" && return 0
+  info "Échec de cloud.debian.org ; essai du miroir cdimage.debian.org"
+  wget -q -O "$destination" "${url/cloud.debian.org/cdimage.debian.org}" || {
+    rm -f "$destination"
+    die "téléchargement impossible : $url"
+  }
+}
+
+ensure_base() {
+  local image="$1" file="${IMG_FILE[$image]}" url="${IMG_URL[$image]}"
+  local sha512="${IMG_SHA512[$image]}" partial final
+  volume_exists "$file" && return 0
+  mkdir -p "$CACHE_DIR"
+  partial="$CACHE_DIR/$file.part"
+  final="$CACHE_DIR/$file"
+  info "Téléchargement de l'image épinglée $file"
+  download_pinned "$url" "$partial"
+  mv "$partial" "$final"
+  if ! printf '%s  %s\n' "$sha512" "$final" | sha512sum -c --status -; then
+    rm -f "$final"
+    die "SHA512 invalide pour '$file' ; rien n'a été injecté dans libvirt"
+  fi
+  volume_push "$file" "$final" qcow2
+  "${VIRSH[@]}" pool-refresh "$POOL" >/dev/null
+  rm -f "$final"
+  echo "SHA512 OK — $file"
+}
+
+get_ips() {
+  "${VIRSH[@]}" domifaddr "$1" 2>/dev/null \
+    | awk '/ipv4/ {sub(/\/.*/, "", $4); print $4}'
+}
+
+get_ip() { get_ips "$1" | sed -n '1p'; }
+
+domain_networks() {
+  "${VIRSH[@]}" domiflist "$1" 2>/dev/null \
+    | awk 'NR > 2 && NF {print $3}' | sort | paste -sd, -
+}
+
+normalize_networks() {
+  tr ',' '\n' <<<"$1" | sort | paste -sd, -
+}
+
+wait_ip() {
+  local name="$1" ip attempt
+  for attempt in $(seq 1 60); do
+    ip=$(get_ip "$name")
+    [[ -n "$ip" ]] && { echo "$ip"; return 0; }
+    sleep 2
+  done
+  return 1
+}
+
+wait_ssh() {
+  local ip="$1" attempt
+  for attempt in $(seq 1 45); do
+    ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=2 "root@$ip" true 2>/dev/null && return 0
+    sleep 2
+  done
+  return 1
+}
+
+ensure_clean_snapshot() {
+  local name="$1" ip
+  snapshot_exists "$name" && return 0
+  ip=$(wait_ip "$name") || die "pas d'IP après 120 s ; labctl console $name"
+  guard_forbidden_ip "$name"
+  wait_ssh "$ip" || die "SSH injoignable ; labctl console $name"
+  timeout 120 ssh "${SSH_OPTS[@]}" "root@$ip" \
+    'cloud-init status --wait >/dev/null 2>&1' || true
+  "${VIRSH[@]}" snapshot-create-as "$name" clean \
+    --description "Debian 13 fraîche, cloud-init terminé" >/dev/null
+}
+
+make_seed() {
+  local name="$1" seed="$2" temporary
+  require_command cloud-localds
+  temporary=$(mktemp -d)
+  trap 'rm -rf "$temporary"' RETURN
+  cat >"$temporary/user-data" <<EOF
+#cloud-config
+hostname: $name
+disable_root: false
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  users:
+    - name: root
+      password: $ROOT_PASSWORD
+      type: text
+users:
+  - name: root
+    lock_passwd: false
+    ssh_authorized_keys:
+      - $(ssh_pubkey)
+EOF
+  cat >"$temporary/meta-data" <<EOF
+instance-id: $name-$(date +%s)
+local-hostname: $name
+EOF
+  cloud-localds "$seed" "$temporary/user-data" "$temporary/meta-data"
+  rm -rf "$temporary"
+  trap - RETURN
+}
+
+network_definition() {
+  local name="$1" topology="$2" gateway="" prefix="" forward=""
+  case "$name" in
+    lab-quick)        gateway="192.168.240.1"; prefix="192.168.240"; forward="nat" ;;
+    lab-operator)     gateway="192.168.241.1"; prefix="192.168.241" ;;
+    lab-public)       gateway="192.168.242.1"; prefix="192.168.242"; forward="nat" ;;
+    lab-site-private) gateway="192.168.243.1"; prefix="192.168.243" ;;
+    *) die "réseau LAB inconnu '$name'" ;;
+  esac
+  cat <<EOF
+<network>
+  <name>$name</name>
+  <description>$ORIGIN topology=$topology</description>
+  ${forward:+<forward mode='$forward'/>}
+  <ip address='$gateway' netmask='255.255.255.0'>
+    <dhcp><range start='$prefix.100' end='$prefix.199'/></dhcp>
+  </ip>
+</network>
+EOF
+}
+
+network_is_managed() {
+  "${VIRSH[@]}" net-dumpxml "$1" 2>/dev/null \
+    | grep -Fq "<description>$ORIGIN topology=$2</description>"
+}
+
+network_is_active() {
+  LC_ALL=C "${VIRSH[@]}" net-info "$1" 2>/dev/null \
+    | awk '$1 == "Active:" && $2 == "yes" { active = 1 } END { exit !active }'
+}
+
+ensure_network() {
+  local name="$1" topology="$2" definition
+  if network_exists "$name"; then
+    network_is_managed "$name" "$topology" || die "réseau '$name' existant mais non géré ; refus"
+  else
+    definition=$(mktemp)
+    network_definition "$name" "$topology" >"$definition"
+    "${VIRSH[@]}" net-define "$definition" >/dev/null
+    rm -f "$definition"
+  fi
+  "${VIRSH[@]}" net-autostart "$name" >/dev/null
+  network_is_active "$name" || "${VIRSH[@]}" net-start "$name" >/dev/null
+}
+
+destroy_network() {
+  local name="$1" topology="$2"
+  network_exists "$name" || return 0
+  network_is_managed "$name" "$topology" || die "réseau '$name' non géré ; refus de destruction"
+  "${VIRSH[@]}" net-destroy "$name" >/dev/null 2>&1 || true
+  "${VIRSH[@]}" net-undefine "$name" >/dev/null
+}
+
+set_domain_metadata() {
+  local name="$1" template="$2" topology="$3" value
+  value="<lab xmlns=\"$META_URI\" origin=\"$ORIGIN\" controller-version=\"$CONTROLLER_VERSION\" template=\"$template\" topology=\"$topology\"/>"
+  "${VIRSH[@]}" metadata "$name" --uri "$META_URI" --key your-cloud \
+    --set "$value" --config --live >/dev/null
+}
+
+create_domain() {
+  local name="$1" template="$2" topology="$3"
+  shift 3
+  local networks=("$@") network_args=() network
+  valid_name "$name"
+  require_template "$template"
+  require_topology "$topology"
+  domain_exists "$name" && die "'$name' existe déjà"
+  [[ ${#networks[@]} -gt 0 ]] || die "aucun réseau indiqué pour '$name'"
+  for network in "${networks[@]}"; do
+    network_exists "$network" || die "réseau '$network' absent"
+    network_args+=(--network "network=$network,model=virtio")
+  done
+
+  local image base
+  image="${TEMPLATE_IMAGE[$template]}"
+  base="${IMG_FILE[$image]}"
+  local disk_volume="$name.qcow2" seed_volume="$name-seed.iso" path
+  ensure_base "$image"
+  mkdir -p "$CACHE_DIR"
+  for path in "$disk_volume" "$seed_volume"; do
+    volume_exists "$path" && die "volume orphelin '$path' ; inspection humaine requise"
+  done
+
+  local overlay="$CACHE_DIR/$disk_volume" seed="$CACHE_DIR/$seed_volume"
+  qemu-img create -f qcow2 -F qcow2 -u -b "$POOL_DIR/$base" \
+    "$overlay" "${TEMPLATE_DISK[$template]}" >/dev/null
+  volume_push "$disk_volume" "$overlay" qcow2
+  rm -f "$overlay"
+  if ! make_seed "$name" "$seed"; then
+    volume_delete "$disk_volume" || true
+    rm -f "$seed"
+    die "génération cloud-init impossible pour '$name'"
+  fi
+  if ! volume_push "$seed_volume" "$seed" raw; then
+    volume_delete "$disk_volume" || true
+    rm -f "$seed"
+    die "injection de la seed impossible pour '$name'"
+  fi
+  rm -f "$seed"
+  "${VIRSH[@]}" pool-refresh "$POOL" >/dev/null
+
+  info "Création de '$name' ($template, topologie $topology)"
+  if ! virt-install --connect qemu:///system --name "$name" \
+    --memory "${TEMPLATE_RAM[$template]}" --vcpus "${TEMPLATE_VCPUS[$template]}" \
+    --disk "vol=$POOL/$disk_volume" --disk "vol=$POOL/$seed_volume,readonly=on,bus=virtio" \
+    --import --osinfo debian13 "${network_args[@]}" --noautoconsole >/dev/null; then
+    volume_delete "$disk_volume" || true
+    volume_delete "$seed_volume" || true
+    die "échec de création de '$name'"
+  fi
+  set_domain_metadata "$name" "$template" "$topology" || {
+    "${VIRSH[@]}" destroy "$name" >/dev/null 2>&1 || true
+    "${VIRSH[@]}" undefine "$name" >/dev/null 2>&1 || true
+    volume_delete "$disk_volume" || true
+    volume_delete "$seed_volume" || true
+    die "métadonnées de garde impossibles pour '$name' ; VM supprimée"
+  }
+
+  local ip
+  ensure_clean_snapshot "$name"
+  ip=$(get_ip "$name")
+  echo "✔ '$name' prête — $template — $ip — snapshot clean"
+}
+
+destroy_domain() {
+  local name="$1"
+  guard_mutation "$name"
+  "${VIRSH[@]}" destroy "$name" >/dev/null 2>&1 || true
+  "${VIRSH[@]}" undefine "$name" --snapshots-metadata >/dev/null
+  local volume
+  for volume in "$name.qcow2" "$name-seed.iso"; do
+    volume_exists "$volume" && volume_delete "$volume"
+  done
+  echo "✔ '$name' détruite"
+}
+
+topology_domains() {
+  case "$1" in
+    quick)
+      printf '%s\n' 'lab-console|console|lab-quick' 'lab-machine-1|machine|lab-quick'
+      ;;
+    v1-full)
+      printf '%s\n' \
+        'lab-console|console|lab-operator' \
+        'lab-coordinateur|coordinateur|lab-public' \
+        'lab-gateway|passerelle|lab-operator,lab-public,lab-site-private' \
+        'lab-machine-1|machine|lab-site-private' \
+        'lab-machine-2|machine|lab-site-private'
+      ;;
+  esac
+}
+
+topology_networks() {
+  case "$1" in
+    quick) printf '%s\n' lab-quick ;;
+    v1-full) printf '%s\n' lab-operator lab-public lab-site-private ;;
+  esac
+}
+
+cmd_topology_create() {
+  local topology="${1:?usage: labctl topology create <quick|v1-full>}"
+  require_topology "$topology"
+  preflight_host
+  local network row name template csv
+  while IFS='|' read -r name template csv; do
+    if domain_exists "$name"; then
+      [[ "$(metadata_attr "$name" origin)" == "$ORIGIN" \
+        && "$(metadata_attr "$name" template)" == "$template" \
+        && "$(metadata_attr "$name" topology)" == "$topology" \
+        && "$(domain_networks "$name")" == "$(normalize_networks "$csv")" ]] \
+        || die "'$name' existe avec une origine, un gabarit ou une topologie incompatible ; refus avant effet"
+      guard_forbidden_ip "$name"
+    fi
+  done < <(topology_domains "$topology")
+  while IFS= read -r network; do ensure_network "$network" "$topology"; done < <(topology_networks "$topology")
+  while IFS='|' read -r name template csv; do
+    if domain_exists "$name"; then
+      ensure_clean_snapshot "$name"
+      info "'$name' déjà conforme ; conservation"
+      continue
+    fi
+    IFS=',' read -r -a networks <<<"$csv"
+    create_domain "$name" "$template" "$topology" "${networks[@]}"
+  done < <(topology_domains "$topology")
+  cmd_topology_inspect "$topology"
+}
+
+cmd_topology_inspect() {
+  local topology="${1:?usage: labctl topology inspect <quick|v1-full>}"
+  require_topology "$topology"
+  local row name template networks actual_origin actual_template actual_topology ip state network
+  printf 'Réseaux :\n'
+  while IFS= read -r network; do
+    if network_exists "$network" && network_is_managed "$network" "$topology"; then
+      printf '  %-19s %s\n' "$network" "géré · $(LC_ALL=C "${VIRSH[@]}" net-info "$network" | sed -n 's/^Active:[[:space:]]*//p')"
+    elif network_exists "$network"; then
+      printf '  %-19s %s\n' "$network" "présent mais non géré"
+    else
+      printf '  %-19s %s\n' "$network" absent
+    fi
+  done < <(topology_networks "$topology")
+  printf '\nVM :\n'
+  printf '%-19s %-13s %-10s %-15s %s\n' VM GABARIT ETAT IP ORIGINE
+  while IFS='|' read -r name template networks; do
+    if ! domain_exists "$name"; then
+      printf '%-19s %-13s %-10s %-15s %s\n' "$name" "$template" absente - -
+      continue
+    fi
+    actual_origin=$(metadata_attr "$name" origin)
+    actual_template=$(metadata_attr "$name" template)
+    actual_topology=$(metadata_attr "$name" topology)
+    state=$(LC_ALL=C "${VIRSH[@]}" domstate "$name")
+    ip=$(get_ip "$name"); ip=${ip:--}
+    printf '%-19s %-13s %-10s %-15s %s\n' "$name" "$actual_template" "$state" "$ip" "$actual_origin"
+    [[ "$actual_origin" == "$ORIGIN" && "$actual_template" == "$template" && "$actual_topology" == "$topology" ]] \
+      || die "métadonnées inattendues pour '$name'"
+    [[ "$(domain_networks "$name")" == "$(normalize_networks "$networks")" ]] \
+      || die "réseaux inattendus pour '$name'"
+    guard_forbidden_ip "$name"
+  done < <(topology_domains "$topology")
+}
+
+cmd_topology_destroy() {
+  local topology="${1:?usage: labctl topology destroy <quick|v1-full>}"
+  require_topology "$topology"
+  local rows=() row name template networks network index
+  mapfile -t rows < <(topology_domains "$topology")
+  for ((index=${#rows[@]}-1; index>=0; index--)); do
+    row="${rows[$index]}"
+    IFS='|' read -r name template networks <<<"$row"
+    if domain_exists "$name"; then
+      [[ "$(metadata_attr "$name" topology)" == "$topology" ]] \
+        || die "'$name' appartient à une autre topologie ; refus de destruction"
+      destroy_domain "$name"
+    fi
+  done
+  while IFS= read -r network; do destroy_network "$network" "$topology"; done < <(topology_networks "$topology")
+}
+
+cmd_topology() {
+  local action="${1:-}"; [[ $# -gt 0 ]] && shift
+  case "$action" in
+    create) cmd_topology_create "$@" ;;
+    inspect) cmd_topology_inspect "$@" ;;
+    destroy) cmd_topology_destroy "$@" ;;
+    *) die "usage: labctl topology <create|inspect|destroy> <quick|v1-full>" ;;
+  esac
+}
+
+cmd_list() {
+  local name state origin template topology ip
+  printf '%-24s %-10s %-15s %-13s %-10s %s\n' VM ETAT IP GABARIT TOPOLOGIE ORIGINE
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    state=$(LC_ALL=C "${VIRSH[@]}" domstate "$name")
+    ip=$(get_ip "$name"); ip=${ip:--}
+    origin=$(metadata_attr "$name" origin); origin=${origin:--}
+    template=$(metadata_attr "$name" template); template=${template:--}
+    topology=$(metadata_attr "$name" topology); topology=${topology:--}
+    printf '%-24s %-10s %-15s %-13s %-10s %s\n' "$name" "$state" "$ip" "$template" "$topology" "$origin"
+  done < <("${VIRSH[@]}" list --all --name)
+}
+
+cmd_revert() {
+  local name="${1:?usage: labctl revert <vm> [snapshot]}" snapshot="${2:-clean}"
+  valid_name "$snapshot"
+  guard_mutation "$name"
+  "${VIRSH[@]}" snapshot-revert "$name" "$snapshot"
+  if [[ "$(LC_ALL=C "${VIRSH[@]}" domstate "$name")" == "shut off" ]]; then
+    "${VIRSH[@]}" start "$name" >/dev/null
+    wait_ip "$name" >/dev/null || die "pas d'IP après retour au snapshot"
+  fi
+  guard_forbidden_ip "$name"
+  echo "✔ '$name' revenue au snapshot '$snapshot'"
+}
+
+cmd_snap() {
+  local name="${1:?usage: labctl snap <vm> <snapshot>}" snapshot="${2:?usage: labctl snap <vm> <snapshot>}"
+  valid_name "$snapshot"
+  guard_mutation "$name"
+  "${VIRSH[@]}" snapshot-create-as "$name" "$snapshot" >/dev/null
+  echo "✔ snapshot '$snapshot' posé sur '$name'"
+}
+
+cmd_ip() { require_managed_domain "$1"; get_ip "$1"; }
+
+cmd_ssh() {
+  local name="${1:?usage: labctl ssh <vm> [commande...]}" ip
+  shift
+  require_managed_domain "$name"
+  guard_forbidden_ip "$name"
+  ip=$(wait_ip "$name") || die "pas d'IP pour '$name'"
+  exec ssh "${SSH_OPTS[@]}" "root@$ip" "$@"
+}
+
+cmd_console() {
+  local name="${1:?usage: labctl console <vm>}"
+  require_managed_domain "$name"
+  echo "Sortie de la console : Ctrl+]"
+  "${VIRSH[@]}" console "$name"
+}
+
+usage() {
+  cat <<EOF
+labctl v6 — LAB your-cloud borné
+
+  labctl topology create  <quick|v1-full>
+  labctl topology inspect <quick|v1-full>
+  labctl topology destroy <quick|v1-full>
+  labctl list
+  labctl revert  <vm> [snapshot]
+  labctl snap    <vm> <snapshot>
+  labctl ip      <vm>
+  labctl ssh     <vm> [commande...]
+  labctl console <vm>
+
+Gabarits :
+$(template_table)
+
+Les mutations refusent tout domaine sans métadonnées $ORIGIN et les adresses
+192.168.122.123 et 10.66.66.1.
+EOF
+}
+
+command="${1:-}"; [[ $# -gt 0 ]] && shift
+case "$command" in
+  topology) cmd_topology "$@" ;;
+  list) cmd_list ;;
+  revert) cmd_revert "$@" ;;
+  snap) cmd_snap "$@" ;;
+  ip) cmd_ip "$@" ;;
+  ssh) cmd_ssh "$@" ;;
+  console) cmd_console "$@" ;;
+  help|-h|--help|'') usage ;;
+  *) die "commande inconnue '$command' ; labctl help" ;;
+esac
