@@ -1,21 +1,19 @@
-# Installer la release candidate V1
+# Installer your-cloud 1.0.0
 
-> La candidate courante est `1.0.0-rc.2`. Elle corrige le premier essai
-> d'adoption de `rc.1` en rendant les dépendances d'automatisation installables
-> depuis le wheel, sans copie du dépôt source.
+> Cette procédure part uniquement du lot stable `1.0.0`. Le dépôt source n'est
+> jamais nécessaire sur la console de l'opérateur.
 
 La V1 cible Debian 13 `trixie` sur amd64. Les artefacts ne doivent jamais être
 choisis par un alias `latest` : l'opérateur sélectionne une version exacte et
 vérifie sa provenance avant installation.
 
-RC2 est encore une candidate LAB et n'est pas publiée. Lorsqu'elle le sera, le
-lot complet sera attaché à la pré-release GitHub `v1.0.0-rc.2`. Pendant une
-preuve privée, le responsable du test remet ce même répertoire d'artefacts à
-l'opérateur. Le dépôt source n'est jamais nécessaire sur sa console.
+Après publication, le lot complet est attaché à la release GitHub `v1.0.0`.
+Avant publication, le responsable de la preuve remet exactement le même
+répertoire d'artefacts à l'opérateur.
 
 ## Vérifier le lot
 
-Le lot RC contient les binaires observer et coordinateur, le wheel de la
+Le lot contient les binaires observer et coordinateur, le wheel de la
 console, l'archive versionnée de l'engine Ansible, les unités systemd,
 `RELEASE-METADATA.json`, `SHA256SUMS`, sa signature et la clé publique de la
 preuve.
@@ -24,7 +22,7 @@ Dans les commandes suivantes, remplacer le chemin par celui du lot téléchargé
 ou remis pour la preuve :
 
 ```text
-export RELEASE_DIR="$HOME/Downloads/your-cloud-1.0.0-rc.2"
+export RELEASE_DIR="$HOME/Downloads/your-cloud-1.0.0"
 cd "$RELEASE_DIR"
 openssl pkeyutl -verify -rawin -pubin \
   -inkey release-signing-public.pem \
@@ -49,7 +47,7 @@ sudo apt-get update
 sudo apt-get install python3.13-venv=3.13.5-2+deb13u3
 python3 -m venv ~/.local/share/your-cloud/venv
 ~/.local/share/your-cloud/venv/bin/pip install \
-  "$RELEASE_DIR/your_cloud_console-1.0.0rc2-py3-none-any.whl"
+  "$RELEASE_DIR/your_cloud_console-1.0.0-py3-none-any.whl"
 source ~/.local/share/your-cloud/venv/bin/activate
 your-cloud --help
 ```
@@ -59,7 +57,7 @@ de reprendre les commandes. `ENGINE_DIR` et `OBSERVER` seront définis plus bas
 et doivent eux aussi être redéfinis après une nouvelle connexion.
 
 Les dépendances transitives sont épinglées par le projet, mais `pip` les
-télécharge depuis son index configuré : RC2 n'est pas encore un lot
+télécharge depuis son index configuré : la V1 n'est pas un lot
 d'installation hors ligne. La console conserve sa déclaration sous
 `~/.config/your-cloud/` et son état privé sous `~/.local/state/your-cloud/` sauf
 chemins explicitement fournis.
@@ -71,7 +69,7 @@ même wheel vérifié :
 
 ```text
 pip install \
-  "$RELEASE_DIR/your_cloud_console-1.0.0rc2-py3-none-any.whl[automation]"
+  "$RELEASE_DIR/your_cloud_console-1.0.0-py3-none-any.whl[automation]"
 ansible-playbook --version
 ```
 
@@ -85,7 +83,7 @@ Avant de lancer la console, l'opérateur dispose déjà d'un accès SSH par clé
 la machine. La clé est fournie par l'hébergeur, installée physiquement ou par
 un autre canal d'administration ; your-cloud ne peut pas inventer ce premier
 accès. Le compte peut être `root` pour un bootstrap fournisseur ou un compte
-normal capable d'exécuter `sudo -n` sans demander de mot de passe. RC2 ne sait
+normal capable d'exécuter `sudo -n` sans demander de mot de passe. La V1 ne sait
 pas répondre à une invite interactive de mot de passe SSH ou sudo.
 
 Le parcours minimal crée une infrastructure, déclare une machine puis effectue
@@ -122,11 +120,11 @@ un artefact séparé afin que son contenu soit inspectable avant exécution.
 Extraire son archive dans un répertoire privé :
 
 ```text
-install -d -m 0700 "$HOME/.local/share/your-cloud/releases/1.0.0-rc.2"
-tar -xzf "$RELEASE_DIR/your-cloud-engine_1.0.0-rc.2.tar.gz" \
-  -C "$HOME/.local/share/your-cloud/releases/1.0.0-rc.2"
-export ENGINE_DIR="$HOME/.local/share/your-cloud/releases/1.0.0-rc.2/engine"
-export OBSERVER="$RELEASE_DIR/your-cloud-observer_1.0.0-rc.2_linux_amd64"
+install -d -m 0700 "$HOME/.local/share/your-cloud/releases/1.0.0"
+tar -xzf "$RELEASE_DIR/your-cloud-engine_1.0.0.tar.gz" \
+  -C "$HOME/.local/share/your-cloud/releases/1.0.0"
+export ENGINE_DIR="$HOME/.local/share/your-cloud/releases/1.0.0/engine"
+export OBSERVER="$RELEASE_DIR/your-cloud-observer_1.0.0_linux_amd64"
 ```
 
 La première commande affiche seulement le plan. Elle n'installe rien :

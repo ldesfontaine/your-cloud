@@ -1,8 +1,9 @@
 # Anatomie du projet
 
-> État décrit : P1 à P4 prouvés dans `quick`, puis P5 complet prouvé dans
-> `v1-full` le 2026-07-12, y compris la migration explicite du schéma 2 et la
-> séparation entre domaine déclaré et détection runtime sourcée.
+> État décrit : P1 à P6 prouvés dans les LAB `quick` et `v1-full` le
+> 2026-07-12, puis installation et enrôlement autonomes prouvés depuis le seul
+> lot distribuable. La stabilisation `1.0.0` rejoue ces garanties sans dépendre
+> du dépôt source.
 
 Ce guide explique le chemin réellement suivi par les données et les autorités.
 Les [ADR](adr/REGISTRE.md) et les [spécifications](specifications/README.md)
@@ -11,6 +12,9 @@ restent normatifs ; cette page sert de carte de lecture pour le code.
 Une [édition HTML autonome et interactive](anatomie-du-projet.html) permet de
 faire ressortir successivement les flux d'installation, de publication, de
 lecture et de reprise.
+
+La [preuve finale stable](lab/v1-stable.md) relie cette carte au lot réellement
+construit, installé et mis à niveau dans le LAB.
 
 ## La chaîne en une minute
 

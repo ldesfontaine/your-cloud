@@ -14,22 +14,24 @@ ces tags ni une branche d'archive sans rapport avec son code courant.
 
 ## Première release stable
 
-Le tag `v1.0.0` ne sera créé que lorsque le produit accomplira un parcours utilisateur complet et prouvé. Aucun tag de confort ne remplace cette preuve. Une pré-release `v1.0.0-rc.N` pourra être utilisée uniquement pour valider les artefacts finaux.
+Le tag `v1.0.0` ne sera créé que lorsque le produit accomplira un parcours utilisateur complet et prouvé. Aucun tag de confort ne remplace cette preuve. Les candidates restent des commits et des lots internes : GitHub ne publie que des tags et releases stables `vX.Y.Z`.
 
-Les étapes P0 à P6 de la [`Roadmap`](ROADMAP.md) sont des paliers internes et ne reçoivent pas automatiquement de tag. P6 correspond à la preuve complète exigée avant la première release candidate.
+Les étapes P0 à P6 de la [`Roadmap`](ROADMAP.md) sont des paliers internes et ne reçoivent pas automatiquement de tag. P6 correspond à la preuve complète exigée avant la première release stable.
 
-La candidate `v1.0.0-rc.1` a fermé P6 dans le LAB, puis son
+La candidate interne `1.0.0-rc.1` a fermé P6 dans le LAB, puis son
 [essai d'adoption](lab/rc1-adoption.md) a trouvé deux écarts de distribution :
 les dépendances d'automatisation exigeaient encore le dépôt source et le
 premier parcours n'était pas assez explicite. Elle n'est donc pas promue en
-stable. Ces écarts appartiennent à `v1.0.0-rc.2` et doivent être rejoués depuis
+stable. Ces écarts ont été corrigés dans la candidate interne `1.0.0-rc.2` et rejoués depuis
 le seul lot distribué.
 
 La [preuve d'adoption RC2](lab/rc2-adoption.md) confirme la construction signée,
 l'installation autonome de l'extra Ansible, l'audit sans mutation,
-l'enrôlement d'une cible Debian distante neuve et son re-run `changed=0`. La
-promotion stable attend encore la publication d'une pré-release signée par une
-clé approuvée hors du LAB, puis son utilisation sans défaut bloquant.
+l'enrôlement d'une cible Debian distante neuve et son re-run `changed=0`. Le
+passage à `1.0.0` exige le même lot construit deux fois à
+l'identique, une installation neuve, une mise à niveau depuis RC2 et le parcours
+d'adoption sans défaut bloquant. Le tag et la release viennent seulement après
+ces preuves et un GO explicite sur le commit exact.
 
 La V1 doit au minimum permettre à un opérateur de :
 
@@ -73,7 +75,7 @@ Les payloads et accusés V1 sont des messages Protobuf transmis par ces requête
 
 La console interroge le coordinateur avec une identité mTLS de lecture distincte des identités de machine, de l’identité d’administration et des clés SSH. Elle récupère des pages bornées d’enveloppes originales puis vérifie elle-même leurs signatures ; le coordinateur ne pousse aucune donnée vers le laptop. Cette API ne peut ni enrôler ou révoquer une machine, ni modifier le registre dérivé, la déclaration, les services ou les points de coordination. Ces changements continuent de passer par le chemin SSH/Ansible en V1. La clé de lecture reste chiffrée dans la console, révocable et incluse dans le kit de récupération ; son vol expose au plus la télémétrie conservée, jamais une autorité d’administration ou un secret d’infrastructure.
 
-Les daemons et coordinateurs de la V1 ne se mettent jamais à jour seuls et ne récupèrent pas de version flottante depuis Internet. Une mise à jour est initiée par l'opérateur depuis la console, cible une version précise, vérifie l'origine et l'intégrité de l'artefact, présente son plan d'action et prépare le retour à la version précédente avant le déploiement. Le protocole est versionné indépendamment des binaires et les releases stables successives restent normalement interopérables. La console vérifie toute la topologie, met à jour les coordinateurs autorisés avant les daemons, puis avance une machine à la fois avec preuve du retour de l'observation et arrêt au premier échec. Ces détails sont automatiques dans le parcours guidé ; une transition incompatible est refusée avant tout changement avec indication de la release intermédiaire nécessaire. La RC V1 signe `SHA256SUMS` en Ed25519 avec OpenSSL puis revérifie signature et sommes. La preuve LAB emploie une clé synthétique ; une release publique exige une empreinte distribuée par un canal indépendant approuvé.
+Les daemons et coordinateurs de la V1 ne se mettent jamais à jour seuls et ne récupèrent pas de version flottante depuis Internet. Une mise à jour est initiée par l'opérateur depuis la console, cible une version précise, vérifie l'origine et l'intégrité de l'artefact, présente son plan d'action et prépare le retour à la version précédente avant le déploiement. Le protocole est versionné indépendamment des binaires et les releases stables successives restent normalement interopérables. La console vérifie toute la topologie, met à jour les coordinateurs autorisés avant les daemons, puis avance une machine à la fois avec preuve du retour de l'observation et arrêt au premier échec. Ces détails sont automatiques dans le parcours guidé ; une transition incompatible est refusée avant tout changement avec indication de la release intermédiaire nécessaire. Le lot V1 signe `SHA256SUMS` en Ed25519 avec OpenSSL puis revérifie signature et sommes. La preuve LAB emploie une clé synthétique ; une release publique exige une empreinte distribuée par un canal indépendant approuvé.
 
 Seule la console peut effectuer une vérification passive, désactivable et non bloquante d'un manifeste signé afin de signaler une nouvelle version ; les daemons et coordinateurs ne contactent jamais le service de distribution. L'emplacement du manifeste ne devient aucune dépendance de fonctionnement.
 

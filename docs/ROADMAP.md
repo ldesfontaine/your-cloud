@@ -191,7 +191,7 @@ Transformer les composants prouvés séparément en un produit installable, réc
 
 ### Preuve de sortie
 
-Une VM de console neuve restaure son état, reprend une flotte existante, observe deux infrastructures et applique un plan idempotent sans réenrôlement. Les preuves de sécurité, coupure, reprise et mise à jour sont reproductibles. Alors seulement une release candidate puis le tag `v1.0.0` peuvent être créés.
+Une VM de console neuve restaure son état, reprend une flotte existante, observe deux infrastructures et applique un plan idempotent sans réenrôlement. Les preuves de sécurité, coupure, reprise et mise à jour sont reproductibles. Les candidates restent internes ; alors seulement le tag stable `v1.0.0` peut être proposé.
 
 Voir la [preuve LAB P6](lab/p6-release-v1.md).
 

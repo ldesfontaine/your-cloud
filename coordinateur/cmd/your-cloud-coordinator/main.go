@@ -16,7 +16,7 @@ import (
 	"github.com/ldesfontaine/yourcloud/coordinateur/internal/store"
 )
 
-const version = "1.0.0-rc.2"
+const version = "1.0.0"
 
 func main() {
 	if err := run(); err != nil {

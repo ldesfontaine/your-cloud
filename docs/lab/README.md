@@ -104,6 +104,10 @@ sur une cible Debian distante neuve provisionnée avec la clé de son opérateur
 Une relecture junior bornée à la documentation a guidé les corrections du
 parcours avant le build final.
 
+La [preuve finale stable](v1-stable.md) construit deux lots `1.0.0` identiques,
+installe la console dans un venv neuf, met à niveau la console et le daemon
+depuis RC2, revérifie l'état signé puis obtient un re-run `changed=0`.
+
 ## Contrôleur `labctl`
 
 [`tools/labctl`](../../tools/labctl) adapte les mécanismes utiles de l’ancien

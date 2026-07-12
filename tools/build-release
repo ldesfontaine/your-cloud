@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Construit et signe une release candidate uniquement dans un runner isolé.
+# Construit et signe une release stable uniquement dans un runner isolé.
 set -euo pipefail
 
 version="${1:?usage: tools/build-release <version> <output-dir> <signing-key>}"
 output="${2:?usage: tools/build-release <version> <output-dir> <signing-key>}"
 signing_key="${3:?usage: tools/build-release <version> <output-dir> <signing-key>}"
 
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] \
-  || { echo "version RC invalide" >&2; exit 1; }
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { echo "version stable invalide" >&2; exit 1; }
 [[ -f "$signing_key" ]] || { echo "clé de signature absente" >&2; exit 1; }
 [[ "$(stat -c %a "$signing_key")" == "600" ]] \
   || { echo "la clé de signature doit être en mode 0600" >&2; exit 1; }
@@ -38,7 +38,7 @@ go build -trimpath -ldflags='-s -w' \
 
 SOURCE_DATE_EPOCH=0 "$python_bin" -m pip wheel --no-deps --no-build-isolation \
   --wheel-dir "$output" "$root/console"
-wheel_version="${version/-rc./rc}"
+wheel_version="$version"
 [[ -f "$output/your_cloud_console-${wheel_version}-py3-none-any.whl" ]] \
   || { echo "version interne du wheel incohérente" >&2; exit 1; }
 
@@ -55,7 +55,7 @@ cat >"$output/RELEASE-METADATA.json" <<EOF
   "declaration_schema": 2,
   "identity_registry_schema": 2,
   "platform": "debian-13-amd64",
-  "status": "release-candidate"
+  "status": "stable"
 }
 EOF
 
@@ -72,4 +72,4 @@ EOF
   sha256sum --check SHA256SUMS
 )
 
-echo "Release candidate $version construite et vérifiée dans $output"
+echo "Release stable $version construite et vérifiée dans $output"

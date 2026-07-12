@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Parcours technique interactif de la console, du daemon et du coordinateur your-cloud, de P1 à la récupération P6.">
+  <meta name="description" content="Parcours technique interactif de la console, du daemon et du coordinateur your-cloud, de P1 à la release stable V1.">
   <title>Anatomie du projet — your-cloud</title>
   <style>
     :root {
@@ -262,13 +262,15 @@
     <div class="page">
       <p class="eyebrow">your-cloud · lecture développeur</p>
       <h1>Anatomie du projet.<span>Du premier SSH à l’état repris après une panne.</span></h1>
-      <p class="lead">Une carte du code réellement prouvé de P1 au flux distant P5 : qui installe quoi, qui détient quelle autorité, quels messages circulent et ce qui continue quand le pilotage disparaît.</p>
+      <p class="lead">Une carte du code réellement prouvé de P1 à P6, jusqu’à l’installation autonome depuis le lot V1 : qui installe quoi, qui détient quelle autorité, quels messages circulent et ce qui continue quand le pilotage disparaît.</p>
       <div class="status-line" aria-label="État des paliers">
         <span class="badge">P1 audit</span>
         <span class="badge">P2 daemon</span>
         <span class="badge">P3 mutation sûre</span>
         <span class="badge">P4 coordinateur local</span>
         <span class="badge">P5 distant + domaines de panne</span>
+        <span class="badge">P6 cycle de vie + reprise</span>
+        <span class="badge">V1 lot autonome</span>
       </div>
     </div>
   </header>
@@ -280,7 +282,7 @@
       <a href="#composants">Composants</a>
       <a href="#couches">Couches</a>
       <a href="#pannes">Pannes</a>
-      <a href="#p5">Preuve P5</a>
+      <a href="#p6">Preuve V1</a>
       <a href="#sources">Sources</a>
     </div>
   </nav>
@@ -420,9 +422,9 @@
       </div>
     </section>
 
-    <section id="p5">
-      <div class="section-head"><span class="section-no">06 · preuve</span><div><h2>P5 change la distance, pas les autorités.</h2></div></div>
-      <div class="boundary"><strong>P5 complet prouvé dans v1-full</strong><p>Le même coordinateur 0.5.0 a traversé le NAT, servi deux infrastructures, survécu à une reconstruction de sa base dérivée et permis une migration avec ancien point conservé puis retiré séparément. Aucune route anonyme ni entrée de télémétrie vers les machines privées n’a été acceptée. Le schéma 2 sépare maintenant le domaine déclaré de la détection runtime sourcée ; les deux infrastructures du LAB sont confirmées dans le même domaine, sans indépendance inventée.</p></div>
+    <section id="p6">
+      <div class="section-head"><span class="section-no">06 · preuve</span><div><h2>P6 ferme le cycle de vie et rend le lot adoptable.</h2></div></div>
+      <div class="boundary"><strong>P1 à P6 et adoption autonome prouvés</strong><p>Le mode distant traverse le NAT sans donner d’autorité d’administration au coordinateur. Une console neuve restaure la flotte sans réenrôlement, les mises à jour et retours arrière restent planifiés, et une cible Debian neuve peut être auditée puis enrôlée depuis le seul lot distribué. Le second passage Ansible termine à <code>changed=0</code>. Les candidates restent internes ; seul le lot stable reçoit un tag après validation et GO explicite.</p></div>
     </section>
 
     <section id="sources">
@@ -431,7 +433,8 @@
         <a href="ANATOMIE-DU-PROJET.md"><small>Source technique maintenable</small><strong>Anatomie du projet</strong></a>
         <a href="GUIDE-DU-BATISSEUR.md"><small>Vision et parcours utilisateur</small><strong>Guide du bâtisseur</strong></a>
         <a href="adr/REGISTRE.md"><small>Décisions normatives</small><strong>Registre des ADR</strong></a>
-        <a href="lab/p5-mode-distant.md"><small>Réseau, migration et reconstruction</small><strong>Preuve LAB P5</strong></a>
+        <a href="lab/p6-release-v1.md"><small>Cycle de vie, reprise et limites</small><strong>Preuve LAB P6</strong></a>
+        <a href="lab/v1-stable.md"><small>Build reproductible, installation et mise à niveau</small><strong>Preuve stable 1.0.0</strong></a>
         <a href="specifications/README.md"><small>Contrats et bornes</small><strong>Spécifications V1</strong></a>
         <a href="ROADMAP.md"><small>Paliers et preuves de sortie</small><strong>Roadmap</strong></a>
         <a href="lab/README.md"><small>Exécutions réelles et limites</small><strong>Preuves LAB</strong></a>
@@ -439,7 +442,7 @@
     </section>
   </main>
 
-  <footer><div class="page">your-cloud · guide technique P1–P4 · les ADR et spécifications restent normatifs</div></footer>
+  <footer><div class="page">your-cloud · guide technique V1, P1–P6 · les ADR et spécifications restent normatifs</div></footer>
 
   <script>
     (() => {

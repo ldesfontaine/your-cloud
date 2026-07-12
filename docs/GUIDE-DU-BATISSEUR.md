@@ -1,6 +1,8 @@
 # Guide du bâtisseur
 
-> État : architecture cible en cours de cadrage. Ce guide décrit le produit que nous construisons ; il ne prétend pas que ces fonctions sont déjà implémentées.
+> État : le socle V1 décrit ici est implémenté et prouvé jusqu'à P6. Les
+> générations services, résilience et infrastructure complète restent des
+> horizons, pas des fonctions déjà livrées.
 
 Une [édition HTML autonome et illustrée](guide-du-batisseur.html) facilite la lecture d’ensemble. Ce fichier Markdown reste la source éditoriale de référence.
 
@@ -199,7 +201,9 @@ La V1 ne cherche pas encore à déployer tout le homelab final. Elle doit prouve
 - restaurer la console, ses secrets et son registre public depuis les artefacts prévus ;
 - prouver l’ensemble dans le LAB sans exécuter le projet sur le laptop de développement.
 
-Le tag `v1.0.0` n’existe qu’après cette preuve de bout en bout. Les paliers intermédiaires sont des étapes de construction, pas des releases artificielles.
+Le tag `v1.0.0` n’existe qu’après cette preuve de bout en bout. Les paliers et
+candidates intermédiaires restent dans les commits et les rapports LAB : seuls
+les tags stables sont publiés.
 
 ## Après la V1
 

@@ -33,7 +33,7 @@ chiffrées, l'autorité de transport chiffrée, la déclaration et les registres
 publics courants, ainsi que les identités mTLS de rôle encore chiffrées. La
 restauration refuse tout écrasement et ne contacte ni ne réenrôle aucune machine.
 
-Le mode distant, conservé dans la RC V1, sépare l'installation du coordinateur public, la
+Le mode distant de la V1 sépare l'installation du coordinateur public, la
 migration d'une machine pilote et le retrait ultérieur de l'ancien endpoint.
 Un endpoint peut être une IP ou un DNS ; son certificat reste lié à cette
 localisation. La console annonce une perte du coordinateur comme un pilotage
