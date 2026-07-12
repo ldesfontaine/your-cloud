@@ -36,7 +36,7 @@ go build -trimpath -ldflags='-s -w' \
 [[ "$("$output/your-cloud-coordinator_${version}_linux_amd64" version)" == "$version" ]] \
   || { echo "version interne du coordinateur incohérente" >&2; exit 1; }
 
-"$python_bin" -m pip wheel --no-deps --no-build-isolation \
+SOURCE_DATE_EPOCH=0 "$python_bin" -m pip wheel --no-deps --no-build-isolation \
   --wheel-dir "$output" "$root/console"
 wheel_version="${version/-rc./rc}"
 [[ -f "$output/your_cloud_console-${wheel_version}-py3-none-any.whl" ]] \

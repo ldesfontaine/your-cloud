@@ -27,7 +27,9 @@ flowchart LR
 
 `tools/build-release` exécute désormais les tests Python avant les tests Go. Il
 refuse aussi un daemon, un coordinateur ou un wheel dont la version interne ne
-correspond pas au nom demandé. Le build final a produit :
+correspond pas au nom demandé. Le wheel utilise un horodatage source fixe ; deux
+builds successifs du même état ont produit des répertoires strictement
+identiques selon `diff -qr`. Le build final a produit :
 
 ```text
 Ran 39 tests in 3.595s
@@ -39,7 +41,7 @@ Release candidate 1.0.0-rc.2 construite et vérifiée
 
 | Artefact | SHA-256 |
 |---|---|
-| console wheel | `199802bf324fc781910e1801ba9710a0f552fcc08cb5d855b48778b93f11f2c0` |
+| console wheel | `4e0fdcc423898c94f2fa7d029343b07604f572cfdf259a9c79cce85079708ea7` |
 | engine Ansible | `4b3003f6f0802f1c5a778c5262ab4df61826dcda29c26a8f48b72c49a6708dad` |
 | coordinateur amd64 | `989d6670479335badfbeba555f9b3f3d7db1575e3e7197a5bf0427469c2788de` |
 | observer amd64 | `6dc78fb3e4d14c10644795ff2c5e4c98db675ba90ebb01deb586968a2baa2074` |
