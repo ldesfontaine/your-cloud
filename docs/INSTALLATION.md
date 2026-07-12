@@ -8,6 +8,11 @@ La V1 cible Debian 13 `trixie` sur amd64. Les artefacts ne doivent jamais être
 choisis par un alias `latest` : l'opérateur sélectionne une version exacte et
 vérifie sa provenance avant installation.
 
+RC2 est encore une candidate LAB et n'est pas publiée. Lorsqu'elle le sera, le
+lot complet sera attaché à la pré-release GitHub `v1.0.0-rc.2`. Pendant une
+preuve privée, le responsable du test remet ce même répertoire d'artefacts à
+l'opérateur. Le dépôt source n'est jamais nécessaire sur sa console.
+
 ## Vérifier le lot
 
 Le lot RC contient les binaires observer et coordinateur, le wheel de la
@@ -15,9 +20,12 @@ console, l'archive versionnée de l'engine Ansible, les unités systemd,
 `RELEASE-METADATA.json`, `SHA256SUMS`, sa signature et la clé publique de la
 preuve.
 
-Depuis le répertoire des artefacts :
+Dans les commandes suivantes, remplacer le chemin par celui du lot téléchargé
+ou remis pour la preuve :
 
 ```text
+export RELEASE_DIR="$HOME/Downloads/your-cloud-1.0.0-rc.2"
+cd "$RELEASE_DIR"
 openssl pkeyutl -verify -rawin -pubin \
   -inkey release-signing-public.pem \
   -in SHA256SUMS -sigfile SHA256SUMS.sig
@@ -31,21 +39,30 @@ l'opérateur.
 
 ## Installer la console
 
-Sur Debian 13, installer d'abord le module venv prouvé, puis créer un
-environnement Python 3.13 dédié et installer le nom exact du wheel :
+La console de l'opérateur et les machines gérées doivent utiliser Debian 13
+amd64 pour cette V1. Sur la console, installer d'abord le module venv prouvé,
+puis créer un environnement Python 3.13 dédié et installer le nom exact du
+wheel :
 
 ```text
-apt-get update
-apt-get install python3.13-venv=3.13.5-2+deb13u3
+sudo apt-get update
+sudo apt-get install python3.13-venv=3.13.5-2+deb13u3
 python3 -m venv ~/.local/share/your-cloud/venv
 ~/.local/share/your-cloud/venv/bin/pip install \
-  ./your_cloud_console-1.0.0rc2-py3-none-any.whl
-~/.local/share/your-cloud/venv/bin/your-cloud --help
+  "$RELEASE_DIR/your_cloud_console-1.0.0rc2-py3-none-any.whl"
+source ~/.local/share/your-cloud/venv/bin/activate
+your-cloud --help
 ```
 
-Les dépendances transitives sont épinglées par le projet. La console conserve
-sa déclaration sous `~/.config/your-cloud/` et son état privé sous
-`~/.local/state/your-cloud/` sauf chemins explicitement fournis.
+Dans un nouveau terminal, réactiver le venv et redéfinir `RELEASE_DIR` avant
+de reprendre les commandes. `ENGINE_DIR` et `OBSERVER` seront définis plus bas
+et doivent eux aussi être redéfinis après une nouvelle connexion.
+
+Les dépendances transitives sont épinglées par le projet, mais `pip` les
+télécharge depuis son index configuré : RC2 n'est pas encore un lot
+d'installation hors ligne. La console conserve sa déclaration sous
+`~/.config/your-cloud/` et son état privé sous `~/.local/state/your-cloud/` sauf
+chemins explicitement fournis.
 
 Cette installation minimale suffit pour initialiser la console, déclarer des
 machines et les auditer en lecture seule. Une console qui doit enrôler,
@@ -53,9 +70,9 @@ sécuriser ou mettre à jour une machine installe l'extra d'automatisation du
 même wheel vérifié :
 
 ```text
-~/.local/share/your-cloud/venv/bin/pip install \
-  './your_cloud_console-1.0.0rc2-py3-none-any.whl[automation]'
-~/.local/share/your-cloud/venv/bin/ansible-playbook --version
+pip install \
+  "$RELEASE_DIR/your_cloud_console-1.0.0rc2-py3-none-any.whl[automation]"
+ansible-playbook --version
 ```
 
 Les versions Ansible et Python sont ainsi épinglées dans le même artefact.
@@ -67,7 +84,9 @@ projet et n'est plus une condition cachée pour l'utilisateur.
 Avant de lancer la console, l'opérateur dispose déjà d'un accès SSH par clé à
 la machine. La clé est fournie par l'hébergeur, installée physiquement ou par
 un autre canal d'administration ; your-cloud ne peut pas inventer ce premier
-accès.
+accès. Le compte peut être `root` pour un bootstrap fournisseur ou un compte
+normal capable d'exécuter `sudo -n` sans demander de mot de passe. RC2 ne sait
+pas répondre à une invite interactive de mot de passe SSH ou sudo.
 
 Le parcours minimal crée une infrastructure, déclare une machine puis effectue
 un audit sans la modifier :
@@ -87,6 +106,96 @@ your-cloud machine audit mini-pc --accept-host-key
 empreinte fournisseur ou obtenue hors bande existe, utiliser plutôt
 `--host-fingerprint SHA256:...`. Une différence ultérieure est refusée.
 
+TOFU signifie que la première clé d'hôte observée est affichée puis acceptée
+explicitement. Pour une preuve plus forte, l'hébergeur fournit l'empreinte
+`SHA256:...` dans son interface ou par un autre canal ; elle doit correspondre
+exactement au format affiché par OpenSSH.
+
+Un audit réussi se termine par `Décision : eligible`, `Mutation distante : 0`
+et aucun refus. `ineligible` signifie que la cible ou l'accès ne satisfait pas
+les prérequis ; il ne faut alors pas tenter de forcer l'enrôlement.
+
+## Enrôler la première machine
+
+L'engine est l'ensemble des playbooks Ansible utilisés par la console. Il reste
+un artefact séparé afin que son contenu soit inspectable avant exécution.
+Extraire son archive dans un répertoire privé :
+
+```text
+install -d -m 0700 "$HOME/.local/share/your-cloud/releases/1.0.0-rc.2"
+tar -xzf "$RELEASE_DIR/your-cloud-engine_1.0.0-rc.2.tar.gz" \
+  -C "$HOME/.local/share/your-cloud/releases/1.0.0-rc.2"
+export ENGINE_DIR="$HOME/.local/share/your-cloud/releases/1.0.0-rc.2/engine"
+export OBSERVER="$RELEASE_DIR/your-cloud-observer_1.0.0-rc.2_linux_amd64"
+```
+
+La première commande affiche seulement le plan. Elle n'installe rien :
+
+```text
+your-cloud machine enroll mini-pc \
+  --daemon-binary "$OBSERVER" \
+  --engine-dir "$ENGINE_DIR" \
+  --unit ssh.service
+```
+
+`--unit ssh.service` demande au daemon d'observer explicitement l'état du
+service SSH. Cette unité existe sur la Debian 13 cible prouvée. On peut omettre
+ce paramètre pour commencer sans unité particulière, ou le répéter avec le nom
+exact d'une autre unité systemd que l'on veut suivre. Le daemon n'inventorie
+jamais automatiquement tous les services.
+
+Lire le plan, puis relancer exactement la même commande avec l'approbation :
+
+```text
+your-cloud machine enroll mini-pc \
+  --daemon-binary "$OBSERVER" \
+  --engine-dir "$ENGINE_DIR" \
+  --unit ssh.service \
+  --approve
+```
+
+La console lance elle-même `ansible-playbook --syntax-check` avant le playbook
+réel. Un succès se termine par `Enrôlement vérifié`, l'identité publique du
+daemon et la séquence du premier état signé. La clé privée du daemon reste sur
+la machine.
+
+Vérifier ensuite l'état courant, puis relancer l'enrôlement approuvé. Le second
+passage doit rester idempotent et le récapitulatif Ansible doit indiquer
+`changed=0` :
+
+```text
+your-cloud machine inspect mini-pc
+your-cloud machine enroll mini-pc \
+  --daemon-binary "$OBSERVER" \
+  --engine-dir "$ENGINE_DIR" \
+  --unit ssh.service \
+  --approve
+```
+
+Un état « signé » signifie que la console vérifie qu'il provient de l'identité
+Ed25519 approuvée pour cette machine et qu'il ne s'agit pas d'un rejeu. Cela ne
+donne au daemon aucun droit d'administration.
+
+Ce premier état ne passe pas encore par un coordinateur : la console le lit
+directement par le même accès SSH strict que l'audit. Le coordinateur devient
+utile plus tard pour conserver l'observation lorsque la console est éteinte.
+
+## Refus courants
+
+- `Permission denied (publickey)` : la clé passée à `--identity-file` ou le
+  compte SSH ne correspond pas à la cible ; corriger l'accès fournisseur, sans
+  remplacer automatiquement la clé d'hôte ;
+- `sudo` ou `become` refusé : le compte ne satisfait pas `sudo -n` ; utiliser
+  un accès bootstrap autorisé ou préparer cette délégation hors de your-cloud ;
+- `playbook ou binaire du daemon absent` : vérifier `ENGINE_DIR`, `OBSERVER` et
+  le niveau d'extraction de l'archive ;
+- unité inconnue : retirer le `--unit` concerné ou confirmer son nom avec
+  `systemctl status NOM.service` sur la cible ;
+- version incompatible : ne pas renommer un artefact et ne pas mélanger les
+  fichiers de deux releases ; revérifier `SHA256SUMS` ;
+- clé d'hôte différente : arrêter le parcours et vérifier la machine par le
+  fournisseur ou un canal hors bande avant toute rotation.
+
 ## Installer ou mettre à jour les composants natifs
 
 Ne pas copier manuellement un binaire sur une flotte. La console reçoit le
@@ -94,11 +203,9 @@ chemin exact, sa somme SHA-256 et sa version, met d'abord à jour un coordinateu
 puis un daemon pilote par site. Elle conserve le binaire précédent et arrête la
 propagation au premier échec.
 
-Le premier parcours utilise les commandes guidées `machine enroll`,
-`coordination install-local` ou `coordination install-distant`. Une installation
-existante utilise `component update --pilot --approve`. Les playbooks exécutent
-leur `--syntax-check` avant mutation et le re-run attendu vaut `changed=0`.
-
-Extraire `your-cloud-engine_1.0.0-rc.2.tar.gz` dans un répertoire privé du
-runner, puis passer son dossier `engine/` à `--engine-dir`. L'archive appartient
-au même manifeste signé que la console et les binaires.
+L'installation d'un coordinateur local ou distant vient seulement après cette
+première machine observable. Elle n'appartient pas au parcours de démarrage
+minimal ci-dessus ; son tutoriel complet doit être validé avant la promotion
+stable. Un coordinateur local reste limité au LAN ou au réseau
+d'administration. Un coordinateur distant est joignable par plusieurs sites,
+par exemple sur un VPS, sans recevoir de clé SSH d'administration.

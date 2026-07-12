@@ -98,10 +98,11 @@ l'installation, mais refuse la promotion en stable tant que l'automatisation
 ne peut pas être installée sans le dépôt source et que le premier parcours n'est
 pas reproduit avec un accès SSH utilisateur légitime.
 
-La [preuve intermédiaire RC2](rc2-adoption.md) ferme l'installation autonome de
-l'extra Ansible et le premier audit sans mutation. Elle conserve comme dernier
-critère avant promotion l'audit et l'enrôlement d'une cible distante neuve,
-provisionnée dès l'origine avec la clé de son opérateur.
+La [preuve d'adoption RC2](rc2-adoption.md) ferme l'installation autonome de
+l'extra Ansible, l'audit sans mutation, l'enrôlement et le re-run `changed=0`
+sur une cible Debian distante neuve provisionnée avec la clé de son opérateur.
+Une relecture junior bornée à la documentation a guidé les corrections du
+parcours avant le build final.
 
 ## Contrôleur `labctl`
 

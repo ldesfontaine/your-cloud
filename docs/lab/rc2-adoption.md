@@ -1,4 +1,4 @@
-# Preuve intermédiaire d'adoption de `v1.0.0-rc.2`
+# Preuve d'adoption de `v1.0.0-rc.2`
 
 > Preuve produite le 2026-07-12 dans `lab-console` et
 > `lab-console-recovery`. La candidate a été construite et signée avec une clé
@@ -18,7 +18,9 @@ flowchart LR
     Build --> Lot["Lot signé RC2"]
     Lot --> Fresh["Venv neuf sans dépôt source"]
     Fresh --> Automation["Extra automation\nAnsible 2.19.4"]
-    Automation --> Audit["Premier audit SSH\nmutation distante : 0"]
+    Automation --> Audit["Audit SSH distant\nmutation distante : 0"]
+    Audit --> Enroll["Enrôlement approuvé\nétat signé"]
+    Enroll --> Rerun["Re-run\nchanged=0"]
 ```
 
 ## Construction et cohérence du lot
@@ -28,7 +30,7 @@ refuse aussi un daemon, un coordinateur ou un wheel dont la version interne ne
 correspond pas au nom demandé. Le build final a produit :
 
 ```text
-Ran 39 tests in 3.802s
+Ran 39 tests in 3.949s
 OK
 tests Go : OK
 Signature Verified Successfully
@@ -37,7 +39,7 @@ Release candidate 1.0.0-rc.2 construite et vérifiée
 
 | Artefact | SHA-256 |
 |---|---|
-| console wheel | `890d791bddab79005011431c31196ea3e7862320ffbba73d1c4aab30bcbcb14f` |
+| console wheel | `e2289766b21972d56ceb955579d21db37260841d3696215f3566b20aaa0769fb` |
 | engine Ansible | `4b3003f6f0802f1c5a778c5262ab4df61826dcda29c26a8f48b72c49a6708dad` |
 | coordinateur amd64 | `2e92d7024921c3cf57cc7713d2d2f8af44ffa052b5bc0e06805b8dad28ade9e0` |
 | observer amd64 | `eb4793f06f25f90c9f957f83c08ffa88ed64409f77965752257632bfa1b2fbfe` |
@@ -55,29 +57,54 @@ ansible-playbook [core 2.19.4]
 
 Aucun fichier du dépôt source n'a été nécessaire sur cette console.
 
-## Premier bénéfice utilisateur
+## Parcours distant complet
 
-Une déclaration et une infrastructure neuves ont été créées depuis la CLI
-installée. Pour ne pas copier la clé privée du contrôleur LAB ni affaiblir une
-machine déjà sécurisée, le premier audit a ciblé la console LAB elle-même avec
-une identité SSH synthétique locale.
+L'état P6 de `lab-machine-2` a d'abord été conservé dans le snapshot
+`pre-rc2-adoption`, puis la VM est revenue à son snapshot Debian `clean`. Une
+nouvelle clé d'opérateur synthétique a été créée dans la console RC2 ; seule sa
+partie publique a été provisionnée sur la cible par le chemin LAB. Aucune clé
+privée du contrôleur `labctl` n'a été copiée dans une VM.
 
-Le résultat a confirmé Debian 13 amd64, systemd, l'accès `sudo`, l'espace
-disque, les sources de configuration et les sockets. La décision vaut
-`eligible`, sans refus ni conflit, avec `Mutation distante : 0`. La clé d'hôte
-a été enregistrée comme `tofu-visible`.
+Une déclaration et l'infrastructure `homelab` ont été créées depuis la seule
+CLI installée. L'audit distant a confirmé Debian 13 amd64, systemd, l'accès
+privilégié, l'espace disque, les sources de configuration et les sockets. La
+décision vaut `eligible`, sans refus ni conflit, avec
+`Mutation distante : 0`. La clé d'hôte a été enregistrée comme
+`tofu-visible`. Un écart d'horloge de LAB a été rendu visible comme limite sans
+être masqué.
 
-## Limite avant promotion stable
+La première commande `machine enroll` sans `--approve` a affiché le plan et
+s'est terminée par `Plan non appliqué`. La seconde a exécuté le
+`--syntax-check`, installé le daemon RC2 et vérifié son identité Ed25519 ainsi
+que son premier état signé. `machine inspect` a ensuite rendu
+`signature-ed25519-verified` et la version `1.0.0-rc.2`.
 
-Cette preuve ferme l'installation autonome et le premier audit, mais elle ne
-prétend pas simuler un utilisateur extérieur complet. Avant `v1.0.0`, une cible
-Debian distante neuve doit être provisionnée avec une clé appartenant dès le
-départ à l'opérateur. Depuis le seul lot RC2, celui-ci doit alors reproduire :
+Le lot reconstruit après la revue documentaire affiche désormais le
+récapitulatif Ansible au lieu de le masquer. Son re-run final a produit :
 
-1. l'audit distant sans mutation ;
-2. le plan d'enrôlement sans `--approve` ;
-3. l'enrôlement approuvé après `--syntax-check` ;
-4. l'état signé courant ;
-5. le re-run Ansible attendu à `changed=0`.
+```text
+Enrôlement vérifié : ... état signé séquence 3.
+Ansible : 192.168.243.158 : ok=10 changed=0 unreachable=0 failed=0
+```
 
-RC2 est donc une candidate installable, pas encore une release stable.
+## Relecture comme utilisateur junior
+
+Un sous-agent temporaire a reçu le rôle d'un homelabber junior et l'interdiction
+de lire le code, Git, les ADR, les preuves LAB ou Internet. Sa première lecture
+de `README.md` et `INSTALLATION.md` s'est arrêtée après l'audit : origine du
+lot, activation du venv, droits SSH, chemins d'artefacts et commande
+d'enrôlement restaient trop implicites.
+
+Après correction, il a estimé pouvoir suivre seul l'installation privée,
+l'audit, le plan, l'enrôlement, l'inspection et le re-run. Sa seconde lecture a
+encore demandé l'explication de `ssh.service`, du premier état sans
+coordinateur, des variables à restaurer dans un nouveau terminal et des refus
+courants. Ces points ont été ajoutés au guide avant le build final.
+
+## Frontière de publication
+
+RC2 est installable et son parcours minimal est prouvé depuis le seul lot. Elle
+reste une candidate LAB signée par une clé synthétique : l'adoption autonome
+publique attend encore un commit de référence, une signature de publication
+dont l'empreinte est distribuée indépendamment et la pré-release GitHub. Elle
+n'est pas encore `v1.0.0`.

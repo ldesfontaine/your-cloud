@@ -134,12 +134,19 @@ def enroll(
     if not isinstance(public, dict) or set(public) != {"algorithm", "key_id", "public_key"}:
         raise EnrollmentError("identité publique distante incomplète")
     identity_store.approve(machine.id, **public)
+    summary = next(
+        (line.strip() for line in reversed(applied.stdout.splitlines()) if "changed=" in line),
+        "résumé Ansible indisponible",
+    )
     last_error: Exception | None = None
     for _ in range(10):
         try:
             encoded = remote_observer(machine, host_store, "export-current")
             state = verify_state(machine.id, decode_envelope(encoded), identity_store, record_sequence=False)
-            return f"Enrôlement vérifié : identité {public['key_id']}, état signé séquence {state.sequence}"
+            return (
+                f"Enrôlement vérifié : identité {public['key_id']}, "
+                f"état signé séquence {state.sequence}. Ansible : {summary}"
+            )
         except Exception as error:  # l'unité peut être en cours de premier démarrage
             last_error = error
             time.sleep(1)

@@ -23,11 +23,11 @@ premier parcours n'était pas assez explicite. Elle n'est donc pas promue en
 stable. Ces écarts appartiennent à `v1.0.0-rc.2` et doivent être rejoués depuis
 le seul lot distribué.
 
-La [preuve intermédiaire RC2](lab/rc2-adoption.md) confirme la construction
-signée, l'installation autonome de l'extra Ansible et un premier audit sans
-mutation. La promotion stable attend encore le même parcours sur une cible
-distante neuve possédant dès son provisionnement un accès SSH légitime, suivi
-d'un enrôlement et de son re-run idempotent.
+La [preuve d'adoption RC2](lab/rc2-adoption.md) confirme la construction signée,
+l'installation autonome de l'extra Ansible, l'audit sans mutation,
+l'enrôlement d'une cible Debian distante neuve et son re-run `changed=0`. La
+promotion stable attend encore la publication d'une pré-release signée par une
+clé approuvée hors du LAB, puis son utilisation sans défaut bloquant.
 
 La V1 doit au minimum permettre à un opérateur de :
 
