@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "your-cloud-console"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 description = "Console souveraine your-cloud"
 requires-python = ">=3.13"
 dependencies = [
@@ -13,6 +13,16 @@ dependencies = [
   "cryptography==45.0.5",
   "protobuf==6.31.1",
   "pycparser==3.0",
+]
+
+[project.optional-dependencies]
+automation = [
+  "ansible-core==2.19.4",
+  "Jinja2==3.1.6",
+  "MarkupSafe==3.0.3",
+  "packaging==26.2",
+  "PyYAML==6.0.3",
+  "resolvelib==1.2.1",
 ]
 
 [project.scripts]

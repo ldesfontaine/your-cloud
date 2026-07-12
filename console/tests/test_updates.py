@@ -11,12 +11,12 @@ class UpdateStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             store = UpdateStore(Path(temporary))
             with self.assertRaisesRegex(ConsoleError, "coordinateur"):
-                store.require_coordinator_version("1.0.0-rc.1")
-            store.record("coordinator", "coord-1", "1.0.0-rc.1")
-            store.require_coordinator_version("1.0.0-rc.1")
-            store.record("observer", "machine-1", "1.0.0-rc.1")
+                store.require_coordinator_version("1.0.0-rc.2")
+            store.record("coordinator", "coord-1", "1.0.0-rc.2")
+            store.require_coordinator_version("1.0.0-rc.2")
+            store.record("observer", "machine-1", "1.0.0-rc.2")
             self.assertEqual(
-                store.load()["observers"]["machine-1"], "1.0.0-rc.1"
+                store.load()["observers"]["machine-1"], "1.0.0-rc.2"
             )
 
 

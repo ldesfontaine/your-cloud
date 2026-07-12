@@ -19,7 +19,7 @@ import (
 	telemetryv1 "github.com/lucas-desfontaine/your-cloud/protocole/gen/go"
 )
 
-const Version = "1.0.0-rc.1"
+const Version = "1.0.0-rc.2"
 
 // App orchestre la collecte, la signature, la persistance et la publication.
 type App struct {

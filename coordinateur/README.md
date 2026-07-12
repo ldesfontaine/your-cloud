@@ -9,7 +9,7 @@ console en lecture seule. Son compte, ses certificats, sa base limitée à
 64 Mio et ses ressources systemd restent séparés du daemon lorsqu'ils sont
 colocalisés. Il ne détient aucun secret d'administration.
 
-Le même binaire `1.0.0-rc.1` sert le mode local et le mode distant. Sur un point
+Le même binaire `1.0.0-rc.2` sert le mode local et le mode distant. Sur un point
 public, son certificat est lié à une IP ou à un nom DNS facultatif, le pare-feu
 est préparé avant l'installation et aucune route anonyme n'est ajoutée. Sa base
 reste dérivée : sa reconstruction repose sur la republication des daemons.

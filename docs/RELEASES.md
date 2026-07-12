@@ -16,6 +16,19 @@ Le tag `v1.0.0` ne sera créé que lorsque le produit accomplira un parcours uti
 
 Les étapes P0 à P6 de la [`Roadmap`](ROADMAP.md) sont des paliers internes et ne reçoivent pas automatiquement de tag. P6 correspond à la preuve complète exigée avant la première release candidate.
 
+La candidate `v1.0.0-rc.1` a fermé P6 dans le LAB, puis son
+[essai d'adoption](lab/rc1-adoption.md) a trouvé deux écarts de distribution :
+les dépendances d'automatisation exigeaient encore le dépôt source et le
+premier parcours n'était pas assez explicite. Elle n'est donc pas promue en
+stable. Ces écarts appartiennent à `v1.0.0-rc.2` et doivent être rejoués depuis
+le seul lot distribué.
+
+La [preuve intermédiaire RC2](lab/rc2-adoption.md) confirme la construction
+signée, l'installation autonome de l'extra Ansible et un premier audit sans
+mutation. La promotion stable attend encore le même parcours sur une cible
+distante neuve possédant dès son provisionnement un accès SSH légitime, suivi
+d'un enrôlement et de son re-run idempotent.
+
 La V1 doit au minimum permettre à un opérateur de :
 
 - installer la console sur le système pris en charge ;

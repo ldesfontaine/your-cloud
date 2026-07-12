@@ -92,6 +92,17 @@ La [preuve complète P6](p6-release-v1.md) ajoute la VM neuve, le cycle de vie,
 les mises à jour progressives, les budgets, les parcours, le lot RC signé et
 les placements distant dédié ou colocalisé du coordinateur.
 
+L'[essai d'adoption de la RC1](rc1-adoption.md) repart ensuite du seul lot
+distribuable sur une console Debian neuve. Il valide l'intégrité et
+l'installation, mais refuse la promotion en stable tant que l'automatisation
+ne peut pas être installée sans le dépôt source et que le premier parcours n'est
+pas reproduit avec un accès SSH utilisateur légitime.
+
+La [preuve intermédiaire RC2](rc2-adoption.md) ferme l'installation autonome de
+l'extra Ansible et le premier audit sans mutation. Elle conserve comme dernier
+critère avant promotion l'audit et l'enrôlement d'une cible distante neuve,
+provisionnée dès l'origine avec la clé de son opérateur.
+
 ## Contrôleur `labctl`
 
 [`tools/labctl`](../../tools/labctl) adapte les mécanismes utiles de l’ancien

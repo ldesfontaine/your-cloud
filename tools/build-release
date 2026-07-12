@@ -22,6 +22,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 install -d -m 0755 "$output"
 
 cd "$root"
+(cd console && PYTHONPATH=src "$python_bin" -m unittest discover -s tests -v)
 go test ./...
 go build -trimpath -ldflags='-s -w' \
   -o "$output/your-cloud-observer_${version}_linux_amd64" \
@@ -30,8 +31,16 @@ go build -trimpath -ldflags='-s -w' \
   -o "$output/your-cloud-coordinator_${version}_linux_amd64" \
   ./coordinateur/cmd/your-cloud-coordinator
 
+[[ "$("$output/your-cloud-observer_${version}_linux_amd64" version)" == "$version" ]] \
+  || { echo "version interne du daemon incohérente" >&2; exit 1; }
+[[ "$("$output/your-cloud-coordinator_${version}_linux_amd64" version)" == "$version" ]] \
+  || { echo "version interne du coordinateur incohérente" >&2; exit 1; }
+
 "$python_bin" -m pip wheel --no-deps --no-build-isolation \
   --wheel-dir "$output" "$root/console"
+wheel_version="${version/-rc./rc}"
+[[ -f "$output/your_cloud_console-${wheel_version}-py3-none-any.whl" ]] \
+  || { echo "version interne du wheel incohérente" >&2; exit 1; }
 
 install -m 0644 engine/ansible/files/your-cloud-observer.service \
   "$output/your-cloud-observer.service"
