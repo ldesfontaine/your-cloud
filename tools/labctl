@@ -867,6 +867,50 @@ cmd_ssh() {
   exec ssh "${SSH_OPTS[@]}" "root@$ip" "$@"
 }
 
+safe_remote_path() {
+  [[ "$1" =~ ^/[A-Za-z0-9._/+~-]+$ ]] \
+    || die "chemin distant invalide '$1' : chemin absolu sans espace attendu"
+}
+
+refuse_sensitive_copy() {
+  local source="$1"
+  [[ "${source##*/}" != "keys.txt" && "$source" != /srv/infra/secrets/* ]] \
+    || die "refus de copier une source sensible vers le LAB"
+}
+
+cmd_copy_to() {
+  local name="${1:?usage: labctl copy-to <vm> <source> <chemin-distant>}" source ip remote
+  source="${2:?usage: labctl copy-to <vm> <source> <chemin-distant>}"
+  remote="${3:?usage: labctl copy-to <vm> <source> <chemin-distant>}"
+  [[ $# -eq 3 ]] || die "usage: labctl copy-to <vm> <source> <chemin-distant>"
+  [[ -e "$source" ]] || die "source absente : '$source'"
+  refuse_sensitive_copy "$source"
+  safe_remote_path "$remote"
+  require_command scp
+  ensure_ssh_key
+  require_managed_domain "$name"
+  guard_forbidden_ip "$name"
+  ip=$(wait_ip "$name") || die "pas d'IP pour '$name'"
+  local recursive=()
+  [[ -d "$source" ]] && recursive=(-r)
+  scp "${SSH_OPTS[@]:1}" "${recursive[@]}" -- "$source" "root@$ip:$remote"
+}
+
+cmd_copy_from() {
+  local name="${1:?usage: labctl copy-from <vm> <chemin-distant> <destination>}" remote destination ip
+  remote="${2:?usage: labctl copy-from <vm> <chemin-distant> <destination>}"
+  destination="${3:?usage: labctl copy-from <vm> <chemin-distant> <destination>}"
+  [[ $# -eq 3 ]] || die "usage: labctl copy-from <vm> <chemin-distant> <destination>"
+  safe_remote_path "$remote"
+  refuse_sensitive_copy "$remote"
+  require_command scp
+  ensure_ssh_key
+  require_managed_domain "$name"
+  guard_forbidden_ip "$name"
+  ip=$(wait_ip "$name") || die "pas d'IP pour '$name'"
+  scp "${SSH_OPTS[@]:1}" -r -- "root@$ip:$remote" "$destination"
+}
+
 cmd_console() {
   local name="${1:?usage: labctl console <vm>}"
   require_managed_domain "$name"
@@ -889,6 +933,8 @@ labctl v6 — LAB your-cloud borné
   labctl stop    <vm>
   labctl ip      <vm>
   labctl ssh     <vm> [commande...]
+  labctl copy-to <vm> <source> <chemin-distant>
+  labctl copy-from <vm> <chemin-distant> <destination>
   labctl console <vm>
 
 Gabarits :
@@ -909,6 +955,8 @@ case "$command" in
   stop) cmd_stop "$@" ;;
   ip) cmd_ip "$@" ;;
   ssh) cmd_ssh "$@" ;;
+  copy-to) cmd_copy_to "$@" ;;
+  copy-from) cmd_copy_from "$@" ;;
   console) cmd_console "$@" ;;
   help|-h|--help|'') usage ;;
   *) die "commande inconnue '$command' ; labctl help" ;;

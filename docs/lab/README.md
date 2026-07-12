@@ -148,6 +148,9 @@ labctl topology destroy v1-full
 
 labctl stop lab-console
 labctl start lab-console
+labctl ssh lab-console
+labctl copy-to lab-console ./artefact-public /tmp/artefact-public
+labctl copy-from lab-console /tmp/resultat-public ./resultat-public
 ```
 
 Une nouvelle golden base ne sera créée que si un coût réel et mesuré la
@@ -164,7 +167,10 @@ ne remplace pas la lecture humaine de `labctl list` avant une intervention.
 
 Le contrôleur génère une clé SSH synthétique dédiée dans son cache local et
 l'utilise exclusivement pour les VM du LAB. Cette clé ne doit jamais entrer
-dans le dépôt ni être remplacée par une clé personnelle d'administration.
+dans le dépôt ni être remplacée par une clé personnelle d'administration. Les
+commandes `ssh`, `copy-to` et `copy-from` la sélectionnent automatiquement : il
+ne faut pas appeler `ssh`, `scp` ou `rsync` directement vers les adresses LAB.
+Les copies refusent explicitement `keys.txt` et `/srv/infra/secrets/`.
 
 Seuls des secrets synthétiques entrent dans le LAB. Un playbook réel reçoit
 d’abord un `--syntax-check`, puis son re-run doit donner `changed=0`, toujours
