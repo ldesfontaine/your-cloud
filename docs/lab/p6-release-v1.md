@@ -52,6 +52,25 @@ ajouté et prouvé :
 L'ancienne identité est refusée comme remplacée. La nouvelle clé privée n'a
 jamais quitté la machine.
 
+## Variantes de placement du coordinateur
+
+Le LAB complet conserve toutes ses variantes au lieu de se réduire au scénario
+minimal : coordinateur local colocalisé avec un daemon à P4, coordinateur
+distant dédié à P5, puis coordinateur distant et daemon colocalisés sur
+`lab-coordinateur` dans la preuve complémentaire P6.
+
+La variante distante exige la confirmation `--colocated` lorsque la machine
+pilote et le coordinateur ont la même identité logique. Le daemon du VPS a été
+mis à jour avec l'artefact RC exact, puis a publié vers le coordinateur présent
+sur la même machine. La console a vérifié son état signé à la séquence 208. Son
+pic mémoire était de 4 841 472 octets sous le plafond observer de 64 Mio. Le
+re-run Ansible a donné `ok=7 changed=0` ; une relecture immédiate de la même
+séquence a été refusée comme rejeu.
+
+Les deux processus gardent comptes, données, identités, unités et budgets
+distincts. La chute du coordinateur rend le pilotage indisponible mais ne doit
+pas arrêter les services ni le daemon.
+
 ## Mise à jour progressive
 
 Le coordinateur a été mis à jour avant les daemons. `lab-machine-1` a servi de
@@ -92,7 +111,7 @@ sommes.
 
 | Artefact | SHA-256 |
 |---|---|
-| console wheel | `1e8711c99d031af7a859b8dce952f4dcf115e6515335a3990201e99d8e3e37ba` |
+| console wheel | `b12262f12968919578cf684ea3a64542cd8ffb735f9bae13eba92a46f837ac28` |
 | engine Ansible | `4b3003f6f0802f1c5a778c5262ab4df61826dcda29c26a8f48b72c49a6708dad` |
 | coordinateur amd64 | `299abba53d227f9d2f8d592ef3ba9df70024886e95a1e1d230ea9d8e7e9755f2` |
 | observer amd64 | `dd215334810f648b48ba847a5a8b75ce2d674589b4df7d0a42aaa2819d003323` |

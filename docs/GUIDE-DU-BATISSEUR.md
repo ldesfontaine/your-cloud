@@ -114,6 +114,12 @@ daemon sur le VPS pour observer aussi cette machine, sous des comptes et budgets
 séparés ; cette cohabitation reste optionnelle. Voir le
 [scénario VPS + mini-PC](SCENARIO-VPS-MINI-PC.md).
 
+Ce VPS appartient à la zone d'exposition sans devenir automatiquement une DMZ.
+Le coordinateur reste dispensable à la continuité des services : sa perte coupe
+l'observation récente et le pilotage, pas les applications déjà déployées. Si le
+VPS accueille plus tard k3s ou des services publics, ces charges partageront son
+domaine de panne ; une séparation par VM ou par VPS deviendra préférable.
+
 Ce trafic de télémétrie ne remplace pas WireGuard. Les tunnels d’administration et d’exposition conservent leurs propres rôles, séparés l’un de l’autre et installés uniquement lorsque la topologie en a besoin.
 
 ## Le parcours d’un utilisateur V1

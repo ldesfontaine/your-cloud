@@ -89,7 +89,8 @@ applique un plan pilote à `changed=0`. Elle documente l'étape menée avant la
 reproduction finale sur une VM console réellement neuve.
 
 La [preuve complète P6](p6-release-v1.md) ajoute la VM neuve, le cycle de vie,
-les mises à jour progressives, les budgets, les parcours et le lot RC signé.
+les mises à jour progressives, les budgets, les parcours, le lot RC signé et
+les placements distant dédié ou colocalisé du coordinateur.
 
 ## Contrôleur `labctl`
 

@@ -5,10 +5,40 @@ import tempfile
 import unittest
 
 from your_cloud_console.cli import build_parser, run
-from your_cloud_console.model import Declaration, Infrastructure, SCHEMA_VERSION, save_declaration
+from your_cloud_console.errors import ConsoleError
+from your_cloud_console.model import (
+    Declaration, Infrastructure, Machine, SCHEMA_VERSION, save_declaration,
+)
 
 
 class CliTests(unittest.TestCase):
+    def test_distant_colocation_requires_explicit_confirmation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            declaration = root / "declaration.json"
+            save_declaration(
+                declaration,
+                Declaration(
+                    SCHEMA_VERSION,
+                    (Machine("vps", "192.0.2.10", 22, "operator", "/tmp/key"),),
+                    (),
+                ),
+            )
+            base = [
+                "--declaration", str(declaration),
+                "--state-dir", str(root / "state"),
+                "coordination", "migrate-pilot", "vps",
+                "--coordinator", "vps", "--endpoint", "192.0.2.10",
+                "--engine-dir", str(root / "engine"),
+            ]
+            parser = build_parser()
+            with self.assertRaisesRegex(ConsoleError, "--colocated"):
+                run(parser.parse_args(base))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run(parser.parse_args([*base, "--colocated"])), 3)
+            self.assertIn("Plan non appliqué", output.getvalue())
+
     def test_recovery_restore_requires_approval_before_reading_the_kit(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

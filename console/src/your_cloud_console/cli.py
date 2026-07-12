@@ -282,6 +282,11 @@ def build_parser() -> argparse.ArgumentParser:
     coordination_pilot.add_argument("--port", type=int, default=8443)
     coordination_pilot.add_argument("--engine-dir", type=Path, required=True)
     coordination_pilot.add_argument("--passphrase-file", type=Path)
+    coordination_pilot.add_argument(
+        "--colocated",
+        action="store_true",
+        help="confirmer que le daemon et le coordinateur partagent cette machine",
+    )
     coordination_pilot.add_argument("--approve", action="store_true")
 
     coordination_retire = coordination_commands.add_parser(
@@ -792,8 +797,14 @@ def run(args: argparse.Namespace) -> int:
         declaration = load_declaration(args.declaration)
         pilot = declaration.machine(args.id)
         coordinator = declaration.machine(args.coordinator)
-        if pilot.id == coordinator.id:
-            raise ConsoleError("le pilote distant doit être distinct du coordinateur")
+        if pilot.id == coordinator.id and not args.colocated:
+            raise ConsoleError(
+                "la cohabitation daemon-coordinateur exige la confirmation --colocated"
+            )
+        if pilot.id != coordinator.id and args.colocated:
+            raise ConsoleError(
+                "--colocated est réservé à une machine portant elle-même le coordinateur"
+            )
         print(pilot_migration_plan(pilot, coordinator.id, args.endpoint, args.port))
         if not args.approve:
             print("Plan non appliqué : relancer avec --approve après vérification du pilote.")

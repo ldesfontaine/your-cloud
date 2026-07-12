@@ -55,6 +55,32 @@ installation facile à comprendre, la recommandation est donc : coordinateur
 seul sur le VPS, daemon seul sur le mini-PC. Le daemon du VPS pourra être enrôlé
 ensuite comme une machine ordinaire, sans fusionner les deux rôles.
 
+Le coordinateur est important pour l'observation continue, mais il n'est pas
+essentiel au fonctionnement des services. S'il tombe, l'état devient ancien et
+les changements distants attendent ; les services du mini-PC continuent. Il ne
+porte aucune clé SSH, aucun secret applicatif et aucune autorité d'exécution.
+
+## VPS public, zone d'exposition et DMZ
+
+Un VPS public appartient naturellement à une zone d'exposition. Cela ne suffit
+pas à en faire une DMZ au sens du produit : une DMZ est une frontière de
+sécurité qui isole les composants exposés des services et données, pas le nom
+d'une machine ni un synonyme de VPS.
+
+Dans ce scénario, le VPS ne relaie aucun accès d'administration vers le LAN et
+ne devient pas une passerelle de confiance. Il reçoit seulement les connexions
+mTLS sortantes des daemons et les lectures mTLS de la console. Cette séparation
+reste cohérente même si le VPS est compromis : les clés d'administration et les
+secrets des services ne doivent pas s'y trouver.
+
+Plus tard, héberger un nœud d'entrée, k3s ou un service public sur le même VPS
+place ces charges et le coordinateur dans le même domaine de panne et le même
+noyau. C'est un compromis acceptable pour une petite installation, pas une DMZ
+fortement isolée. La cible plus sûre est alors de séparer le coordinateur dans
+une autre VM ou un petit VPS, et de garder les charges publiques dans leur zone
+d'exposition. Proxmox, surtout s'il administre les VM locales, ne doit pas être
+traité comme un simple service public sur ce VPS sans conception dédiée.
+
 Sur un homelab sans VPS, le coordinateur et le daemon peuvent aussi cohabiter
 sur le mini-PC en mode local. Dans ce cas la console ne retrouve l'observation
 continue depuis Internet que si un chemin réseau privé rend ce mini-PC
@@ -75,6 +101,18 @@ signature-ed25519-verified`. Le coordinateur a consommé moins de 6 Mio au pic e
 le daemon environ 8 Mio, tous deux sous leurs budgets systemd. La preuve P5 a
 déjà montré qu'aucune connexion de télémétrie entrante n'atteignait les machines
 du site privé.
+
+Le LAB complet ne se réduit pas à ce scénario. Il conserve les six VM, deux
+infrastructures, la console de récupération, les coupures, migrations,
+renouvellements, mises à jour, budgets et artefacts. Les variantes couvertes
+sont suivies explicitement : coordinateur local colocalisé à P4, coordinateur
+distant dédié à P5/P6, et coordinateur distant colocalisé avec son propre daemon
+dans la preuve complémentaire P6.
+
+Cette dernière variante a été exécutée : le daemon RC de `lab-coordinateur` a
+publié vers le coordinateur de la même machine, l'état signé a été accepté à la
+séquence 208 et le re-run a donné `changed=0`. Les deux machines privées sont
+restées visibles aux séquences 207 et 208.
 
 Ce scénario ne valide pas encore OPNsense, la gestion d'un hyperviseur, les
 services applicatifs ni leur exposition. Ces sujets peuvent former le palier
