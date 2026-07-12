@@ -28,6 +28,9 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 UMask=0077
+MemoryMax=64M
+TasksMax=64
+CPUQuota=25%
 
 [Install]
 WantedBy=multi-user.target

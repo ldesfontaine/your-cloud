@@ -167,6 +167,8 @@
           your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json public-identity
           your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json export-current
           your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json db-usage
+          your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json prepare-identity-renewal
+          your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json finalize-identity-renewal
         dest: /etc/sudoers.d/90-your-cloud-admin
         owner: root
         group: root

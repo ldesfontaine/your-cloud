@@ -9,6 +9,20 @@ from your_cloud_console.model import Declaration, Infrastructure, SCHEMA_VERSION
 
 
 class CliTests(unittest.TestCase):
+    def test_recovery_restore_requires_approval_before_reading_the_kit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            arguments = build_parser().parse_args([
+                "--declaration", str(root / "declaration.json"),
+                "--state-dir", str(root / "state"),
+                "recovery", "restore", "--kit", str(root / "missing-kit.json"),
+            ])
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run(arguments), 3)
+            self.assertIn("Plan non appliqué", output.getvalue())
+            self.assertFalse((root / "declaration.json").exists())
+
     def test_declaration_migration_requires_approval(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "declaration.json"

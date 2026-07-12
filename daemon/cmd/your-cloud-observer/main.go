@@ -11,6 +11,7 @@ import (
 
 	"github.com/lucas-desfontaine/your-cloud/daemon/internal/app"
 	"github.com/lucas-desfontaine/your-cloud/daemon/internal/config"
+	"github.com/lucas-desfontaine/your-cloud/daemon/internal/identity"
 )
 
 func main() {
@@ -28,11 +29,44 @@ func run() error {
 		return err
 	}
 	if flags.NArg() != 1 {
-		return fmt.Errorf("usage: your-cloud-observer [--config PATH] run|export-current|public-identity|db-usage")
+		return fmt.Errorf("usage: your-cloud-observer [--config PATH] run|export-current|public-identity|db-usage|version|prepare-identity-renewal|commit-identity-renewal|rollback-identity-renewal|finalize-identity-renewal")
+	}
+	if flags.Arg(0) == "version" {
+		fmt.Println(app.Version)
+		return nil
 	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
+	}
+	switch flags.Arg(0) {
+	case "prepare-identity-renewal":
+		candidate, err := identity.PrepareRenewal(cfg.StateDir)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{
+			"algorithm": "Ed25519", "key_id": candidate.KeyID(),
+			"public_key": candidate.PublicBase64(),
+		})
+	case "commit-identity-renewal":
+		if err := identity.CommitRenewal(cfg.StateDir); err != nil {
+			return err
+		}
+		fmt.Println("identité candidate activée")
+		return nil
+	case "rollback-identity-renewal":
+		if err := identity.RollbackRenewal(cfg.StateDir); err != nil {
+			return err
+		}
+		fmt.Println("identité précédente restaurée")
+		return nil
+	case "finalize-identity-renewal":
+		if err := identity.FinalizeRenewal(cfg.StateDir); err != nil {
+			return err
+		}
+		fmt.Println("rollback d'identité retiré")
+		return nil
 	}
 	observer, err := app.Open(cfg)
 	if err != nil {

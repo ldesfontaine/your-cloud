@@ -31,7 +31,9 @@ class TelemetryTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def envelope(self, sequence=1):
+    def envelope(self, sequence=1, *, private=None, key_id=None):
+        private = private or self.private
+        key_id = key_id or self.key_id
         state = telemetrie_pb2.MachineState(
             schema_version=1,
             machine_id="machine-1",
@@ -46,10 +48,10 @@ class TelemetryTests(unittest.TestCase):
         )
         payload = state.SerializeToString(deterministic=True)
         stream = telemetrie_pb2.TELEMETRY_STREAM_STATE
-        signature = self.private.sign(SIGNATURE_DOMAIN + bytes((stream,)) + payload)
+        signature = private.sign(SIGNATURE_DOMAIN + bytes((stream,)) + payload)
         return telemetrie_pb2.SignedEnvelope(
             schema_version=1,
-            key_id=self.key_id,
+            key_id=key_id,
             stream=stream,
             payload=payload,
             signature=signature,
@@ -95,6 +97,38 @@ class TelemetryTests(unittest.TestCase):
             "machine-1", envelope.SerializeToString(deterministic=True), self.store
         )
         self.assertEqual(verified.kind, "observer-started")
+
+    def test_renewal_accepts_only_prepared_candidate_then_archives_previous(self):
+        candidate = Ed25519PrivateKey.generate()
+        public = candidate.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        import hashlib
+        key_id = hashlib.sha256(public).hexdigest()
+        candidate_envelope = self.envelope(
+            sequence=2, private=candidate, key_id=key_id
+        ).SerializeToString(deterministic=True)
+        with self.assertRaisesRegex(TelemetryError, "inconnue"):
+            verify_state("machine-1", candidate_envelope, self.store)
+        self.store.prepare_renewal(
+            "machine-1",
+            key_id=key_id,
+            algorithm="Ed25519",
+            public_key=base64.b64encode(public).decode("ascii"),
+        )
+        self.assertEqual(
+            verify_state("machine-1", candidate_envelope, self.store).sequence, 2
+        )
+        self.store.finalize_renewal("machine-1", key_id)
+        raw = self.store.load()
+        self.assertEqual(self.store.get("machine-1").key_id, key_id)
+        self.assertEqual(raw["history"]["machine-1"][0]["status"], "replaced")
+        with self.assertRaisesRegex(TelemetryError, "inconnue|remplacée"):
+            verify_state(
+                "machine-1",
+                self.envelope(sequence=3).SerializeToString(deterministic=True),
+                self.store,
+            )
 
 
 if __name__ == "__main__":

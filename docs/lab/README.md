@@ -58,6 +58,7 @@ La création du LAB, le [premier contact](p1-premier-contact.md), la
 Topologie `v1-full` :
 
 - `lab-console` ;
+- `lab-console-recovery`, console neuve réservée aux preuves de restauration ;
 - `lab-coordinateur` ;
 - `lab-gateway` ;
 - `lab-machine-1` et `lab-machine-2` ;
@@ -81,6 +82,14 @@ La [preuve P5](p5-mode-distant.md) a utilisé cette topologie. `site-a` et
 même réseau privé de LAB : cette topologie ne les présente donc pas comme deux
 domaines de panne indépendants. Le schéma 2 et la détection runtime issue des
 métadonnées `labctl` les confirment tous deux dans `lab-site-private`.
+
+La [preuve intermédiaire de restauration P6](p6-restauration-console.md)
+reprend cette flotte depuis un état console vierge, sans réenrôlement, puis
+applique un plan pilote à `changed=0`. Elle documente l'étape menée avant la
+reproduction finale sur une VM console réellement neuve.
+
+La [preuve complète P6](p6-release-v1.md) ajoute la VM neuve, le cycle de vie,
+les mises à jour progressives, les budgets, les parcours et le lot RC signé.
 
 ## Contrôleur `labctl`
 

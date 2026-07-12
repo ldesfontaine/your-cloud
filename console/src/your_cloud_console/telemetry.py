@@ -20,7 +20,7 @@ from .errors import TelemetryError
 from .protocol import telemetrie_pb2
 
 
-IDENTITY_SCHEMA_VERSION = 1
+IDENTITY_SCHEMA_VERSION = 2
 MAX_ENVELOPE_BYTES = 256 * 1024
 SIGNATURE_DOMAIN = b"your-cloud.telemetry.v1\x00"
 
@@ -47,7 +47,12 @@ class IdentityStore:
         self.path = state_dir / "machine_identities.json"
 
     def _empty(self) -> dict[str, Any]:
-        return {"schema_version": IDENTITY_SCHEMA_VERSION, "identities": {}}
+        return {
+            "schema_version": IDENTITY_SCHEMA_VERSION,
+            "identities": {},
+            "pending": {},
+            "history": {},
+        }
 
     def load(self) -> dict[str, Any]:
         """Charge le registre et valide chaque identité avant utilisation."""
@@ -60,12 +65,34 @@ class IdentityStore:
             raise TelemetryError(
                 f"registre d'identités invalide : ligne {error.lineno}, colonne {error.colno}"
             ) from error
-        if not isinstance(raw, dict) or set(raw) != {"schema_version", "identities"}:
+        if not isinstance(raw, dict) or raw.get("schema_version") not in {1, 2}:
             raise TelemetryError("registre d'identités incomplet")
-        if raw["schema_version"] != IDENTITY_SCHEMA_VERSION or not isinstance(raw["identities"], dict):
+        if raw["schema_version"] == 1:
+            if set(raw) != {"schema_version", "identities"}:
+                raise TelemetryError("registre d'identités incomplet")
+            raw = {
+                "schema_version": 2,
+                "identities": raw["identities"],
+                "pending": {},
+                "history": {},
+            }
+        if set(raw) != {"schema_version", "identities", "pending", "history"}:
+            raise TelemetryError("registre d'identités incomplet")
+        if not all(isinstance(raw[field], dict) for field in ("identities", "pending", "history")):
             raise TelemetryError("version inconnue du registre d'identités")
         for machine_id, item in raw["identities"].items():
             self._parse(machine_id, item)
+        for machine_id, item in raw["pending"].items():
+            identity = self._parse(machine_id, item)
+            if identity.status != "pending":
+                raise TelemetryError(f"identité candidate invalide pour {machine_id}")
+        for machine_id, items in raw["history"].items():
+            if not isinstance(items, list):
+                raise TelemetryError(f"historique d'identités invalide pour {machine_id}")
+            for item in items:
+                identity = self._parse(machine_id, item)
+                if identity.status not in {"replaced", "revoked"}:
+                    raise TelemetryError(f"historique d'identités invalide pour {machine_id}")
         return raw
 
     def _parse(self, machine_id: str, item: Any) -> MachineIdentity:
@@ -75,7 +102,9 @@ class IdentityStore:
         }
         if not isinstance(item, dict) or set(item) != expected:
             raise TelemetryError(f"identité invalide pour {machine_id}")
-        if item["algorithm"] != "Ed25519" or item["status"] not in {"active", "revoked"}:
+        if item["algorithm"] != "Ed25519" or item["status"] not in {
+            "active", "pending", "replaced", "revoked"
+        }:
             raise TelemetryError(f"identité invalide pour {machine_id}")
         if not all(isinstance(item[field], str) and item[field] for field in ("key_id", "public_key", "approved_at")):
             raise TelemetryError(f"identité invalide pour {machine_id}")
@@ -142,11 +171,98 @@ class IdentityStore:
         self._write(raw)
         return revoked
 
-    def accept_sequence(self, machine_id: str, stream: int, sequence: int) -> None:
-        """Avance une séquence persistante et refuse rejeu ou retour arrière."""
+    def prepare_renewal(
+        self, machine_id: str, *, key_id: str, algorithm: str, public_key: str
+    ) -> MachineIdentity:
+        """Enregistre une candidate distincte sans remplacer l'identité active."""
+
+        current = self.get(machine_id)
+        if algorithm != "Ed25519":
+            raise TelemetryError(f"algorithme d'identité refusé : {algorithm}")
+        public = _decode_public_key(public_key)
+        if hashlib.sha256(public).hexdigest() != key_id:
+            raise TelemetryError("identifiant de clé incohérent avec la clé publique")
+        if current.key_id == key_id:
+            raise TelemetryError("la candidate est identique à l'identité active")
+        raw = self.load()
+        existing = raw["pending"].get(machine_id)
+        if existing is not None:
+            pending = self._parse(machine_id, existing)
+            if pending.key_id != key_id:
+                raise TelemetryError("une autre identité candidate existe déjà")
+            return pending
+        pending = MachineIdentity(
+            key_id=key_id,
+            algorithm=algorithm,
+            public_key=public_key,
+            status="pending",
+            approved_at=datetime.now(timezone.utc).isoformat(),
+            revoked_at=None,
+            state_sequence=current.state_sequence,
+            event_sequence=current.event_sequence,
+        )
+        raw["pending"][machine_id] = asdict(pending)
+        self._write(raw)
+        return pending
+
+    def finalize_renewal(self, machine_id: str, key_id: str) -> MachineIdentity:
+        """Active la candidate vérifiée et archive l'ancienne identité."""
 
         raw = self.load()
         current = self.get(machine_id)
+        item = raw["pending"].get(machine_id)
+        if item is None:
+            raise TelemetryError("aucune identité candidate à finaliser")
+        pending = self._parse(machine_id, item)
+        if pending.key_id != key_id:
+            raise TelemetryError("identité candidate inattendue")
+        ended_at = datetime.now(timezone.utc).isoformat()
+        replaced = MachineIdentity(**{
+            **asdict(current), "status": "replaced", "revoked_at": ended_at,
+        })
+        active = MachineIdentity(**{
+            **asdict(pending), "status": "active", "revoked_at": None,
+        })
+        raw["history"].setdefault(machine_id, []).append(asdict(replaced))
+        raw["identities"][machine_id] = asdict(active)
+        del raw["pending"][machine_id]
+        self._write(raw)
+        return active
+
+    def cancel_renewal(self, machine_id: str, key_id: str) -> None:
+        """Oublie une candidate refusée sans modifier l'identité active."""
+
+        raw = self.load()
+        item = raw["pending"].get(machine_id)
+        if item is None:
+            return
+        pending = self._parse(machine_id, item)
+        if pending.key_id != key_id:
+            raise TelemetryError("identité candidate inattendue")
+        del raw["pending"][machine_id]
+        self._write(raw)
+
+    def for_envelope(self, machine_id: str, key_id: str) -> MachineIdentity:
+        """Retourne l'identité active ou la candidate explicitement préparée."""
+
+        raw = self.load()
+        current = self.get(machine_id)
+        if current.key_id == key_id:
+            return current
+        pending = raw["pending"].get(machine_id)
+        if pending is not None:
+            candidate = self._parse(machine_id, pending)
+            if candidate.key_id == key_id:
+                return candidate
+        raise TelemetryError("identité d'enveloppe inconnue ou remplacée")
+
+    def accept_sequence(
+        self, machine_id: str, stream: int, sequence: int, *, key_id: str | None = None
+    ) -> None:
+        """Avance une séquence persistante et refuse rejeu ou retour arrière."""
+
+        raw = self.load()
+        current = self.get(machine_id) if key_id is None else self.for_envelope(machine_id, key_id)
         field = {
             telemetrie_pb2.TELEMETRY_STREAM_STATE: "state_sequence",
             telemetrie_pb2.TELEMETRY_STREAM_EVENT: "event_sequence",
@@ -160,7 +276,8 @@ class IdentityStore:
             )
         item = asdict(current)
         item[field] = sequence
-        raw["identities"][machine_id] = item
+        target = "pending" if current.status == "pending" else "identities"
+        raw[target][machine_id] = item
         self._write(raw)
 
     def _write(self, value: dict[str, Any]) -> None:
@@ -213,9 +330,7 @@ def verify_state(
         raise TelemetryError("enveloppe Protobuf invalide") from error
     if envelope.schema_version != 1 or envelope.stream != telemetrie_pb2.TELEMETRY_STREAM_STATE:
         raise TelemetryError("version ou flux d'enveloppe refusé")
-    identity = store.get(machine_id)
-    if envelope.key_id != identity.key_id:
-        raise TelemetryError("identité d'enveloppe inconnue ou remplacée")
+    identity = store.for_envelope(machine_id, envelope.key_id)
     public = Ed25519PublicKey.from_public_bytes(_decode_public_key(identity.public_key))
     try:
         public.verify(
@@ -236,7 +351,9 @@ def verify_state(
     if len(state.units) > 32:
         raise TelemetryError("trop d'unités dans la télémétrie")
     if record_sequence:
-        store.accept_sequence(machine_id, envelope.stream, state.sequence)
+        store.accept_sequence(
+            machine_id, envelope.stream, state.sequence, key_id=envelope.key_id
+        )
     return state
 
 
@@ -258,9 +375,7 @@ def verify_event(
         raise TelemetryError("enveloppe Protobuf invalide") from error
     if envelope.schema_version != 1 or envelope.stream != telemetrie_pb2.TELEMETRY_STREAM_EVENT:
         raise TelemetryError("version ou flux d'enveloppe refusé")
-    identity = store.get(machine_id)
-    if envelope.key_id != identity.key_id:
-        raise TelemetryError("identité d'enveloppe inconnue ou remplacée")
+    identity = store.for_envelope(machine_id, envelope.key_id)
     public = Ed25519PublicKey.from_public_bytes(_decode_public_key(identity.public_key))
     try:
         public.verify(
@@ -288,7 +403,9 @@ def verify_event(
     ):
         raise TelemetryError("marqueur de lacune incohérent")
     if record_sequence:
-        store.accept_sequence(machine_id, envelope.stream, event.sequence)
+        store.accept_sequence(
+            machine_id, envelope.stream, event.sequence, key_id=envelope.key_id
+        )
     return event
 
 

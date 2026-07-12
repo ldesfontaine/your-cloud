@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Construit et signe une release candidate uniquement dans un runner isolé.
+set -euo pipefail
+
+version="${1:?usage: tools/build-release <version> <output-dir> <signing-key>}"
+output="${2:?usage: tools/build-release <version> <output-dir> <signing-key>}"
+signing_key="${3:?usage: tools/build-release <version> <output-dir> <signing-key>}"
+
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] \
+  || { echo "version RC invalide" >&2; exit 1; }
+[[ -f "$signing_key" ]] || { echo "clé de signature absente" >&2; exit 1; }
+[[ "$(stat -c %a "$signing_key")" == "600" ]] \
+  || { echo "la clé de signature doit être en mode 0600" >&2; exit 1; }
+command -v go >/dev/null
+command -v openssl >/dev/null
+command -v sha256sum >/dev/null
+python_bin="${PYTHON:-python3}"
+"$python_bin" -c 'import setuptools.build_meta' >/dev/null
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+[[ ! -e "$output" ]] || { echo "refus d'écraser la sortie existante" >&2; exit 1; }
+install -d -m 0755 "$output"
+
+cd "$root"
+go test ./...
+go build -trimpath -ldflags='-s -w' \
+  -o "$output/your-cloud-observer_${version}_linux_amd64" \
+  ./daemon/cmd/your-cloud-observer
+go build -trimpath -ldflags='-s -w' \
+  -o "$output/your-cloud-coordinator_${version}_linux_amd64" \
+  ./coordinateur/cmd/your-cloud-coordinator
+
+"$python_bin" -m pip wheel --no-deps --no-build-isolation \
+  --wheel-dir "$output" "$root/console"
+
+install -m 0644 engine/ansible/files/your-cloud-observer.service \
+  "$output/your-cloud-observer.service"
+install -m 0644 engine/ansible/files/your-cloud-coordinator.service \
+  "$output/your-cloud-coordinator.service"
+tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+  -czf "$output/your-cloud-engine_${version}.tar.gz" engine
+cat >"$output/RELEASE-METADATA.json" <<EOF
+{
+  "version": "$version",
+  "protocol_schema": 1,
+  "declaration_schema": 2,
+  "identity_registry_schema": 2,
+  "platform": "debian-13-amd64",
+  "status": "release-candidate"
+}
+EOF
+
+(
+  cd "$output"
+  sha256sum RELEASE-METADATA.json *.service *.whl *.tar.gz \
+    your-cloud-coordinator_*_linux_amd64 \
+    your-cloud-observer_*_linux_amd64 >SHA256SUMS
+  openssl pkey -in "$signing_key" -pubout -out release-signing-public.pem
+  openssl pkeyutl -sign -rawin -inkey "$signing_key" \
+    -in SHA256SUMS -out SHA256SUMS.sig
+  openssl pkeyutl -verify -rawin -pubin -inkey release-signing-public.pem \
+    -in SHA256SUMS -sigfile SHA256SUMS.sig
+  sha256sum --check SHA256SUMS
+)
+
+echo "Release candidate $version construite et vérifiée dans $output"

@@ -24,7 +24,7 @@ flowchart LR
 | P3 | La machine peut être sécurisée sans perdre l’accès | Première mutation à risque et retour maîtrisé | Nouvelle session SSH, pare-feu dual-stack, re-run `changed=0`, dérive détectée |
 | P4 | L’état reste disponible lorsque le laptop est éteint | Composant toujours allumé et protocole de télémétrie | Coordinateur local, coupure console, journal repris, aucun arrêt de service causé par le pilotage |
 | P5 | Plusieurs sites et infrastructures sont observés à distance | Réseau distribué, NAT et migration progressive | VPS sans domaine obligatoire, machine pilote, aucune entrée de télémétrie vers le LAN, deux infrastructures distinctes |
-| P6 | Le produit accomplit et restaure tout le parcours V1 | Cycle de vie complet et qualité de release | LAB complet, restauration de console, renouvellement, mise à jour, artefacts et documentation vérifiés |
+| P6 | Le produit accomplit et restaure tout le parcours V1 | Cycle de vie complet et qualité de release | LAB complet avec console de récupération neuve, renouvellement, mise à jour, artefacts et documentation vérifiés |
 
 ## P0 — Atelier propre
 
@@ -171,6 +171,11 @@ Voir la [preuve LAB P5](lab/p5-mode-distant.md).
 
 ## P6 — Release V1 complète
 
+> État : terminé le 2026-07-12. Restauration sur VM neuve, cycle de vie,
+> renouvellement, mises à jour progressives, budgets, parcours et artefacts RC
+> signés sont prouvés dans `v1-full`. Le tag et la publication attendent un GO
+> explicite distinct.
+
 ### But
 
 Transformer les composants prouvés séparément en un produit installable, récupérable et documenté de bout en bout.
@@ -189,6 +194,8 @@ Transformer les composants prouvés séparément en un produit installable, réc
 ### Preuve de sortie
 
 Une VM de console neuve restaure son état, reprend une flotte existante, observe deux infrastructures et applique un plan idempotent sans réenrôlement. Les preuves de sécurité, coupure, reprise et mise à jour sont reproductibles. Alors seulement une release candidate puis le tag `v1.0.0` peuvent être créés.
+
+Voir la [preuve LAB P6](lab/p6-release-v1.md).
 
 ## Horizons après `v1.0.0`
 

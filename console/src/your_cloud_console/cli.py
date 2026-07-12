@@ -26,7 +26,15 @@ from .coordination import (
     retire_coordinator_point,
 )
 from .errors import ConsoleError
-from .enrollment import enroll, enrollment_plan, remote_observer
+from .enrollment import (
+    enroll,
+    enrollment_plan,
+    identity_renewal_plan,
+    observer_uninstall_plan,
+    remote_observer,
+    renew_identity,
+    uninstall_observer,
+)
 from .failure_domains import FailureDomainStore, failure_domain_view
 from .model import (
     Declaration,
@@ -50,10 +58,12 @@ from .security import (
     profile_status,
     security_plan,
 )
+from .resources import measure_resources
 from .ssh import verify_or_pin_host_key
 from .storage import HostKeyStore
 from .telemetry import IdentityStore, decode_envelope, state_to_dict, verify_event, verify_state
 from .transport import TransportStore
+from .updates import UpdateStore, apply_update, update_plan
 
 
 def default_declaration_path() -> Path:
@@ -104,6 +114,19 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     subcommands.add_parser("init", help="créer une déclaration vide au schéma courant")
+
+    recovery = subcommands.add_parser(
+        "recovery", help="actualiser ou restaurer le kit de récupération de la console"
+    )
+    recovery_commands = recovery.add_subparsers(dest="recovery_command", required=True)
+    for command, help_text in (
+        ("refresh", "capturer l'état complet courant dans un kit existant"),
+        ("restore", "restaurer une console neuve depuis un kit complet"),
+    ):
+        recovery_command = recovery_commands.add_parser(command, help=help_text)
+        recovery_command.add_argument("--kit", type=Path, required=True)
+        recovery_command.add_argument("--passphrase-file", type=Path)
+        recovery_command.add_argument("--approve", action="store_true")
 
     declaration = subcommands.add_parser("declaration", help="gérer le schéma de déclaration")
     declaration_commands = declaration.add_subparsers(
@@ -178,6 +201,22 @@ def build_parser() -> argparse.ArgumentParser:
     machine_disenroll = machine_commands.add_parser("disenroll", help="révoquer le suivi sans désinstaller")
     machine_disenroll.add_argument("id")
     machine_disenroll.add_argument("--approve", action="store_true")
+
+    machine_renew = machine_commands.add_parser(
+        "renew-identity", help="remplacer l'identité sans changer la machine logique"
+    )
+    machine_renew.add_argument("id")
+    machine_renew.add_argument("--engine-dir", type=Path, required=True)
+    machine_renew.add_argument("--passphrase-file", type=Path)
+    machine_renew.add_argument("--approve", action="store_true")
+
+    machine_uninstall = machine_commands.add_parser(
+        "uninstall-observer", help="retirer le daemon sans toucher aux services"
+    )
+    machine_uninstall.add_argument("id")
+    machine_uninstall.add_argument("--engine-dir", type=Path, required=True)
+    machine_uninstall.add_argument("--passphrase-file", type=Path)
+    machine_uninstall.add_argument("--approve", action="store_true")
 
     administration = machine_commands.add_parser(
         "administration", help="préparer un accès d'administration séparé"
@@ -269,6 +308,28 @@ def build_parser() -> argparse.ArgumentParser:
     coordination_journal.add_argument("--passphrase-file", type=Path)
     coordination_journal.add_argument("--json", action="store_true")
 
+    component = subcommands.add_parser(
+        "component", help="mettre à jour progressivement les composants natifs"
+    )
+    component_commands = component.add_subparsers(dest="component_command", required=True)
+    component_update = component_commands.add_parser("update")
+    component_update.add_argument("kind", choices=("coordinator", "observer"))
+    component_update.add_argument("id")
+    component_update.add_argument("--binary", type=Path, required=True)
+    component_update.add_argument("--sha256", required=True)
+    component_update.add_argument("--version", required=True)
+    component_update.add_argument("--engine-dir", type=Path, required=True)
+    component_update.add_argument("--passphrase-file", type=Path)
+    component_update.add_argument("--pilot", action="store_true")
+    component_update.add_argument("--approve", action="store_true")
+    component_resources = component_commands.add_parser(
+        "resources", help="mesurer les budgets systemd et SQLite"
+    )
+    component_resources.add_argument("kind", choices=("coordinator", "observer"))
+    component_resources.add_argument("id")
+    component_resources.add_argument("--passphrase-file", type=Path)
+    component_resources.add_argument("--json", action="store_true")
+
     serve_parser = subcommands.add_parser("serve", help="servir l'API locale en lecture seule")
     serve_parser.add_argument("--socket", type=Path, required=True)
     return parser
@@ -295,6 +356,44 @@ def run(args: argparse.Namespace) -> int:
     if args.command == "init":
         save_declaration(args.declaration, empty_declaration(), refuse_existing=True)
         print(f"Déclaration créée : {args.declaration}")
+        return 0
+    if args.command == "recovery":
+        plan_title = (
+            "Plan d'actualisation"
+            if args.recovery_command == "refresh"
+            else "Plan de restauration"
+        )
+        if args.recovery_command == "refresh":
+            effects = (
+                "  - remplacer le kit par l'état complet courant de la console\n"
+                "  - conserver les clés d'administration et l'autorité de transport chiffrées\n"
+                "  - inclure la déclaration et les registres publics à leur version courante"
+            )
+        elif args.recovery_command == "restore":
+            effects = (
+                "  - exiger une déclaration absente et un répertoire d'état vierge\n"
+                "  - restaurer les autorités chiffrées sans contacter ni réenrôler les machines\n"
+                "  - restaurer la déclaration et les registres publics sans écrasement"
+            )
+        else:
+            raise ConsoleError("commande de récupération inconnue")
+        print(f"{plan_title} de la console depuis {args.kit} :\n{effects}")
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification.")
+            return 3
+        passphrase = read_passphrase(args.passphrase_file, confirm=False)
+        store = AdminKeyStore(args.state_dir)
+        if args.recovery_command == "refresh":
+            count = store.refresh_recovery_kit(args.declaration, args.kit, passphrase)
+            print(f"Kit complet actualisé : {count} clé(s) d'administration chiffrée(s).")
+        else:
+            count = store.restore_recovery_kit(args.declaration, args.kit, passphrase)
+            load_declaration(args.declaration)
+            IdentityStore(args.state_dir).load()
+            print(
+                f"Console restaurée : {count} clé(s) d'administration, déclaration et "
+                "registre d'identités vérifiés. Aucun réenrôlement effectué."
+            )
         return 0
     if args.command == "declaration" and args.declaration_command == "migrate":
         candidate = load_migration_candidate(args.declaration)
@@ -511,6 +610,41 @@ def run(args: argparse.Namespace) -> int:
             return 3
         revoked = IdentityStore(args.state_dir).revoke(args.id)
         print(f"Identité révoquée : {revoked.key_id}. Aucune mutation distante effectuée.")
+        return 0
+    if args.command == "machine" and args.machine_command == "renew-identity":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        print(identity_renewal_plan(machine))
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification.")
+            return 3
+        host_store = HostKeyStore(args.state_dir)
+        verify_or_pin_host_key(machine, host_store)
+        with machine_access(
+            machine, args.state_dir, args.passphrase_file
+        ) as access:
+            print(renew_identity(
+                access,
+                host_store,
+                IdentityStore(args.state_dir),
+                engine_dir=args.engine_dir,
+            ))
+        return 0
+    if args.command == "machine" and args.machine_command == "uninstall-observer":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        print(observer_uninstall_plan(machine))
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification.")
+            return 3
+        host_store = HostKeyStore(args.state_dir)
+        verify_or_pin_host_key(machine, host_store)
+        with machine_access(
+            machine, args.state_dir, args.passphrase_file
+        ) as access:
+            result = uninstall_observer(access, host_store, engine_dir=args.engine_dir)
+        revoked = IdentityStore(args.state_dir).revoke(machine.id)
+        print(f"{result} Identité révoquée : {revoked.key_id}.")
         return 0
     if args.command == "machine" and args.machine_command == "administration":
         if args.administration_command != "prepare":
@@ -758,6 +892,53 @@ def run(args: argparse.Namespace) -> int:
                 f"suite après {next_sequence}, autre page : {'oui' if has_more else 'non'}"
             )
         return 0
+    if args.command == "component" and args.component_command == "update":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        if not args.pilot:
+            raise ConsoleError("la mise à jour exige une machine pilote explicite avec --pilot")
+        print(update_plan(args.kind, machine, args.binary, args.version, args.sha256))
+        if not args.approve:
+            print("Plan non appliqué : relancer avec --approve après vérification.")
+            return 3
+        host_store = HostKeyStore(args.state_dir)
+        verify_or_pin_host_key(machine, host_store)
+        with machine_access(
+            machine, args.state_dir, args.passphrase_file
+        ) as access:
+            print(apply_update(
+                args.kind,
+                access,
+                host_store,
+                UpdateStore(args.state_dir),
+                binary=args.binary,
+                expected_sha256=args.sha256,
+                version=args.version,
+                engine_dir=args.engine_dir,
+            ))
+        return 0
+    if args.command == "component" and args.component_command == "resources":
+        declaration = load_declaration(args.declaration)
+        machine = declaration.machine(args.id)
+        host_store = HostKeyStore(args.state_dir)
+        verify_or_pin_host_key(machine, host_store)
+        with machine_access(
+            machine, args.state_dir, args.passphrase_file
+        ) as access:
+            measured = measure_resources(args.kind, access, host_store)
+        if args.json:
+            print(json.dumps(measured, ensure_ascii=False, indent=2))
+        else:
+            database = measured["database"]
+            print(
+                f"Ressources {args.kind} sur {args.id} : "
+                f"mémoire {measured['memory_current_bytes']} octets "
+                f"(pic {measured['memory_peak_bytes']}, plafond {measured['memory_max_bytes']}), "
+                f"tâches {measured['tasks_current']}/{measured['tasks_max']}, "
+                f"SQLite {database['bytes']}/{database['limit_bytes']} octets, "
+                f"budget {'respecté' if measured['within_budget'] else 'DÉPASSÉ'}"
+            )
+        return 0 if measured["within_budget"] else 3
     if args.command == "serve":
         serve(args.socket, args.declaration)
         return 0

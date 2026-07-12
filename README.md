@@ -30,6 +30,7 @@ flux installation, publication, lecture et panne.
 - [Anatomie technique](docs/ANATOMIE-DU-PROJET.md)
 - [Vision](docs/VISION.md)
 - [Guide du bâtisseur](docs/GUIDE-DU-BATISSEUR.md)
+- [Scénario simple VPS + mini-PC](docs/SCENARIO-VPS-MINI-PC.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contrat des releases](docs/RELEASES.md)
 - [Vocabulaire partagé](CONTEXT.md)

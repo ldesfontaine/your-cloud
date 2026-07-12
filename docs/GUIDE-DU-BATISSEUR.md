@@ -107,6 +107,13 @@ flowchart LR
 
 Le VPS fournit un point de rendez-vous accessible aux différents sites. Un domaine est pratique mais facultatif : une adresse IP suffit, car la confiance vient des identités cryptographiques et non du DNS.
 
+Le cas concret le plus simple place le coordinateur seul sur un VPS et un daemon
+sur le mini-PC domestique. Le routeur du domicile laisse sortir la télémétrie
+mais n'ouvre aucun port vers le mini-PC. Le coordinateur peut cohabiter avec un
+daemon sur le VPS pour observer aussi cette machine, sous des comptes et budgets
+séparés ; cette cohabitation reste optionnelle. Voir le
+[scénario VPS + mini-PC](SCENARIO-VPS-MINI-PC.md).
+
 Ce trafic de télémétrie ne remplace pas WireGuard. Les tunnels d’administration et d’exposition conservent leurs propres rôles, séparés l’un de l’autre et installés uniquement lorsque la topologie en a besoin.
 
 ## Le parcours d’un utilisateur V1

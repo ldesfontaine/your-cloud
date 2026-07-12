@@ -9,6 +9,8 @@ preuves LAB.
 - [Protocole V1](protocole-v1.md)
 - [Profil Linux V1](profil-linux-v1.md)
 - [Déclaration V2 et domaines de panne](declaration-v2.md)
+- [Récupération de la console V1](recuperation-console-v1.md)
+- [Contrat de release V1](release-v1.md)
 - [LAB V1](../lab/README.md)
 
 Chaque document indique si son contrat reste une cible ou s'il possède déjà une

@@ -38,7 +38,7 @@ func Load(path string) (*Registry, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("registre public JSON invalide: %w", err)
 	}
-	if raw.SchemaVersion != 1 || raw.Identities == nil {
+	if (raw.SchemaVersion != 1 && raw.SchemaVersion != 2) || raw.Identities == nil {
 		return nil, fmt.Errorf("registre public de version inconnue")
 	}
 	result := &Registry{keys: make(map[string]ed25519.PublicKey), ids: make(map[string]string)}

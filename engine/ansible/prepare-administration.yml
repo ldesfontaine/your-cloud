@@ -52,6 +52,8 @@
           {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json public-identity
           {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json export-current
           {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json db-usage
+          {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json prepare-identity-renewal
+          {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json finalize-identity-renewal
         dest: /etc/sudoers.d/90-your-cloud-admin
         owner: root
         group: root

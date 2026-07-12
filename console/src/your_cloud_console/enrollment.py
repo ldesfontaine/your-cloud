@@ -36,6 +36,32 @@ def enrollment_plan(machine: Machine, daemon_binary: Path, units: tuple[str, ...
     )
 
 
+def identity_renewal_plan(machine: Machine) -> str:
+    """Décrit le remplacement borné de l'identité d'une machine logique."""
+
+    return "\n".join((
+        f"Plan de renouvellement d'identité pour {machine.id} :",
+        "  - générer une candidate privée sur la machine sans l'activer",
+        "  - conserver l'identité active et son historique dans la console",
+        "  - préparer le rollback local avant activation",
+        "  - redémarrer uniquement le daemon d'observation",
+        "  - vérifier un état signé par la candidate avant de remplacer l'ancienne",
+        "  - conserver la même machine logique, adresse, affectation et séquences",
+    ))
+
+
+def observer_uninstall_plan(machine: Machine) -> str:
+    """Décrit le retrait du seul daemon sans toucher aux services hébergés."""
+
+    return "\n".join((
+        f"Plan de désinstallation du daemon pour {machine.id} :",
+        "  - arrêter et désactiver uniquement your-cloud-observer.service",
+        "  - retirer son binaire, sa configuration, son compte et son état privé",
+        "  - révoquer son identité publique dans la console",
+        "  - conserver la machine logique, SSH, les services et leurs données",
+    ))
+
+
 def _run(command: list[str], *, env: dict[str, str] | None = None, timeout: int = 120) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout, env=env)
@@ -123,7 +149,10 @@ def enroll(
 def remote_observer(machine: Machine, host_store: HostKeyStore, command: str) -> str:
     """Exécute une commande locale bornée du daemon via le chemin SSH vérifié."""
 
-    if command not in {"public-identity", "export-current", "db-usage"}:
+    if command not in {
+        "public-identity", "export-current", "db-usage",
+        "prepare-identity-renewal", "finalize-identity-renewal",
+    }:
         raise EnrollmentError("commande d'observation distante refusée")
     ssh = ssh_command(machine, host_store.render_known_hosts())
     completed = _run(
@@ -136,3 +165,121 @@ def remote_observer(machine: Machine, host_store: HostKeyStore, command: str) ->
     if not output or len(output) > 512 * 1024:
         raise EnrollmentError("sortie d'observation absente ou trop grande")
     return output
+
+
+def _lifecycle_command(
+    machine: Machine, host_store: HostKeyStore, engine_dir: Path, playbook_name: str
+) -> tuple[list[str], dict[str, str]]:
+    known_hosts = host_store.render_known_hosts()
+    playbook = engine_dir / "ansible" / playbook_name
+    if not playbook.is_file():
+        raise EnrollmentError(f"playbook de cycle de vie absent : {playbook}")
+    command = [
+        "ansible-playbook", "-i", f"{machine.address},", "--user", machine.user,
+        "--private-key", machine.identity_file, "--extra-vars", f"ansible_port={machine.port}",
+        str(playbook),
+    ]
+    env = dict(os.environ)
+    env["ANSIBLE_CONFIG"] = str(engine_dir / "ansible" / "ansible.cfg")
+    env["ANSIBLE_SSH_COMMON_ARGS"] = " ".join((
+        "-F /dev/null", "-o IdentitiesOnly=yes", "-o StrictHostKeyChecking=yes",
+        f"-o UserKnownHostsFile={known_hosts}", "-o GlobalKnownHostsFile=/dev/null",
+    ))
+    return command, env
+
+
+def renew_identity(
+    machine: Machine,
+    host_store: HostKeyStore,
+    identity_store: IdentityStore,
+    *,
+    engine_dir: Path,
+) -> str:
+    """Renouvelle en deux phases puis vérifie la nouvelle provenance signée."""
+
+    authorization, env = _lifecycle_command(
+        machine, host_store, engine_dir, "authorize-observer-lifecycle.yml"
+    )
+    syntax = _run([*authorization[:-1], "--syntax-check", authorization[-1]], env=env)
+    if syntax.returncode != 0:
+        raise EnrollmentError(
+            f"syntax-check des délégations refusé : {syntax.stderr.strip() or syntax.stdout.strip()}"
+        )
+    authorized = _run(authorization, env=env, timeout=180)
+    if authorized.returncode != 0:
+        raise EnrollmentError(
+            f"délégations de renouvellement refusées : {authorized.stderr.strip() or authorized.stdout.strip()}"
+        )
+    candidate_raw = remote_observer(machine, host_store, "prepare-identity-renewal")
+    try:
+        candidate = json.loads(candidate_raw)
+    except json.JSONDecodeError as error:
+        raise EnrollmentError("identité candidate distante invalide") from error
+    if not isinstance(candidate, dict) or set(candidate) != {
+        "algorithm", "key_id", "public_key"
+    }:
+        raise EnrollmentError("identité candidate distante incomplète")
+    identity_store.prepare_renewal(machine.id, **candidate)
+    command, env = _lifecycle_command(
+        machine, host_store, engine_dir, "renew-observer-identity.yml"
+    )
+    syntax = _run([*command[:-1], "--syntax-check", command[-1]], env=env)
+    if syntax.returncode != 0:
+        identity_store.cancel_renewal(machine.id, candidate["key_id"])
+        raise EnrollmentError(
+            f"syntax-check du renouvellement refusé : {syntax.stderr.strip() or syntax.stdout.strip()}"
+        )
+    applied = _run(command, env=env, timeout=180)
+    if applied.returncode != 0:
+        identity_store.cancel_renewal(machine.id, candidate["key_id"])
+        raise EnrollmentError(
+            f"renouvellement distant refusé : {applied.stderr.strip() or applied.stdout.strip()}"
+        )
+    public = json.loads(remote_observer(machine, host_store, "public-identity"))
+    if public != candidate:
+        raise EnrollmentError("l'identité active ne correspond pas à la candidate approuvée")
+    last_error: Exception | None = None
+    for _ in range(10):
+        try:
+            encoded = remote_observer(machine, host_store, "export-current")
+            state = verify_state(
+                machine.id, decode_envelope(encoded), identity_store,
+                record_sequence=False,
+            )
+            remote_observer(machine, host_store, "finalize-identity-renewal")
+            active = identity_store.finalize_renewal(machine.id, candidate["key_id"])
+            return (
+                f"Identité renouvelée : {active.key_id}, machine logique {machine.id}, "
+                f"état signé séquence {state.sequence}"
+            )
+        except Exception as error:
+            last_error = error
+            time.sleep(1)
+    raise EnrollmentError(
+        f"candidate activée mais état signé non vérifié ; rollback préparé : {last_error}"
+    )
+
+
+def uninstall_observer(
+    machine: Machine, host_store: HostKeyStore, *, engine_dir: Path
+) -> str:
+    """Retire le daemon et son état privé sans toucher aux services applicatifs."""
+
+    command, env = _lifecycle_command(
+        machine, host_store, engine_dir, "uninstall-observer.yml"
+    )
+    syntax = _run([*command[:-1], "--syntax-check", command[-1]], env=env)
+    if syntax.returncode != 0:
+        raise EnrollmentError(
+            f"syntax-check de désinstallation refusé : {syntax.stderr.strip() or syntax.stdout.strip()}"
+        )
+    applied = _run(command, env=env, timeout=180)
+    if applied.returncode != 0:
+        raise EnrollmentError(
+            f"désinstallation distante refusée : {applied.stderr.strip() or applied.stdout.strip()}"
+        )
+    summary = next(
+        (line.strip() for line in reversed(applied.stdout.splitlines()) if "changed=" in line),
+        "résumé Ansible indisponible",
+    )
+    return f"Daemon désinstallé de {machine.id}; services hébergés inchangés. Ansible : {summary}"

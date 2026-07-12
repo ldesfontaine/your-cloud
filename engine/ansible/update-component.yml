@@ -1,0 +1,151 @@
+---
+- name: Mettre à jour un composant avec rollback préparé
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    component_paths:
+      observer:
+        binary: /usr/libexec/your-cloud-observer
+        service: your-cloud-observer.service
+        unit: /etc/systemd/system/your-cloud-observer.service
+      coordinator:
+        binary: /usr/libexec/your-cloud-coordinator
+        service: your-cloud-coordinator.service
+        unit: /etc/systemd/system/your-cloud-coordinator.service
+  tasks:
+    - name: Valider la version, l'intégrité et le composant
+      ansible.builtin.assert:
+        that:
+          - component in component_paths
+          - component_binary is file
+          - component_unit is file
+          - expected_sha256 is match('^[0-9a-f]{64}$')
+          - expected_version is match('^[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$')
+        fail_msg: Paramètres de mise à jour invalides
+
+    - name: Installer l'unité systemd bornée du composant
+      ansible.builtin.copy:
+        src: "{{ component_unit }}"
+        dest: "{{ component_paths[component].unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Recharger systemd
+        - Redémarrer le composant mis à jour
+
+    - name: Vérifier l'intégrité de l'artefact côté console
+      ansible.builtin.stat:
+        path: "{{ component_binary }}"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: local_artifact
+
+    - name: Refuser un artefact différent de la somme approuvée
+      ansible.builtin.assert:
+        that:
+          - local_artifact.stat.checksum == expected_sha256
+        fail_msg: Somme SHA-256 de l'artefact incohérente
+
+    - name: Mesurer le binaire installé
+      ansible.builtin.stat:
+        path: "{{ component_paths[component].binary }}"
+        checksum_algorithm: sha256
+      register: installed
+
+    - name: Remplacer le composant sous protection du rollback
+      when: not installed.stat.exists or installed.stat.checksum != expected_sha256
+      block:
+        - name: Déposer l'artefact candidat
+          ansible.builtin.copy:
+            src: "{{ component_binary }}"
+            dest: "{{ component_paths[component].binary }}.next"
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Arrêter uniquement le composant ciblé
+          ansible.builtin.systemd_service:
+            name: "{{ component_paths[component].service }}"
+            state: stopped
+
+        - name: Préparer le binaire précédent
+          ansible.builtin.copy:
+            src: "{{ component_paths[component].binary }}"
+            dest: "{{ component_paths[component].binary }}.previous"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+          when: installed.stat.exists
+
+        - name: Activer le binaire candidat
+          ansible.builtin.copy:
+            src: "{{ component_paths[component].binary }}.next"
+            dest: "{{ component_paths[component].binary }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Retirer le dépôt candidat
+          ansible.builtin.file:
+            path: "{{ component_paths[component].binary }}.next"
+            state: absent
+
+        - name: Démarrer uniquement le composant ciblé
+          ansible.builtin.systemd_service:
+            name: "{{ component_paths[component].service }}"
+            state: started
+
+        - name: Vérifier la version active
+          ansible.builtin.command:
+            argv:
+              - "{{ component_paths[component].binary }}"
+              - version
+          register: active_version
+          changed_when: false
+          failed_when: active_version.stdout | trim != expected_version
+
+      rescue:
+        - name: Restaurer le binaire précédent
+          ansible.builtin.copy:
+            src: "{{ component_paths[component].binary }}.previous"
+            dest: "{{ component_paths[component].binary }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+          when: installed.stat.exists
+
+        - name: Redémarrer le composant restauré
+          ansible.builtin.systemd_service:
+            name: "{{ component_paths[component].service }}"
+            state: started
+          failed_when: false
+
+        - name: Refuser la propagation après rollback
+          ansible.builtin.fail:
+            msg: Mise à jour refusée ; rollback du composant tenté
+
+    - name: Vérifier la version du binaire déjà conforme
+      ansible.builtin.command:
+        argv:
+          - "{{ component_paths[component].binary }}"
+          - version
+      register: unchanged_version
+      changed_when: false
+      failed_when: unchanged_version.stdout | trim != expected_version
+      when: installed.stat.exists and installed.stat.checksum == expected_sha256
+
+  handlers:
+    - name: Recharger systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Redémarrer le composant mis à jour
+      ansible.builtin.systemd_service:
+        name: "{{ component_paths[component].service }}"
+        state: restarted

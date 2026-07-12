@@ -425,6 +425,7 @@ topology_domains() {
     v1-full)
       printf '%s\n' \
         'lab-console|console|lab-operator' \
+        'lab-console-recovery|console|lab-operator' \
         'lab-coordinateur|coordinateur|lab-public' \
         'lab-gateway|passerelle|lab-operator,lab-public,lab-site-private' \
         'lab-machine-1|machine|lab-site-private' \
@@ -628,7 +629,13 @@ EOF
 /usr/sbin/sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
 GATEWAY_POLICY
 
-  lab_ssh lab-console bash -s -- "$gateway_operator" "fd66:241::193/64" "fd66:241::1" <<'CLIENT_ROUTE'
+  local console ipv6_console_address
+  for console in lab-console lab-console-recovery; do
+    case "$console" in
+      lab-console) ipv6_console_address="fd66:241::193/64" ;;
+      lab-console-recovery) ipv6_console_address="fd66:241::140/64" ;;
+    esac
+    lab_ssh "$console" bash -s -- "$gateway_operator" "$ipv6_console_address" "fd66:241::1" <<'CLIENT_ROUTE'
 set -euo pipefail
 gateway="$1"
 ipv6_address="$2"
@@ -653,6 +660,7 @@ EOF
 networkctl reload
 networkctl reconfigure enp1s0
 CLIENT_ROUTE
+  done
 
   local machine ipv6_address
   for machine in lab-machine-1 lab-machine-2; do

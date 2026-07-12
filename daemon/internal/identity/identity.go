@@ -14,6 +14,11 @@ import (
 )
 
 const signatureDomain = "your-cloud.telemetry.v1\x00"
+const (
+	currentSeed  = "identity.seed"
+	pendingSeed  = "identity.seed.pending"
+	previousSeed = "identity.seed.previous"
+)
 
 // Identity détient la clé privée propre à une machine et son identifiant public.
 type Identity struct {
@@ -30,7 +35,11 @@ func LoadOrCreate(stateDir string) (*Identity, error) {
 	if err := os.Chmod(stateDir, 0700); err != nil {
 		return nil, fmt.Errorf("protéger le stockage d'identité: %w", err)
 	}
-	path := filepath.Join(stateDir, "identity.seed")
+	path := filepath.Join(stateDir, currentSeed)
+	return loadOrCreatePath(path)
+}
+
+func loadOrCreatePath(path string) (*Identity, error) {
 	seed, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		seed = make([]byte, ed25519.SeedSize)
@@ -58,6 +67,75 @@ func LoadOrCreate(stateDir string) (*Identity, error) {
 	public := private.Public().(ed25519.PublicKey)
 	digest := sha256.Sum256(public)
 	return &Identity{private: private, public: public, keyID: hex.EncodeToString(digest[:])}, nil
+}
+
+// PrepareRenewal crée une identité candidate sans modifier l'identité active.
+func PrepareRenewal(stateDir string) (*Identity, error) {
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		return nil, fmt.Errorf("créer le stockage d'identité: %w", err)
+	}
+	pending, err := loadOrCreatePath(filepath.Join(stateDir, pendingSeed))
+	if err != nil {
+		return nil, err
+	}
+	current, err := LoadOrCreate(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	if pending.KeyID() == current.KeyID() {
+		return nil, fmt.Errorf("identité candidate identique à l'identité active")
+	}
+	return pending, nil
+}
+
+// CommitRenewal active la candidate en conservant l'ancienne pour rollback.
+func CommitRenewal(stateDir string) error {
+	current := filepath.Join(stateDir, currentSeed)
+	pending := filepath.Join(stateDir, pendingSeed)
+	previous := filepath.Join(stateDir, previousSeed)
+	if _, err := os.Stat(pending); err != nil {
+		return fmt.Errorf("identité candidate absente: %w", err)
+	}
+	if _, err := os.Stat(previous); err == nil {
+		return fmt.Errorf("rollback précédent encore présent")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspecter le rollback d'identité: %w", err)
+	}
+	if err := os.Rename(current, previous); err != nil {
+		return fmt.Errorf("préparer le rollback d'identité: %w", err)
+	}
+	if err := os.Rename(pending, current); err != nil {
+		_ = os.Rename(previous, current)
+		return fmt.Errorf("activer l'identité candidate: %w", err)
+	}
+	return nil
+}
+
+// RollbackRenewal restaure l'identité précédente après un échec vérifié.
+func RollbackRenewal(stateDir string) error {
+	current := filepath.Join(stateDir, currentSeed)
+	previous := filepath.Join(stateDir, previousSeed)
+	failed := filepath.Join(stateDir, pendingSeed)
+	if _, err := os.Stat(previous); err != nil {
+		return fmt.Errorf("identité précédente absente: %w", err)
+	}
+	if err := os.Rename(current, failed); err != nil {
+		return fmt.Errorf("isoler l'identité échouée: %w", err)
+	}
+	if err := os.Rename(previous, current); err != nil {
+		_ = os.Rename(failed, current)
+		return fmt.Errorf("restaurer l'identité précédente: %w", err)
+	}
+	return nil
+}
+
+// FinalizeRenewal retire le rollback seulement après preuve de la nouvelle identité.
+func FinalizeRenewal(stateDir string) error {
+	path := filepath.Join(stateDir, previousSeed)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("retirer l'identité précédente: %w", err)
+	}
+	return nil
 }
 
 // KeyID retourne l'empreinte stable qui désigne la clé publique.

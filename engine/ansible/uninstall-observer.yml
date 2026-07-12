@@ -1,0 +1,39 @@
+---
+- name: Désinstaller uniquement le daemon d'observation
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Arrêter et désactiver le daemon lorsqu'il existe
+      ansible.builtin.systemd_service:
+        name: your-cloud-observer.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Retirer les fichiers possédés par le daemon
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/your-cloud-observer.service
+        - /usr/libexec/your-cloud-observer
+        - /etc/your-cloud/observer.json
+        - /var/lib/your-cloud/observer
+      notify: Recharger systemd
+
+    - name: Retirer le compte sans toucher aux autres comptes
+      ansible.builtin.user:
+        name: your-cloud-observer
+        state: absent
+        remove: false
+
+    - name: Retirer le groupe dédié
+      ansible.builtin.group:
+        name: your-cloud-observer
+        state: absent
+
+  handlers:
+    - name: Recharger systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true

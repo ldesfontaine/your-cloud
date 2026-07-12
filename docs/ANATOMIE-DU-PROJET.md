@@ -76,6 +76,13 @@ une **nouvelle** session :
 Le kit passe au schéma 2 lorsque P4 ajoute l’autorité privée mTLS, toujours
 chiffrée. Aucun secret clair durable n’entre dans la déclaration ou le dépôt.
 
+À P6, une actualisation explicite produit le schéma 3 complet : toutes les clés
+d’administration chiffrées, l’autorité et les identités de rôle mTLS chiffrées,
+la déclaration et les registres publics courants. Une console neuve valide tout
+le kit avant écriture, refuse un état déjà occupé puis restaure les mêmes machines
+logiques sans les réenrôler. Les clés privées de télémétrie des daemons restent
+sur leurs machines.
+
 **Entrée :** audit éligible + mot de passe privé + approbation du plan.
 **Sortie :** compte dédié, clé chiffrée et kit vérifié.
 **Code :** [`secrets.py`](../console/src/your_cloud_console/secrets.py),
@@ -288,6 +295,24 @@ détecté, sa source, sa preuve et son instant. La vue distingue `unknown`,
 `declared`, `detected`, `confirmed` et `conflict`. Dans le LAB, `site-a` et
 `site-b` sont confirmés dans le même domaine `lab-site-private` : aucune
 indépendance n'est inventée depuis leur nom logique.
+
+## Ce que P6 a fermé
+
+P6 ajoute deux cycles protégés. Une identité candidate naît sur la machine,
+reste pending dans la console, puis remplace l'ancienne seulement après un état
+signé vérifié ; l'ancienne rejoint l'historique et le rollback local disparaît
+en dernier. Une mise à jour vérifie version et SHA-256, conserve `.previous`,
+met les coordinateurs avant les daemons et avance pilote par pilote.
+
+Les unités systemd bornent désormais CPU, mémoire et tâches. La console mesure
+ces cgroups et l'occupation SQLite sans ouvrir de diagnostic réseau. La release
+candidate assemble binaires, wheel, unités et métadonnées, signe `SHA256SUMS`
+avec OpenSSL puis revérifie chaque artefact avant livraison.
+
+Le retrait reste séparé : désaffecter ne désenrôle pas, désenrôler ne désinstalle
+pas, et désinstaller l'observer ne touche ni aux services ni à leurs données.
+La console de récupération neuve reprend les mêmes identités logiques sans
+réenrôlement.
 
 Pour la direction produit, lire le [Guide du bâtisseur](GUIDE-DU-BATISSEUR.md).
 Pour les preuves exécutées, lire la [documentation du LAB](lab/README.md).

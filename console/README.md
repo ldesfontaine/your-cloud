@@ -27,7 +27,13 @@ console revérifie toujours la signature Ed25519 d'origine après le relais.
 L'autorité privée de transport reste chiffrée et rejoint le kit de récupération
 vérifié lors de l'installation.
 
-Le mode distant 0.5.0 sépare l'installation du coordinateur public, la
+P6 ajoute l'actualisation du kit au schéma 3 et sa restauration dans une console
+vierge. Le kit complet rassemble toutes les clés d'administration encore
+chiffrées, l'autorité de transport chiffrée, la déclaration et les registres
+publics courants, ainsi que les identités mTLS de rôle encore chiffrées. La
+restauration refuse tout écrasement et ne contacte ni ne réenrôle aucune machine.
+
+Le mode distant, conservé dans la RC V1, sépare l'installation du coordinateur public, la
 migration d'une machine pilote et le retrait ultérieur de l'ancien endpoint.
 Un endpoint peut être une IP ou un DNS ; son certificat reste lié à cette
 localisation. La console annonce une perte du coordinateur comme un pilotage

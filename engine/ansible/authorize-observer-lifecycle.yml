@@ -1,0 +1,16 @@
+---
+- name: Autoriser les seules commandes de renouvellement inspectées par la console
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Installer la délégation bornée du cycle de vie
+      ansible.builtin.copy:
+        content: |
+          your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json prepare-identity-renewal
+          your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json finalize-identity-renewal
+        dest: /etc/sudoers.d/91-your-cloud-observer-lifecycle
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
