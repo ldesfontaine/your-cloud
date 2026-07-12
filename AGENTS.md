@@ -52,8 +52,7 @@ le parcours et les décisions techniques vivent dans la documentation.
 
 ## Git et GitHub
 
-- Tous les commits utilisent uniquement l’identité Git configurée de Lucas
-  Desfontaine comme auteur et committer.
+- Tous les commits utilisent uniquement l’identité Git configurée de Lucas comme auteur et committer.
 - Aucun auteur IA, aucun trailer `Co-Authored-By`. Un crédit éventuel appartient
   au README.
 - Pas de commit surprise. Vérifier le diff, l’identité et les secrets avant de
