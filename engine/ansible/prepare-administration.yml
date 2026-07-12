@@ -1,0 +1,59 @@
+---
+- name: Préparer le chemin d'administration
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    administration_user: your-cloud-admin
+  tasks:
+    - name: Valider les paramètres du compte
+      ansible.builtin.assert:
+        that:
+          - machine_id is match('^[a-z0-9][a-z0-9-]{0,62}$')
+          - administration_public_key is match('^ssh-ed25519 [A-Za-z0-9+/=]+$')
+        fail_msg: Paramètres du chemin d'administration invalides
+
+    - name: Créer le groupe d'administration
+      ansible.builtin.group:
+        name: "{{ administration_user }}"
+        system: true
+
+    - name: Créer le compte d'administration non-root
+      ansible.builtin.user:
+        name: "{{ administration_user }}"
+        group: "{{ administration_user }}"
+        groups: sudo
+        append: true
+        create_home: true
+        home: "/home/{{ administration_user }}"
+        shell: /bin/bash
+        password_lock: true
+
+    - name: Protéger le répertoire SSH du compte
+      ansible.builtin.file:
+        path: "/home/{{ administration_user }}/.ssh"
+        state: directory
+        owner: "{{ administration_user }}"
+        group: "{{ administration_user }}"
+        mode: "0700"
+
+    - name: Installer la clé propre à la machine
+      ansible.builtin.copy:
+        content: "{{ administration_public_key }} your-cloud administration {{ machine_id }}\n"
+        dest: "/home/{{ administration_user }}/.ssh/authorized_keys"
+        owner: "{{ administration_user }}"
+        group: "{{ administration_user }}"
+        mode: "0600"
+
+    - name: Autoriser l'élévation non interactive du compte
+      ansible.builtin.copy:
+        content: |
+          {{ administration_user }} ALL=(root) NOPASSWD: ALL
+          {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json public-identity
+          {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json export-current
+          {{ administration_user }} ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json db-usage
+        dest: /etc/sudoers.d/90-your-cloud-admin
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s

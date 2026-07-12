@@ -1,0 +1,240 @@
+---
+- name: Appliquer le profil Linux sûr
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    profile_dir: /var/lib/your-cloud/profile
+    manifest_path: /var/lib/your-cloud/profile/manifest.sha256
+    ssh_profile_path: /etc/ssh/sshd_config.d/10-your-cloud.conf
+    nft_profile_path: /etc/nftables.conf
+    sysctl_profile_path: /etc/sysctl.d/90-your-cloud.conf
+    rollback_dir: "/var/lib/your-cloud/profile/rollback/{{ rollback_id }}"
+  pre_tasks:
+    - name: Valider les paramètres du profil
+      ansible.builtin.assert:
+        that:
+          - machine_id is match('^[a-z0-9][a-z0-9-]{0,62}$')
+          - administration_ipv4_cidr is match('^[0-9.]+/[0-9]{1,2}$')
+          - administration_ipv6_cidr is match('^[0-9A-Fa-f:]+/[0-9]{1,3}$')
+          - nftables_package_version is match('^[A-Za-z0-9.+:~_-]+$')
+          - rollback_id is match('^[a-z0-9-]{1,63}$')
+        fail_msg: Paramètres du profil Linux invalides
+
+    - name: Vérifier la présence du manifeste d'autorité
+      ansible.builtin.stat:
+        path: "{{ manifest_path }}"
+      register: profile_manifest
+
+    - name: Vérifier l'absence de dérive possédée
+      ansible.builtin.command:
+        argv: [sha256sum, --check, "{{ manifest_path }}"]
+      register: manifest_check
+      changed_when: false
+      failed_when: false
+      when: profile_manifest.stat.exists
+
+    - name: Refuser une dérive avant toute mutation
+      ansible.builtin.assert:
+        that:
+          - not profile_manifest.stat.exists or manifest_check.rc == 0
+        fail_msg: Dérive détectée sur le profil possédé ; aucune correction automatique
+
+    - name: Inspecter les chemins que le profil possédera
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha256
+      loop:
+        - "{{ ssh_profile_path }}"
+        - "{{ nft_profile_path }}"
+        - "{{ sysctl_profile_path }}"
+      register: managed_paths
+
+    - name: Refuser une autorité préexistante non adoptée
+      ansible.builtin.assert:
+        that:
+          - profile_manifest.stat.exists or not item.stat.exists
+        fail_msg: "Chemin non possédé déjà présent : {{ item.item }}"
+      loop: "{{ managed_paths.results }}"
+
+    - name: Inspecter l'installation antérieure de nftables
+      ansible.builtin.command: dpkg-query -W nftables
+      register: nft_package_before
+      changed_when: false
+      failed_when: false
+
+    - name: Inspecter l'activation antérieure de nftables
+      ansible.builtin.command: systemctl is-enabled nftables.service
+      register: nft_enabled_before
+      changed_when: false
+      failed_when: false
+
+    - name: Inspecter l'état antérieur de nftables
+      ansible.builtin.command: systemctl is-active nftables.service
+      register: nft_active_before
+      changed_when: false
+      failed_when: false
+
+    - name: Créer le répertoire privé du profil
+      ansible.builtin.file:
+        path: "{{ profile_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Vérifier si le rollback initial est déjà préparé
+      ansible.builtin.stat:
+        path: "{{ rollback_dir }}/rollback.sh"
+      register: rollback_prepared
+
+    - name: Préparer le répertoire de rollback
+      ansible.builtin.file:
+        path: "{{ rollback_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Préserver les fichiers antérieurs présents
+      ansible.builtin.copy:
+        src: "{{ item.item }}"
+        dest: "{{ rollback_dir }}/{{ item.item | basename }}.before"
+        remote_src: true
+        owner: root
+        group: root
+        mode: preserve
+        force: false
+      when: item.stat.exists and not rollback_prepared.stat.exists
+      loop: "{{ managed_paths.results }}"
+
+    - name: Préserver le ruleset antérieur
+      ansible.builtin.shell: |
+        set -eu
+        if command -v nft >/dev/null 2>&1; then
+          nft list ruleset > "{{ rollback_dir }}/ruleset.before"
+        else
+          : > "{{ rollback_dir }}/ruleset.before"
+        fi
+      args:
+        executable: /bin/sh
+        creates: "{{ rollback_dir }}/ruleset.before"
+      when: not rollback_prepared.stat.exists
+
+    - name: Préserver les valeurs sysctl antérieures
+      ansible.builtin.shell: |
+        set -eu
+        {
+          sysctl -n net.ipv4.conf.all.accept_redirects
+          sysctl -n net.ipv4.conf.default.accept_redirects
+          sysctl -n net.ipv6.conf.all.accept_redirects
+          sysctl -n net.ipv6.conf.default.accept_redirects
+        } > "{{ rollback_dir }}/sysctl.before"
+      args:
+        executable: /bin/sh
+        creates: "{{ rollback_dir }}/sysctl.before"
+      when: not rollback_prepared.stat.exists
+
+    - name: Installer le rollback borné
+      ansible.builtin.template:
+        src: rollback-profile.sh.j2
+        dest: "{{ rollback_dir }}/rollback.sh"
+        owner: root
+        group: root
+        mode: "0700"
+        force: false
+      when: not rollback_prepared.stat.exists
+
+  tasks:
+    - name: Installer la version résolue de nftables
+      ansible.builtin.apt:
+        name: "nftables={{ nftables_package_version }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Borner l'accès direct au compte d'observation
+      ansible.builtin.copy:
+        content: |
+          your-cloud-admin ALL=(root) NOPASSWD: ALL
+          your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json public-identity
+          your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json export-current
+          your-cloud-admin ALL=(your-cloud-observer) NOPASSWD: /usr/libexec/your-cloud-observer --config /etc/your-cloud/observer.json db-usage
+        dest: /etc/sudoers.d/90-your-cloud-admin
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Installer la politique SSH possédée
+      ansible.builtin.template:
+        src: sshd-your-cloud.conf.j2
+        dest: "{{ ssh_profile_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Recharger SSH
+
+    - name: Valider la configuration SSH complète
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Installer le pare-feu dual-stack possédé
+      ansible.builtin.template:
+        src: nftables-your-cloud.conf.j2
+        dest: "{{ nft_profile_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/sbin/nft -c -f %s
+      notify: Recharger nftables
+
+    - name: Installer les réglages système minimaux
+      ansible.builtin.template:
+        src: sysctl-your-cloud.conf.j2
+        dest: "{{ sysctl_profile_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Appliquer les réglages système
+      ansible.builtin.command: /usr/sbin/sysctl --system
+      changed_when: false
+
+    - name: Activer le pare-feu au démarrage
+      ansible.builtin.systemd_service:
+        name: nftables.service
+        enabled: true
+        state: started
+
+    - name: Appliquer les handlers avant la preuve de connexion
+      ansible.builtin.meta: flush_handlers
+
+    - name: Calculer le manifeste d'autorité
+      ansible.builtin.command:
+        argv:
+          - sha256sum
+          - "{{ ssh_profile_path }}"
+          - "{{ nft_profile_path }}"
+          - "{{ sysctl_profile_path }}"
+          - /etc/sudoers.d/90-your-cloud-admin
+      register: profile_hashes
+      changed_when: false
+
+    - name: Enregistrer le manifeste d'autorité
+      ansible.builtin.copy:
+        content: "{{ profile_hashes.stdout }}\n"
+        dest: "{{ manifest_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+  handlers:
+    - name: Recharger SSH
+      ansible.builtin.systemd_service:
+        name: ssh.service
+        state: reloaded
+
+    - name: Recharger nftables
+      ansible.builtin.command: /usr/sbin/nft -f /etc/nftables.conf
+      changed_when: true

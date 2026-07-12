@@ -20,3 +20,7 @@ class EnrollmentError(ConsoleError):
 
 class TelemetryError(ConsoleError):
     pass
+
+
+class SecurityError(ConsoleError):
+    pass

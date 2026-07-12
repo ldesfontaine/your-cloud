@@ -21,7 +21,7 @@ OBSERVER_USER = "your-cloud-observer"
 def enrollment_plan(machine: Machine, daemon_binary: Path, units: tuple[str, ...]) -> str:
     return "\n".join(
         (
-            f"Plan P2 pour {machine.id} ({machine.endpoint}) :",
+            f"Plan pour rendre {machine.id} observable ({machine.endpoint}) :",
             f"  - installer le binaire natif vérifié depuis {daemon_binary}",
             "  - créer le compte non interactif your-cloud-observer sans sudo",
             "  - créer une identité Ed25519 locale dont la clé privée reste sur la machine",
@@ -84,7 +84,7 @@ def enroll(
 ) -> str:
     audit = run_audit(machine, host_store, pinned_host_key)
     if audit.decision != "eligible":
-        raise EnrollmentError("l'audit préalable n'autorise pas P2")
+        raise EnrollmentError("l'audit préalable n'autorise pas l'enrôlement")
     command, env = _ansible_command(machine, host_store, engine_dir, daemon_binary, units)
     syntax = _run([*command[:-1], "--syntax-check", command[-1]], env=env)
     if syntax.returncode != 0:

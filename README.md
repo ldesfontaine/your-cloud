@@ -38,8 +38,8 @@ branche `old-project`.
 Les frontières de P0 accueillent progressivement le code des paliers :
 
 ```text
-console/       console Python P2, audit, enrôlement et inspection signée
-daemon/        daemon Go P2 d’observation sans port entrant
+console/       console Python, audit, enrôlement et inspection signée
+daemon/        daemon Go d’observation sans port entrant
 coordinateur/  coordinateur Go de télémétrie
 protocole/     contrats Protobuf et sorties générées versionnées
 engine/        contenu Ansible exécuté depuis la console dans le LAB

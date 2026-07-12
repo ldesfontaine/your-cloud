@@ -1,0 +1,25 @@
+#!/usr/sbin/nft -f
+# Fichier possédé par your-cloud. Toute dérive exige un nouveau plan.
+
+flush ruleset
+
+table inet your_cloud {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    ct state invalid drop
+    ct state established,related accept
+    iifname "lo" accept
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+    ip saddr {{ administration_ipv4_cidr }} tcp dport 22 accept
+    ip6 saddr {{ administration_ipv6_cidr }} tcp dport 22 accept
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+  }
+}

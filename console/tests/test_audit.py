@@ -25,9 +25,11 @@ def remote_output(**overrides):
         "ssh_config_sources": "/etc/ssh/sshd_config",
         "nft_config_sources": "",
         "sysctl_config_sources": "/etc/sysctl.conf",
+        "authorized_key_files": "/root/.ssh/authorized_keys",
         "config_managers": "",
         "listening_sockets": "tcp 0.0.0.0:22",
         "nft_rule_lines": "0",
+        "profile_managed": "no",
     }
     fields.update(overrides)
     payload = bytearray()

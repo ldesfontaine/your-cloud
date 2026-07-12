@@ -96,6 +96,10 @@ Une VM nue devient observable, son état signé est accepté par la console et u
 
 ## P3 — Première mutation sûre
 
+> État : terminé le 2026-07-12. Le nouveau compte, le kit de récupération, les
+> connexions IPv4 et IPv6, le rollback, l'idempotence et le refus de dérive sont
+> prouvés dans le LAB `quick`.
+
 ### But
 
 Appliquer le premier profil Linux sans bloquer l’opérateur ni écraser une autorité existante.
@@ -112,7 +116,7 @@ Appliquer le premier profil Linux sans bloquer l’opérateur ni écraser une au
 
 ### Preuve de sortie
 
-Une connexion SSH réellement nouvelle et `sudo` sont prouvés avant fermeture de l’ancien accès. Le pare-feu fonctionne en IPv4 et IPv6. Une seconde application donne `changed=0`. Une modification manuelle est montrée dans un plan, jamais écrasée automatiquement.
+Une connexion SSH réellement nouvelle et `sudo` sont prouvés avant fermeture de l’ancien accès. Le pare-feu fonctionne en IPv4 et IPv6. Une seconde application donne `changed=0`. Une modification manuelle est montrée dans un plan, jamais écrasée automatiquement. Voir la [preuve de sécurisation](lab/securiser-une-machine.md).
 
 ## P4 — Observation continue locale
 

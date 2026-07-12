@@ -55,6 +55,16 @@ nft_sources=$(find /etc/nftables.conf /etc/nftables.d -maxdepth 2 -type f \
 sysctl_sources=$(find /etc/sysctl.conf /etc/sysctl.d -maxdepth 2 -type f \
   -name '*.conf' -print 2>/dev/null | sort || true)
 
+if [ "$(id -u)" -eq 0 ]; then
+  authorized_key_files=$(find /root/.ssh /home -maxdepth 3 -type f \
+    -name authorized_keys -print 2>/dev/null | sort || true)
+elif [ "$privilege_non_interactive" = yes ]; then
+  authorized_key_files=$(sudo -n find /root/.ssh /home -maxdepth 3 -type f \
+    -name authorized_keys -print 2>/dev/null | sort || true)
+else
+  authorized_key_files='inspection privilégiée indisponible'
+fi
+
 config_managers=''
 for manager in puppet salt-call chef-client cf-agent; do
   if command -v "$manager" >/dev/null 2>&1; then
@@ -74,12 +84,26 @@ else
 fi
 
 nft_rule_lines=0
+nft_command=''
 if command -v nft >/dev/null 2>&1; then
+  nft_command=$(command -v nft)
+elif [ -x /usr/sbin/nft ]; then
+  nft_command=/usr/sbin/nft
+fi
+if [ -n "$nft_command" ]; then
   if [ "$(id -u)" -eq 0 ]; then
-    nft_rule_lines=$(nft list ruleset 2>/dev/null | awk 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }')
+    nft_rule_lines=$("$nft_command" list ruleset 2>/dev/null | awk 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }')
   elif [ "$privilege_non_interactive" = yes ]; then
-    nft_rule_lines=$(sudo -n nft list ruleset 2>/dev/null | awk 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }')
+    nft_rule_lines=$(sudo -n "$nft_command" list ruleset 2>/dev/null | awk 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }')
   fi
+fi
+
+if [ "$(id -u)" -eq 0 ] && [ -r /var/lib/your-cloud/profile/manifest.sha256 ]; then
+  profile_managed=yes
+elif [ "$privilege_non_interactive" = yes ] && sudo -n test -r /var/lib/your-cloud/profile/manifest.sha256; then
+  profile_managed=yes
+else
+  profile_managed=no
 fi
 
 field os_id "$os_id"
@@ -96,9 +120,11 @@ field systemd_present "$systemd_present"
 field ssh_config_sources "$ssh_sources"
 field nft_config_sources "$nft_sources"
 field sysctl_config_sources "$sysctl_sources"
+field authorized_key_files "$authorized_key_files"
 field config_managers "$config_managers"
 field listening_sockets "$listening_sockets"
 field nft_rule_lines "$nft_rule_lines"
+field profile_managed "$profile_managed"
 """
 
 
@@ -153,9 +179,11 @@ def _parse_remote_fields(output: bytes) -> dict[str, str]:
         "ssh_config_sources",
         "nft_config_sources",
         "sysctl_config_sources",
+        "authorized_key_files",
         "config_managers",
         "listening_sockets",
         "nft_rule_lines",
+        "profile_managed",
     }
     missing = required - set(fields)
     if missing:
@@ -214,8 +242,10 @@ def run_audit(machine: Machine, store: HostKeyStore, host_key: PinnedHostKey) ->
             "sysctl": _lines(fields["sysctl_config_sources"]),
         },
         "configuration_managers": _lines(fields["config_managers"]),
+        "authorized_key_files": _lines(fields["authorized_key_files"]),
         "listening_sockets": _lines(fields["listening_sockets"]),
         "nft_rule_lines": nft_rule_lines,
+        "profile_managed": fields["profile_managed"] == "yes",
     }
 
     refusals: list[str] = []
@@ -236,12 +266,12 @@ def run_audit(machine: Machine, store: HostKeyStore, host_key: PinnedHostKey) ->
             "autorité de configuration persistante détectée : "
             + ", ".join(observed["configuration_managers"])
         )
-    if nft_rule_lines:
+    if nft_rule_lines and not observed["profile_managed"]:
         conflicts.append(
-            f"ruleset nftables existant ({nft_rule_lines} lignes) : son autorité doit être clarifiée avant P3"
+            f"ruleset nftables existant ({nft_rule_lines} lignes) : son autorité doit être clarifiée avant la sécurisation"
         )
     if not observed["sudo_present"]:
-        limits.append("sudo absent : le futur compte d'administration P3 ne pourra pas être prouvé")
+        limits.append("sudo absent : le futur compte d'administration ne pourra pas être prouvé")
     if not observed["privilege_non_interactive"]:
         limits.append("élévation non interactive indisponible pour le chemin de bootstrap")
     if free_kib < 2 * 1024 * 1024:
@@ -254,16 +284,16 @@ def run_audit(machine: Machine, store: HostKeyStore, host_key: PinnedHostKey) ->
     blocker = "none" if decision == "eligible" else "compatibility-or-authority"
     potential_plan = (
         {
-            "phase": "P2",
+            "phase": "observation",
             "action": "enroll-observation-daemon",
             "status": "possible" if decision == "eligible" else "blocked",
             "blocker": blocker,
         },
         {
-            "phase": "P3",
+            "phase": "administration",
             "action": "prepare-dedicated-administration-path",
-            "status": "requires-separate-plan",
-            "blocker": "limits-and-authorities-must-be-approved",
+            "status": "already-managed" if observed["profile_managed"] else "requires-separate-plan",
+            "blocker": "none" if observed["profile_managed"] else "limits-and-authorities-must-be-approved",
         },
     )
     return AuditResult(
@@ -301,6 +331,8 @@ def render_human(result: AuditResult) -> str:
         f"SSH={len(sources['ssh'])}, nftables={len(sources['nftables'])}, "
         f"sysctl={len(sources['sysctl'])}",
         "Sockets écoutés : " + (", ".join(observed["listening_sockets"]) or "aucun"),
+        "Accès SSH résiduels ou gérés : "
+        + (", ".join(observed["authorized_key_files"]) or "aucun fichier authorized_keys"),
         f"Décision : {result.decision}",
         "Mutation distante : 0",
     ]

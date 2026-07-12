@@ -1,7 +1,7 @@
 # LAB de développement V1
 
-> État : topologie `quick` créée puis utilisée pour les preuves P1 et P2 le
-> 2026-07-12.
+> État : topologie `quick` créée puis utilisée pour le premier contact, la
+> machine observable et la première sécurisation le 2026-07-12.
 > La topologie `v1-full` reste à valider ; aucun de ses gabarits n'est présenté
 > comme attesté avant une création réelle.
 
@@ -49,8 +49,9 @@ Cette topologie couvre compilation, tests, premier contact, audit et
 enrôlement sur une image Debian 13 nue. Aucun artefact préinstallé ne doit
 fausser le parcours jour zéro.
 
-La création du LAB, le [premier contact P1](p1-premier-contact.md) et la
-[machine observable P2](p2-machine-observable.md) sont prouvés.
+La création du LAB, le [premier contact](p1-premier-contact.md), la
+[machine observable](p2-machine-observable.md) et la
+[sécurisation sans perte d'accès](securiser-une-machine.md) sont prouvés.
 
 ## LAB V1 complet
 
