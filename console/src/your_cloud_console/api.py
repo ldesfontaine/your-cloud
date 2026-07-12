@@ -57,6 +57,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "schema_version": declaration.schema_version,
                         "transport": "unix-socket",
                         "mutation_capable": False,
+                        "milestone": "P2",
                     },
                 )
             elif path == "/v1/declaration":
@@ -74,7 +75,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._json(422, {"error": str(error)})
 
     def do_POST(self) -> None:
-        self._json(405, {"error": "P1 expose uniquement une API locale en lecture seule"})
+        self._json(405, {"error": "P2 expose uniquement une API locale en lecture seule"})
 
 
 def serve(socket_path: Path, declaration_path: Path) -> None:

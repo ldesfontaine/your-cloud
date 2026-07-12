@@ -1,6 +1,7 @@
 # Télémétrie V1
 
-> État : contrat cible, à confirmer par les preuves P2 à P4.
+> État : collecte et file locale confirmées par P2 ; transport et conservation
+> du coordinateur à confirmer par P4.
 
 ## État collecté
 
@@ -41,3 +42,10 @@ hébergé.
 Après une coupure, le daemon republie d’abord son état courant, puis les
 événements encore conservés. Un débordement produit une lacune explicite au
 lieu d’un historique présenté comme complet.
+
+À P2, SQLite emploie des transactions synchrones et une limite dure de pages.
+L'état périodique remplace l'état courant au lieu d'alimenter le journal. Un
+changement de démarrage, noyau, besoin de redémarrage ou unité choisie produit
+un événement significatif. Le dépassement de la part réservée au journal
+supprime les événements les plus anciens et produit un marqueur de lacune
+signé.

@@ -1,6 +1,7 @@
 # Protocole de télémétrie V1
 
-> État : contrat cible, primitives précises à choisir pendant P2 et P4.
+> État : messages et signatures confirmés par P2 ; transport et accusés à
+> confirmer par P4.
 
 ## Transport
 
@@ -27,6 +28,17 @@ Les outils de génération sont épinglés et le code généré est versionné. 
 génération et les tests ont lieu dans le LAB, jamais sur le laptop de
 développement.
 
+P2 fixe la signature à Ed25519. La clé publique brute de 32 octets est encodée
+en base64 dans le registre de la console ; son identifiant est son SHA-256
+hexadécimal. Les octets signés sont exactement la concaténation du domaine
+ASCII `your-cloud.telemetry.v1`, d'un octet nul, de l'octet numérique du flux,
+puis du payload Protobuf exact. Le flux fait donc partie de la signature et une
+enveloppe d'état ne peut pas être réinterprétée comme événement.
+
+Le contrat source est généré avec `protoc` 3.21.12 et `protoc-gen-go` v1.36.6.
+Les runtimes restent épinglés par `go.mod`, `go.sum` et le `pyproject.toml` de
+la console.
+
 ## Séquences et accusés
 
 Les états et les événements possèdent des séquences persistantes distinctes.
@@ -44,3 +56,8 @@ Une identité mTLS de console peut uniquement lire des pages bornées de
 télémétrie autorisée. Elle ne peut ni enrôler, ni révoquer, ni modifier le
 registre, la déclaration ou une machine. Les mutations du coordinateur passent
 en V1 par le chemin d’administration SSH et Ansible.
+
+Avant P4, P2 fournit uniquement une inspection ponctuelle : la console récupère
+l'enveloppe originale par le chemin SSH déjà vérifié, puis applique exactement
+la même vérification de provenance et de séquence que celle qui sera utilisée
+après relais par un coordinateur.

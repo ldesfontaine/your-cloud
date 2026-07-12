@@ -73,6 +73,10 @@ Sur une VM Debian 13 neuve, la console affiche l’audit et le plan potentiel. U
 
 ## P2 — Machine observable
 
+> État : terminé le 2026-07-12. L'enrôlement, l'identité persistante, la file
+> bornée, l'inspection signée et les refus de modification et de rejeu sont
+> prouvés dans le LAB `quick`.
+
 ### But
 
 Enrôler une machine et obtenir un état signé sans lui donner de pouvoir d’administration.
@@ -88,7 +92,7 @@ Enrôler une machine et obtenir un état signé sans lui donner de pouvoir d’a
 
 ### Preuve de sortie
 
-Une VM nue devient observable, son état signé est accepté par la console et une enveloppe modifiée ou rejouée est refusée. Le daemon ne possède aucun port entrant et le désenrôlement n’affecte aucun service hébergé.
+Une VM nue devient observable, son état signé est accepté par la console et une enveloppe modifiée ou rejouée est refusée. Le daemon ne possède aucun port entrant et le désenrôlement n'affecte aucun service hébergé. Voir la [preuve LAB P2](lab/p2-machine-observable.md).
 
 ## P3 — Première mutation sûre
 

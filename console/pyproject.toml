@@ -4,10 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "your-cloud-console"
-version = "0.1.0"
+version = "0.2.0"
 description = "Console souveraine your-cloud"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+  "cffi==2.1.0",
+  "cryptography==45.0.5",
+  "protobuf==6.31.1",
+  "pycparser==3.0",
+]
 
 [project.scripts]
 your-cloud = "your_cloud_console.cli:main"

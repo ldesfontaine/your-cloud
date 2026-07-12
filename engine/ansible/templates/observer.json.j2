@@ -1,0 +1,7 @@
+{
+  "machine_id": {{ machine_id | to_json }},
+  "state_dir": "/var/lib/your-cloud/observer",
+  "interval_seconds": 60,
+  "queue_limit_bytes": 10485760,
+  "units": {{ observer_units | to_json }}
+}

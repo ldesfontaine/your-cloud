@@ -38,13 +38,13 @@ branche `old-project`.
 Les frontières de P0 accueillent progressivement le code des paliers :
 
 ```text
-console/       console Python P1, déclaration et premier contact SSH
-daemon/        daemon Go d’observation sans port entrant
+console/       console Python P2, audit, enrôlement et inspection signée
+daemon/        daemon Go P2 d’observation sans port entrant
 coordinateur/  coordinateur Go de télémétrie
 protocole/     contrats Protobuf et sorties générées versionnées
 engine/        contenu Ansible exécuté depuis la console dans le LAB
 tools/         contrôleurs d’atelier, distincts du produit
 ```
 
-Les autres répertoires applicatifs conservent seulement leur contrat de
-frontière tant que leur palier n’a pas commencé.
+Le coordinateur conserve seulement son contrat de frontière jusqu’à P4. Les
+preuves exécutées des paliers terminés vivent dans `docs/lab/`.

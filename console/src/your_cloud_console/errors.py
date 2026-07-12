@@ -12,3 +12,11 @@ class HostKeyError(ConsoleError):
 
 class AuditError(ConsoleError):
     pass
+
+
+class EnrollmentError(ConsoleError):
+    pass
+
+
+class TelemetryError(ConsoleError):
+    pass

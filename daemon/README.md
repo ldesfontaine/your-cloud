@@ -1,7 +1,10 @@
 # Daemon d’observation
 
-Ce répertoire accueillera le daemon Go à partir de P2. Il observe un état
-borné, signe ses messages et initie ses connexions vers un coordinateur. Il
-n’ouvre aucun port entrant et ne reçoit aucune autorité d’administration.
+Le daemon Go P2 observe un état borné toutes les 60 secondes, conserve son état
+courant et ses événements significatifs dans SQLite, puis signe les payloads
+Protobuf avec l'identité Ed25519 propre à la machine.
 
-Aucune implémentation n’est introduite pendant P0.
+Il tourne sous `your-cloud-observer`, compte `nologin` sans `sudo`, avec une
+unité systemd durcie et sans famille réseau IP à P2. Il n'ouvre aucun port et ne
+reçoit aucune commande. La publication sortante vers un coordinateur appartient
+à P4.
