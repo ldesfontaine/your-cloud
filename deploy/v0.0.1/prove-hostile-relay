@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Exercise the live Relay boundary from the isolated LAB builder.
+set -euo pipefail
+
+relay_url=${1:?usage: prove-hostile-relay <relay-http-origin>}
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+post_case() {
+  local name=$1 expected=$2 payload=$3 actual
+  actual=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
+    --output "$workdir/response.json" --write-out '%{http_code}' \
+    --header 'Content-Type: application/json' --data-binary "$payload" \
+    "$relay_url/v0/presence")
+  printf '%-22s expected=%s actual=%s response=' "$name" "$expected" "$actual"
+  tr -d '\n' <"$workdir/response.json"
+  printf '\n'
+  [[ "$actual" == "$expected" ]]
+}
+
+post_case 'missing machine_id' 400 \
+  '{"daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
+post_case 'malformed machine_id' 400 \
+  '{"machine_id":"../root","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
+post_case 'unauthorized machine' 400 \
+  '{"machine_id":"lab-machine-2","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
+post_case 'duplicate machine_id' 400 \
+  '{"machine_id":"lab-machine-2","machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
+post_case 'wrong field case' 400 \
+  '{"Machine_ID":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
+post_case 'unknown field' 400 \
+  '{"machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z","command":"id"}'
+
+dd if=/dev/zero of="$workdir/oversized.json" bs=513 count=1 status=none
+actual=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
+  --output "$workdir/response.json" --write-out '%{http_code}' \
+  --header 'Content-Type: application/json' --data-binary "@$workdir/oversized.json" \
+  "$relay_url/v0/presence")
+printf '%-22s expected=413 actual=%s response=' 'oversized body' "$actual"
+tr -d '\n' <"$workdir/response.json"
+printf '\n'
+[[ "$actual" == 413 ]]
+
+curl --fail --silent --show-error --connect-timeout 2 --max-time 5 \
+  --request QUERY --header 'Content-Type: application/json' \
+  --data-binary '{}' "$relay_url/v0/machines" >"$workdir/state.json"
+printf 'relay still available  status=200\n'

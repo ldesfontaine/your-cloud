@@ -1,0 +1,34 @@
+[Unit]
+Description=Your Cloud v0.0.1 presence Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=your-cloud-daemon
+EnvironmentFile=/etc/your-cloud/daemon.env
+ExecStart=/usr/local/lib/your-cloud/your-cloud daemon --machine-id=${MACHINE_ID} --relay-url=${RELAY_URL}
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+InaccessiblePaths=-/etc/your-cloud/relay.env -/etc/your-cloud/relay-candidate.json
+
+[Install]
+WantedBy=multi-user.target

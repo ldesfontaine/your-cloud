@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Explicitly authorize and activate the Relay role on the simulated VPS.
+set -euo pipefail
+
+[[ $# -eq 1 ]] || { echo "usage: enable-relay <listen-ip:port>" >&2; exit 2; }
+listen=$1
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+
+[[ $(id -u) -eq 0 ]] || { echo "enable-relay must run as root" >&2; exit 1; }
+[[ $(hostname) == lab-coordinateur ]] \
+  || { echo "this v0.0.1 machine is not the Relay candidate" >&2; exit 1; }
+[[ "$listen" == 192.168.242.103:8443 ]] \
+  || { echo "unexpected v0.0.1 LAB listen address" >&2; exit 1; }
+[[ -f /usr/local/lib/your-cloud/your-cloud && ! -L /usr/local/lib/your-cloud/your-cloud && -x /usr/local/lib/your-cloud/your-cloud ]] \
+  || { echo "install-agent must install the common artifact first" >&2; exit 1; }
+[[ -f "$script_dir/your-cloud-relay.service" ]] \
+  || { echo "Relay unit template is missing" >&2; exit 1; }
+
+config=$(mktemp)
+candidate=$(mktemp)
+trap 'rm -f "$config" "$candidate"' EXIT
+printf 'RELAY_LISTEN=%s\n' "$listen" >"$config"
+printf '%s\n' '{"schema":1,"role":"relay-candidate"}' >"$candidate"
+
+install -d -o root -g root -m 0755 /etc/your-cloud
+install -o root -g root -m 0600 "$config" /etc/your-cloud/relay.env
+install -o root -g root -m 0644 "$candidate" /etc/your-cloud/relay-candidate.json
+install -o root -g root -m 0644 "$script_dir/your-cloud-relay.service" /etc/systemd/system/your-cloud-relay.service
+systemctl daemon-reload
+systemctl reset-failed your-cloud-relay.service >/dev/null 2>&1 || true
+systemctl enable your-cloud-relay.service >/dev/null
+systemctl restart your-cloud-relay.service

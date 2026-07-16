@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Cap à long terme de Your Cloud.">
+  <title>Cap du projet — Your Cloud</title>
+  <style>
+    :root{color-scheme:dark;--bg:#07111e;--panel:#0e1d31;--text:#f2f6fb;--muted:#aab9ca;--line:#29415d;--cyan:#5dd8e7;--green:#70dda8;--amber:#ffca70}*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 15% 0,#102c42,transparent 32rem),var(--bg);font:16px/1.65 Inter,system-ui,sans-serif}main{width:min(920px,calc(100% - 36px));margin:auto;padding:64px 0 96px}h1,h2{line-height:1.15}h1{margin:0;font-size:clamp(2.7rem,8vw,5.8rem);letter-spacing:-.04em}h2{margin-top:64px;font-size:clamp(1.7rem,4vw,2.7rem)}p,li{max-width:760px}.eyebrow{color:var(--cyan);font:700 .78rem ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase}.lead{color:var(--muted);font-size:1.15rem}.notice,.card{margin-top:28px;padding:22px;border:1px solid var(--line);border-radius:16px;background:rgba(14,29,49,.86)}.notice{border-left:4px solid var(--amber)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}.card h3{margin-top:0;color:var(--green)}a{color:var(--cyan)}footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted)}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Cap du projet</p>
+    <h1>Rendre l'infrastructure lisible, puis agir proprement.</h1>
+    <p class="lead">Your Cloud réunit machines, état et services dans une interface cohérente, guidée pour les débutants et transparente pour les utilisateurs expérimentés.</p>
+    <h2>La destination</h2>
+    <p>Un utilisateur représente son infrastructure, rattache des machines Linux, comprend visuellement leur état, puis déploie et gère progressivement des services sans perdre la visibilité sur les opérations réellement exécutées.</p>
+    <!-- coherence: V1-APP-ACCESS:start -->
+    <h2>Une interface Web sans exposer les machines</h2>
+    <p>À terme, l'utilisateur autorisé ouvre l'App en HTTPS depuis le Web sans établir lui-même un VPN. Seul le point d'entrée de l'App est public : ni SSH, ni l'Agent, ni une API d'administration du LAN ne le deviennent. Le navigateur ne reçoit aucune clé de machine ou de runner.</p>
+    <div class="notice"><strong>Décision V1 :</strong> l'App et Ansible restent dans une VM de contrôle privée. Le navigateur du laptop rejoint l'App par un tunnel SSH local lié à <code>127.0.0.1</code> ; seuls BentoPDF et Vaultwarden sont publiés par le VPS. À terme, l'App aura son propre accès HTTPS authentifié sans dépendre du laptop.</div>
+    <!-- coherence: V1-APP-ACCESS:end -->
+    <!-- coherence: AGENT-AUTHORITY:start -->
+    <h2>Un seul artefact, des rôles réellement isolés</h2>
+    <div class="grid">
+      <article class="card"><h3>Exécutable commun</h3><p>Une version signée et inventoriée fournit les rôles connus sans les activer par sa seule présence.</p></article>
+      <article class="card"><h3>Daemon permanent</h3><p>Non-root, il observe et ouvre les communications sortantes. Il ne modifie jamais directement le système.</p></article>
+      <article class="card"><h3>Relay explicite</h3><p>Optionnel, il refuse de démarrer sans machine candidate provisionnée. Il garde son propre processus, compte, identité et stockage.</p></article>
+      <article class="card"><h3>Auxiliaire futur</h3><p>Optionnel, ponctuel, sans réseau et absent de la V1. Il revérifiera un plan exact, appliquera une opération bornée puis s'arrêtera.</p></article>
+    </div>
+    <p>Un fichier partagé n'est pas une isolation. Une machine ordinaire lance uniquement <code>your-cloud daemon</code>. Une candidate Relay explicitement provisionnée peut lancer simultanément <code>your-cloud daemon</code> et <code>your-cloud relay</code> depuis les mêmes octets, sous deux comptes et politiques systemd distincts. Un défaut du lot commun peut toucher plusieurs rôles : tests par rôle, déploiement progressif et retour atomique restent obligatoires.</p>
+    <p>Le Daemon est traité comme un transport non fiable. Lorsqu'il sera conçu après la V1, l'Auxiliaire vérifiera indépendamment l'origine, la cible, l'approbation, l'expiration et l'anti-rejeu. Une liste positive bornera aussi le sens des paramètres : aucun montage de <code>/</code>, règle pare-feu libre, destination arbitraire, shell ou script transmis depuis l'interface.</p>
+    <h2>Chaque action va vers la bonne autorité</h2>
+    <div class="grid">
+      <article class="card"><h3>Linux local</h3><p>Agent puis Auxiliaire local avec privilèges propres à l'opération.</p></article>
+      <article class="card"><h3>OpenStack</h3><p>Adaptateur central utilisant l'API native et une identité limitée.</p></article>
+      <article class="card"><h3>IaC</h3><p>Terraform, OpenTofu ou Ansible passent par un runner isolé et vérifiable.</p></article>
+      <article class="card"><h3>K3s</h3><p>Amorçage local si nécessaire, puis API du cluster avec droits bornés.</p></article>
+    </div>
+    <h2>Un contrat d'action commun</h2>
+    <p>Demande autorisée, plan exact, approbation liée à son empreinte, ordre ciblé et expirant, validation locale, opération idempotente lorsque promis, résultat honnête et audit expurgé. Les états distinguent attente, exécution, réussite, échec et résultat inconnu ; aucune coupure ne provoque un rejeu aveugle.</p>
+    <div class="notice"><strong>La V1 reste volontairement plus petite :</strong> l'exécutable contient seulement les modes Daemon et Relay ; le Relay reste désactivé par défaut. App → plan → approbation → Ansible → SSH demeure l'unique chemin d'action et l'Auxiliaire reste hors V1.</div>
+    <p>OWASP et NIS2 n'imposent pas cette technologie : l'architecture est notre traduction de leurs principes et devra être prouvée. Elle applique les valeurs sûres par défaut, le moindre privilège, le refus par défaut, la défense en profondeur et la séparation des responsabilités de <a href="https://cheatsheetseries.owasp.org/cheatsheets/Secure_Product_Design_Cheat_Sheet.html">l'OWASP Secure Product Design</a> et de son <a href="https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html">guide d'autorisation</a>. La <a href="https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html">validation sémantique</a> borne chaque paramètre et la <a href="https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html">journalisation</a> relie demande, approbation et résultat sans secret. Elle contribue aux contrôles d'accès, à la cryptographie, au développement sûr, à la chaîne d'approvisionnement et à l'évaluation d'efficacité de <a href="https://eur-lex.europa.eu/legal-content/FR/TXT/?uri=CELEX:32022L2555">NIS2, article 21</a>, sans valoir déclaration de conformité.</p>
+    <!-- coherence: AGENT-AUTHORITY:end -->
+    <!-- coherence: SERVICE-LIFECYCLE:start -->
+    <h2>Préparer fermé, publier en dernier</h2>
+    <div class="grid">
+      <article class="card"><h3>1 · Reprise</h3><p>Inventaire, responsabilités, plan approuvé et restauration prouvée.</p></article>
+      <article class="card"><h3>2 · Préparation fermée</h3><p>Identités, secrets et réseau privé sont préparés sans exposition.</p></article>
+      <article class="card"><h3>3 · Vérification</h3><p>Le service est déployé et vérifié localement avant tout trafic utilisateur.</p></article>
+      <article class="card"><h3>4 · Publication</h3><p>Le flux exact est autorisé, puis la route est basculée et observée.</p></article>
+    </div>
+    <p>Une migration avec données nomme l'autorité d'écriture et le point de non-retour. Après de nouvelles écritures sur la destination, aucun retour automatique ne remet simplement l'ancienne route. Une coupure donne un résultat inconnu, jamais un rejeu aveugle. Le <a href="../architecture/CYCLE-DE-VIE-DES-SERVICES.md">contrat détaillé</a> couvre les scénarios homelab, PME, migration et panne.</p>
+    <!-- coherence: SERVICE-LIFECYCLE:end -->
+    <h2>Le modèle minimal</h2>
+    <div class="grid">
+      <article class="card"><h3>Infrastructure</h3><p>Le groupe logique dans lequel l'utilisateur rassemble ses machines.</p></article>
+      <article class="card"><h3>Machine</h3><p>Un hôte Linux physique ou virtuel, existant avant la V1.</p></article>
+      <article class="card"><h3>Service</h3><p>Une capacité déployée et suivie sur une ou plusieurs machines.</p></article>
+      <article class="card"><h3>App</h3><p>L'interface Web et son backend, qui montrent, préparent, font approuver puis coordonnent les opérations.</p></article>
+      <article class="card"><h3>Agent</h3><p>L'installation locale unique qui regroupe les capacités explicitement activées.</p></article>
+      <article class="card"><h3>Daemon</h3><p>Le processus permanent non privilégié de l'Agent.</p></article>
+      <article class="card"><h3>Relay</h3><p>Le point qui reçoit les observations des machines.</p></article>
+    </div>
+    <h2>Plateformes et extensions</h2>
+    <p>Your Cloud peut partir de machines Linux existantes ou déléguer leur provisionnement à des intégrations explicites telles qu'OpenStack, Terraform ou OpenTofu, sans réimplémenter leurs moteurs ni leurs autorités. K3s et d'autres familles de services sont introduits seulement lorsque leurs besoins et leurs preuves sont compris.</p>
+    <!-- coherence: V1-NETWORK:start -->
+    <h2>Une vraie DMZ</h2>
+    <p>Le VPS public de la V1 est une zone d'exposition durcie, pas automatiquement une DMZ. Une DMZ réelle possède un segment dédié et des frontières filtrantes indépendantes vers Internet et vers les zones privées, tandis que l'administration reste séparée. Your Cloud pourra représenter et vérifier ces frontières sans déduire une DMZ de la seule présence d'une adresse publique.</p>
+    <!-- coherence: V1-NETWORK:end -->
+    <!-- coherence: OWNERSHIP-MODES:start -->
+    <h2>Gestion choisie, jamais imposée</h2>
+    <p>Your Cloud peut déployer et configurer le passage lui-même. L'utilisateur peut aussi conserver ses outils : le service apparaît alors comme externe, avec une séparation visible entre l'état déclaré et l'état réellement vérifié.</p>
+    <h2>Découverte locale</h2>
+    <p>Sur une machine enrôlée, Your Cloud peut relever en lecture seule les services, conteneurs, ports et passages qu'il sait interpréter. Il ne scanne pas le LAN : les autres appareils ne sont ni inventoriés ni considérés fiables par leur seule présence réseau.</p>
+    <!-- coherence: OWNERSHIP-MODES:end -->
+    <!-- coherence: V1-OBSERVATION:start -->
+    <h2>Observation choisie, jamais une commande distante</h2>
+    <p>L'utilisateur choisit des observations nommées et voit leurs données, privilèges et coûts. Le Daemon n'ouvre aucun port réseau : il conserve un tampon local borné puis envoie lui-même les données en mTLS. Le Relay accuse réception sans pouvoir donner d'ordre. Les extensions futures restent versionnées et typées ; aucun shell, chemin libre ou plugin silencieux ne devient un collecteur.</p>
+    <!-- coherence: V1-OBSERVATION:end -->
+    <h2>Confiance bornée</h2>
+    <p>Seules les machines explicitement enrôlées participent au réseau privé de Your Cloud. L'enrôlement donne une identité, pas une autorisation générale : chaque pair, destination, port et protocole reste limité au besoin approuvé, et les données Your Cloud sont chiffrées avant de quitter leur machine.</p>
+    <h2>Rythme de construction</h2>
+    <p>Le cap n'est pas une roadmap globale. La roadmap active s'arrête à la V1 et seul le prochain incrément reçoit un numéro ainsi qu'un périmètre détaillé. Chaque incrément ajoute une capacité observable et prouvée ; chaque choix explicite sa menace, les recommandations OWASP concernées, les mesures NIS2 pertinentes, les tests hostiles et le risque résiduel.</p>
+    <footer>Source : <a href="../projet/CAP.md">CAP.md</a> · Ligne d'arrivée : <a href="objectif-v1.html">objectif V1</a> · Chemin : <a href="roadmap-v1.html">roadmap V1</a></footer>
+  </main>
+</body>
+</html>

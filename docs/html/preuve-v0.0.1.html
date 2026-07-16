@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Preuve LAB exécutée de Your Cloud v0.0.1 : un artefact et trois processus isolés.">
+  <title>Preuve LAB v0.0.1 — Your Cloud</title>
+  <style>
+    :root{color-scheme:dark;--bg:#06101b;--panel:#0d1c2d;--panel2:#12263d;--text:#f4f8fc;--muted:#a9bacb;--line:#294862;--cyan:#68dbea;--green:#73e0a7;--amber:#ffc96d;--red:#ff8e9e}*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 7% 0,#12394c,transparent 30rem),radial-gradient(circle at 100% 35%,#27204d,transparent 32rem),var(--bg);font:16px/1.55 Inter,system-ui,sans-serif}main{width:min(1120px,calc(100% - 34px));margin:auto;padding:52px 0 86px}h1,h2{line-height:1.12}h1{font-size:clamp(2.7rem,7vw,5.4rem);letter-spacing:-.045em;margin:.12em 0}h2{font-size:clamp(1.5rem,3vw,2.3rem);margin-top:54px}.eyebrow{color:var(--cyan);font:800 .78rem ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}.lead{max-width:850px;color:var(--muted);font-size:1.12rem}.badges{display:flex;gap:9px;flex-wrap:wrap;margin:22px 0}.badge{padding:7px 11px;border:1px solid var(--green);border-radius:999px;color:var(--green);background:#0a1a28}.placement{display:grid;grid-template-columns:1fr 150px 1fr;gap:16px;align-items:center;margin-top:30px}.machine,.card,.capture{border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,rgba(18,38,61,.96),rgba(7,19,32,.96));box-shadow:0 20px 60px rgba(0,0,0,.2)}.machine{padding:22px;min-height:230px}.machine h3{color:var(--green);margin-top:0}.machine.relay{border-color:var(--cyan)}.machine.relay h3{color:var(--cyan)}.machine code{color:var(--amber)}.flow{text-align:center;color:var(--cyan);font-weight:800}.flow .line{height:3px;margin:13px 0;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:4px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}.card{padding:20px}.card strong{display:block;color:var(--green);font-size:1.45rem}.card p{color:var(--muted)}.capture{padding:20px;overflow:auto}.capture pre{margin:0;color:#dce9f5;font:14px/1.55 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap}.hostile{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}.hostile th,.hostile td{padding:12px;border-bottom:1px solid var(--line);text-align:left}.hostile th{color:var(--cyan)}.ok{color:var(--green);font-weight:800}.limit{margin-top:24px;padding:20px;border-left:4px solid var(--red);border-radius:9px;background:rgba(255,142,158,.07);color:var(--muted)}code{color:var(--amber)}a{color:var(--cyan)}footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted)}@media(max-width:760px){.placement,.grid{grid-template-columns:1fr}.flow{padding:8px}.flow .line{width:50px;margin:22px auto;transform:rotate(90deg)}}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Preuve exécutée · LAB v1-full · 16 juillet 2026</p>
+    <h1>Un fichier. Trois processus. Deux machines vivantes.</h1>
+    <p class="lead"><code>v0.0.1</code> prouve qu'un même exécutable peut fournir Daemon et Relay sans fusionner leurs processus, comptes ou cycles de vie. Le Relay reste refusé par défaut sur la machine LAN.</p>
+    <div class="badges"><span class="badge">Contrat prouvé</span><span class="badge">SHA-256 identique</span><span class="badge">Tests LAB verts</span><span class="badge">Retrait propre</span></div>
+
+    <section class="placement" aria-label="Placement réellement exécuté">
+      <article class="machine"><h3>LAN privé</h3><p><code>lab-machine-1</code></p><p>Mêmes octets<br>Daemon · PID 3821<br>aucun port produit entrant</p><p>Relay absent et refusé sans candidature</p></article>
+      <div class="flow"><span>présence → Relay VPS</span><div class="line"></div><small>HTTP :8443<br>gateway filtrant</small></div>
+      <article class="machine relay"><h3>VPS simulé</h3><p><code>lab-coordinateur</code></p><p>Un fichier <code>your-cloud</code><br>Relay · PID 6183 · UID 63459<br>Daemon · PID 6200 · UID 64637 → Relay local</p><p>Deux unités <code>active/running</code></p></article>
+    </section>
+
+    <h2>Quatre preuves qui ferment l'incrément</h2>
+    <div class="grid">
+      <article class="card"><strong>2f115c75…a8feb</strong><p>Même SHA-256 sur le builder, le VPS et la machine LAN ; aucun ancien binaire spécialisé.</p></article>
+      <article class="card"><strong>2 PID · 2 UID</strong><p>Daemon et Relay tournent en parallèle sur le VPS depuis le même chemin, sous deux comptes dynamiques distincts.</p></article>
+      <article class="card"><strong>Refus avant écoute</strong><p>Manifeste absent sur le LAN ou modifiable sur le VPS : sortie non nulle et aucun port <code>8443</code>.</p></article>
+      <article class="card"><strong>0 reste après retrait</strong><p>Unités <code>not-found</code>, PID 0, binaire et configuration absents sur les trois anciennes cibles.</p></article>
+    </div>
+
+    <h2>Chaîne de build et résultat nominal</h2>
+    <div class="capture"><pre>lab-console · Go 1.24.4 · linux/amd64
+gofmt       PASS
+bash -n     PASS
+check-docs  PASS · 6 décisions · 52 blocs · 72 liens
+go test     PASS
+go vet      PASS
+build       ELF statique · CGO_ENABLED=0
+
+QUERY /v0/machines  →  200
+Content-Type: application/json
+Accept-Query: "application/json"
+body: {}
+
+lab-coordinateur  recent  daemon v0.0.1
+lab-machine-1     recent  daemon v0.0.1</pre></div>
+
+    <h2>Défaut sûr et frontières hostiles</h2>
+    <table class="hostile"><thead><tr><th>Entrée ou situation</th><th>Attendu</th><th>Obtenu</th><th>Après</th></tr></thead><tbody>
+      <tr><td>Relay LAN sans manifeste</td><td>refus avant écoute</td><td class="ok">code 2</td><td class="ok">port fermé</td></tr>
+      <tr><td>Activation Relay sur mauvais hôte</td><td>refus avant effet</td><td class="ok">refus</td><td class="ok">Daemon actif</td></tr>
+      <tr><td>Adresse Relay différente</td><td>refus avant candidature</td><td class="ok">refus</td><td class="ok">aucun port</td></tr>
+      <tr><td>Manifeste candidat <code>0666</code></td><td>refus</td><td class="ok">Relay failed</td><td class="ok">Daemon actif</td></tr>
+      <tr><td>PID hors unité pendant retrait</td><td>refus, fichiers gardés</td><td class="ok">code 1</td><td class="ok">manifeste/binaire présents</td></tr>
+      <tr><td>ID d'installation <code>../root</code></td><td>refus avant effet</td><td class="ok">refus</td><td class="ok">Daemon inchangé</td></tr>
+      <tr><td><code>machine_id</code> absent</td><td>400</td><td class="ok">400</td><td class="ok">Relay actif</td></tr>
+      <tr><td>Ancienne machine hors liste</td><td>400</td><td class="ok">400</td><td class="ok">Relay actif</td></tr>
+      <tr><td>Champ connu dupliqué ou mauvaise casse</td><td>400</td><td class="ok">400</td><td class="ok">Relay actif</td></tr>
+      <tr><td>Champ <code>command</code></td><td>400</td><td class="ok">400</td><td class="ok">Relay actif</td></tr>
+      <tr><td>Corps 513 octets</td><td>413</td><td class="ok">413</td><td class="ok">Relay actif</td></tr>
+      <tr><td>Ancien GET de consultation</td><td>405</td><td class="ok">405</td><td class="ok">État inchangé</td></tr>
+    </tbody></table>
+
+    <h2>Indépendance et cycle de vie</h2>
+    <div class="capture"><pre>Arrêt du Daemon VPS + 5 secondes
+lab-coordinateur  old
+lab-machine-1     recent
+Relay PID avant=5990 · après=5990
+
+Deux Daemons arrêtés + redémarrage Relay
+lab-coordinateur  absent
+lab-machine-1     absent
+
+Deux Daemons redémarrés
+lab-coordinateur  recent
+lab-machine-1     recent
+
+disable-relay
+Daemon VPS active · binaire commun intact · manifeste absent · port fermé
+
+remove-agent sur 3 cibles
+LoadState=not-found · MainPID=0 · /etc et /usr/local absents
+
+État final réinstallé
+VPS: Daemon + Relay · LAN: Daemon seul · 2 recent</pre></div>
+
+    <p class="limit"><strong>Limites visibles :</strong> le port <code>8443</code> transporte encore du HTTP clair sans identité. Le manifeste empêche une activation accidentelle mais ne résiste pas à root. Aucun mTLS, App, métrique, tampon, Auxiliaire, Ansible métier, conteneur, WireGuard, élection ou remplacement automatique de Relay n'est revendiqué. La signature, la SBOM et la provenance restent exigées avant la preuve finale V1.</p>
+
+    <footer>Source détaillée : <a href="../lab/v0.0.1-presence.md">rapport Markdown</a> · Contrat : <a href="../objectifs/v1/CONTRAT-V0.0.1.md">v0.0.1</a> · Roadmap : <a href="roadmap-v1.html">V1</a></footer>
+  </main>
+</body>
+</html>

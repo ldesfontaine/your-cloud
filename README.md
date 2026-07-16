@@ -1,61 +1,41 @@
-# your-cloud
+# Your Cloud
 
-> Le nom canonique du produit, de la commande, du dépôt et des artefacts est
-> `your-cloud`. Les underscores restent réservés aux identifiants Python qui ne
-> peuvent pas contenir de tiret.
+Your Cloud permet de représenter une infrastructure, d'observer ses machines et
+de déployer des services depuis une interface compréhensible, sans masquer les
+opérations réellement exécutées.
 
-Ce projet construit une console souveraine qui enrôle, observe et fait évoluer
-des infrastructures Linux sans donner au chemin de télémétrie une autorité
-d’administration et sans rendre les services dépendants du pilotage.
+## Construction vérifiable
 
-La V1 repose sur trois composants :
+Chaque capacité est d'abord définie, puis implémentée et enfin prouvée dans un
+environnement isolé. La documentation distingue explicitement ces trois états.
 
-- une console Python sur le poste Linux approuvé de l’opérateur ;
-- un daemon Go léger et en lecture seule sur chaque machine gérée ;
-- un coordinateur Go remplaçable qui conserve uniquement la télémétrie.
+[`tools/labctl`](tools/labctl) contrôle les machines du LAB. Sa
+présence ne prouve aucune capacité du produit.
 
-Le chemin de changement reste séparé : la console présente un plan puis atteint
-directement les machines par SSH et Ansible après approbation.
+## Sources actives
 
-## Comprendre le fonctionnement pas à pas
+- [Carte documentaire](docs/README.md) : le point d'entrée et le chemin de
+  lecture selon le sujet.
+- [Cap du projet](docs/projet/CAP.md) : la destination à long terme et les
+  limites durables.
+- [Objectif V1](docs/objectifs/v1/README.md) : la première ligne d'arrivée
+  concrète.
+- [Roadmap V1](docs/objectifs/v1/ROADMAP.md) : l'ordre des preuves nécessaires
+  pour atteindre cette ligne d'arrivée, sans planifier les versions postérieures.
+- [Contexte](CONTEXT.md) : le petit glossaire commun.
+- [Qualité du code](docs/contribution/QUALITE.md) : les règles appliquées à
+  chaque changement.
+- [Cohérence documentaire](docs/projet/COHERENCE.md) : le rôle de chaque
+  source et la propagation des décisions transverses.
+- [Anatomie du projet](docs/architecture/ANATOMIE.md) : le placement, les flux
+  et leur [vue HTML visuelle](docs/html/anatomie.html), mis à jour au fil du
+  développement.
+- [Documentation visuelle](docs/html/index.html) : l'entrée vers toutes les
+  éditions HTML.
+- [LAB](docs/lab/README.md) : le contrôleur et ses gardes.
 
-L'[Anatomie du projet](docs/ANATOMIE-DU-PROJET.md) suit le code depuis le
-premier audit SSH jusqu'à la publication mTLS, la seconde vérification des
-signatures et la reprise après coupure. Une
-[édition HTML interactive](docs/anatomie-du-projet.html) permet d'explorer les
-flux installation, publication, lecture et panne.
-
-## Lire le projet
-
-- [Anatomie technique](docs/ANATOMIE-DU-PROJET.md)
-- [Vision](docs/VISION.md)
-- [Guide du bâtisseur](docs/GUIDE-DU-BATISSEUR.md)
-- [Scénario simple VPS + mini-PC](docs/SCENARIO-VPS-MINI-PC.md)
-- [Installation et premier audit](docs/INSTALLATION.md)
-- [Roadmap](docs/ROADMAP.md)
-- [Contrat des releases](docs/RELEASES.md)
-- [Vocabulaire partagé](CONTEXT.md)
-- [Registre des décisions](docs/adr/REGISTRE.md)
-- [Spécifications](docs/specifications/README.md)
-- [Laboratoire](docs/lab/README.md)
-
-Le développement suit la roadmap par paliers. Aucun code de l’ancienne lignée
-n’est repris par défaut ; son archive reste séparée de ce produit.
-
-## Arborescence de construction
-
-Les frontières de P0 accueillent progressivement le code des paliers :
+Après toute modification d'une décision transverse, le contrôle statique est :
 
 ```text
-console/       console Python, audit, enrôlement et inspection signée
-daemon/        daemon Go d’observation sans port entrant
-coordinateur/  coordinateur Go de télémétrie
-protocole/     contrats Protobuf et sorties générées versionnées
-engine/        contenu Ansible exécuté depuis la console dans le LAB
-tools/         contrôleurs d’atelier, distincts du produit
+tools/check-docs
 ```
-
-Le coordinateur local, le transport mTLS et la reprise après coupure sont
-implémentés depuis P4. P5 ajoute le même point en mode distant, la migration par
-pilote avec ancien endpoint conservé, son retrait séparé et le LAB réseau
-complet. Les preuves exécutées vivent dans `docs/lab/`.

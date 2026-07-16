@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Contrat fonctionnel de la V1 de Your Cloud.">
+  <title>Objectif V1 — Your Cloud</title>
+  <style>
+    :root{color-scheme:dark;--bg:#07111e;--panel:#0e1d31;--text:#f2f6fb;--muted:#aab9ca;--line:#29415d;--cyan:#5dd8e7;--blue:#75a9ff;--green:#70dda8;--amber:#ffca70}*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 85% 0,#102c42,transparent 32rem),var(--bg);font:16px/1.65 Inter,system-ui,sans-serif}main{width:min(1040px,calc(100% - 36px));margin:auto;padding:64px 0 96px}h1,h2,h3{line-height:1.15}h1{margin:0;font-size:clamp(2.7rem,8vw,5.8rem);letter-spacing:-.04em}h2{margin-top:64px;font-size:clamp(1.7rem,4vw,2.7rem)}p,li{max-width:800px}.eyebrow{color:var(--cyan);font:700 .78rem ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase}.lead{color:var(--muted);font-size:1.15rem}.status{display:inline-block;margin-top:18px;padding:7px 12px;border:1px solid var(--amber);border-radius:999px;color:var(--amber)}.topology{display:grid;grid-template-columns:1fr auto 1fr;gap:18px;align-items:stretch;margin-top:28px}.node{padding:22px;border:1px solid var(--line);border-radius:18px;background:rgba(14,29,49,.9)}.node.public{border-color:var(--blue)}.node.private{border-color:var(--green)}.node h3{margin-top:0}.link{align-self:center;color:var(--cyan);font-weight:800;text-align:center}table{width:100%;border-collapse:collapse;border:1px solid var(--line);background:var(--panel)}th,td{padding:14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--cyan)}.checks{columns:2 280px;gap:36px}.checks li{break-inside:avoid;margin-bottom:10px}.open{padding:22px;border:1px solid var(--amber);border-radius:16px;background:rgba(255,202,112,.07)}a{color:var(--cyan)}footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted)}@media(max-width:720px){.topology{grid-template-columns:1fr}.link{transform:rotate(90deg)}}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Première ligne d'arrivée</p>
+    <h1>Deux machines. Deux services. Un seul point d'entrée public.</h1>
+    <p class="lead">La V1 observe un VPS et une machine de LAN, déploie un service sur chacun et configure leur accès HTTPS sans ouvrir le LAN à Internet.</p>
+    <span class="status">Contrat validé pour découpage</span>
+    <h2>Placement</h2>
+    <div class="topology">
+      <article class="node public"><h3>VPS public</h3><ul><li>Un exécutable <code>your-cloud</code></li><li>Daemon et Relay en processus séparés</li><li>Point d'entrée HTTPS</li><li>Service A</li></ul></article>
+      <div class="link" aria-label="Passage chiffré configuré par Your Cloud">passage chiffré<br>configuré<br>→</div>
+      <article class="node private"><h3>Machine du LAN</h3><ul><li>Aucun port Internet entrant</li><li>Même exécutable, Daemon seulement</li><li>Relay refusé sans provisionnement</li><li>Service B</li></ul></article>
+    </div>
+    <!-- coherence: V1-APP-ACCESS:start -->
+    <h2>Trois accès à ne pas confondre</h2>
+    <table><thead><tr><th>Ce que l'utilisateur ouvre</th><th>Chemin V1 décidé</th><th>Exposition</th></tr></thead><tbody>
+      <tr><td><code>https://pdf.&lt;domaine&gt;</code></td><td>DNS → IP du VPS:443 → Traefik → BentoPDF local</td><td>Public</td></tr>
+      <tr><td><code>https://vault.&lt;domaine&gt;</code></td><td>DNS → même IP du VPS:443 → Traefik → WireGuard → Vaultwarden</td><td>Public</td></tr>
+      <tr><td>App Your Cloud</td><td>Navigateur laptop → <code>127.0.0.1:&lt;port&gt;</code> → tunnel SSH → VM de contrôle</td><td>Plan d'administration uniquement</td></tr>
+    </tbody></table>
+    <p>Les ports internes des services ne sont jamais publics. Une requête directe vers l'IP du VPS sans nom déclaré n'obtient aucune route applicative par défaut. Le laptop ne lance pas le projet : il exécute uniquement le navigateur et le client SSH ; l'App et Ansible restent dans la VM. Podman n'est donc pas un prérequis du laptop utilisateur en V1.</p>
+    <p><code>labctl</code> ne possède pas encore de commande de tunnel. L'incrément de l'interface pourra ajouter une commande bornée, liée seulement à <code>127.0.0.1</code>, lorsque les ports exacts seront choisis.</p>
+    <p>Publier l'App dès la V1 ajouterait l'identité utilisateur, les autorisations par infrastructure et par action, les sessions, la protection CSRF, la limitation des tentatives, la réauthentification des opérations critiques et l'isolation des clés SSH et du runner Ansible. La garder sur le plan d'administration réduit cette première preuve sans revendiquer encore l'accès Web final sans tunnel.</p>
+    <!-- coherence: V1-APP-ACCESS:end -->
+    <!-- coherence: OWNERSHIP-MODES:start -->
+    <h2>Responsabilité choisie</h2>
+    <p>En mode géré, l'App présente puis applique le plan qui configure WireGuard, limite le trafic autorisé, termine HTTPS sur le VPS et route chaque nom. En mode externe, l'utilisateur garde la main et l'App distingue clairement ce qui est déclaré de ce qui est vérifié.</p>
+    <!-- coherence: OWNERSHIP-MODES:end -->
+    <!-- coherence: AGENT-AUTHORITY:start -->
+    <h2>Trois chemins séparés</h2>
+    <table><thead><tr><th>Chemin</th><th>Responsabilité</th></tr></thead><tbody><tr><td>Daemon → Relay</td><td>Présence, état et métriques</td></tr><tr><td>App → machines</td><td>Plans approuvés et changements via Ansible</td></tr><tr><td>Internet → VPS → service</td><td>Exposition HTTPS des applications</td></tr></tbody></table>
+    <p>La V1 distribue un seul exécutable <code>your-cloud</code>. Le VPS lance ses modes <code>daemon</code> et <code>relay</code> en parallèle, mais sous des comptes, configurations, identités, secrets, stockages et budgets séparés. La machine du LAN lance seulement le Daemon ; le Relay refuse de démarrer sans provisionnement candidat local explicite.</p>
+    <h2>Comment un clic devient une action en V1</h2>
+    <p>L'App consulte l'état connu, construit un plan borné, affiche ses privilèges, flux et conséquences, puis attend l'approbation. Son backend, placé dans l'environnement d'administration, applique ensuite ce plan avec Ansible par SSH sans rendre le port du LAN public. Le navigateur ne parle jamais lui-même en SSH. Des contrôles directs et les observations suivantes du Daemon vérifient le résultat. Le Daemon ne reçoit jamais le clic et n'exécute aucune commande.</p>
+    <p>L'approbation identifie le contenu exact appliqué. Toute différence d'artefact ou de paramètre arrête l'application avant la première mutation. L'interface ne fournit ni playbook, inventaire, commande, argument ou chemin libre : le backend sélectionne un parcours connu, des entrées typées, une machine enrôlée, une clé d'hôte vérifiée et des droits <code>sudo</code> minimaux.</p>
+    <h2>Compatible avec la cible finale, sans l'implémenter</h2>
+    <p>Le parcours utilisateur restera le même après la V1 : demander, comprendre, approuver, appliquer et vérifier. Pour une future machine en mode géré, l'Agent unique pourra ajouter un Auxiliaire local ponctuel, sans réseau, tandis qu'OpenStack, l'IaC et K3s utiliseront leurs API ou un runner isolé. Aucun canal d'action ni Auxiliaire n'appartient au contrat V1 ; les réintroduire exigerait une modification explicite et une nouvelle validation du contrat.</p>
+    <!-- coherence: AGENT-AUTHORITY:end -->
+    <!-- coherence: V1-NETWORK:start -->
+    <h2>Identités et chiffrement</h2>
+    <p>Seules les machines enrôlées peuvent devenir des pairs du passage privé, mais l'enrôlement n'autorise aucun accès général. WireGuard protège les paquets entre machines, mTLS identifie chaque Daemon auprès du Relay, SSH protège l'administration et HTTPS protège les accès Web.</p>
+    <table><thead><tr><th>Flux</th><th>Protection V1</th></tr></thead><tbody><tr><td>Machines enrôlées</td><td>WireGuard, pairs nommés et routes bornées</td></tr><tr><td>Daemon → Relay</td><td>mTLS avec une identité par Daemon</td></tr><tr><td>App → Relay</td><td>HTTPS avec authentification forte de l'App</td></tr><tr><td>App → machine</td><td>SSH et clé d'hôte vérifiée</td></tr><tr><td>Navigateur → service</td><td>HTTPS</td></tr><tr><td>VPS → service LAN</td><td>WireGuard, destination et port explicites</td></tr></tbody></table>
+    <p>Cette défense en profondeur répond aux risques d'écoute, d'usurpation et de déplacement latéral. Les tests refusent un pair inconnu, un certificat de Daemon révoqué, une mauvaise clé SSH et tout port non prévu. Une machine totalement compromise peut encore utiliser ses propres clés et ses seuls flux autorisés : le chiffrement ne remplace donc jamais le confinement.</p>
+    <h2>Ce que la V1 doit prouver</h2>
+    <ul class="checks"><li>Deux machines dans une infrastructure.</li><li>État reçu depuis les deux Daemons.</li><li>Observation récente ou ancienne visible.</li><li>Plan lisible avant chaque changement.</li><li>Un service versionné sur chaque machine.</li><li>Passage privé configuré par Your Cloud.</li><li>Deux services accessibles en HTTPS.</li><li>Aucun port entrant vers le LAN.</li><li>Second passage sans changement inutile.</li><li>Redémarrage et suppression propres.</li></ul>
+    <h2>WireGuard borné</h2>
+    <p>Une clé par machine, adresses <code>/32</code>, aucune route vers le LAN, refus par défaut et seuls les ports explicitement publiés. Depuis un VPS compromis, SSH, les autres ports et les autres machines doivent rester injoignables. Le Daemon ne scanne aucun voisin et un service géré ne reçoit aucun accès latéral non déclaré.</p>
+    <!-- coherence: V1-NETWORK:end -->
+    <h2>Traefik explicite</h2>
+    <p>Traefik termine HTTPS et route BentoPDF ainsi que Vaultwarden. Your Cloud génère sa configuration avec le <code>file provider</code> : aucune découverte implicite, aucun socket Docker, aucune API ou dashboard public. Un conteneur non déclaré ne reçoit jamais de route.</p>
+    <h2>Images OCI maîtrisées</h2>
+    <p>Le premier parcours de déploiement utilise des images OCI avec nom, version et digest approuvés. <code>latest</code> est refusé. Le plan montre l'origine, les volumes, les ports, les ressources et les flux ; une mise à jour exige un nouveau plan et la suppression préserve les données persistantes par défaut.</p>
+    <h2>Podman rootless et Quadlet</h2>
+    <p>Podman rootless exécute les images sans démon central privilégié. Sa CLI reste proche de Docker sans promettre une compatibilité parfaite. Quadlet décrit chaque conteneur comme un service systemd lisible : image, utilisateur, volumes, réseau, limites et redémarrage.</p>
+    <p><strong>Limite V1 :</strong> le déploiement OCI géré exige systemd et cgroup v2 sur la machine hôte. L'App vérifie ces prérequis avant toute mutation et refuse clairement une cible incompatible. Quadlet ne fabrique pas de solution OpenRC ou runit ; un service installé autrement peut rester externe. Cette limite ne décide pas encore des prérequis du seul Daemon d'observation.</p>
+    <p>OWASP ne recommande pas Quadlet par son nom. Nous l'utilisons pour appliquer et prouver rootless, l'absence de socket exposé, les capacités minimales, l'interdiction d'élévation, les écritures explicites et les limites de ressources. Lors de sa première utilisation, le rapport expliquera visuellement chaque réglage et son test hostile.</p>
+    <h2>Services proposés pour la preuve finale</h2>
+    <p>Des services <code>hello-world</code> servent seulement de sondes pendant les premiers incréments. La cible validée pour la V1 finale est <a href="https://www.bentopdf.com/docs/self-hosting/">BentoPDF</a> épinglé sur le VPS et <a href="https://github.com/dani-garcia/vaultwarden">Vaultwarden</a> dans le LAN, avec stockage, sauvegarde, restauration et secrets synthétiques réellement prouvés.</p>
+    <!-- coherence: V1-OBSERVATION:start -->
+    <h2>Observer sans backdoor</h2>
+    <p>L'utilisateur choisit un profil composé de collecteurs nommés. Le plan montre leurs données, lectures locales, fréquence, rétention et ressources. Le Daemon non-root n'ouvre aucun port : il conserve un tampon local borné puis pousse les observations en mTLS. Le Relay accuse réception, mais ne peut envoyer aucune commande.</p>
+    <p>Une consultation locale reste possible sans Relay. Quand le tampon atteint sa limite, l'état courant est conservé et la perte historique devient une lacune visible. Commande shell, chemin arbitraire, scan du LAN et plugin téléchargé à la demande sont refusés.</p>
+    <!-- coherence: V1-OBSERVATION:end -->
+    <h2>Premier jalon après la V1</h2>
+    <p>La <code>v1.0.1</code> ajoutera un petit parcours SSO OpenID Connect pour Vaultwarden. Le fournisseur, son placement et sa récupération seront cadrés seulement après la preuve V1 ; cette note ne préconçoit pas encore la solution.</p>
+    <h2>Premier incrément</h2>
+    <p><code>v0.0.1</code> s'arrête au même exécutable sur les deux machines, au Relay et au Daemon parallèles sur le VPS, au Daemon seul sur le LAN et à leur signal de présence horodaté. Cette distribution, le refus Relay par défaut et le protocole sont prouvés dans le LAB. Aucun déploiement, aucune métrique système et aucun mTLS ne sont revendiqués.</p>
+    <h2>Preuves uniquement dans le LAB</h2>
+    <p>Le produit, l'App, Ansible, les tests et les builds s'exécutent dans des VM LAB ou un runner isolé. Le laptop sert à éditer, inspecter Git, contrôler le LAB, ouvrir le tunnel SSH local et utiliser le navigateur ; aucune preuve produit n'y est fabriquée.</p>
+    <h2>Paramètres décidés au bon incrément</h2>
+    <div class="open"><p>Le profil détaillé et les chiffres du tampon ne bloquent plus la roadmap. <code>v0.0.1</code> garde seulement la présence. Le premier incrément de vraie observation mesurera dans le LAB la taille des messages, la fréquence et le coût disque, puis fixera la limite d'âge, la limite de taille, le maximum et les tests de saturation.</p><p>Le contrat reste strict : état courant conservé, événements anciens retirés en premier, lacune visible, et aucun log, secret, contenu de fichier ou inventaire libre par défaut.</p></div>
+    <footer>Source : <a href="../objectifs/v1/README.md">objectif V1</a> · Vision générale : <a href="cap.html">cap du projet</a> · Chemin : <a href="roadmap-v1.html">roadmap V1</a></footer>
+  </main>
+</body>
+</html>

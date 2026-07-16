@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""Valide statiquement la couverture et les liens des sources documentaires."""
+
+from __future__ import annotations
+
+import re
+import sys
+from dataclasses import dataclass
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REGISTRY_PATH = ROOT / "docs/projet/COHERENCE.md"
+
+REQUIRED_FILES = (
+    "README.md",
+    "CONTEXT.md",
+    "docs/README.md",
+    "docs/projet/COHERENCE.md",
+    "docs/projet/CAP.md",
+    "docs/objectifs/v1/README.md",
+    "docs/objectifs/v1/ROADMAP.md",
+    "docs/contribution/README.md",
+    "docs/contribution/QUALITE.md",
+    "docs/architecture/ANATOMIE.md",
+    "docs/lab/README.md",
+    "docs/html/index.html",
+    "docs/html/cap.html",
+    "docs/html/objectif-v1.html",
+    "docs/html/roadmap-v1.html",
+    "docs/html/anatomie.html",
+)
+
+HTML_MIRRORS = {
+    "docs/projet/CAP.md": "docs/html/cap.html",
+    "docs/objectifs/v1/README.md": "docs/html/objectif-v1.html",
+    "docs/objectifs/v1/ROADMAP.md": "docs/html/roadmap-v1.html",
+    "docs/architecture/ANATOMIE.md": "docs/html/anatomie.html",
+}
+
+STALE_PHRASES = (
+    "question v1 encore ouverte",
+    "recommandation v1 à confirmer",
+    "accès app v1 à trancher",
+    "recommandation à confirmer avant la roadmap",
+    "contrat en construction",
+)
+
+REGISTRY_START = "<!-- coherence-registry:start -->"
+REGISTRY_END = "<!-- coherence-registry:end -->"
+MARKER_PATTERN = re.compile(
+    r"<!--\s*coherence:\s*([A-Z][A-Z0-9-]*):(start|end)\s*-->"
+)
+MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+IDENTIFIER_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]*$")
+
+
+@dataclass(frozen=True)
+class Decision:
+    """Décision transverse et documents publics qui doivent la projeter."""
+
+    identifier: str
+    summary: str
+    canonical: str
+    projections: tuple[str, ...]
+
+    @property
+    def declared_targets(self) -> tuple[str, ...]:
+        """Retourne la source canonique suivie des projections sans doublon."""
+
+        return tuple(dict.fromkeys((self.canonical, *self.projections)))
+
+
+class LinkCollector(HTMLParser):
+    """Collecte les liens locaux d'une page HTML sans interpréter son rendu."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if tag != "a":
+            return
+        for name, value in attrs:
+            if name == "href" and value:
+                self.links.append(value)
+
+
+def clean_cell(value: str) -> str:
+    """Retire uniquement le balisage simple autorisé dans le registre."""
+
+    return value.strip().replace("`", "")
+
+
+def parse_registry(errors: list[str]) -> tuple[Decision, ...]:
+    """Lit la table bornée du registre et refuse tout format ambigu."""
+
+    if not REGISTRY_PATH.is_file():
+        errors.append("registre absent: docs/projet/COHERENCE.md")
+        return ()
+
+    text = REGISTRY_PATH.read_text(encoding="utf-8")
+    if text.count(REGISTRY_START) != 1 or text.count(REGISTRY_END) != 1:
+        errors.append("le registre doit contenir une seule paire de bornes")
+        return ()
+
+    body = text.split(REGISTRY_START, 1)[1].split(REGISTRY_END, 1)[0]
+    decisions: list[Decision] = []
+    identifiers: set[str] = set()
+
+    for line_number, raw_line in enumerate(body.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [clean_cell(cell) for cell in line.strip("|").split("|")]
+        if not cells or cells[0] in {"Identifiant", "---"}:
+            continue
+        if len(cells) != 4:
+            errors.append(
+                f"registre ligne {line_number}: quatre colonnes sont requises"
+            )
+            continue
+
+        identifier, summary, canonical, projection_cell = cells
+        if not IDENTIFIER_PATTERN.fullmatch(identifier):
+            errors.append(f"identifiant invalide dans le registre: {identifier}")
+            continue
+        if identifier in identifiers:
+            errors.append(f"identifiant dupliqué dans le registre: {identifier}")
+            continue
+        identifiers.add(identifier)
+
+        projections = tuple(
+            item.strip() for item in projection_cell.split(",") if item.strip()
+        )
+        if not summary or not canonical or not projections:
+            errors.append(f"décision incomplète dans le registre: {identifier}")
+            continue
+        decisions.append(Decision(identifier, summary, canonical, projections))
+
+    if not decisions:
+        errors.append("aucune décision transverse lisible dans le registre")
+    return tuple(decisions)
+
+
+def with_mirrors(targets: tuple[str, ...]) -> tuple[str, ...]:
+    """Ajoute les vues HTML imposées par les sources Markdown déclarées."""
+
+    expanded: list[str] = []
+    for target in targets:
+        expanded.append(target)
+        mirror = HTML_MIRRORS.get(target)
+        if mirror:
+            expanded.append(mirror)
+    return tuple(dict.fromkeys(expanded))
+
+
+def validate_required_files(errors: list[str]) -> None:
+    """Vérifie que la carte minimale des sources publiques existe."""
+
+    for relative_path in REQUIRED_FILES:
+        if not (ROOT / relative_path).is_file():
+            errors.append(f"source obligatoire absente: {relative_path}")
+
+
+def validate_decisions(decisions: tuple[Decision, ...], errors: list[str]) -> int:
+    """Vérifie les paires de marqueurs et refuse les projections implicites."""
+
+    expected_by_identifier: dict[str, set[str]] = {}
+    marker_count = 0
+
+    for decision in decisions:
+        targets = with_mirrors(decision.declared_targets)
+        expected_by_identifier[decision.identifier] = set(targets)
+        start_marker = f"<!-- coherence: {decision.identifier}:start -->"
+        end_marker = f"<!-- coherence: {decision.identifier}:end -->"
+
+        for relative_path in targets:
+            path = ROOT / relative_path
+            if not path.is_file():
+                errors.append(
+                    f"{decision.identifier}: projection absente: {relative_path}"
+                )
+                continue
+            text = path.read_text(encoding="utf-8")
+            start_count = text.count(start_marker)
+            end_count = text.count(end_marker)
+            if start_count != 1 or end_count != 1:
+                errors.append(
+                    f"{decision.identifier}: {relative_path} doit contenir "
+                    "exactement une paire de marqueurs"
+                )
+                continue
+            if text.index(start_marker) >= text.index(end_marker):
+                errors.append(
+                    f"{decision.identifier}: marqueurs inversés dans {relative_path}"
+                )
+                continue
+            marker_count += 2
+
+    public_documents = [ROOT / "README.md", ROOT / "CONTEXT.md"]
+    public_documents.extend(sorted((ROOT / "docs").rglob("*.md")))
+    public_documents.extend(sorted((ROOT / "docs").rglob("*.html")))
+
+    known_identifiers = {decision.identifier for decision in decisions}
+    for path in public_documents:
+        if not path.is_file():
+            continue
+        relative_path = path.relative_to(ROOT).as_posix()
+        text = path.read_text(encoding="utf-8")
+        marker_stack: list[str] = []
+        for match in MARKER_PATTERN.finditer(text):
+            identifier, boundary = match.groups()
+            if identifier not in known_identifiers:
+                errors.append(
+                    f"marqueur orphelin {identifier} dans {relative_path}"
+                )
+            elif relative_path not in expected_by_identifier[identifier]:
+                errors.append(
+                    f"projection non déclarée de {identifier} dans {relative_path}"
+                )
+
+            if boundary == "start":
+                marker_stack.append(identifier)
+                continue
+            if not marker_stack:
+                errors.append(
+                    f"marqueur de fin sans début pour {identifier} "
+                    f"dans {relative_path}"
+                )
+                continue
+            if marker_stack[-1] != identifier:
+                errors.append(
+                    f"marqueurs croisés dans {relative_path}: "
+                    f"{marker_stack[-1]} doit être refermé avant {identifier}"
+                )
+                continue
+            marker_stack.pop()
+
+        if marker_stack:
+            errors.append(
+                f"marqueur non refermé dans {relative_path}: {marker_stack[-1]}"
+            )
+
+    return marker_count
+
+
+def normalize_link(raw_link: str) -> str:
+    """Normalise un lien Markdown simple sans accepter de chemin local absolu."""
+
+    link = raw_link.strip()
+    if link.startswith("<") and link.endswith(">"):
+        link = link[1:-1]
+    if " " in link and not link.startswith(("http://", "https://")):
+        link = link.split(" ", 1)[0]
+    return link
+
+
+def is_external_link(link: str) -> bool:
+    """Indique si un lien ne doit pas être résolu dans le dépôt."""
+
+    return link.startswith(("http://", "https://", "mailto:", "data:", "#"))
+
+
+def validate_link(
+    document: Path, raw_link: str, errors: list[str], checked: set[tuple[Path, str]]
+) -> None:
+    """Vérifie une cible locale une seule fois par document."""
+
+    link = normalize_link(raw_link)
+    key = (document, link)
+    if not link or key in checked or is_external_link(link):
+        return
+    checked.add(key)
+
+    parsed = urlsplit(link)
+    local_path = unquote(parsed.path)
+    if not local_path:
+        return
+    if local_path.startswith("/"):
+        errors.append(
+            f"lien local absolu interdit dans {document.relative_to(ROOT)}: {link}"
+        )
+        return
+
+    target = (document.parent / local_path).resolve()
+    try:
+        target.relative_to(ROOT.resolve())
+    except ValueError:
+        errors.append(
+            f"lien hors dépôt dans {document.relative_to(ROOT)}: {link}"
+        )
+        return
+    if not target.exists():
+        errors.append(
+            f"lien cassé dans {document.relative_to(ROOT)}: {link}"
+        )
+
+
+def validate_links(errors: list[str]) -> int:
+    """Vérifie les liens locaux de toutes les sources Markdown et HTML actives."""
+
+    checked: set[tuple[Path, str]] = set()
+    documents = [ROOT / "README.md", ROOT / "CONTEXT.md"]
+    documents.extend(sorted((ROOT / "docs").rglob("*.md")))
+    documents.extend(sorted((ROOT / "docs").rglob("*.html")))
+
+    for document in documents:
+        if not document.is_file():
+            continue
+        text = document.read_text(encoding="utf-8")
+        if document.suffix == ".md":
+            links = MARKDOWN_LINK_PATTERN.findall(text)
+        else:
+            collector = LinkCollector()
+            collector.feed(text)
+            links = collector.links
+        for link in links:
+            validate_link(document, link, errors, checked)
+    return len(checked)
+
+
+def validate_stale_phrases(errors: list[str]) -> None:
+    """Refuse uniquement les anciennes contradictions déjà identifiées."""
+
+    documents = [ROOT / "README.md"]
+    documents.extend(sorted((ROOT / "docs").rglob("*.md")))
+    documents.extend(sorted((ROOT / "docs").rglob("*.html")))
+    for document in documents:
+        if not document.is_file():
+            continue
+        text = document.read_text(encoding="utf-8").casefold()
+        for phrase in STALE_PHRASES:
+            if phrase in text:
+                errors.append(
+                    f"formulation obsolète dans {document.relative_to(ROOT)}: {phrase}"
+                )
+
+
+def main() -> int:
+    """Exécute tous les contrôles et produit une sortie courte et actionnable."""
+
+    errors: list[str] = []
+    validate_required_files(errors)
+    decisions = parse_registry(errors)
+    marker_count = validate_decisions(decisions, errors)
+    link_count = validate_links(errors)
+    validate_stale_phrases(errors)
+
+    if errors:
+        print("Documentation: FAIL", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+
+    print("Documentation: PASS")
+    print(f"- {len(decisions)} décisions transverses contrôlées")
+    print(
+        f"- {marker_count // 2} blocs de couverture Markdown/HTML vérifiés"
+    )
+    print(f"- {link_count} liens locaux vérifiés")
+    print("- cohérence sémantique: relecture humaine toujours requise")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

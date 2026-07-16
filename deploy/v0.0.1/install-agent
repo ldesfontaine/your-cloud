@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Install the common artifact and activate only the outbound Daemon role.
+set -euo pipefail
+
+[[ $# -eq 3 ]] || { echo "usage: install-agent <binary> <machine-id> <relay-url>" >&2; exit 2; }
+binary=$1
+machine_id=$2
+relay_url=$3
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+
+[[ $(id -u) -eq 0 ]] || { echo "install-agent must run as root" >&2; exit 1; }
+[[ -f "$binary" && ! -L "$binary" && -x "$binary" ]] \
+  || { echo "regular executable artifact not found: $binary" >&2; exit 1; }
+[[ "$machine_id" == lab-coordinateur || "$machine_id" == lab-machine-1 ]] \
+  || { echo "machine ID is outside the v0.0.1 allowlist" >&2; exit 1; }
+host=$(hostname)
+[[ "$host" == "$machine_id" ]] \
+  || { echo "machine ID $machine_id does not match host $host" >&2; exit 1; }
+[[ "$relay_url" == http://192.168.242.103:8443 ]] \
+  || { echo "unexpected v0.0.1 LAB Relay URL" >&2; exit 1; }
+[[ -f "$script_dir/your-cloud-daemon.service" ]] \
+  || { echo "Daemon unit template is missing" >&2; exit 1; }
+
+config=$(mktemp)
+staged_binary=
+cleanup() {
+  rm -f "$config"
+  [[ -z "$staged_binary" ]] || rm -f "$staged_binary"
+}
+trap cleanup EXIT
+printf 'MACHINE_ID=%s\nRELAY_URL=%s\n' "$machine_id" "$relay_url" >"$config"
+
+install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud
+staged_binary=$(mktemp /usr/local/lib/your-cloud/.your-cloud.XXXXXX)
+install -o root -g root -m 0755 "$binary" "$staged_binary"
+mv -f "$staged_binary" /usr/local/lib/your-cloud/your-cloud
+staged_binary=
+install -o root -g root -m 0600 "$config" /etc/your-cloud/daemon.env
+install -o root -g root -m 0644 "$script_dir/your-cloud-daemon.service" /etc/systemd/system/your-cloud-daemon.service
+systemctl daemon-reload
+systemctl enable your-cloud-daemon.service >/dev/null
+systemctl restart your-cloud-daemon.service
+
+# Replacing shared octets also restarts an already active optional Relay so two
+# roles cannot silently keep running different versions of the same artifact.
+if systemctl is-active --quiet your-cloud-relay.service; then
+  systemctl restart your-cloud-relay.service
+fi

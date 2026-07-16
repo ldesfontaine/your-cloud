@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Remove Relay authority and runtime state while leaving the Agent Daemon.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: disable-relay" >&2; exit 2; }
+[[ $(id -u) -eq 0 ]] || { echo "disable-relay must run as root" >&2; exit 1; }
+command -v pgrep >/dev/null || { echo "pgrep is required" >&2; exit 1; }
+command -v ss >/dev/null || { echo "ss is required" >&2; exit 1; }
+
+fail() { echo "$*" >&2; exit 1; }
+
+stop_and_disable() {
+  local unit=$1 load active substate pid
+  if ! systemctl stop "$unit" >/dev/null 2>&1; then
+    load=$(systemctl show "$unit" --property=LoadState --value) \
+      || fail "cannot inspect $unit after stop failed"
+    [[ "$load" == not-found ]] || fail "cannot stop $unit"
+  fi
+  load=$(systemctl show "$unit" --property=LoadState --value) \
+    || fail "cannot inspect $unit LoadState"
+  active=$(systemctl show "$unit" --property=ActiveState --value) \
+    || fail "cannot inspect $unit ActiveState"
+  substate=$(systemctl show "$unit" --property=SubState --value) \
+    || fail "cannot inspect $unit SubState"
+  pid=$(systemctl show "$unit" --property=MainPID --value) \
+    || fail "cannot inspect $unit MainPID"
+  [[ "$pid" == 0 ]] || fail "$unit still has MainPID=$pid"
+  [[ "$active" == inactive || "$active" == failed ]] \
+    || fail "$unit remains $active/$substate"
+  if [[ "$load" != not-found ]]; then
+    systemctl disable "$unit" >/dev/null \
+      || fail "cannot disable $unit"
+  fi
+}
+
+assert_no_process() {
+  local pattern=$1 status
+  if pgrep -f "$pattern" >/dev/null; then
+    fail "a Relay process still uses the installed artifact"
+  else
+    status=$?
+    [[ $status -eq 1 ]] || fail "cannot inspect Relay processes"
+  fi
+}
+
+stop_and_disable your-cloud-relay.service
+assert_no_process '^/usr/local/lib/your-cloud/your-cloud relay( |$)'
+assert_no_process '^/usr/local/lib/your-cloud/your-cloud-relay( |$)'
+listeners=$(ss -H -ltn 'sport = :8443') || fail "cannot inspect Relay listeners"
+[[ -z "$listeners" ]] || fail "port 8443 is still listening"
+rm -f /etc/systemd/system/your-cloud-relay.service
+rm -f /etc/your-cloud/relay.env /etc/your-cloud/relay-candidate.json
+systemctl daemon-reload
+systemctl reset-failed your-cloud-relay.service >/dev/null 2>&1 || true
+rmdir /etc/your-cloud 2>/dev/null || true
