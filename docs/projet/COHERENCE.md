@@ -23,7 +23,9 @@ sources.
 | `docs/objectifs/v1/README.md` | Ce qui doit être vrai pour déclarer la V1 atteinte |
 | `docs/objectifs/v1/ROADMAP.md` | L'ordre des preuves jusqu'à la V1 et le prochain incrément détaillé |
 | `docs/contribution/QUALITE.md` | Les règles de conception, développement et validation |
+| `docs/contribution/TESTS.md` | Le registre des contrôles, incidents et écarts à automatiser, jamais une preuve par lui-même |
 | `docs/architecture/ANATOMIE.md` | La projection visuelle des placements, flux, autorités et états |
+| `docs/architecture/CHAINE-D-OBSERVATION.md` | La projection détaillée des rôles Daemon/Relay, du signal de présence et de leur coordination |
 | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | Le cycle sûr validé du déploiement, de la publication, de la migration et du retrait d'un service |
 | `docs/lab/` | Les preuves réellement exécutées, jamais une décision par elles-mêmes |
 | `docs/html/` | Des vues visuelles dérivées de leur Markdown, jamais une source indépendante |
@@ -78,8 +80,8 @@ ci-dessous sert seulement à reconnaître son sujet.
 <!-- coherence-registry:start -->
 | Identifiant | Frontière suivie | Source canonique | Projections obligatoires |
 |---|---|---|---|
-| `AGENT-AUTHORITY` | Un artefact Agent par version, rôles en processus isolés, Daemon non-root, Relay explicitement activé, Auxiliaire optionnel ponctuel et autorités adaptées | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
-| `V1-OBSERVATION` | Collecteurs nommés, sortie mTLS, Relay sans ordre, tampon borné et lacunes visibles | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
+| `AGENT-AUTHORITY` | Un artefact Agent par version, rôles en processus isolés, Daemon non-root, Relay explicitement activé, Auxiliaire optionnel ponctuel et autorités adaptées | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
+| `V1-OBSERVATION` | Collecteurs nommés, sortie mTLS, Relay sans ordre, tampon borné et lacunes visibles | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
 | `V1-APP-ACCESS` | Accès privé à l'App dans l'objectif V1 et cible HTTPS authentifiée sans dépendance au laptop | `docs/objectifs/v1/README.md` | `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 | `V1-NETWORK` | Machines enrôlées, flux bornés, WireGuard, mTLS, HTTPS et zone d'exposition sans fausse DMZ | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 | `OWNERSHIP-MODES` | Modes géré/externe, déclaré/vérifié, aucune adoption ou découverte réseau implicite | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |

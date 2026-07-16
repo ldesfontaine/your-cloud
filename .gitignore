@@ -5,4 +5,12 @@ dist/
 build/
 *.egg-info/
 .ansible/
+
+# Routeurs, propositions et caches propres aux assistants locaux.
 /AGENTS.md
+/AGENTS.proposal.md
+/CLAUDE.md
+/.agents/
+/.codex/
+/.claude/
+/.cursor/

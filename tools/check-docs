@@ -24,13 +24,16 @@ REQUIRED_FILES = (
     "docs/objectifs/v1/ROADMAP.md",
     "docs/contribution/README.md",
     "docs/contribution/QUALITE.md",
+    "docs/contribution/TESTS.md",
     "docs/architecture/ANATOMIE.md",
+    "docs/architecture/CHAINE-D-OBSERVATION.md",
     "docs/lab/README.md",
     "docs/html/index.html",
     "docs/html/cap.html",
     "docs/html/objectif-v1.html",
     "docs/html/roadmap-v1.html",
     "docs/html/anatomie.html",
+    "docs/html/chaine-observation.html",
 )
 
 HTML_MIRRORS = {
@@ -38,6 +41,7 @@ HTML_MIRRORS = {
     "docs/objectifs/v1/README.md": "docs/html/objectif-v1.html",
     "docs/objectifs/v1/ROADMAP.md": "docs/html/roadmap-v1.html",
     "docs/architecture/ANATOMIE.md": "docs/html/anatomie.html",
+    "docs/architecture/CHAINE-D-OBSERVATION.md": "docs/html/chaine-observation.html",
 }
 
 STALE_PHRASES = (

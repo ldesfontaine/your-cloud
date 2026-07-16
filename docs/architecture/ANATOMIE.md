@@ -6,6 +6,10 @@ Une [édition HTML autonome et visuelle](../html/anatomie.html) accompagne
 cette source Markdown. Elle évolue à chaque incrément qui modifie un composant,
 un placement, une autorité ou un flux réseau.
 
+La [chaîne d'observation détaillée](CHAINE-D-OBSERVATION.md) explique
+progressivement les rôles Daemon et Relay, le signal de présence, les moments
+où ils agissent et les limites propres à `v0.0.1`.
+
 ## Comment lire ce document
 
 Trois états ne doivent jamais être confondus :

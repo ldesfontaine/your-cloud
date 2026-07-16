@@ -26,6 +26,9 @@ dans leurs sources documentaires dédiées.
   laisser uniquement dans une conversation.
 - Appliquer le contrat de [cohérence documentaire](../projet/COHERENCE.md),
   mettre à jour les vues HTML concernées, puis exécuter `tools/check-docs`.
+- Capitaliser les contrôles encore manuels, incidents et écarts techniques dans
+  le [registre d'automatisation](TESTS.md), sans le confondre avec un rapport de
+  preuve réellement exécutée.
 - Un contrôle vert prouve la couverture et les liens, pas l'absence de
   contradiction sémantique : relire le sens avant de poursuivre.
 - Créer un ADR seulement si la décision est difficile à renverser, surprenante
@@ -59,4 +62,5 @@ dans leurs sources documentaires dédiées.
 
 Résumer simplement le résultat, les preuves exécutées, les limites connues et
 la prochaine étape sûre. Pour une décision validée, nommer les sources mises à
-jour et les choix qui restent ouverts.
+jour et les choix qui restent ouverts. Toute preuve manuelle destinée à être
+rejouée rejoint aussi le [registre des tests](TESTS.md).
