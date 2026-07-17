@@ -241,7 +241,7 @@ réponse cacheable et partie query de l'URI intégrée à la ressource ciblée.
 2. `tools/test-v0.0.1` est l'entrée exécutée dans `lab-console` pour préparer le
    lot complet puis lancer format, syntaxe shell, documentation, tests Go sans
    cache, `go vet` et build statique. Elle publie le détail des étapes et
-   préserver le premier code d'échec.
+   préserve le premier code d'échec.
 3. Cette entrée échoue si le runner n'est pas root, si un
    lien documentaire vise un fichier absent du lot ou si l'exécutable n'est pas
    le seul artefact Go attendu.
