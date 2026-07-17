@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the common artifact and activate only the outbound Daemon role.
+# Install or replace the common artifact and activate only the Daemon role.
 set -euo pipefail
 
 [[ $# -eq 3 ]] || { echo "usage: install-agent <binary> <machine-id> <relay-url>" >&2; exit 2; }
@@ -21,28 +21,180 @@ host=$(hostname)
 [[ -f "$script_dir/your-cloud-daemon.service" ]] \
   || { echo "Daemon unit template is missing" >&2; exit 1; }
 
+artifact=/usr/local/lib/your-cloud/your-cloud
+daemon_config=/etc/your-cloud/daemon.env
+daemon_unit=/etc/systemd/system/your-cloud-daemon.service
+relay_unit=your-cloud-relay.service
+for directory in /usr/local/lib/your-cloud /etc/your-cloud; do
+  [[ ! -L "$directory" ]] || { echo "managed directory must not be a symbolic link: $directory" >&2; exit 1; }
+done
+for target in "$artifact" "$daemon_config" "$daemon_unit"; do
+  [[ ! -L "$target" ]] || { echo "managed target must not be a symbolic link: $target" >&2; exit 1; }
+done
+
 config=$(mktemp)
+backup_dir=$(mktemp -d)
 staged_binary=
 cleanup() {
   rm -f "$config"
   [[ -z "$staged_binary" ]] || rm -f "$staged_binary"
+  rm -rf "$backup_dir"
 }
 trap cleanup EXIT
 printf 'MACHINE_ID=%s\nRELAY_URL=%s\n' "$machine_id" "$relay_url" >"$config"
 
-install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud
-staged_binary=$(mktemp /usr/local/lib/your-cloud/.your-cloud.XXXXXX)
-install -o root -g root -m 0755 "$binary" "$staged_binary"
-mv -f "$staged_binary" /usr/local/lib/your-cloud/your-cloud
-staged_binary=
-install -o root -g root -m 0600 "$config" /etc/your-cloud/daemon.env
-install -o root -g root -m 0644 "$script_dir/your-cloud-daemon.service" /etc/systemd/system/your-cloud-daemon.service
-systemctl daemon-reload
-systemctl enable your-cloud-daemon.service >/dev/null
-systemctl restart your-cloud-daemon.service
+managed_targets=("$artifact" "$daemon_config" "$daemon_unit")
+for index in "${!managed_targets[@]}"; do
+  target=${managed_targets[$index]}
+  if [[ -e "$target" ]]; then
+    cp -a -- "$target" "$backup_dir/$index"
+    : >"$backup_dir/$index.present"
+  fi
+done
 
-# Replacing shared octets also restarts an already active optional Relay so two
-# roles cannot silently keep running different versions of the same artifact.
-if systemctl is-active --quiet your-cloud-relay.service; then
-  systemctl restart your-cloud-relay.service
+active_state() {
+  systemctl show "$1" --property=ActiveState --value
+}
+
+enabled_state() {
+  local unit=$1 state
+  if state=$(systemctl is-enabled "$unit" 2>/dev/null); then
+    case "$state" in
+      enabled|enabled-runtime) echo enabled ;;
+      *) echo "unsupported enabled state for $unit: $state" >&2; return 1 ;;
+    esac
+    return
+  fi
+  case "$state" in
+    disabled|not-found) echo disabled ;;
+    *) echo "cannot establish enabled state for $unit: ${state:-unknown}" >&2; return 1 ;;
+  esac
+}
+
+daemon_active_before=$(active_state your-cloud-daemon.service) \
+  || { echo "cannot inspect Daemon state before installation" >&2; exit 1; }
+relay_active_before=$(active_state "$relay_unit") \
+  || { echo "cannot inspect Relay state before installation" >&2; exit 1; }
+daemon_enabled_before=$(enabled_state your-cloud-daemon.service) \
+  || exit 1
+
+restore_previous_lot() {
+  local index target unit load_state daemon_load failed=0
+  echo "installation failed; restoring the previous v0.0.1 lot" >&2
+
+  daemon_load=$(systemctl show your-cloud-daemon.service --property=LoadState --value) \
+    || failed=1
+  if [[ "$daemon_load" != not-found ]]; then
+    systemctl stop your-cloud-daemon.service >/dev/null 2>&1 || failed=1
+  fi
+  if [[ "$relay_active_before" == active ]]; then
+    systemctl stop "$relay_unit" >/dev/null 2>&1 || failed=1
+  fi
+  if [[ "$daemon_enabled_before" == disabled && "$daemon_load" != not-found ]]; then
+    systemctl disable your-cloud-daemon.service >/dev/null 2>&1 || failed=1
+  fi
+
+  for index in "${!managed_targets[@]}"; do
+    target=${managed_targets[$index]}
+    rm -f -- "$target" || failed=1
+    if [[ -e "$backup_dir/$index.present" ]]; then
+      cp -a -- "$backup_dir/$index" "$target" || failed=1
+    fi
+  done
+  systemctl daemon-reload || failed=1
+  for unit in your-cloud-daemon.service "$relay_unit"; do
+    load_state=$(systemctl show "$unit" --property=LoadState --value) \
+      || { failed=1; continue; }
+    if [[ "$load_state" != not-found ]]; then
+      systemctl reset-failed "$unit" >/dev/null 2>&1 || failed=1
+    fi
+  done
+
+  if [[ "$daemon_enabled_before" == enabled ]]; then
+    systemctl enable your-cloud-daemon.service >/dev/null || failed=1
+  fi
+  if [[ "$daemon_active_before" == active ]]; then
+    systemctl restart your-cloud-daemon.service || failed=1
+    assert_unit_running your-cloud-daemon.service || failed=1
+  else
+    systemctl stop your-cloud-daemon.service >/dev/null 2>&1 || true
+  fi
+  if [[ "$relay_active_before" == active ]]; then
+    systemctl restart "$relay_unit" || failed=1
+    assert_unit_running "$relay_unit" || failed=1
+  fi
+  rmdir /etc/your-cloud /usr/local/lib/your-cloud 2>/dev/null || true
+  [[ $failed -eq 0 ]] || {
+    echo "rollback of the previous v0.0.1 lot is incomplete; manual inspection required" >&2
+    return 1
+  }
+}
+
+assert_unit_running() {
+  local unit=$1 active=unknown substate=unknown pid=unknown executable attempt
+  local stable_pid= consecutive=0
+  for attempt in 1 2 3 4 5; do
+    active=$(systemctl show "$unit" --property=ActiveState --value) || return
+    substate=$(systemctl show "$unit" --property=SubState --value) || return
+    pid=$(systemctl show "$unit" --property=MainPID --value) || return
+    if [[ "$active" == active && "$substate" == running && "$pid" =~ ^[1-9][0-9]*$ ]]; then
+      executable=$(readlink -f "/proc/$pid/exe") || return
+      if [[ "$executable" == "$artifact" ]]; then
+        if [[ "$pid" == "$stable_pid" ]]; then
+          consecutive=$((consecutive + 1))
+        else
+          stable_pid=$pid
+          consecutive=1
+        fi
+        [[ $consecutive -lt 3 ]] || return 0
+      else
+        stable_pid=
+        consecutive=0
+      fi
+    else
+      stable_pid=
+      consecutive=0
+    fi
+    [[ $attempt -eq 5 ]] || sleep 1
+  done
+  echo "$unit did not stabilize for three checks: ActiveState=$active SubState=$substate MainPID=$pid" >&2
+  return 1
+}
+
+activate_new_lot() {
+  install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud \
+    || { echo "cannot prepare managed directories" >&2; return 1; }
+  staged_binary=$(mktemp /usr/local/lib/your-cloud/.your-cloud.XXXXXX) \
+    || { echo "cannot stage the common artifact" >&2; return 1; }
+  install -o root -g root -m 0755 "$binary" "$staged_binary" \
+    || { echo "cannot copy the staged common artifact" >&2; return 1; }
+  mv -f "$staged_binary" "$artifact" \
+    || { echo "cannot activate the staged common artifact" >&2; return 1; }
+  staged_binary=
+  install -o root -g root -m 0600 "$config" "$daemon_config" \
+    || { echo "cannot activate the Daemon configuration" >&2; return 1; }
+  install -o root -g root -m 0644 "$script_dir/your-cloud-daemon.service" "$daemon_unit" \
+    || { echo "cannot activate the Daemon unit" >&2; return 1; }
+  systemctl daemon-reload \
+    || { echo "systemd could not reload the Daemon unit" >&2; return 1; }
+  systemctl enable your-cloud-daemon.service >/dev/null \
+    || { echo "systemd could not enable the Daemon" >&2; return 1; }
+  systemctl restart your-cloud-daemon.service \
+    || { echo "systemd could not restart the Daemon" >&2; return 1; }
+  assert_unit_running your-cloud-daemon.service \
+    || { echo "Daemon readiness check failed" >&2; return 1; }
+
+  # The Relay shares the artifact bytes but retains its own process, account,
+  # configuration, unit and authority. Restart only a Relay that was active.
+  if [[ "$relay_active_before" == active ]]; then
+    systemctl restart "$relay_unit" \
+      || { echo "systemd could not restart the colocated Relay" >&2; return 1; }
+    assert_unit_running "$relay_unit" \
+      || { echo "colocated Relay readiness check failed" >&2; return 1; }
+  fi
+}
+
+if ! activate_new_lot; then
+  restore_previous_lot || exit 1
+  exit 1
 fi

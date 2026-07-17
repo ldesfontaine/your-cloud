@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Verify list rendering and exit codes without touching the real libvirt LAB.
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "$0")/../.." && pwd)
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+mkdir "$workdir/bin"
+ln -s "$root/tools/tests/fixtures/virsh-list" "$workdir/bin/virsh"
+
+machine_output=$(PATH="$workdir/bin:$PATH" "$root/tools/labctl" list --format=tsv)
+expected=$'vm\tstate\tips\ttemplate\ttopology\torigin\nlab-managed\trunning\t192.0.2.10,198.51.100.20\tmachine\tv1-full\tyour-cloud/labctl\nlab-unmanaged\trunning\t192.0.2.10,198.51.100.20\t-\t-\t-\nlab-stopped\tshut off\t-\t-\t-\t-'
+[[ "$machine_output" == "$expected" ]] || {
+  printf 'unexpected machine output:\n%s\n' "$machine_output" >&2
+  exit 1
+}
+
+human_output=$(PATH="$workdir/bin:$PATH" "$root/tools/labctl" list)
+[[ "$human_output" == *"VM"* && "$human_output" == *"lab-managed"* \
+  && "$human_output" == *"your-cloud/labctl"* ]] || {
+  printf 'unexpected human output:\n%s\n' "$human_output" >&2
+  exit 1
+}
+
+if PATH="$workdir/bin:$PATH" "$root/tools/labctl" list --format=json >/dev/null 2>&1; then
+  echo "unsupported list format was accepted" >&2
+  exit 1
+fi
+
+printf 'PASS: labctl list human and TSV contracts\n'

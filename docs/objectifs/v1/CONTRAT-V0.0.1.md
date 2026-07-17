@@ -28,10 +28,12 @@ Le build et les tests ont lieu dans `lab-console`. Le laptop sert seulement à
 ## Transport minimal confiné
 
 Le Daemon envoie une requête `POST /v0/presence` en HTTP/1.1 vers le Relay sur
-le port `8443`. Ce port haut est déjà le seul port applicatif borné autorisé de
-`lab-site-private` vers `lab-public` par la topologie. Il n'implique aucun TLS :
-le transport reste explicitement non chiffré dans cet incrément. Le corps JSON
-ne dépasse pas 512 octets et contient exactement :
+le port `8443`. Le binaire et le script d'installation imposent tous deux
+l'origine exacte `http://192.168.242.103:8443` et refusent utilisateur, chemin,
+partie query ou fragment. Ce port haut est déjà le seul port applicatif borné
+autorisé de `lab-site-private` vers `lab-public` par la topologie. Il n'implique
+aucun TLS : le transport reste explicitement non chiffré dans cet incrément. Le
+corps JSON ne dépasse pas 512 octets et contient exactement :
 
 ```json
 {
@@ -59,8 +61,10 @@ par la RFC 10008, porte une opération sûre et idempotente dont le corps décri
 la requête. Le corps `application/json` de `v0.0.1` est exactement `{}` : il
 signifie « toutes les machines autorisées », sans introduire de filtre ou
 langage d'interrogation d'un palier futur. Le Relay annonce
-`Accept-Query: "application/json"` et refuse un corps absent, non JSON, non
-vide ou supérieur à 32 octets.
+`Accept-Query: "application/json"`, interdit la mise en cache avec
+`Cache-Control: no-store` et refuse un corps absent, non JSON, non vide ou
+supérieur à 32 octets. Les deux routes refusent toute partie query de l'URI, y
+compris un `?` vide : le corps JSON reste l'unique contrat de consultation.
 
 La réponse rend toujours les deux identifiants autorisés, triés. Pour chaque
 machine, le Relay expose la version et l'horodatage déclarés, son propre
@@ -91,6 +95,15 @@ nom d'hôte LAB, puis active uniquement le Daemon. Activer le Relay est une seco
 opération explicite qui crée un manifeste candidat root-owned. Le mode Relay
 refuse avant toute écoute si ce manifeste manque, est un lien symbolique, est
 modifiable par un autre compte ou ne respecte pas le schéma positif attendu.
+
+Un remplacement du lot prépare le nouvel artefact avant sa bascule et conserve
+les fichiers ainsi que les états actifs précédents. Daemon puis Relay
+colocalisé doivent garder le même PID actif pendant trois contrôles de
+stabilité au démarrage. Si une étape échoue, `install-agent` restaure l'ancien lot,
+réinitialise un éventuel `start-limit-hit` et relance seulement les rôles qui
+étaient actifs. L'injection de `/bin/false` doit donc échouer tout en rendant
+l'état absent lors d'une première installation, ou l'ancienne empreinte et les
+deux rôles actifs lors d'un remplacement.
 
 Le Relay et les Daemons utilisent des comptes système distincts, sans shell,
 sans capacité Linux, sans accès en écriture au système et sans privilège

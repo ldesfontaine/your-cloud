@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Run the complete source-side v0.0.1 gate inside the isolated LAB builder.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: test-v0.0.1" >&2; exit 2; }
+[[ $(hostname) == lab-console ]] \
+  || { echo "test-v0.0.1 must run on lab-console" >&2; exit 1; }
+[[ $(id -u) -eq 0 ]] \
+  || { echo "test-v0.0.1 requires the isolated root LAB runner" >&2; exit 1; }
+
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+cd "$root"
+[[ ! -e dist ]] || { echo "test-v0.0.1 requires a source lot without dist/" >&2; exit 1; }
+
+step() { printf '\n==> %s\n' "$1"; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+step "Go formatting"
+mapfile -d '' go_files < <(find cmd internal -type f -name '*.go' -print0)
+[[ ${#go_files[@]} -gt 0 ]] || fail "no Go source found"
+unformatted=$(gofmt -l "${go_files[@]}")
+[[ -z "$unformatted" ]] || fail "gofmt required for: $unformatted"
+
+step "Shell syntax"
+shell_count=0
+while IFS= read -r -d '' file; do
+  if [[ $(sed -n '1p' "$file") == '#!/usr/bin/env bash' ]]; then
+    bash -n "$file"
+    shell_count=$((shell_count + 1))
+  fi
+done < <(find deploy tools -type f -print0)
+[[ $shell_count -gt 0 ]] || fail "no Bash script found"
+
+step "labctl list contract"
+bash tools/tests/labctl-list
+
+step "Documentation contract"
+tools/check-docs
+
+step "Go tests without cache"
+go test -count=1 ./...
+
+step "Go vet"
+go vet ./...
+
+step "Single static Go artifact"
+main_packages=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./... | sed '/^$/d')
+[[ $(wc -l <<<"$main_packages") -eq 1 ]] \
+  || fail "expected one main package, found: $main_packages"
+mkdir dist
+CGO_ENABLED=0 go build -trimpath -o dist/your-cloud ./cmd/your-cloud
+mapfile -d '' artifacts < <(find dist -maxdepth 1 -type f -print0)
+[[ ${#artifacts[@]} -eq 1 && ${artifacts[0]} == dist/your-cloud ]] \
+  || fail "build did not produce exactly one your-cloud artifact"
+[[ -x dist/your-cloud ]] || fail "built artifact is not executable"
+sha256sum dist/your-cloud
+
+printf '\nPASS: v0.0.1 source gate completed on %s as uid %s\n' "$(hostname)" "$(id -u)"

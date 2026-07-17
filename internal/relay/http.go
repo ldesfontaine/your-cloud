@@ -50,6 +50,10 @@ func (handler *Handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 }
 
 func (handler *Handler) receivePresence(response http.ResponseWriter, request *http.Request) {
+	if hasURIQuery(request) {
+		writeProblem(response, http.StatusBadRequest, "URI query is not supported in v0.0.1")
+		return
+	}
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		writeProblem(response, http.StatusBadRequest, "Content-Type must be application/json")
@@ -71,13 +75,18 @@ func (handler *Handler) receivePresence(response http.ResponseWriter, request *h
 		return
 	}
 
-	receivedAt := handler.now().UTC()
+	receivedAt := handler.now()
 	handler.store.Record(signal, receivedAt)
 	response.WriteHeader(http.StatusNoContent)
 }
 
 func (handler *Handler) queryMachines(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Accept-Query", `"application/json"`)
+	response.Header().Set("Cache-Control", "no-store")
+	if hasURIQuery(request) {
+		writeProblem(response, http.StatusBadRequest, "URI query is not supported in v0.0.1")
+		return
+	}
 	contentType := request.Header.Get("Content-Type")
 	if contentType == "" {
 		writeProblem(response, http.StatusBadRequest, "Content-Type is required for QUERY")
@@ -108,13 +117,13 @@ func (handler *Handler) queryMachines(response http.ResponseWriter, request *htt
 		return
 	}
 
-	now := handler.now().UTC()
+	now := handler.now()
 	payload := struct {
 		GeneratedAt string         `json:"generated_at"`
 		StaleAfter  string         `json:"stale_after"`
 		Machines    []MachineState `json:"machines"`
 	}{
-		GeneratedAt: now.Format(time.RFC3339Nano),
+		GeneratedAt: now.UTC().Format(time.RFC3339Nano),
 		StaleAfter:  presence.StaleAfter.String(),
 		Machines:    handler.store.Snapshot(now),
 	}
@@ -122,6 +131,12 @@ func (handler *Handler) queryMachines(response http.ResponseWriter, request *htt
 	if err := json.NewEncoder(response).Encode(payload); err != nil {
 		handler.logger.Printf("render machines: %v", err)
 	}
+}
+
+// hasURIQuery rejects both a non-empty query and a trailing question mark.
+// v0.0.1 carries the complete QUERY contract in the bounded JSON body.
+func hasURIQuery(request *http.Request) bool {
+	return request.URL.RawQuery != "" || request.URL.ForceQuery
 }
 
 func requireJSONEnd(decoder *json.Decoder) error {

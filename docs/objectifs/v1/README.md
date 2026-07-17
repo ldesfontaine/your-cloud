@@ -617,6 +617,15 @@ transporte aucune commande en sens inverse. Le Relay peut accuser réception ou
 refuser un message invalide ; il ne peut ni changer le profil, ni demander un
 fichier, ni lancer une collecte ponctuelle.
 
+Un endpoint Relay approuvé réunit la route, le port et l'identité
+cryptographique attendue. Chaque Daemon enrôlé en reçoit un ; le Relay n'a pas
+besoin d'une IP publique si un réseau fournisseur, un segment interne ou un
+passage privé borné le rend joignable. Un futur remplacement automatique reste
+un contrat séparé : il devra limiter les candidates, prouver la panne,
+redistribuer l'endpoint authentifié, annoncer la perte d'état éventuelle et
+empêcher deux Relay de devenir simultanément responsables. Son mécanisme n'est
+pas choisi par la V1 actuelle.
+
 Sans Relay disponible, une commande exécutée **localement sur la machine** peut
 afficher le dernier état et la santé du tampon. Cette consultation utilisera un
 fichier protégé ou un socket Unix local aux permissions bornées, jamais une API

@@ -746,17 +746,37 @@ cmd_topology() {
 }
 
 cmd_list() {
-  local name state origin template topology ip
-  printf '%-24s %-10s %-15s %-13s %-10s %s\n' VM ETAT IP GABARIT TOPOLOGIE ORIGINE
+  local format=human name state origin template topology ip
+  if [[ "${1:-}" == --format=tsv ]]; then
+    format=tsv
+    shift
+  fi
+  [[ $# -eq 0 ]] || die "usage: labctl list [--format=tsv]"
+  if [[ "$format" == human ]]; then
+    printf '%-24s %-10s %-15s %-13s %-10s %s\n' VM ETAT IP GABARIT TOPOLOGIE ORIGINE
+  else
+    printf 'vm\tstate\tips\ttemplate\ttopology\torigin\n'
+  fi
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     state=$(LC_ALL=C "${VIRSH[@]}" domstate "$name")
-    ip=$(get_ip "$name"); ip=${ip:--}
+    if [[ "$state" == "shut off" ]]; then
+      ip=-
+    elif ! ip=$(get_ips "$name" | paste -sd, -); then
+      die "impossible d'inspecter les adresses de '$name'"
+    else
+      ip=${ip:--}
+    fi
     origin=$(metadata_attr "$name" origin); origin=${origin:--}
     template=$(metadata_attr "$name" template); template=${template:--}
     topology=$(metadata_attr "$name" topology); topology=${topology:--}
-    printf '%-24s %-10s %-15s %-13s %-10s %s\n' "$name" "$state" "$ip" "$template" "$topology" "$origin"
+    if [[ "$format" == human ]]; then
+      printf '%-24s %-10s %-15s %-13s %-10s %s\n' "$name" "$state" "$ip" "$template" "$topology" "$origin"
+    else
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$state" "$ip" "$template" "$topology" "$origin"
+    fi
   done < <("${VIRSH[@]}" list --all --name)
+  return 0
 }
 
 cmd_revert() {
@@ -926,7 +946,7 @@ labctl v6 — LAB your-cloud borné
   labctl topology inspect <quick|v1-full>
   labctl topology prepare v1-full
   labctl topology destroy <quick|v1-full>
-  labctl list
+  labctl list [--format=tsv]
   labctl revert  <vm> [snapshot]
   labctl snap    <vm> <snapshot>
   labctl start   <vm>
@@ -948,7 +968,7 @@ EOF
 command="${1:-}"; [[ $# -gt 0 ]] && shift
 case "$command" in
   topology) cmd_topology "$@" ;;
-  list) cmd_list ;;
+  list) cmd_list "$@" ;;
   revert) cmd_revert "$@" ;;
   snap) cmd_snap "$@" ;;
   start) cmd_start "$@" ;;

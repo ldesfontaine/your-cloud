@@ -215,6 +215,13 @@ Daemon non-root -> tampon local borné -> sortie mTLS -> Relay
       `-> état local seulement               `-> aucun ordre retour
 ```
 
+Chaque Daemon reçoit un endpoint Relay approuvé : route, port et identité
+cryptographique attendue. Ce trajet peut rester entièrement privé ; le Relay
+n'a pas besoin d'une IP publique si le routage autorisé le rend joignable. Un
+remplacement automatique futur devra prouver la panne, choisir uniquement une
+candidate autorisée, redistribuer cet endpoint et empêcher deux autorités
+actives. Aucun de ces mécanismes n'est encore choisi.
+
 Le Daemon n'ouvre aucun port réseau. Il conserve l'état courant et les données
 non confirmées par le Relay dans un tampon limité. Une perte provoquée par la
 limite apparaît comme une lacune explicite, jamais comme une période saine.

@@ -13,6 +13,8 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/presence"
 )
 
+const v001RelayOrigin = "http://192.168.242.103:8443"
+
 func runDaemon(arguments []string) error {
 	flags := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	machineID := flags.String("machine-id", "", "synthetic identity of this LAB machine")
@@ -22,6 +24,9 @@ func runDaemon(arguments []string) error {
 	}
 	if flags.NArg() != 0 {
 		return errorsForUnexpectedArguments("daemon", flags.Args())
+	}
+	if *relayURL != v001RelayOrigin {
+		return fmt.Errorf("daemon relay URL must be %s in v0.0.1", v001RelayOrigin)
 	}
 
 	logger := log.New(os.Stdout, "your-cloud daemon: ", log.LstdFlags|log.LUTC)

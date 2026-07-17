@@ -90,6 +90,10 @@ func TestSenderRejectsUnsafeConfiguration(t *testing.T) {
 		{name: "malformed id", machineID: "../root", relayURL: "http://127.0.0.1:8080", interval: time.Second},
 		{name: "https not in contract", machineID: "lab-machine-1", relayURL: "https://127.0.0.1:8080", interval: time.Second},
 		{name: "relay path", machineID: "lab-machine-1", relayURL: "http://127.0.0.1:8080/admin", interval: time.Second},
+		{name: "relay userinfo", machineID: "lab-machine-1", relayURL: "http://admin@127.0.0.1:8080", interval: time.Second},
+		{name: "relay query", machineID: "lab-machine-1", relayURL: "http://127.0.0.1:8080?target=other", interval: time.Second},
+		{name: "relay empty query", machineID: "lab-machine-1", relayURL: "http://127.0.0.1:8080?", interval: time.Second},
+		{name: "relay fragment", machineID: "lab-machine-1", relayURL: "http://127.0.0.1:8080#other", interval: time.Second},
 		{name: "zero interval", machineID: "lab-machine-1", relayURL: "http://127.0.0.1:8080", interval: 0},
 	}
 	for _, test := range tests {

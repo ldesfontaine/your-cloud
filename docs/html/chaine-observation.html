@@ -96,7 +96,7 @@
     <section aria-labelledby="notions">
       <h2 id="notions">Les notions avant les flux</h2>
       <div class="grid">
-        <article class="card"><span class="tag">installation</span><h3>Agent</h3><p>L'installation locale de Your Cloud sur une machine. Il distribue un seul fichier exécutable par version.</p></article>
+        <article class="card"><span class="tag">installation</span><h3>Agent</h3><p>La frontière de l'installation locale de Your Cloud sur une machine. <strong>Ce n'est pas un processus</strong> : elle fournit seulement les rôles activés.</p></article>
         <article class="card"><span class="tag">fichier</span><h3>Artefact</h3><p>Le fichier <code>your-cloud</code>. Les mêmes octets peuvent lancer des rôles différents.</p></article>
         <article class="card"><span class="tag">exécution</span><h3>Processus</h3><p>Une instance en mémoire. Daemon et Relay restent deux processus avec leurs propres comptes et cycles.</p></article>
         <article class="card"><span class="tag">droits</span><h3>Autorité</h3><p>Ce qu'un processus peut lire, modifier ou joindre. Partager un artefact ne partage pas automatiquement cette autorité.</p></article>
@@ -191,6 +191,7 @@
           <p><strong>Sûre</strong> signifie que le client ne demande aucun changement. <strong>Idempotente</strong> signifie que répéter la requête n'ajoute aucun effet de bord.</p>
           <pre>Content-Type: application/json
 Accept-Query: "application/json"
+Cache-Control: no-store
 
 {}</pre>
         </article>
@@ -202,7 +203,17 @@ Accept-Query: "application/json"
           <tr><td><code>QUERY /v0/machines</code></td><td>client de preuve LAB</td><td>Relay <code>192.168.242.103:8443</code></td><td>HTTP clair, LAB uniquement</td></tr>
         </tbody>
       </table>
-      <p class="note danger"><strong>Écarts connus avant tout intermédiaire :</strong> la réponse <code>QUERY</code> ne porte pas encore <code>Cache-Control: no-store</code>, et une partie d'URI après <code>?</code> est ignorée au lieu d'être refusée. La preuve directe n'incluait ni proxy ni cache.</p>
+      <p class="note"><strong>Contrat fermé :</strong> la réponse <code>QUERY</code> porte <code>Cache-Control: no-store</code>. Les deux routes refusent toute partie d'URI après <code>?</code>, même vide ; le corps JSON reste l'unique entrée structurée.</p>
+    </section>
+
+    <section aria-labelledby="relay-endpoint">
+      <h2 id="relay-endpoint">Relay futur : joignable ne veut pas dire public</h2>
+      <div class="grid">
+        <article class="card wide"><span class="tag">besoin V1</span><h3>Endpoint approuvé</h3><p>Chaque Daemon reçoit une route, un port et l'identité cryptographique attendue. Une IP seule ne prouve pas quel Relay répond.</p></article>
+        <article class="card wide"><span class="tag">réseau</span><h3>Routage privé accepté</h3><p>Réseau fournisseur, segment interne ou passage privé borné conviennent. Une IP publique n'est requise que si la topologie impose une arrivée directe depuis Internet.</p></article>
+        <article class="card wide"><span class="tag">continuité future</span><h3>Remplacement sous conditions</h3><p>Candidature, panne prouvée, endpoint redistribué, état repris et autorité active unique doivent être définis avant toute bascule automatique.</p></article>
+        <article class="card wide"><span class="tag">hors palier</span><h3>Mécanisme encore ouvert</h3><p>Nom stable, liste d'endpoints ou découverte signée ne sont pas choisis. Aucun failover Relay n'est ajouté à <code>v0.0.1</code> ni promis au palier suivant.</p></article>
+      </div>
     </section>
 
     <section aria-labelledby="states">
@@ -216,7 +227,7 @@ Accept-Query: "application/json"
         <article class="card"><h3>recent</h3><p>Dernière réception Relay vieille de moins de quatre secondes.</p></article>
         <article class="card"><h3>old</h3><p>Dernière réception Relay vieille d'au moins quatre secondes.</p></article>
       </div>
-      <p class="note">Une horloge monotone mesure une durée sans être faussée par une correction de l'heure civile. Le code perd actuellement cette information lors d'une conversion UTC prématurée : le scénario LAB est prouvé, mais les sauts d'horloge Relay restent à corriger et automatiser.</p>
+      <p class="note">Une horloge monotone mesure une durée sans être faussée par une correction de l'heure civile. Le Relay garde maintenant le temps brut pour calculer l'âge et ne convertit en UTC qu'au rendu. L'injection d'un saut d'horloge Relay reste à automatiser.</p>
     </section>
 
     <section aria-labelledby="code">
@@ -232,7 +243,7 @@ Accept-Query: "application/json"
       <h2 id="scope">Ne pas confondre les niveaux</h2>
       <div class="grid">
         <article class="card scope proved"><h3>Prouvé · v0.0.1</h3><p>Artefact commun, processus isolés, signal minimal, HTTP POST/QUERY, états mémoire, refus Relay et cycle de retrait.</p></article>
-        <article class="card scope decided"><h3>Décidé · V1</h3><p>Identités Daemon, mTLS, collecteurs nommés, tampon borné, enregistrement durable et App authentifiée.</p></article>
+        <article class="card scope decided"><h3>Décidé · V1</h3><p>Identités Daemon, endpoint Relay approuvé public ou privé, mTLS, collecteurs nommés, tampon borné, enregistrement durable et App authentifiée.</p></article>
         <article class="card scope absent"><h3>Absent</h3><p>Auxiliaire, commandes distantes, scan LAN, élection, réplication ou remplacement automatique du Relay.</p></article>
       </div>
     </section>

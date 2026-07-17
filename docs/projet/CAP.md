@@ -388,6 +388,15 @@ aucune autorisation envers les autres appareils.
 - Un service déjà déployé ne s'arrête pas uniquement parce que l'App ou le Relay
   est indisponible.
 <!-- coherence: V1-OBSERVATION:start -->
+- Chaque Daemon enrôlé reçoit un endpoint Relay approuvé qui borne la route, le
+  port et l'identité cryptographique attendue. Le Relay n'exige pas d'adresse
+  publique lorsqu'un routage privé autorisé le rend joignable aux Daemons et à
+  l'App ; une adresse IP seule ne constitue jamais son identité.
+- Un futur remplacement automatique du Relay reste limité aux machines
+  candidates explicitement autorisées. Il doit prouver la panne, empêcher deux
+  autorités actives concurrentes, redistribuer un endpoint authentifié et
+  annoncer la continuité ou la perte d'état réellement garantie ; son
+  mécanisme précis reste ouvert.
 - Le Daemon n'accepte aucune connexion réseau entrante et le Relay ne lui donne
   jamais d'ordre. L'utilisateur choisit des observations nommées ; le Daemon les
   envoie par une connexion sortante authentifiée et conserve localement un

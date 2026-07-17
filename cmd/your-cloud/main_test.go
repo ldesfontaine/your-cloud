@@ -46,3 +46,19 @@ func TestRelayRejectsEveryOtherListenAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestDaemonRejectsEveryOtherRelayOrigin(t *testing.T) {
+	t.Parallel()
+	for _, relayURL := range []string{
+		"",
+		"http://127.0.0.1:8443",
+		v001RelayOrigin + "/",
+		v001RelayOrigin + "?target=other",
+		"http://admin@192.168.242.103:8443",
+	} {
+		err := runDaemon([]string{"--machine-id=lab-machine-1", "--relay-url=" + relayURL})
+		if err == nil || !strings.Contains(err.Error(), "must be "+v001RelayOrigin) {
+			t.Fatalf("unsafe Relay origin %q was not refused: %v", relayURL, err)
+		}
+	}
+}

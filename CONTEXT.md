@@ -25,10 +25,10 @@ Interface utilisateur et service qui présente l'infrastructure, prépare les pl
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 **Agent**:
-Installation locale unique de Your Cloud sur une machine enrôlée, qui peut fournir plusieurs rôles sans les confondre et regroupe uniquement les capacités explicitement activées pour cette machine.
+Frontière de l'installation locale unique de Your Cloud sur une machine enrôlée, qui n'est pas elle-même un processus et ne regroupe que les rôles explicitement activés pour cette machine.
 
 **Daemon**:
-Processus permanent non privilégié de l'Agent, chargé des échanges sortants et de l'observation sans appliquer lui-même de changement privilégié.
+Processus permanent non privilégié fourni par l'Agent, chargé des échanges sortants et de l'observation sans appliquer lui-même de changement privilégié.
 
 **Auxiliaire local**:
 Autorité optionnelle et ponctuelle de l'Agent capable d'appliquer sur sa propre machine une opération nommée et approuvée, sans devenir un shell général.

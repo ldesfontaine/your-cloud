@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Minimal deterministic virsh double for the read-only labctl list contract.
+set -euo pipefail
+
+[[ "${1:-}" == --connect && "${2:-}" == qemu:///system ]] || exit 64
+shift 2
+command=${1:-}
+shift || true
+
+case "$command" in
+  list)
+    [[ "$*" == "--all --name" ]] || exit 64
+    printf '%s\n' lab-managed lab-unmanaged lab-stopped
+    ;;
+  domstate)
+    if [[ "${1:-}" == lab-stopped ]]; then
+      printf '%s\n' 'shut off'
+    else
+      printf '%s\n' running
+    fi
+    ;;
+  domifaddr)
+    [[ "${1:-}" != lab-stopped ]] || exit 1
+    printf '%s\n' \
+      ' Name       MAC address          Protocol     Address' \
+      '-------------------------------------------------------------------------------' \
+      ' vnet0      52:54:00:00:00:01    ipv4        192.0.2.10/24' \
+      ' vnet1      52:54:00:00:00:02    ipv4        198.51.100.20/24'
+    ;;
+  metadata)
+    name=${1:?}
+    if [[ "$name" == lab-managed ]]; then
+      printf '%s\n' '<lab:domain xmlns:lab="urn:your-cloud:lab" origin="your-cloud/labctl" template="machine" topology="v1-full"/>'
+    else
+      exit 1
+    fi
+    ;;
+  *)
+    exit 64
+    ;;
+esac

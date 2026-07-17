@@ -87,8 +87,18 @@ func TestHandlerRejectsWrongMethods(t *testing.T) {
 
 	server := httptest.NewServer(newTestHandler())
 	defer server.Close()
-	for _, endpoint := range []string{"/v0/presence", "/v0/machines"} {
-		request, err := http.NewRequest(http.MethodDelete, server.URL+endpoint, nil)
+	tests := []struct {
+		method   string
+		endpoint string
+	}{
+		{method: http.MethodDelete, endpoint: "/v0/presence"},
+		{method: http.MethodDelete, endpoint: "/v0/machines"},
+		{method: http.MethodGet, endpoint: "/v0/machines"},
+		{method: http.MethodPost, endpoint: "/v0/machines"},
+		{method: "QUERY", endpoint: "/v0/presence"},
+	}
+	for _, test := range tests {
+		request, err := http.NewRequest(test.method, server.URL+test.endpoint, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,8 +108,41 @@ func TestHandlerRejectsWrongMethods(t *testing.T) {
 		}
 		response.Body.Close()
 		if response.StatusCode != http.StatusMethodNotAllowed {
-			t.Fatalf("%s returned %d", endpoint, response.StatusCode)
+			t.Fatalf("%s %s returned %d", test.method, test.endpoint, response.StatusCode)
 		}
+	}
+}
+
+func TestHandlerRejectsURIQueriesAndStaysAvailable(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(newTestHandler())
+	defer server.Close()
+	tests := []struct {
+		method   string
+		endpoint string
+		body     string
+	}{
+		{method: http.MethodPost, endpoint: "/v0/presence?filter=x", body: `{"machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}`},
+		{method: http.MethodPost, endpoint: "/v0/presence?", body: `{"machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}`},
+		{method: "QUERY", endpoint: "/v0/machines?filter=x", body: `{}`},
+		{method: "QUERY", endpoint: "/v0/machines?", body: `{}`},
+	}
+	for _, test := range tests {
+		request, err := http.NewRequest(test.method, server.URL+test.endpoint, strings.NewReader(test.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s %s returned %d", test.method, test.endpoint, response.StatusCode)
+		}
+		postSignal(t, server.URL, validSignal("lab-coordinateur"), http.StatusNoContent)
 	}
 }
 
@@ -144,6 +187,9 @@ func TestQueryMachinesRequiresTheExactV001Query(t *testing.T) {
 			}
 			if response.Header.Get("Accept-Query") != `"application/json"` {
 				t.Fatalf("Accept-Query=%q", response.Header.Get("Accept-Query"))
+			}
+			if response.Header.Get("Cache-Control") != "no-store" {
+				t.Fatalf("Cache-Control=%q", response.Header.Get("Cache-Control"))
 			}
 		})
 	}

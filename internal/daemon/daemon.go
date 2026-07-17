@@ -38,8 +38,11 @@ func NewSender(machineID, relayURL string, interval time.Duration, logger *log.L
 		return nil, errors.New("interval must be positive")
 	}
 	parsedURL, err := url.Parse(relayURL)
-	if err != nil || parsedURL.Scheme != "http" || parsedURL.Host == "" || parsedURL.Path != "" {
-		return nil, errors.New("relay URL must be an HTTP origin without a path")
+	if err != nil || parsedURL.Scheme != "http" || parsedURL.Host == "" ||
+		parsedURL.User != nil || parsedURL.Path != "" || parsedURL.RawPath != "" ||
+		parsedURL.RawQuery != "" || parsedURL.ForceQuery || parsedURL.Fragment != "" ||
+		parsedURL.Opaque != "" {
+		return nil, errors.New("relay URL must be an HTTP origin without userinfo, path, query, or fragment")
 	}
 	return &Sender{
 		machineID:  machineID,

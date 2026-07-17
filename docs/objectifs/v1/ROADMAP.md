@@ -139,7 +139,11 @@ exact, publier ou basculer, observer, puis retirer l'ancien état.
 distincte à chaque Daemon, protéger le transport Daemon–Relay par mTLS, puis
 introduire le premier profil d'observation utile composé de collecteurs nommés.
 Le plan du profil montre les champs, lectures locales, privilèges, fréquence et
-coûts. Les observations en attente restent dans un tampon local borné.
+coûts. Les observations en attente restent dans un tampon local borné. Chaque
+Daemon reçoit un endpoint Relay approuvé comprenant route, port et identité ;
+cet endpoint peut être privé. L'élection ou le remplacement automatique d'un
+Relay reste hors de ce palier tant que candidature, détection de panne,
+autorité active unique, redistribution et reprise d'état ne sont pas définies.
 
 **Preuve de sortie :** un Daemon inconnu, révoqué ou utilisant la mauvaise
 identité est refusé ; une panne du Relay ne remplit pas le disque ; le retour du

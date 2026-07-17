@@ -1,47 +1,138 @@
 #!/usr/bin/env bash
-# Exercise the live Relay boundary from the isolated LAB builder.
+# Exercise the live Relay boundary and its runtime invariants on the LAB VPS.
 set -euo pipefail
 
-relay_url=${1:?usage: prove-hostile-relay <relay-http-origin>}
+[[ $# -eq 1 ]] || { echo "usage: prove-hostile-relay <relay-http-origin>" >&2; exit 2; }
+relay_url=$1
+[[ $(hostname) == lab-coordinateur ]] \
+  || { echo "prove-hostile-relay must run on lab-coordinateur" >&2; exit 1; }
+[[ $(id -u) -eq 0 ]] \
+  || { echo "prove-hostile-relay requires the isolated root LAB runner" >&2; exit 1; }
+[[ "$relay_url" == http://192.168.242.103:8443 ]] \
+  || { echo "unexpected v0.0.1 LAB Relay URL" >&2; exit 1; }
+command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
+command -v ss >/dev/null || { echo "ss is required" >&2; exit 1; }
+
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
+artifact=/usr/local/lib/your-cloud/your-cloud
+initial_pid=
 
-post_case() {
-  local name=$1 expected=$2 payload=$3 actual
-  actual=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
-    --output "$workdir/response.json" --write-out '%{http_code}' \
-    --header 'Content-Type: application/json' --data-binary "$payload" \
-    "$relay_url/v0/presence")
-  printf '%-22s expected=%s actual=%s response=' "$name" "$expected" "$actual"
-  tr -d '\n' <"$workdir/response.json"
-  printf '\n'
-  [[ "$actual" == "$expected" ]]
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+assert_runtime() {
+  local pid executable listeners listener_count
+  systemctl is-active --quiet your-cloud-relay.service \
+    || fail "Relay unit is not active"
+  pid=$(systemctl show your-cloud-relay.service --property=MainPID --value) \
+    || fail "cannot read Relay MainPID"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "invalid Relay MainPID=$pid"
+  if [[ -z "$initial_pid" ]]; then
+    initial_pid=$pid
+  else
+    [[ "$pid" == "$initial_pid" ]] \
+      || fail "Relay restarted during hostile matrix: initial=$initial_pid current=$pid"
+  fi
+  executable=$(readlink -f "/proc/$pid/exe") \
+    || fail "cannot resolve Relay executable"
+  [[ "$executable" == "$artifact" ]] \
+    || fail "Relay executable is $executable instead of $artifact"
+  listeners=$(ss -H -ltn 'sport = :8443') \
+    || fail "cannot inspect Relay listener"
+  listener_count=$(grep -c '^' <<<"$listeners")
+  [[ $listener_count -eq 1 && "$listeners" == *"192.168.242.103:8443"* ]] \
+    || fail "unexpected Relay listeners: $listeners"
 }
 
-post_case 'missing machine_id' 400 \
-  '{"daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
-post_case 'malformed machine_id' 400 \
-  '{"machine_id":"../root","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
-post_case 'unauthorized machine' 400 \
-  '{"machine_id":"lab-machine-2","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
-post_case 'duplicate machine_id' 400 \
-  '{"machine_id":"lab-machine-2","machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
-post_case 'wrong field case' 400 \
-  '{"Machine_ID":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
-post_case 'unknown field' 400 \
-  '{"machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z","command":"id"}'
+assert_valid_query() {
+  local actual
+  actual=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
+    --output "$workdir/state.json" --dump-header "$workdir/headers.txt" \
+    --write-out '%{http_code}' --request QUERY \
+    --header 'Content-Type: application/json' --data-binary '{}' \
+    "$relay_url/v0/machines")
+  [[ "$actual" == 200 ]] || fail "valid QUERY returned $actual"
+  tr -d '\r' <"$workdir/headers.txt" | grep -Fxiq 'Accept-Query: "application/json"' \
+    || fail "valid QUERY omitted Accept-Query"
+  tr -d '\r' <"$workdir/headers.txt" | grep -Fxiq 'Cache-Control: no-store' \
+    || fail "valid QUERY omitted Cache-Control: no-store"
+}
 
+assert_healthy() {
+  assert_runtime
+  assert_valid_query
+}
+
+request_case() {
+  local name=$1 method=$2 expected=$3 content_type=$4 payload=$5 target=$6 actual
+  local arguments=(
+    --silent --show-error --connect-timeout 2 --max-time 5
+    --output "$workdir/response.json" --write-out '%{http_code}'
+    --request "$method"
+  )
+  if [[ -z "$content_type" ]]; then
+    # Suppress curl's automatic form Content-Type when a body is present.
+    arguments+=(--header 'Content-Type:')
+  else
+    arguments+=(--header "Content-Type: $content_type")
+  fi
+  [[ "$payload" == __NO_BODY__ ]] || arguments+=(--data-binary "$payload")
+  if [[ "$target" == *'?' ]]; then
+    # curl otherwise normalizes away a trailing empty query before sending.
+    arguments+=(--request-target "$target")
+  fi
+  actual=$(curl "${arguments[@]}" "$relay_url$target")
+  printf '%-28s expected=%s actual=%s response=' "$name" "$expected" "$actual"
+  tr -d '\n' <"$workdir/response.json"
+  printf '\n'
+  [[ "$actual" == "$expected" ]] || fail "$name returned $actual instead of $expected"
+  assert_healthy
+}
+
+valid_presence='{"machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}'
 dd if=/dev/zero of="$workdir/oversized.json" bs=513 count=1 status=none
-actual=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
-  --output "$workdir/response.json" --write-out '%{http_code}' \
-  --header 'Content-Type: application/json' --data-binary "@$workdir/oversized.json" \
-  "$relay_url/v0/presence")
-printf '%-22s expected=413 actual=%s response=' 'oversized body' "$actual"
-tr -d '\n' <"$workdir/response.json"
-printf '\n'
-[[ "$actual" == 413 ]]
+dd if=/dev/zero of="$workdir/oversized-query.json" bs=33 count=1 status=none
 
-curl --fail --silent --show-error --connect-timeout 2 --max-time 5 \
-  --request QUERY --header 'Content-Type: application/json' \
-  --data-binary '{}' "$relay_url/v0/machines" >"$workdir/state.json"
-printf 'relay still available  status=200\n'
+assert_healthy
+
+request_case 'POST missing machine_id' POST 400 application/json \
+  '{"daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}' /v0/presence
+request_case 'POST malformed machine_id' POST 400 application/json \
+  '{"machine_id":"../root","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}' /v0/presence
+request_case 'POST unauthorized machine' POST 400 application/json \
+  '{"machine_id":"lab-machine-2","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}' /v0/presence
+request_case 'POST duplicate machine_id' POST 400 application/json \
+  '{"machine_id":"lab-machine-2","machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}' /v0/presence
+request_case 'POST wrong field case' POST 400 application/json \
+  '{"Machine_ID":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z"}' /v0/presence
+request_case 'POST unknown field' POST 400 application/json \
+  '{"machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at":"2026-07-16T12:00:00Z","command":"id"}' /v0/presence
+request_case 'POST second object' POST 400 application/json "$valid_presence{}" /v0/presence
+request_case 'POST missing Content-Type' POST 400 '' '{}' /v0/presence
+request_case 'POST wrong Content-Type' POST 400 text/plain '{}' /v0/presence
+request_case 'POST oversized body' POST 413 application/json \
+  "@$workdir/oversized.json" /v0/presence
+request_case 'POST URI query' POST 400 application/json "$valid_presence" \
+  '/v0/presence?filter=x'
+request_case 'POST empty URI query' POST 400 application/json "$valid_presence" \
+  '/v0/presence?'
+
+request_case 'QUERY missing body' QUERY 400 application/json __NO_BODY__ /v0/machines
+request_case 'QUERY missing Content-Type' QUERY 400 '' '{}' /v0/machines
+request_case 'QUERY wrong Content-Type' QUERY 415 text/plain '{}' /v0/machines
+request_case 'QUERY null body' QUERY 400 application/json null /v0/machines
+request_case 'QUERY future filter' QUERY 400 application/json \
+  '{"machine_id":"lab-machine-1"}' /v0/machines
+request_case 'QUERY second object' QUERY 400 application/json '{}{}' /v0/machines
+request_case 'QUERY oversized body' QUERY 413 application/json \
+  "@$workdir/oversized-query.json" /v0/machines
+request_case 'QUERY URI query' QUERY 400 application/json '{}' \
+  '/v0/machines?filter=x'
+request_case 'QUERY empty URI query' QUERY 400 application/json '{}' \
+  '/v0/machines?'
+
+request_case 'GET machines' GET 405 '' __NO_BODY__ /v0/machines
+request_case 'POST machines' POST 405 application/json '{}' /v0/machines
+request_case 'QUERY presence' QUERY 405 application/json "$valid_presence" /v0/presence
+
+printf 'PASS: hostile HTTP matrix; Relay PID %s stayed active on the exact listener\n' "$initial_pid"

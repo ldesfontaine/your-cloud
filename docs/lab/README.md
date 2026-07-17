@@ -31,7 +31,8 @@ un ancien rôle.
 
 Avant toute mutation de VM :
 
-1. exécuter `tools/labctl list` ;
+1. exécuter `tools/labctl list` pour une lecture humaine ou
+   `tools/labctl list --format=tsv` pour une garde automatisée ;
 2. confirmer l'origine et le gabarit de chaque cible ;
 3. vérifier que son adresse diffère de `192.168.122.123` et `10.66.66.1` ;
 4. arrêter immédiatement au moindre doute, en traitant la cible comme une
@@ -55,7 +56,7 @@ annoncée comme telle.
 ## Commandes disponibles
 
 ```text
-tools/labctl list
+tools/labctl list [--format=tsv]
 tools/labctl topology create <quick|v1-full>
 tools/labctl topology inspect <quick|v1-full>
 tools/labctl topology prepare v1-full
@@ -67,6 +68,17 @@ tools/labctl ssh <vm> [commande...]
 tools/labctl copy-to <vm> <source> <destination>
 tools/labctl copy-from <vm> <source> <destination>
 ```
+
+La sortie TSV possède les colonnes fixes `vm`, `state`, `ips`, `template`,
+`topology` et `origin`. Plusieurs adresses sont séparées par une virgule ; une
+VM arrêtée sans adresse rend `-`. Une erreur d'inspection d'une VM active reste
+bloquante.
+
+Pour `v0.0.1`, `tools/prove-v0.0.1` est l'entrée d'orchestration. Le poste de
+développement ne fait qu'empaqueter le lot non sensible, calculer ses empreintes
+et appeler `labctl`. `tools/test-v0.0.1`, le build, le binaire, HTTP et systemd
+s'exécutent uniquement dans les VM LAB. Une erreur après mutation sélectionne
+et vérifie l'état absent ; un succès réinstalle l'état final documenté.
 
 L'existence d'une topologie dans `labctl` signifie uniquement que l'outil sait
 la créer. Une capacité devient prouvée seulement après une exécution réelle,

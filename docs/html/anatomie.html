@@ -82,6 +82,7 @@
     <!-- coherence: V1-OBSERVATION:start -->
     <h2>Observer sans ouvrir une porte</h2>
     <div class="flow" aria-label="Flux d'observation"><div class="step">Profil approuvé</div><div class="step">Collecteurs nommés</div><div class="step">Daemon non-root</div><div class="step">Tampon borné</div><div class="step">Sortie mTLS</div><div class="step">Relay sans commande</div></div>
+    <p class="boundary">Chaque Daemon reçoit un endpoint Relay approuvé : route, port et identité cryptographique. Le trajet peut rester privé ; aucune IP publique n'est intrinsèquement requise. Un remplacement automatique futur devra prouver la panne, limiter les candidates et empêcher deux autorités actives ; son mécanisme reste ouvert.</p>
     <div class="compare">
       <article class="explain"><h3>Autorisé</h3><ul><li>Cible explicitement déclarée</li><li>Schéma et privilèges connus</li><li>État local sans API réseau</li><li>Lacune visible si le tampon déborde</li></ul></article>
       <article class="explain warning"><h3>Refusé</h3><ul><li>Commande shell ou arguments libres</li><li>Chemin ou contenu arbitraire</li><li>Scan du LAN</li><li>Plugin téléchargé à la demande</li></ul></article>

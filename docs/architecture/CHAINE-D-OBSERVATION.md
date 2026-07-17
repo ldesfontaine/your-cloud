@@ -12,7 +12,9 @@ transporte des faits observés ; il ne transporte aucun ordre vers les machines.
 
 Pour lire les schémas sans confondre installation, programme et exécution :
 
-- l'**Agent** est l'installation locale de Your Cloud sur une machine ;
+- l'**Agent** est la frontière de l'installation locale de Your Cloud sur une
+  machine. Ce n'est ni un processus, ni un troisième service : il fournit
+  seulement les rôles explicitement activés sur cette machine ;
 - un **artefact** est le fichier exécutable construit pour une version ; dans
   `v0.0.1`, ce fichier unique s'appelle `your-cloud` ;
 - un **rôle** est une capacité choisie au démarrage de cet exécutable, comme
@@ -87,7 +89,7 @@ deux.
 
 ### Daemon
 
-Le **Daemon** est le processus permanent d'observation de l'Agent. Dans
+Le **Daemon** est le processus permanent d'observation fourni par l'Agent. Dans
 `v0.0.1`, il ne relève encore aucune métrique système : il connaît seulement
 son identifiant synthétique, la version de l'exécutable et l'heure courante.
 
@@ -196,13 +198,13 @@ client LAB             ----HTTP---->  192.168.242.103:8443
 consultation : QUERY /v0/machines
 ```
 
-Le package Daemon exige actuellement le schéma `http`, un hôte non vide et
-l'absence de chemin, puis ajoute `/v0/presence`. Le script d'installation borne
-en plus l'origine exacte à `http://192.168.242.103:8443`. L'audit statique a
-toutefois montré que le binaire ne revérifie pas encore cette valeur exacte et
-ne refuse pas tous les composants annexes d'une URL. Le Relay, lui, revérifie
-son écoute exacte sur `192.168.242.103:8443`. Ces valeurs prouvent un scénario
-LAB ; elles ne constituent pas une configuration de production.
+Une **origine HTTP** contient seulement le schéma, l'hôte et le port. Le package
+Daemon refuse utilisateur, chemin, partie query et fragment, puis ajoute
+`/v0/presence`. Le point d'entrée du binaire et le script d'installation
+revérifient tous deux l'origine LAB exacte
+`http://192.168.242.103:8443`. Le Relay revérifie de la même manière son écoute
+exacte sur `192.168.242.103:8443`. Ces valeurs bornent un scénario LAB ; elles
+ne constituent pas une configuration de production.
 
 ### Pourquoi `POST` pour le signal
 
@@ -227,6 +229,7 @@ JSON vide `{}`, avec `Content-Type: application/json`, et rester inférieur ou
 
 ```text
 Accept-Query: "application/json"
+Cache-Control: no-store
 ```
 
 Répéter cette requête ne modifie pas le stockage du Relay. L'ancien
@@ -236,15 +239,44 @@ Répéter cette requête ne modifie pas le stockage du Relay. L'ancien
 d'ancienneté et la vue des machines.
 
 Un **cache HTTP** est un intermédiaire capable de conserver une réponse et de
-la réutiliser. La RFC rend une réponse `QUERY` cacheable ; or `v0.0.1` ne renvoie
-pas encore `Cache-Control: no-store`. La preuve directe du LAB n'incluait aucun
-cache, mais cette directive et son test deviennent obligatoires avant d'ajouter
-l'App, un proxy ou un autre intermédiaire.
+la réutiliser. La RFC rend une réponse `QUERY` cacheable ; le Relay envoie donc
+`Cache-Control: no-store` pour interdire la conservation de cette vue vivante.
+La preuve LAB initiale n'incluait aucun cache : le contrôle de cet en-tête fait
+partie de la nouvelle matrice automatisée.
 
 La **partie query d'une URI** est le texte situé après `?`. Le corps JSON est le
-seul emplacement prévu ici pour décrire la consultation. Le handler actuel
-ignore pourtant encore une partie query au lieu de la refuser. Cet écart doit
-être fermé et testé avant d'élargir le contrat HTTP.
+seul emplacement prévu ici pour décrire la consultation. Les deux routes
+refusent donc une partie query, y compris un `?` final vide, au lieu de
+l'ignorer ou de créer un second langage de paramètres.
+
+## Destination Relay future : besoin figé, mécanisme ouvert
+
+Un **endpoint Relay** est la destination complète approuvée remise à un
+Daemon : une route joignable, un port et l'identité cryptographique attendue du
+Relay. Une adresse IP seule permet de router des paquets ; elle ne prouve pas
+l'identité du processus rejoint.
+
+Chaque machine enrôlée devra connaître au moins un endpoint Relay approuvé pour
+envoyer ses observations. Cet endpoint n'a pas besoin d'une IP publique : un
+routage interne, un réseau privé fournisseur ou un passage privé borné
+suffisent si le flux sortant du Daemon et la consultation de l'App peuvent
+atteindre le Relay. Une IP publique ne devient nécessaire que si la topologie
+retenue impose réellement une arrivée directe depuis Internet.
+
+La continuité future du Relay exige davantage qu'un second processus prêt à
+démarrer. Avant tout remplacement automatique, le contrat devra fixer :
+
+1. quelles machines sont candidates et avec quelle autorité locale ;
+2. quel signal borné distingue une panne d'une coupure réseau temporaire ;
+3. comment l'endpoint approuvé et son identité sont redistribués ;
+4. quel état est repris et quelle perte d'observation reste acceptée ;
+5. comment empêcher deux Relay de se déclarer simultanément responsables ;
+6. quels délais, retours arrière et preuves autorisent la bascule.
+
+Le choix entre nom stable, liste d'endpoints, découverte signée ou autre
+mécanisme reste ouvert. Il n'appartient ni à `v0.0.1`, ni automatiquement au
+prochain palier. Le stockage mémoire actuel interdit de présenter un simple
+redémarrage ailleurs comme une reprise transparente.
 
 ## États `absent`, `recent` et `old`
 
@@ -278,12 +310,11 @@ Un message refusé ne change pas cet automate. Le seuil utilise `received_at`,
 pas `sent_at`.
 
 Une **horloge monotone** mesure une durée écoulée sans être perturbée par une
-correction de l'heure civile. L'intention est de comparer les réceptions avec
-cette horloge côté Relay. L'implémentation `v0.0.1` convertit toutefois les
-instants en UTC avant le calcul et perd l'information monotone de Go. Les
-transitions observées dans le LAB restent prouvées, mais un saut de l'horloge du
-Relay n'a pas encore été injecté : ce point doit être corrigé et automatisé
-avant de donner au seuil une valeur opérationnelle.
+correction de l'heure civile. Le Relay conserve désormais l'instant brut pour
+le calcul de l'âge et le convertit en UTC uniquement lors du rendu. Les
+transitions observées dans le LAB restent prouvées ; l'injection d'un saut de
+l'horloge civile du Relay reste une preuve hostile à automatiser avant de
+donner au seuil une valeur opérationnelle.
 
 ## Pannes et redémarrages
 
@@ -294,6 +325,7 @@ avant de donner au seuil une valeur opérationnelle.
 | Relay indisponible | les envois échouent et le Daemon réessaie | les Daemons restent démarrés |
 | redémarrage du Relay | toutes les machines redeviennent `absent` | les Daemons renvoient ensuite leurs signaux |
 | manifeste candidat invalide | le Relay échoue avant écoute | le Daemon colocalisé reste indépendant |
+| nouvel artefact incapable de rester actif | le lot précédent est restauré après contrôle de stabilité borné | les rôles précédemment actifs sont relancés avec l'ancienne empreinte |
 | désactivation du Relay | unité, configuration et manifeste Relay sont retirés | le Daemon et l'artefact commun restent installés |
 | retrait complet de l'Agent | les deux rôles doivent être arrêtés avant suppression | aucun processus orphelin n'est accepté |
 
@@ -340,7 +372,7 @@ ce palier, mais ne constituent pas encore un installateur de production V1.
 | Niveau | Chaîne d'observation concernée |
 |---|---|
 | **Prouvé dans `v0.0.1`** | un exécutable commun ; processus Daemon et Relay isolés ; signal minimal ; HTTP `POST` et `QUERY` ; schémas et tailles bornés ; liste de deux machines LAB ; dernier état en mémoire ; transitions `absent`/`recent`/`old` ; refus Relay par défaut ; retraits fail-closed |
-| **Décidé pour la V1, non encore prouvé ici** | identité propre à chaque Daemon ; transport mTLS ; collecteurs nommés ; tampon local borné et lacunes visibles ; enregistrement durable côté Relay ; consultation HTTPS authentifiée par l'App |
+| **Décidé pour la V1, non encore prouvé ici** | identité propre à chaque Daemon ; endpoint Relay approuvé joignable par routage public ou privé ; transport mTLS ; collecteurs nommés ; tampon local borné et lacunes visibles ; enregistrement durable côté Relay ; consultation HTTPS authentifiée par l'App |
 | **Absent de ce contrat** | Auxiliaire local ; commande distante ; plugin arbitraire ; scan du LAN ; élection, réplication ou remplacement automatique du Relay ; base ou historique durable ; métriques système réelles |
 
 Cette séparation doit rester visible à chaque évolution. Ajouter un dessin V1

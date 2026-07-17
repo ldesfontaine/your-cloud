@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Assert the exact v0.0.1 runtime placement on one LAB machine.
+set -euo pipefail
+
+[[ $# -eq 1 ]] || { echo "usage: assert-agent-runtime <absent|daemon|daemon-relay>" >&2; exit 2; }
+expected=$1
+[[ $(id -u) -eq 0 ]] || { echo "assert-agent-runtime must run as root" >&2; exit 1; }
+command -v pgrep >/dev/null || { echo "pgrep is required" >&2; exit 1; }
+command -v ss >/dev/null || { echo "ss is required" >&2; exit 1; }
+
+artifact=/usr/local/lib/your-cloud/your-cloud
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+unit_field() {
+  systemctl show "$1" --property="$2" --value
+}
+
+assert_active_role() {
+  local role=$1 unit="your-cloud-$1.service" pid uid executable process_count status
+  [[ $(unit_field "$unit" ActiveState) == active ]] || fail "$unit is not active"
+  pid=$(unit_field "$unit" MainPID)
+  uid=$(unit_field "$unit" UID)
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "$unit has invalid MainPID=$pid"
+  [[ "$uid" =~ ^[1-9][0-9]*$ ]] || fail "$unit has invalid UID=$uid"
+  executable=$(readlink -f "/proc/$pid/exe") || fail "cannot resolve $unit executable"
+  [[ "$executable" == "$artifact" ]] || fail "$unit uses $executable"
+  process_count=$(pgrep -fc "^$artifact $role( |$)") && status=0 || status=$?
+  [[ $status -eq 0 || $status -eq 1 ]] || fail "cannot inspect $role processes"
+  [[ $process_count -eq 1 ]] || fail "expected one $role process, found $process_count"
+  printf '%s_pid=%s %s_uid=%s\n' "$role" "$pid" "$role" "$uid"
+}
+
+assert_no_runtime() {
+  local status
+  if pgrep -f '^/usr/local/lib/your-cloud/your-cloud (daemon|relay)( |$)' >/dev/null; then
+    fail "a Your Cloud process remains"
+  else
+    status=$?
+    [[ $status -eq 1 ]] || fail "cannot inspect Your Cloud processes"
+  fi
+  [[ -z $(ss -H -ltn 'sport = :8443') ]] || fail "port 8443 is listening"
+}
+
+case "$expected" in
+  absent)
+    for unit in your-cloud-daemon.service your-cloud-relay.service; do
+      [[ $(unit_field "$unit" LoadState) == not-found ]] || fail "$unit is still loaded"
+      [[ $(unit_field "$unit" MainPID) == 0 ]] || fail "$unit still has a PID"
+    done
+    [[ ! -e "$artifact" && ! -e /etc/your-cloud ]] \
+      || fail "Agent files remain after removal"
+    assert_no_runtime
+    ;;
+  daemon)
+    [[ -f "$artifact" && ! -L "$artifact" ]] || fail "common artifact is missing"
+    daemon_line=$(assert_active_role daemon)
+    [[ $(unit_field your-cloud-relay.service LoadState) == not-found ]] \
+      || fail "Relay unit is present on a Daemon-only machine"
+    [[ -z $(ss -H -ltn 'sport = :8443') ]] || fail "Daemon-only machine listens on 8443"
+    printf '%s\n' "$daemon_line"
+    ;;
+  daemon-relay)
+    [[ -f "$artifact" && ! -L "$artifact" ]] || fail "common artifact is missing"
+    daemon_line=$(assert_active_role daemon)
+    relay_line=$(assert_active_role relay)
+    daemon_pid=${daemon_line#*daemon_pid=}; daemon_pid=${daemon_pid%% *}
+    daemon_uid=${daemon_line##*daemon_uid=}
+    relay_pid=${relay_line#*relay_pid=}; relay_pid=${relay_pid%% *}
+    relay_uid=${relay_line##*relay_uid=}
+    [[ "$daemon_pid" != "$relay_pid" ]] || fail "Daemon and Relay share a PID"
+    [[ "$daemon_uid" != "$relay_uid" ]] || fail "Daemon and Relay share a UID"
+    listeners=$(ss -H -ltn 'sport = :8443') || fail "cannot inspect Relay listener"
+    [[ $(grep -c '^' <<<"$listeners") -eq 1 \
+      && "$listeners" == *"192.168.242.103:8443"* ]] \
+      || fail "unexpected Relay listeners: $listeners"
+    printf '%s\n%s\n' "$daemon_line" "$relay_line"
+    ;;
+  *)
+    fail "unknown expected runtime: $expected"
+    ;;
+esac
+
+printf 'PASS: %s runtime on %s\n' "$expected" "$(hostname)"
