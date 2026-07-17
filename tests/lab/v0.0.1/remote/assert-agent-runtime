@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Assert the exact v0.0.1 runtime placement on one LAB machine.
+set -euo pipefail
+
+[[ $# -eq 1 ]] || { echo "usage: assert-agent-runtime <absent|daemon|daemon-relay>" >&2; exit 2; }
+expected=$1
+[[ $(id -u) -eq 0 ]] || { echo "assert-agent-runtime must run as root" >&2; exit 1; }
+command -v pgrep >/dev/null || { echo "pgrep is required" >&2; exit 1; }
+command -v ss >/dev/null || { echo "ss is required" >&2; exit 1; }
+command -v cmp >/dev/null || { echo "cmp is required" >&2; exit 1; }
+
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+source_root=$(cd -- "$script_dir/../../../.." && pwd)
+deploy_dir="$source_root/deploy/v0.0.1"
+[[ -d "$deploy_dir" && ! -L "$deploy_dir" ]] \
+  || { echo "v0.0.1 deploy source is missing or symbolic" >&2; exit 1; }
+artifact=/usr/local/lib/your-cloud/your-cloud
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+assert_metadata() {
+  local expected=$1 path=$2 actual
+  [[ -e "$path" && ! -L "$path" ]] || fail "managed path is missing or symbolic: $path"
+  actual=$(stat -c '%U:%G:%a' "$path") || fail "cannot inspect metadata for $path"
+  [[ "$actual" == "$expected" ]] \
+    || fail "unexpected metadata for $path: $actual instead of $expected"
+}
+
+assert_unit_security() {
+  local role=$1 unit="your-cloud-$1.service" expected_user="your-cloud-$1"
+  local installed_unit="/etc/systemd/system/$unit" model_unit="$deploy_dir/$unit"
+  local expected_family family found
+  local -a address_families
+  [[ -f "$model_unit" && ! -L "$model_unit" ]] || fail "unit model is missing or symbolic: $model_unit"
+  cmp -s -- "$model_unit" "$installed_unit" || fail "$unit differs from its deployed model"
+  [[ $(unit_field "$unit" FragmentPath) == "$installed_unit" ]] || fail "$unit uses an unexpected fragment"
+  [[ -z $(unit_field "$unit" DropInPaths) ]] || fail "$unit is overridden by a systemd drop-in"
+  [[ $(unit_field "$unit" LoadState) == loaded ]] || fail "$unit is not loaded"
+  [[ $(unit_field "$unit" UnitFileState) == enabled ]] || fail "$unit is not enabled"
+  [[ $(unit_field "$unit" User) == "$expected_user" ]] || fail "$unit has an unexpected User"
+  [[ $(unit_field "$unit" DynamicUser) == yes ]] || fail "$unit does not use DynamicUser"
+  [[ $(unit_field "$unit" NoNewPrivileges) == yes ]] || fail "$unit lacks NoNewPrivileges"
+  [[ -z $(unit_field "$unit" CapabilityBoundingSet) ]] || fail "$unit keeps Linux capabilities"
+  [[ -z $(unit_field "$unit" AmbientCapabilities) ]] || fail "$unit keeps ambient capabilities"
+  [[ $(unit_field "$unit" PrivateDevices) == yes ]] || fail "$unit can access host devices"
+  [[ $(unit_field "$unit" PrivateTmp) == yes ]] || fail "$unit does not isolate temporary files"
+  [[ $(unit_field "$unit" ProtectSystem) == strict ]] || fail "$unit does not protect the system tree"
+  [[ $(unit_field "$unit" ProtectHome) == yes ]] || fail "$unit does not protect home directories"
+  [[ $(unit_field "$unit" ProtectClock) == yes ]] || fail "$unit can alter the host clock"
+  [[ $(unit_field "$unit" ProtectControlGroups) == yes ]] || fail "$unit can alter control groups"
+  [[ $(unit_field "$unit" ProtectKernelLogs) == yes ]] || fail "$unit can access kernel logs"
+  [[ $(unit_field "$unit" ProtectKernelModules) == yes ]] || fail "$unit can alter kernel modules"
+  [[ $(unit_field "$unit" ProtectKernelTunables) == yes ]] || fail "$unit can alter kernel tunables"
+  [[ $(unit_field "$unit" RestrictNamespaces) == yes ]] || fail "$unit can create forbidden namespaces"
+  [[ $(unit_field "$unit" LockPersonality) == yes ]] || fail "$unit can alter its execution domain"
+  [[ $(unit_field "$unit" MemoryDenyWriteExecute) == yes ]] || fail "$unit permits writable executable memory"
+  [[ $(unit_field "$unit" SystemCallArchitectures) == native ]] \
+    || fail "$unit accepts non-native system-call architectures"
+  read -r -a address_families <<<"$(unit_field "$unit" RestrictAddressFamilies)"
+  [[ ${#address_families[@]} -eq 3 ]] || fail "$unit has an unexpected address-family set"
+  for expected_family in AF_UNIX AF_INET AF_INET6; do
+    found=0
+    for family in "${address_families[@]}"; do
+      [[ "$family" != "$expected_family" ]] || found=1
+    done
+    [[ $found -eq 1 ]] || fail "$unit does not permit required address family $expected_family"
+  done
+}
+
+assert_daemon_files() {
+  local config expected host
+  assert_metadata root:root:755 /usr/local/lib/your-cloud
+  assert_metadata root:root:755 /etc/your-cloud
+  assert_metadata root:root:755 "$artifact"
+  assert_metadata root:root:600 /etc/your-cloud/daemon.env
+  assert_metadata root:root:644 /etc/systemd/system/your-cloud-daemon.service
+  host=$(hostname)
+  [[ "$host" == lab-coordinateur || "$host" == lab-machine-1 ]] \
+    || fail "Daemon runtime is on an unexpected host: $host"
+  config=$(</etc/your-cloud/daemon.env)
+  expected="MACHINE_ID=$host"$'\n''RELAY_URL=http://192.168.242.103:8443'
+  [[ "$config" == "$expected" ]] || fail "Daemon configuration differs from the v0.0.1 runtime contract"
+  assert_unit_security daemon
+}
+
+assert_relay_files() {
+  local candidate config
+  assert_metadata root:root:600 /etc/your-cloud/relay.env
+  assert_metadata root:root:644 /etc/your-cloud/relay-candidate.json
+  assert_metadata root:root:644 /etc/systemd/system/your-cloud-relay.service
+  config=$(</etc/your-cloud/relay.env)
+  [[ "$config" == 'RELAY_LISTEN=192.168.242.103:8443' ]] \
+    || fail "Relay configuration differs from the v0.0.1 runtime contract"
+  candidate=$(</etc/your-cloud/relay-candidate.json)
+  [[ "$candidate" == '{"schema":1,"role":"relay-candidate"}' ]] \
+    || fail "Relay candidate differs from the v0.0.1 runtime contract"
+  assert_unit_security relay
+}
+
+unit_field() {
+  systemctl show "$1" --property="$2" --value
+}
+
+assert_active_role() {
+  local role=$1 unit="your-cloud-$1.service" pid uid executable process_count process_uid status
+  [[ $(unit_field "$unit" ActiveState) == active ]] || fail "$unit is not active"
+  pid=$(unit_field "$unit" MainPID)
+  uid=$(unit_field "$unit" UID)
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "$unit has invalid MainPID=$pid"
+  [[ "$uid" =~ ^[1-9][0-9]*$ ]] || fail "$unit has invalid UID=$uid"
+  process_uid=$(awk '$1 == "Uid:" {print $2; exit}' "/proc/$pid/status") \
+    || fail "cannot inspect $unit process UID"
+  [[ "$process_uid" == "$uid" ]] || fail "$unit process UID=$process_uid differs from systemd UID=$uid"
+  executable=$(readlink -f "/proc/$pid/exe") || fail "cannot resolve $unit executable"
+  [[ "$executable" == "$artifact" ]] || fail "$unit uses $executable"
+  process_count=$(pgrep -fc "^$artifact $role( |$)") && status=0 || status=$?
+  [[ $status -eq 0 || $status -eq 1 ]] || fail "cannot inspect $role processes"
+  [[ $process_count -eq 1 ]] || fail "expected one $role process, found $process_count"
+  printf '%s_pid=%s %s_uid=%s\n' "$role" "$pid" "$role" "$uid"
+}
+
+assert_no_runtime() {
+  local status
+  if pgrep -f '^/usr/local/lib/your-cloud/your-cloud (daemon|relay)( |$)' >/dev/null; then
+    fail "a Your Cloud process remains"
+  else
+    status=$?
+    [[ $status -eq 1 ]] || fail "cannot inspect Your Cloud processes"
+  fi
+  [[ -z $(ss -H -ltn 'sport = :8443') ]] || fail "port 8443 is listening"
+}
+
+case "$expected" in
+  absent)
+    for unit in your-cloud-daemon.service your-cloud-relay.service; do
+      [[ $(unit_field "$unit" LoadState) == not-found ]] || fail "$unit is still loaded"
+      [[ $(unit_field "$unit" MainPID) == 0 ]] || fail "$unit still has a PID"
+      [[ ! -e "/etc/systemd/system/$unit" && ! -L "/etc/systemd/system/$unit" ]] \
+        || fail "$unit file remains after removal"
+    done
+    [[ ! -e "$artifact" && ! -L "$artifact" \
+      && ! -e /usr/local/lib/your-cloud && ! -L /usr/local/lib/your-cloud \
+      && ! -e /etc/your-cloud && ! -L /etc/your-cloud ]] \
+      || fail "Agent files remain after removal"
+    assert_no_runtime
+    ;;
+  daemon)
+    [[ -f "$artifact" && ! -L "$artifact" ]] || fail "common artifact is missing"
+    daemon_line=$(assert_active_role daemon)
+    [[ $(unit_field your-cloud-relay.service LoadState) == not-found ]] \
+      || fail "Relay unit is present on a Daemon-only machine"
+    [[ -z $(ss -H -ltn 'sport = :8443') ]] || fail "Daemon-only machine listens on 8443"
+    assert_daemon_files
+    printf '%s\n' "$daemon_line"
+    ;;
+  daemon-relay)
+    [[ -f "$artifact" && ! -L "$artifact" ]] || fail "common artifact is missing"
+    daemon_line=$(assert_active_role daemon)
+    relay_line=$(assert_active_role relay)
+    daemon_pid=${daemon_line#*daemon_pid=}; daemon_pid=${daemon_pid%% *}
+    daemon_uid=${daemon_line##*daemon_uid=}
+    relay_pid=${relay_line#*relay_pid=}; relay_pid=${relay_pid%% *}
+    relay_uid=${relay_line##*relay_uid=}
+    [[ "$daemon_pid" != "$relay_pid" ]] || fail "Daemon and Relay share a PID"
+    [[ "$daemon_uid" != "$relay_uid" ]] || fail "Daemon and Relay share a UID"
+    listeners=$(ss -H -ltnp 'sport = :8443') || fail "cannot inspect Relay listener"
+    listener_addresses=()
+    listener_pids=()
+    mapfile -t listener_addresses < <(awk 'NF {print $4}' <<<"$listeners")
+    mapfile -t listener_pids < <(grep -oE 'pid=[0-9]+' <<<"$listeners" | cut -d= -f2)
+    [[ ${#listener_addresses[@]} -eq 1 && ${#listener_pids[@]} -eq 1 ]] \
+      || fail "unexpected Relay listeners: $listeners"
+    [[ ${listener_addresses[0]} == "192.168.242.103:8443" ]] \
+      || fail "Relay listener address is not exact: ${listener_addresses[0]}"
+    [[ ${listener_pids[0]} == "$relay_pid" ]] \
+      || fail "Relay listener PID ${listener_pids[0]} differs from unit PID $relay_pid"
+    assert_daemon_files
+    assert_relay_files
+    printf '%s\n%s\n' "$daemon_line" "$relay_line"
+    ;;
+  *)
+    fail "unknown expected runtime: $expected"
+    ;;
+esac
+
+printf 'PASS: %s runtime on %s\n' "$expected" "$(hostname)"

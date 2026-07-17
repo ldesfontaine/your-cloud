@@ -11,12 +11,13 @@
 </head>
 <body>
   <main>
-    <p class="eyebrow">Preuve exécutée · LAB v1-full · 16 juillet 2026</p>
+    <p class="eyebrow">Références historiques · 16 et 17 juillet 2026</p>
     <h1>Un fichier. Trois processus. Deux machines vivantes.</h1>
-    <p class="lead"><code>v0.0.1</code> prouve qu'un même exécutable peut fournir Daemon et Relay sans fusionner leurs processus, comptes ou cycles de vie. Le Relay reste refusé par défaut sur la machine LAN.</p>
-    <div class="badges"><span class="badge">Contrat prouvé</span><span class="badge">SHA-256 identique</span><span class="badge">Tests LAB verts</span><span class="badge">Retrait propre</span></div>
+    <p class="lead"><code>v0.0.1</code> prouve qu'un même exécutable peut fournir Daemon et Relay sans fusionner leurs processus, comptes ou cycles de vie. Le Relay reste refusé par défaut sur la machine LAN. Le run historique <code>20260717T100150Z-1543398</code> a revalidé les vingt étapes P1, la restitution P2 et le nettoyage depuis les chemins réorganisés, avant les derniers durcissements du banc et de la CI. L'identité d'un rejeu courant appartient à son dossier d'artefacts.</p>
+    <div class="badges"><span class="badge">Contrat prouvé</span><span class="badge">SHA-256 identique</span><span class="badge">P1 hostile automatisé</span><span class="badge">P2 capturé dans le LAB</span><span class="badge">Retrait propre</span></div>
 
-    <section class="placement" aria-label="Placement réellement exécuté">
+    <p class="limit"><strong>Attribution :</strong> les PID, UID et traces de placement ci-dessous viennent de la preuve initiale du 16 juillet. Les empreintes P1/P2 sont celles de la revalidation historique du 17 juillet ; elles ne sont pas mélangées pour prétendre décrire un même processus.</p>
+    <section class="placement" aria-label="Placement historique réellement exécuté">
       <article class="machine"><h3>LAN privé</h3><p><code>lab-machine-1</code></p><p>Mêmes octets<br>Daemon · PID 3821<br>aucun port produit entrant</p><p>Relay absent et refusé sans candidature</p></article>
       <div class="flow"><span>présence → Relay VPS</span><div class="line"></div><small>HTTP :8443<br>gateway filtrant</small></div>
       <article class="machine relay"><h3>VPS simulé</h3><p><code>lab-coordinateur</code></p><p>Un fichier <code>your-cloud</code><br>Relay · PID 6183 · UID 63459<br>Daemon · PID 6200 · UID 64637 → Relay local</p><p>Deux unités <code>active/running</code></p></article>
@@ -24,13 +25,23 @@
 
     <h2>Quatre preuves qui ferment l'incrément</h2>
     <div class="grid">
-      <article class="card"><strong>2f115c75…a8feb</strong><p>Même SHA-256 sur le builder, le VPS et la machine LAN ; aucun ancien binaire spécialisé.</p></article>
+      <article class="card"><strong>4d58798e…f0d41</strong><p>Même SHA-256 sur le builder, le VPS et la machine LAN lors de la référence historique P1/P2 ; aucun ancien binaire spécialisé.</p></article>
       <article class="card"><strong>2 PID · 2 UID</strong><p>Daemon et Relay tournent en parallèle sur le VPS depuis le même chemin, sous deux comptes dynamiques distincts.</p></article>
       <article class="card"><strong>Refus avant écoute</strong><p>Manifeste absent sur le LAN ou modifiable sur le VPS : sortie non nulle et aucun port <code>8443</code>.</p></article>
       <article class="card"><strong>0 reste après retrait</strong><p>Unités <code>not-found</code>, PID 0, binaire et configuration absents sur les trois anciennes cibles.</p></article>
     </div>
 
-    <h2>Chaîne de build et résultat nominal</h2>
+    <h2>P1 et P2 : assertions d'abord, restitution ensuite</h2>
+    <div class="grid">
+      <article class="card"><strong>20 étapes structurées</strong><p>Révision, empreintes, topologie, cibles, fenêtre Relay et nettoyage sont écrits dans <code>result.json</code> par une liste de champs fixe et expurgée.</p></article>
+      <article class="card"><strong>start-limit-hit → récupération</strong><p>Manifeste <code>0666</code>, refus avant <code>reset-failed</code>, puis retour du Relay ; le Daemon colocalisé reste indépendant.</p></article>
+      <article class="card"><strong>2 processus hors unité refusés</strong><p><code>disable-relay</code> et <code>remove-agent</code> conservent les fichiers tant qu'un Relay ou Daemon synthétique demeure.</p></article>
+      <article class="card"><strong>nobody · 127.0.0.1:18080</strong><p>Le rapport généré est servi et capturé seulement dans <code>lab-console</code>. Un échec injecté prouve aussi l'arrêt du serveur.</p></article>
+    </div>
+    <p class="limit"><strong>Autorité :</strong> la page et la capture P2 prouvent leur rendu, jamais le produit. Les codes de sortie et assertions machine de <code>result.json</code> restent le critère de réussite.</p>
+    <p class="limit"><strong>Référence historique post-réorganisation :</strong> lot source <code>ae7ba5d3…b833923</code> · artefact <code>4d58798e…f0d41</code> · résultat P1 <code>7f0d62b5…23f1c1</code> · résultat P2 <code>1107e4a1…f9171</code> · capture <code>2f223461…1fad05</code>. Les assertions machine restent l'autorité de ces empreintes ; ce lot précède les derniers changements d'orchestration et de CI.</p>
+
+    <h2>Chaîne de build historique et résultat nominal</h2>
     <div class="capture"><pre>lab-console · Go 1.24.4 · linux/amd64
 gofmt       PASS
 bash -n     PASS
@@ -63,7 +74,7 @@ lab-machine-1     recent  daemon v0.0.1</pre></div>
       <tr><td>Ancien GET de consultation</td><td>405</td><td class="ok">405</td><td class="ok">État inchangé</td></tr>
     </tbody></table>
 
-    <h2>Indépendance et cycle de vie</h2>
+    <h2>Trace historique d'indépendance et de cycle de vie</h2>
     <div class="capture"><pre>Arrêt du Daemon VPS + 5 secondes
 lab-coordinateur  old
 lab-machine-1     recent

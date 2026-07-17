@@ -31,6 +31,12 @@ La **Présence n'est donc pas un troisième processus**. Dans `v0.0.1`, c'est le
 contrat de données partagé entre le Daemon et le Relay. Le package Go
 `internal/presence` décrit ce contrat ; son nom ne crée pas un rôle à déployer.
 
+Le nom du dossier [`artifacts/`](../../artifacts/README.md) emploie le même mot
+pour les **artefacts de preuve** générés : résultats, rapports et captures. Il
+ne contient pas le binaire déployé. Celui-ci apparaît temporairement sous
+`dist/` dans le runner LAB. Aucun répertoire `build/` ne fait partie de
+l'arborescence du projet.
+
 ## Vue rapide
 
 ```text
@@ -353,7 +359,9 @@ internal/
 deploy/v0.0.1/
 |- unités systemd
 |- installation et retrait de l'Agent
-|- activation et désactivation explicites du Relay
+`- activation et désactivation explicites du Relay
+
+tests/lab/v0.0.1/remote/
 `- pilote de refus HTTP hostile réservé à la preuve LAB
 ```
 
@@ -363,9 +371,10 @@ depuis un autre module. `cmd/` reste la couture de l'exécutable et de ses cycle
 de vie. `deploy/` ne devient pas un troisième composant permanent : ses scripts
 préparent les fichiers et unités puis peuvent disparaître de la cible.
 
-Le pilote `prove-hostile-relay` est spécifique à la preuve LAB. Les scripts
-d'installation et les unités systemd décrivent, eux, le cycle de déploiement de
-ce palier, mais ne constituent pas encore un installateur de production V1.
+Le pilote `tests/lab/v0.0.1/remote/prove-hostile-relay` est spécifique à la
+preuve LAB. Les scripts d'installation et les unités systemd décrivent, eux,
+le cycle de déploiement de ce palier, mais ne constituent pas encore un
+installateur de production V1.
 
 ## Ce qui est prouvé, décidé ou absent
 

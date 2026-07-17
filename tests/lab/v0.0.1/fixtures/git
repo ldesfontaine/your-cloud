@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Minimal read-only Git metadata double for a Plumber scan in lab-console.
+set -euo pipefail
+
+repo_root=${PLUMBER_TEST_REPO_ROOT:-}
+head_sha=${PLUMBER_TEST_HEAD_SHA:-}
+[[ "$repo_root" =~ ^/tmp/your-cloud-ci-generic-[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*/source$ \
+  && -d "$repo_root" && ! -L "$repo_root" ]] \
+  || { echo "git metadata stub: invalid temporary repository root" >&2; exit 2; }
+[[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] \
+  || { echo "git metadata stub: invalid source SHA" >&2; exit 2; }
+
+if [[ $# -eq 3 && $1 == remote && $2 == get-url && $3 == origin ]]; then
+  printf '%s\n' https://github.com/ldesfontaine/your-cloud.git
+elif [[ $# -eq 2 && $1 == rev-parse && $2 == --show-toplevel ]]; then
+  printf '%s\n' "$repo_root"
+elif [[ $# -eq 4 && $1 == -C && $2 == "$repo_root" \
+  && $3 == rev-parse && $4 == HEAD ]]; then
+  printf '%s\n' "$head_sha"
+else
+  echo "git metadata stub: unsupported read-only command" >&2
+  exit 2
+fi

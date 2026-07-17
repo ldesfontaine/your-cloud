@@ -11,23 +11,31 @@ const validCandidate = `{"schema":1,"role":"relay-candidate"}`
 
 func TestDecodeCandidateRejectsHostileDocuments(t *testing.T) {
 	t.Parallel()
-	tests := []string{
-		``,
-		`[]`,
-		`{"schema":1}`,
-		`{"schema":2,"role":"relay-candidate"}`,
-		`{"schema":1,"role":"relay"}`,
-		`{"schema":1,"role":"relay-candidate","extra":true}`,
-		`{"schema":1,"schema":1,"role":"relay-candidate"}`,
-		validCandidate + `{}`,
+	tests := []struct {
+		name     string
+		document string
+	}{
+		{name: "empty", document: ``},
+		{name: "array", document: `[]`},
+		{name: "missing field", document: `{"schema":1}`},
+		{name: "wrong schema", document: `{"schema":2,"role":"relay-candidate"}`},
+		{name: "wrong role", document: `{"schema":1,"role":"relay"}`},
+		{name: "unknown field", document: `{"schema":1,"role":"relay-candidate","extra":true}`},
+		{name: "duplicate field", document: `{"schema":1,"schema":1,"role":"relay-candidate"}`},
+		{name: "wrong field case", document: `{"Schema":1,"role":"relay-candidate"}`},
+		{name: "wrong field type", document: `{"schema":"1","role":"relay-candidate"}`},
+		{name: "truncated object", document: `{"schema":1`},
+		{name: "trailing object", document: validCandidate + `{}`},
 	}
 	if manifest, err := decodeCandidate([]byte(validCandidate)); err != nil || manifest.Schema != 1 || manifest.Role != "relay-candidate" {
 		t.Fatalf("valid candidate rejected: %#v %v", manifest, err)
 	}
-	for _, document := range tests {
-		if manifest, err := decodeCandidate([]byte(document)); err == nil {
-			t.Fatalf("hostile candidate accepted: %q as %#v", document, manifest)
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if manifest, err := decodeCandidate([]byte(test.document)); err == nil {
+				t.Fatalf("hostile candidate accepted: %q as %#v", test.document, manifest)
+			}
+		})
 	}
 }
 

@@ -29,6 +29,8 @@ dans leurs sources documentaires dédiées.
 - Capitaliser les contrôles encore manuels, incidents et écarts techniques dans
   le [registre d'automatisation](TESTS.md), sans le confondre avec un rapport de
   preuve réellement exécutée.
+- Appliquer le [contrat CI](CI.md) aux runners génériques et conserver la preuve
+  multi-VM hors CI tant qu'un contrôleur LAB dédié n'existe pas.
 - Un contrôle vert prouve la couverture et les liens, pas l'absence de
   contradiction sémantique : relire le sens avant de poursuivre.
 - Créer un ADR seulement si la décision est difficile à renverser, surprenante

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Mark and assert Daemon journal transitions without accepting per-attempt noise.
+set -euo pipefail
+
+[[ $# -eq 1 ]] || { echo "usage: prove-log-transitions <mark|assert-success|assert-outage-recovery>" >&2; exit 2; }
+action=$1
+[[ $(id -u) -eq 0 ]] || { echo "prove-log-transitions must run as root" >&2; exit 1; }
+
+unit=your-cloud-daemon.service
+cursor_file=/run/your-cloud-v0.0.1-proof-journal.cursor
+log_file=$(mktemp)
+trap 'rm -f "$log_file"' EXIT
+
+read_logs() {
+  local cursor
+  [[ -s "$cursor_file" ]] || { echo "journal cursor is missing" >&2; exit 1; }
+  cursor=$(cat "$cursor_file")
+  journalctl -u "$unit" --after-cursor "$cursor" -o cat --no-pager >"$log_file"
+}
+
+case "$action" in
+  mark)
+    journalctl -u "$unit" -n 0 --show-cursor --no-pager \
+      | sed -n 's/^-- cursor: //p' >"$cursor_file"
+    [[ -s "$cursor_file" ]] || { echo "journal cursor was not produced" >&2; exit 1; }
+    ;;
+  assert-success)
+    read_logs
+    [[ ! -s "$log_file" ]] \
+      || { echo "success interval emitted unexpected Daemon log lines: $(wc -l <"$log_file")" >&2; exit 1; }
+    ;;
+  assert-outage-recovery)
+    read_logs
+    mapfile -t entries <"$log_file"
+    machine=$(hostname)
+    [[ ${#entries[@]} -eq 2 ]] \
+      || { echo "outage and recovery emitted ${#entries[@]} Daemon log lines instead of 2" >&2; exit 1; }
+    [[ "${entries[0]}" == *"presence unavailable machine_id=$machine: "* ]] \
+      || { echo "first Daemon log line is not the expected unavailable transition" >&2; exit 1; }
+    [[ "${entries[1]}" == *"presence recovered machine_id=$machine" ]] \
+      || { echo "second Daemon log line is not the expected recovery transition" >&2; exit 1; }
+    rm -f "$cursor_file"
+    ;;
+  *)
+    echo "unknown action: $action" >&2
+    exit 2
+    ;;
+esac
+
+printf 'PASS: journal action=%s host=%s\n' "$action" "$(hostname)"

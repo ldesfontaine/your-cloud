@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Prove that lifecycle scripts preserve files when a process exists outside their unit.
+set -euo pipefail
+
+[[ $# -eq 1 ]] || { echo "usage: prove-hostile-unmanaged-process <daemon|relay>" >&2; exit 2; }
+role=$1
+[[ "$role" == daemon || "$role" == relay ]] || { echo "unknown role: $role" >&2; exit 2; }
+[[ $(id -u) -eq 0 ]] || { echo "prove-hostile-unmanaged-process must run as root" >&2; exit 1; }
+command -v setpriv >/dev/null || { echo "setpriv is required" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "timeout is required" >&2; exit 1; }
+
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+source_root=$(cd -- "$script_dir/../../../.." && pwd)
+deploy_dir="$source_root/deploy/v0.0.1"
+[[ -d "$deploy_dir" && ! -L "$deploy_dir" ]] \
+  || { echo "v0.0.1 deploy source is missing or symbolic" >&2; exit 1; }
+artifact=/usr/local/lib/your-cloud/your-cloud
+workdir=$(mktemp -d)
+synthetic_pid=
+
+restore() {
+  local status=$?
+  trap - EXIT
+  if [[ -n "$synthetic_pid" ]]; then
+    kill "$synthetic_pid" >/dev/null 2>&1 || true
+    wait "$synthetic_pid" 2>/dev/null || true
+  fi
+  if [[ "$role" == daemon ]]; then
+    systemctl enable your-cloud-daemon.service >/dev/null 2>&1 || status=1
+    systemctl restart your-cloud-daemon.service >/dev/null 2>&1 || status=1
+  else
+    systemctl enable your-cloud-relay.service >/dev/null 2>&1 || status=1
+    systemctl restart your-cloud-relay.service >/dev/null 2>&1 || status=1
+  fi
+  rm -rf "$workdir"
+  exit "$status"
+}
+trap restore EXIT
+
+expect_lifecycle_refusal() {
+  local expected_message=$1 status match_count actual
+  shift
+  : >"$workdir/refusal.log"
+  if timeout --signal=TERM --kill-after=2s 15s "$@" >"$workdir/refusal.log" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  actual=$(<"$workdir/refusal.log")
+  [[ $status -eq 1 ]] \
+    || { echo "lifecycle refusal returned $status instead of 1: ${actual:-no diagnostic}" >&2; return 1; }
+  match_count=$(grep -Fxc -- "$expected_message" "$workdir/refusal.log" || true)
+  [[ $match_count -eq 1 ]] \
+    || { echo "lifecycle refusal did not emit its exact guard reason: ${actual:-no diagnostic}" >&2; return 1; }
+}
+
+snapshot() {
+  local output=$1 path
+  : >"$output"
+  shift
+  for path in "$@"; do
+    [[ -f "$path" && ! -L "$path" ]] || { echo "managed file missing: $path" >&2; return 1; }
+    printf '%s\t%s\t' "$path" "$(stat -c '%U:%G:%a' "$path")" >>"$output"
+    sha256sum "$path" | awk '{print $1}' >>"$output"
+  done
+}
+
+common_files=(
+  /usr/local/lib/your-cloud/your-cloud
+  /etc/your-cloud/daemon.env
+  /etc/systemd/system/your-cloud-daemon.service
+)
+relay_files=(
+  /etc/your-cloud/relay.env
+  /etc/your-cloud/relay-candidate.json
+  /etc/systemd/system/your-cloud-relay.service
+)
+
+if [[ "$role" == daemon ]]; then
+  [[ $(hostname) == lab-machine-1 ]] || { echo "Daemon proof requires lab-machine-1" >&2; exit 1; }
+  systemctl stop your-cloud-daemon.service
+  snapshot "$workdir/before" "${common_files[@]}"
+  setpriv --reuid=65534 --regid=65534 --clear-groups \
+    "$artifact" daemon --machine-id=lab-machine-1 \
+    --relay-url=http://192.168.242.103:8443 >"$workdir/synthetic.log" 2>&1 &
+  synthetic_pid=$!
+  sleep 1
+  kill -0 "$synthetic_pid"
+  expect_lifecycle_refusal 'a Your Cloud process still uses the installed artifact' \
+    "$deploy_dir/remove-agent"
+  kill -0 "$synthetic_pid" \
+    || { echo "remove-agent terminated the Daemon process outside its unit" >&2; exit 1; }
+  snapshot "$workdir/after" "${common_files[@]}"
+else
+  [[ $(hostname) == lab-coordinateur ]] || { echo "Relay proof requires lab-coordinateur" >&2; exit 1; }
+  systemctl stop your-cloud-relay.service
+  snapshot "$workdir/before" "${relay_files[@]}"
+  setpriv --reuid=65534 --regid=65534 --clear-groups \
+    "$artifact" relay --listen=192.168.242.103:8443 >"$workdir/synthetic.log" 2>&1 &
+  synthetic_pid=$!
+  for _ in $(seq 1 5); do
+    [[ -z $(ss -H -ltn 'sport = :8443') ]] || break
+    sleep 1
+  done
+  kill -0 "$synthetic_pid"
+  relay_listener=$(ss -H -ltn 'sport = :8443')
+  [[ -n "$relay_listener" ]] || { echo "synthetic Relay did not listen" >&2; exit 1; }
+  expect_lifecycle_refusal 'a Relay process still uses the installed artifact' \
+    "$deploy_dir/disable-relay"
+  kill -0 "$synthetic_pid" \
+    || { echo "disable-relay terminated the Relay process outside its unit" >&2; exit 1; }
+  [[ $(ss -H -ltn 'sport = :8443') == "$relay_listener" ]] \
+    || { echo "disable-relay changed the synthetic Relay listener" >&2; exit 1; }
+  snapshot "$workdir/after" "${relay_files[@]}"
+fi
+
+cmp "$workdir/before" "$workdir/after" \
+  || { echo "managed files changed after fail-closed refusal" >&2; exit 1; }
+printf 'PASS: %s process outside its unit blocked deletion and preserved managed files\n' "$role"

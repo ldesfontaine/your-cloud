@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# Prove the GitHub-hosted source-gate shape without running it on the laptop.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: prove-generic-ci" >&2; exit 2; }
+root=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
+labctl="$root/tools/labctl"
+workdir=$(mktemp -d)
+archive="$workdir/your-cloud-ci-src.tgz"
+source_files="$workdir/source-files.list"
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+remote_root="/tmp/your-cloud-ci-generic-$run_id"
+remote_archive="$remote_root.tgz"
+remote_source="$remote_root/source"
+remote_home="$remote_root/home"
+remote_plumber="$remote_home/plumber"
+remote_plumber_report="$remote_source/plumber-report.json"
+remote_hostile_report="$remote_home/plumber-hostile-report.json"
+remote_git_stub="$remote_source/tests/lab/v0.0.1/fixtures/git"
+remote_workflow="$remote_source/.github/workflows/ci.yml"
+remote_workflow_backup="$remote_home/ci.yml.original"
+plumber_url=https://github.com/getplumber/plumber/releases/download/v0.4.8/plumber-linux-amd64
+plumber_sha=1c1379e4e6fce3a6b2cf0fede2fbfd89bd9cebbb8aadae3be95bc3d365a9c8a0
+plumber_policy_hash=sha256:3891f8bcecc443b540a388f08144496d86d613c4721cc4ca8edccb1dcf53707f
+expected_project=ldesfontaine/your-cloud
+result_dir="$root/artifacts/proofs/ci/$run_id"
+local_plumber_report="$result_dir/plumber-report.json"
+local_hostile_report="$result_dir/plumber-hostile-report.json"
+staging_dir="$root/artifacts/proofs/ci/.staging-$run_id"
+staged_plumber_report="$staging_dir/plumber-report.json"
+staged_hostile_report="$staging_dir/plumber-hostile-report.json"
+guard_passed=0
+remote_created=0
+publication_started=0
+published=0
+
+bounded_labctl() {
+  local seconds=$1 operation=$2
+  shift 2
+  timeout --signal=TERM --kill-after=5s "${seconds}s" \
+    "$labctl" "$operation" "$@"
+}
+
+cleanup_remote() {
+  local cleanup_failed=0
+  if [[ $guard_passed -eq 1 && $remote_created -eq 1 ]]; then
+    bounded_labctl 60 ssh lab-console /bin/rm -rf \
+      "$remote_root" "$remote_archive" || cleanup_failed=1
+    bounded_labctl 20 ssh lab-console test ! -e "$remote_root" \
+      || cleanup_failed=1
+    bounded_labctl 20 ssh lab-console test ! -e "$remote_archive" \
+      || cleanup_failed=1
+  fi
+  if [[ $cleanup_failed -eq 0 ]]; then
+    remote_created=0
+    return 0
+  fi
+  return 1
+}
+
+finish() {
+  local status=$? cleanup_failed=0
+  trap - EXIT HUP INT TERM
+  set +e
+  cleanup_remote || cleanup_failed=1
+  /bin/rm -rf "$staging_dir" || cleanup_failed=1
+  if [[ $status -ne 0 && $publication_started -eq 1 && $published -eq 0 ]]; then
+    /bin/rm -rf "$result_dir" || cleanup_failed=1
+  fi
+  /bin/rm -rf "$workdir" || cleanup_failed=1
+  if [[ $cleanup_failed -ne 0 ]]; then
+    echo "generic CI proof cleanup failed" >&2
+    status=1
+  fi
+  exit "$status"
+}
+stop_requested() { exit 130; }
+trap stop_requested HUP INT TERM
+trap finish EXIT
+
+[[ "$run_id" =~ ^[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*$ ]] \
+  || { echo "invalid CI proof run identifier" >&2; exit 1; }
+plumber_controls=$(sed -n 's/^          controls: "\([A-Za-z,]*\)"$/\1/p' \
+  "$root/.github/workflows/ci.yml")
+[[ -n "$plumber_controls" && "$plumber_controls" != *$'\n'* \
+  && ${#plumber_controls} -le 4096 ]] \
+  || { echo "cannot extract the bounded Plumber control list from CI" >&2; exit 1; }
+
+inventory=$(bounded_labctl 30 list --format=tsv) \
+  || { echo "generic CI LAB inventory guard failed" >&2; exit 1; }
+row=$(awk -F '\t' '$1 == "lab-console" {print}' <<<"$inventory")
+[[ -n "$row" && "$row" != *$'\n'* ]] \
+  || { echo "generic CI inventory must contain exactly one lab-console row" >&2; exit 1; }
+IFS=$'\t' read -r name state ips template topology origin extra <<<"$row"
+[[ -z "$extra" && "$name" == lab-console && "$state" == running \
+  && "$ips" != - && "$template" == console && "$topology" == v1-full \
+  && "$origin" == your-cloud/labctl ]] \
+  || { echo "lab-console is outside the approved generic CI inventory" >&2; exit 1; }
+[[ ",$ips," != *",192.168.122.123,"* && ",$ips," != *",10.66.66.1,"* ]] \
+  || { echo "lab-console resolves to a forbidden address" >&2; exit 1; }
+guard_passed=1
+
+: >"$source_files"
+while IFS= read -r -d '' path; do
+  [[ "$path" != /* && "$path" != .. && "$path" != ../* \
+    && "$path" != */../* ]] \
+    || { echo "generic CI Git file list contains an unsafe path" >&2; exit 1; }
+  [[ "${path##*/}" != keys.txt ]] || continue
+  case "$path" in
+    AGENTS.md|AGENTS.proposal.md|CLAUDE.md)
+      continue
+      ;;
+    .git|.git/*|.agents|.agents/*|.codex|.codex/*|.claude|.claude/*|.cursor|.cursor/*)
+      continue
+      ;;
+    dist|dist/*|build|build/*|artifacts/proofs|artifacts/proofs/*)
+      continue
+      ;;
+  esac
+  if [[ -e "$root/$path" || -L "$root/$path" ]]; then
+    [[ ! -L "$root/$path" ]] \
+      || { echo "generic CI source lot refuses symbolic links" >&2; exit 1; }
+    printf '%s\0' "$path" >>"$source_files"
+  fi
+done < <(git -C "$root" ls-files --cached --others --exclude-standard -z)
+[[ -s "$source_files" ]] \
+  || { echo "generic CI Git file list is empty" >&2; exit 1; }
+tar -C "$root" --create --gzip --file "$archive" \
+  --null --no-recursion --files-from "$source_files"
+source_sha=$(sha256sum "$archive"); source_sha=${source_sha%% *}
+source_size=$(stat -c %s "$archive") \
+  || { echo "cannot read generic CI source archive size" >&2; exit 1; }
+[[ "$source_size" =~ ^[1-9][0-9]*$ && $source_size -le $((128 * 1024 * 1024)) ]] \
+  || { echo "generic CI source archive exceeds its fixed 128 MiB bound" >&2; exit 1; }
+source_identity=${source_sha:0:40}
+[[ "$source_identity" =~ ^[0-9a-f]{40}$ ]] \
+  || { echo "cannot derive the bounded source-lot identity" >&2; exit 1; }
+
+bounded_labctl 20 ssh lab-console test ! -e "$remote_root" \
+  || { echo "unique generic CI path already exists" >&2; exit 1; }
+bounded_labctl 20 ssh lab-console test ! -e "$remote_archive" \
+  || { echo "unique generic CI archive already exists" >&2; exit 1; }
+remote_created=1
+bounded_labctl 60 copy-to lab-console "$archive" "$remote_archive"
+bounded_labctl 20 ssh lab-console test -f "$remote_archive" \
+  || { echo "generic CI archive is not a regular file" >&2; exit 1; }
+bounded_labctl 20 ssh lab-console test ! -L "$remote_archive" \
+  || { echo "generic CI archive must not be a symbolic link" >&2; exit 1; }
+remote_source_size=$(bounded_labctl 20 ssh lab-console stat -c %s "$remote_archive") \
+  || { echo "cannot read generic CI archive size after transfer" >&2; exit 1; }
+[[ "$remote_source_size" == "$source_size" ]] \
+  || { echo "generic CI archive size changed while entering the LAB" >&2; exit 1; }
+remote_source_sha=$(bounded_labctl 20 ssh lab-console sha256sum "$remote_archive")
+remote_source_sha=${remote_source_sha%% *}
+[[ "$remote_source_sha" == "$source_sha" ]] \
+  || { echo "generic CI archive changed while entering the LAB" >&2; exit 1; }
+bounded_labctl 20 ssh lab-console chmod 0644 "$remote_archive"
+bounded_labctl 20 ssh lab-console test -x /usr/bin/setpriv \
+  || { echo "setpriv is required by the generic CI LAB proof" >&2; exit 1; }
+bounded_labctl 20 ssh lab-console install -d -o 65534 -g 65534 -m 0755 \
+  "$remote_source"
+bounded_labctl 30 ssh lab-console \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/tar --extract --gzip \
+  --file "$remote_archive" --directory "$remote_source" \
+  --no-same-owner --no-same-permissions
+bounded_labctl 20 ssh lab-console install -d -o 65534 -g 65534 -m 0700 \
+  "$remote_home" "$remote_home/tmp" "$remote_home/cache" \
+  "$remote_home/go" "$remote_home/go/pkg" "$remote_home/go/pkg/mod"
+bounded_labctl 20 ssh lab-console test -x "$remote_git_stub" \
+  || { echo "the bounded Git metadata stub is not executable" >&2; exit 1; }
+
+bounded_labctl 900 ssh lab-console \
+  timeout --signal=TERM --kill-after=5s 840s \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/env -i \
+  HOME="$remote_home" TMPDIR="$remote_home/tmp" \
+  XDG_CACHE_HOME="$remote_home/cache" \
+  GOCACHE="$remote_home/cache/go-build" GOPATH="$remote_home/go" \
+  GOMODCACHE="$remote_home/go/pkg/mod" \
+  PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
+  LANG=C.UTF-8 CI=true GITHUB_ACTIONS=true \
+  "$remote_source/tests/checks/source-v0.0.1" ci
+
+bounded_labctl 20 ssh lab-console test ! -e "$remote_source/dist" \
+  || { echo "generic CI mode left a dist directory" >&2; exit 1; }
+python_cache=$(bounded_labctl 30 ssh lab-console find "$remote_source" \
+  -type d -name __pycache__ -print -quit)
+[[ -z "$python_cache" ]] \
+  || { echo "generic CI mode left a Python cache in the checkout" >&2; exit 1; }
+
+echo "LIMIT: this LAB run verifies the published Plumber SHA-256; the pinned GitHub action additionally requires its SLSA attestation."
+bounded_labctl 480 ssh lab-console \
+  timeout --signal=TERM --kill-after=5s 450s \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/env -i HOME="$remote_home" \
+  PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+  /usr/bin/curl --fail --silent --show-error --location \
+  --proto =https --tlsv1.2 --connect-timeout 10 --max-time 420 \
+  --max-filesize 134217728 \
+  --output "$remote_plumber" "$plumber_url"
+downloaded_plumber_sha=$(bounded_labctl 20 ssh lab-console \
+  sha256sum "$remote_plumber")
+downloaded_plumber_sha=${downloaded_plumber_sha%% *}
+[[ "$downloaded_plumber_sha" == "$plumber_sha" ]] \
+  || { echo "downloaded Plumber binary does not match v0.4.8" >&2; exit 1; }
+bounded_labctl 20 ssh lab-console chmod 0700 "$remote_plumber"
+
+unsupported_git_status=0
+bounded_labctl 20 ssh lab-console \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/env -i PLUMBER_TEST_REPO_ROOT="$remote_source" \
+  PLUMBER_TEST_HEAD_SHA="$source_identity" PATH=/usr/bin:/bin LANG=C.UTF-8 \
+  "$remote_git_stub" status || unsupported_git_status=$?
+[[ $unsupported_git_status -eq 2 ]] \
+  || { echo "Git metadata stub did not fail closed on an unknown command" >&2; exit 1; }
+
+workflow_sha=$(bounded_labctl 20 ssh lab-console sha256sum "$remote_workflow")
+workflow_sha=${workflow_sha%% *}
+[[ "$workflow_sha" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo "CI workflow returned an invalid SHA-256" >&2; exit 1; }
+bounded_labctl 20 ssh lab-console \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /bin/cp "$remote_workflow" "$remote_workflow_backup"
+bounded_labctl 20 ssh lab-console \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/sed -i \
+  's,actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0,actions/checkout@v7,' \
+  "$remote_workflow"
+bounded_labctl 20 ssh lab-console grep -Fq actions/checkout@v7 \
+  "$remote_workflow" \
+  || { echo "hostile CI workflow pin mutation was not applied" >&2; exit 1; }
+hostile_plumber_status=0
+bounded_labctl 240 ssh lab-console \
+  timeout --signal=TERM --kill-after=5s 210s \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/env -i --chdir="$remote_source" \
+  HOME="$remote_home" XDG_CACHE_HOME="$remote_home/cache" \
+  PLUMBER_TEST_REPO_ROOT="$remote_source" \
+  PLUMBER_TEST_HEAD_SHA="$source_identity" \
+  PATH="$remote_source/tests/lab/v0.0.1/fixtures:/usr/local/bin:/usr/bin:/bin" \
+  LANG=C.UTF-8 \
+  "$remote_plumber" analyze --github-url github.com \
+  --min-points 100 --config .plumber.yaml \
+  --controls "$plumber_controls" --fail-warnings \
+  --output "$remote_hostile_report" || hostile_plumber_status=$?
+[[ $hostile_plumber_status -eq 1 ]] \
+  || { echo "Plumber did not block an official action changed to a mutable tag" >&2; exit 1; }
+bounded_labctl 30 ssh lab-console \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/env -i HOME="$remote_home" PATH=/usr/bin:/bin LANG=C.UTF-8 \
+  /usr/bin/python3 "$remote_source/tests/checks/plumber-report.py" \
+  --report "$remote_hostile_report" --mode action-pinning-failure \
+  --expected-action-pinning-issues 2 \
+  --expected-source-identity "$source_identity" \
+  --expected-project "$expected_project" \
+  --expected-policy-hash "$plumber_policy_hash"
+remote_hostile_sha=$(bounded_labctl 20 ssh lab-console \
+  sha256sum "$remote_hostile_report")
+remote_hostile_sha=${remote_hostile_sha%% *}
+[[ "$remote_hostile_sha" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo "hostile Plumber report returned an invalid SHA-256" >&2; exit 1; }
+bounded_labctl 20 ssh lab-console \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /bin/cp "$remote_workflow_backup" "$remote_workflow"
+restored_workflow_sha=$(bounded_labctl 20 ssh lab-console \
+  sha256sum "$remote_workflow")
+restored_workflow_sha=${restored_workflow_sha%% *}
+[[ "$restored_workflow_sha" == "$workflow_sha" ]] \
+  || { echo "hostile CI workflow was not restored exactly" >&2; exit 1; }
+echo "PASS: Plumber blocked an official action changed from a commit SHA to v7"
+
+bounded_labctl 240 ssh lab-console \
+  timeout --signal=TERM --kill-after=5s 210s \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/env -i --chdir="$remote_source" \
+  HOME="$remote_home" XDG_CACHE_HOME="$remote_home/cache" \
+  PLUMBER_TEST_REPO_ROOT="$remote_source" \
+  PLUMBER_TEST_HEAD_SHA="$source_identity" \
+  PATH="$remote_source/tests/lab/v0.0.1/fixtures:/usr/local/bin:/usr/bin:/bin" \
+  LANG=C.UTF-8 \
+  "$remote_plumber" analyze --github-url github.com \
+  --min-points 100 --config .plumber.yaml \
+  --controls "$plumber_controls" --fail-warnings \
+  --output plumber-report.json
+bounded_labctl 30 ssh lab-console \
+  /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups \
+  /usr/bin/env -i HOME="$remote_home" PATH=/usr/bin:/bin LANG=C.UTF-8 \
+  /usr/bin/python3 "$remote_source/tests/checks/plumber-report.py" \
+  --report "$remote_plumber_report" \
+  --action-outcome success --action-passed true \
+  --expected-source-identity "$source_identity" \
+  --expected-project "$expected_project" \
+  --expected-policy-hash "$plumber_policy_hash"
+
+remote_report_sha=$(bounded_labctl 20 ssh lab-console \
+  sha256sum "$remote_plumber_report")
+remote_report_sha=${remote_report_sha%% *}
+[[ "$remote_report_sha" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo "Plumber report returned an invalid SHA-256" >&2; exit 1; }
+[[ ! -e "$result_dir" && ! -e "$staging_dir" ]] \
+  || { echo "generic CI local result path already exists" >&2; exit 1; }
+mkdir -p "$staging_dir"
+bounded_labctl 60 copy-from lab-console \
+  "$remote_plumber_report" "$staged_plumber_report"
+bounded_labctl 60 copy-from lab-console \
+  "$remote_hostile_report" "$staged_hostile_report"
+[[ -f "$staged_plumber_report" && ! -L "$staged_plumber_report" ]] \
+  || { echo "Plumber report was not archived as a regular file" >&2; exit 1; }
+[[ -f "$staged_hostile_report" && ! -L "$staged_hostile_report" ]] \
+  || { echo "hostile Plumber report was not archived as a regular file" >&2; exit 1; }
+local_report_sha=$(sha256sum "$staged_plumber_report")
+local_report_sha=${local_report_sha%% *}
+[[ "$local_report_sha" == "$remote_report_sha" ]] \
+  || { echo "Plumber report changed while leaving the LAB" >&2; exit 1; }
+local_hostile_sha=$(sha256sum "$staged_hostile_report")
+local_hostile_sha=${local_hostile_sha%% *}
+[[ "$local_hostile_sha" == "$remote_hostile_sha" ]] \
+  || { echo "hostile Plumber report changed while leaving the LAB" >&2; exit 1; }
+cleanup_remote \
+  || { echo "generic CI proof cleanup failed before publication" >&2; exit 1; }
+publication_started=1
+mv "$staging_dir" "$result_dir"
+[[ -f "$local_plumber_report" && ! -L "$local_plumber_report" ]] \
+  || { echo "validated Plumber report was not published atomically" >&2; exit 1; }
+[[ -f "$local_hostile_report" && ! -L "$local_hostile_report" ]] \
+  || { echo "validated hostile report was not published atomically" >&2; exit 1; }
+published=1
+
+printf 'PASS: generic CI ran as uid 65534, cleaned its build and accepted Plumber v0.4.8; source_lot_sha256=%s plumber_report_sha256=%s hostile_report_sha256=%s\n' \
+  "$source_sha" "$local_report_sha" "$local_hostile_sha"

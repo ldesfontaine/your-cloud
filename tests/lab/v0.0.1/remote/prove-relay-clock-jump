@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# Prove that Relay freshness uses monotonic age across a forward wall-clock jump.
+set -euo pipefail
+
+[[ $# -eq 1 && $1 =~ ^[0-9]{10}$ ]] \
+  || { echo "usage: prove-relay-clock-jump <independent-reference-epoch>" >&2; exit 2; }
+independent_reference_epoch=$1
+[[ $(id -u) -eq 0 ]] || { echo "prove-relay-clock-jump must run as root" >&2; exit 1; }
+[[ $(hostname) == lab-coordinateur ]] || { echo "Relay clock proof requires lab-coordinateur" >&2; exit 1; }
+
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+clock_control="$script_dir/control-lab-clock"
+clock_state=/run/your-cloud-v0.0.1-proof-clock-state
+relay_url=http://192.168.242.103:8443
+workdir=$(mktemp -d)
+clock_active=0
+daemon_stopped=0
+
+cleanup() {
+  local status=$? cleanup_status=0
+  trap - EXIT
+  set +e
+  if [[ $clock_active -eq 1 ]]; then
+    "$clock_control" restore || cleanup_status=1
+  fi
+  if [[ $daemon_stopped -eq 1 ]]; then
+    systemctl start your-cloud-daemon.service || cleanup_status=1
+  fi
+  /bin/rm -rf "$workdir" || cleanup_status=1
+  if [[ $cleanup_status -ne 0 ]]; then
+    echo "Relay clock proof cleanup failed" >&2
+    exit 1
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+for unit in your-cloud-relay.service your-cloud-daemon.service; do
+  systemctl is-active --quiet "$unit" \
+    || { echo "$unit must be active before the Relay clock proof" >&2; exit 1; }
+done
+relay_pid=$(systemctl show your-cloud-relay.service --property=MainPID --value)
+[[ "$relay_pid" =~ ^[1-9][0-9]*$ ]] || { echo "Relay PID is invalid before the clock proof" >&2; exit 1; }
+
+query_relay() {
+  local destination=$1 code
+  code=$(curl --silent --show-error --connect-timeout 1 --max-time 2 \
+    --output "$destination" --write-out '%{http_code}' --request QUERY \
+    --header 'Content-Type: application/json' --data-binary '{}' \
+    "$relay_url/v0/machines") || code=transport-error
+  [[ "$code" == 200 ]] || { echo "QUERY failed during Relay clock proof: $code" >&2; return 1; }
+}
+
+systemctl stop your-cloud-daemon.service
+daemon_stopped=1
+monotonic_started=$(cut -d' ' -f1 /proc/uptime)
+[[ "$monotonic_started" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || { echo "cannot read monotonic proof start" >&2; exit 1; }
+query_relay "$workdir/before.json"
+reference_metadata=$(python3 - "$workdir/before.json" <<'PY'
+import datetime
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    payload = json.load(stream)
+machines = payload["machines"]
+machine = next(item for item in machines if item["machine_id"] == "lab-coordinateur")
+if machine["status"] != "recent" or "received_at" not in machine:
+    raise SystemExit("coordinateur signal is not recent before the clock proof")
+generated = datetime.datetime.fromisoformat(payload["generated_at"].replace("Z", "+00:00"))
+received = datetime.datetime.fromisoformat(machine["received_at"].replace("Z", "+00:00"))
+initial_age = (generated - received).total_seconds()
+if not 0 <= initial_age < 4:
+    raise SystemExit("coordinateur signal age is outside the freshness window before the clock proof")
+print(f"{machine['received_at']}\t{initial_age:.9f}")
+PY
+)
+IFS=$'\t' read -r reference_received initial_age reference_extra <<<"$reference_metadata"
+[[ -z "$reference_extra" && -n "$reference_received" \
+  && "$initial_age" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || { echo "Relay returned invalid baseline clock metadata" >&2; exit 1; }
+
+apply_status=0
+if "$clock_control" apply "$((independent_reference_epoch + 172800))" "$independent_reference_epoch"; then
+  clock_active=1
+else
+  apply_status=$?
+  if [[ -e "$clock_state" || -L "$clock_state" ]]; then
+    clock_active=1
+  fi
+  exit "$apply_status"
+fi
+query_relay "$workdir/after.json"
+
+current_relay_pid=$(systemctl show your-cloud-relay.service --property=MainPID --value)
+[[ "$current_relay_pid" == "$relay_pid" ]] || { echo "Relay PID changed during its wall-clock jump" >&2; exit 1; }
+python3 - "$workdir/after.json" "$reference_received" "$initial_age" "$monotonic_started" <<'PY'
+import datetime
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    machines = json.load(stream)["machines"]
+machine = next(item for item in machines if item["machine_id"] == "lab-coordinateur")
+if machine.get("status") != "recent":
+    raise SystemExit("Relay did not keep the pre-jump signal recent")
+if machine.get("received_at") != sys.argv[2]:
+    raise SystemExit("the proof signal was replaced during the clock jump")
+received = datetime.datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+now = datetime.datetime.now(datetime.timezone.utc)
+wall_jump = (now - received).total_seconds()
+if not 172700 <= wall_jump <= 172900:
+    raise SystemExit("Relay wall-clock jump is outside the controlled two-day bound")
+with open("/proc/uptime", encoding="ascii") as stream:
+    monotonic_now = float(stream.read().split()[0])
+elapsed = monotonic_now - float(sys.argv[4])
+total_age = float(sys.argv[3]) + elapsed
+if not (0 <= elapsed and total_age < 4):
+    raise SystemExit("Relay clock proof exceeded the freshness threshold")
+print("PASS: Relay kept the unchanged pre-jump signal recent by monotonic age")
+PY
+
+"$clock_control" restore
+clock_active=0
+systemctl start your-cloud-daemon.service
+daemon_stopped=0
+for unit in your-cloud-relay.service your-cloud-daemon.service; do
+  systemctl is-active --quiet "$unit" \
+    || { echo "$unit is not active after the Relay clock proof" >&2; exit 1; }
+done
+[[ $(systemctl show your-cloud-relay.service --property=MainPID --value) == "$relay_pid" ]] \
+  || { echo "Relay PID changed while restoring the wall clock" >&2; exit 1; }
+printf 'PASS: Relay wall-clock jump restored transactionally\n'

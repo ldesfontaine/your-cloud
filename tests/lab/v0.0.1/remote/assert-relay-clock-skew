@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Assert that a skewed sender timestamp remains recent by Relay reception time.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: assert-relay-clock-skew" >&2; exit 2; }
+[[ $(hostname) == lab-coordinateur ]] || { echo "clock-skew assertion requires lab-coordinateur" >&2; exit 1; }
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+relay_url=http://192.168.242.103:8443
+
+for attempt in $(seq 1 10); do
+  code=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
+    --output "$workdir/state.json" --write-out '%{http_code}' --request QUERY \
+    --header 'Content-Type: application/json' --data-binary '{}' \
+    "$relay_url/v0/machines") || code=transport-error
+  if [[ "$code" == 200 ]] && python3 - "$workdir/state.json" <<'PY'
+import datetime
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    machines = json.load(stream)["machines"]
+machine = next(item for item in machines if item["machine_id"] == "lab-machine-1")
+sent = datetime.datetime.fromisoformat(machine["sent_at"].replace("Z", "+00:00"))
+received = datetime.datetime.fromisoformat(machine["received_at"].replace("Z", "+00:00"))
+now = datetime.datetime.now(datetime.timezone.utc)
+assert machine["status"] == "recent"
+assert (received - sent).total_seconds() >= 172700
+assert abs((now - received).total_seconds()) <= 10
+print(f"sent_at={machine['sent_at']} received_at={machine['received_at']} relay_now={now.isoformat().replace('+00:00', 'Z')}")
+PY
+  then
+    printf 'PASS: skewed emitter stayed recent by Relay reception time\n'
+    exit 0
+  fi
+  [[ $attempt -eq 10 ]] || sleep 1
+done
+
+echo "skewed emitter did not produce a recent Relay-owned state" >&2
+exit 1

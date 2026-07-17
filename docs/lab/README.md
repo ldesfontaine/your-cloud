@@ -74,11 +74,28 @@ La sortie TSV possède les colonnes fixes `vm`, `state`, `ips`, `template`,
 VM arrêtée sans adresse rend `-`. Une erreur d'inspection d'une VM active reste
 bloquante.
 
-Pour `v0.0.1`, `tools/prove-v0.0.1` est l'entrée d'orchestration. Le poste de
-développement ne fait qu'empaqueter le lot non sensible, calculer ses empreintes
-et appeler `labctl`. `tools/test-v0.0.1`, le build, le binaire, HTTP et systemd
-s'exécutent uniquement dans les VM LAB. Une erreur après mutation sélectionne
-et vérifie l'état absent ; un succès réinstalle l'état final documenté.
+Pour `v0.0.1`,
+[`tests/lab/v0.0.1/prove`](../../tests/lab/v0.0.1/prove) est l'entrée
+d'orchestration. Le poste de développement ne fait qu'empaqueter le lot non
+sensible, calculer ses empreintes et appeler `labctl`.
+[`tests/checks/source-v0.0.1`](../../tests/checks/source-v0.0.1) s'exécute en
+mode `lab` dans `lab-console` ou en mode `ci` dans un runner CI distant isolé ;
+aucun de ces contrôles ni aucun build ne s'exécute sur le laptop. HTTP et
+systemd restent propres à la preuve dans les VM LAB. Une erreur après mutation
+sélectionne et vérifie l'état absent ; un succès réinstalle l'état final
+documenté.
+
+Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
+sur les sources et contrats réutilisables. La **preuve LAB** sous
+[`tests/lab/`](../../tests/lab/) ajoute le placement réel, les processus,
+systemd, le réseau et le nettoyage multi-VM. Une CI classique peut accueillir
+la première couche dans une image isolée. La seconde exige un runner dédié avec
+libvirt et les gabarits `labctl` ; une image préconstruite ne fournit pas à elle
+seule cette topologie.
+
+`labctl` reste donc utile dans deux contextes : pilotage autorisé depuis le
+poste de développement et pilotage depuis un futur runner CI dédié. Dans les
+deux cas, la même garde d'inventaire précède toute mutation.
 
 L'existence d'une topologie dans `labctl` signifie uniquement que l'outil sait
 la créer. Une capacité devient prouvée seulement après une exécution réelle,
@@ -89,4 +106,7 @@ documentée et reproductible dans le LAB approprié.
 - [`v0.0.1` — un artefact, trois processus isolés](v0.0.1-presence.md) : build
   Go unique, Daemon et Relay parallèles sur le VPS, Daemon seul sur le LAN,
   refus candidat et HTTP, transitions `recent`/`old`/`absent`, retrait et
-  réinstallation dans `v1-full`, le 16 juillet 2026.
+  réinstallation dans `v1-full`, preuve initiale le 16 juillet puis référence
+  automatisée propre le 17 juillet 2026, puis revalidation historique depuis
+  les chemins réorganisés avec le run `20260717T100150Z-1543398`, antérieur aux
+  derniers durcissements du banc et de la CI.

@@ -17,7 +17,8 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |
 | Contribuer ou travailler avec un agent | [`contribution/README.md`](contribution/README.md) |
 | Lire les exigences de qualité | [`contribution/QUALITE.md`](contribution/QUALITE.md) |
-| Préparer l'automatisation des tests | [`contribution/TESTS.md`](contribution/TESTS.md) |
+| Consulter la stratégie et le registre d'automatisation | [`contribution/TESTS.md`](contribution/TESTS.md) |
+| Comprendre la CI, ses permissions et ses limites | [`contribution/CI.md`](contribution/CI.md) |
 | Préparer ou vérifier une preuve LAB | [`lab/README.md`](lab/README.md) |
 | Propager une décision validée | [`projet/COHERENCE.md`](projet/COHERENCE.md) |
 | Ouvrir la documentation visuelle | [`html/index.html`](html/index.html) |

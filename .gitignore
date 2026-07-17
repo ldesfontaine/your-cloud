@@ -6,6 +6,10 @@ build/
 *.egg-info/
 .ansible/
 
+# Sorties de preuve locales ; seule leur convention est versionnée.
+/artifacts/*
+!/artifacts/README.md
+
 # Routeurs, propositions et caches propres aux assistants locaux.
 /AGENTS.md
 /AGENTS.proposal.md

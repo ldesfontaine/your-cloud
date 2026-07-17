@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Assert selected machine states through the live v0.0.1 QUERY boundary.
+set -euo pipefail
+
+[[ $# -eq 2 ]] || { echo "usage: assert-relay-state <machine=status> <machine=status>" >&2; exit 2; }
+relay_url=http://192.168.242.103:8443
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+fail() { echo "FAILED: $*" >&2; exit 1; }
+command -v python3 >/dev/null || fail "python3 is required for strict Relay state parsing"
+
+declare -A expected_machines=()
+for expectation in "$@"; do
+  machine=${expectation%%=*}
+  status=${expectation#*=}
+  case "$machine" in lab-coordinateur|lab-machine-1) ;; *) fail "unknown machine $machine" ;; esac
+  case "$status" in absent|recent|old) ;; *) fail "unknown status $status" ;; esac
+  [[ -z ${expected_machines[$machine]+present} ]] \
+    || fail "duplicate expectation for $machine"
+  expected_machines[$machine]=$status
+done
+[[ -n ${expected_machines[lab-coordinateur]+present} \
+  && -n ${expected_machines[lab-machine-1]+present} ]] \
+  || fail "the exact two v0.0.1 machines must be asserted"
+
+state_matches() {
+  local size
+  size=$(stat -c %s "$workdir/state.json") || return 1
+  [[ "$size" =~ ^[1-9][0-9]*$ && $size -le 8192 ]] || return 1
+  python3 -B - "$workdir/state.json" "$@" <<'PY'
+import datetime as dt
+import json
+import re
+import sys
+
+
+class DuplicateKeyError(ValueError):
+    pass
+
+
+def object_without_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateKeyError(key)
+        result[key] = value
+    return result
+
+
+def reject_constant(value):
+    raise ValueError(value)
+
+
+def valid_timestamp(value):
+    if not isinstance(value, str) or re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z",
+        value,
+    ) is None:
+        return False
+    try:
+        parsed = dt.datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return False
+    return parsed.utcoffset() == dt.timedelta(0)
+
+
+expected = {}
+for item in sys.argv[2:]:
+    machine, status = item.split("=", 1)
+    if machine in expected:
+        raise SystemExit(1)
+    expected[machine] = status
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(
+            handle,
+            object_pairs_hook=object_without_duplicates,
+            parse_constant=reject_constant,
+        )
+except (OSError, UnicodeError, json.JSONDecodeError, DuplicateKeyError, ValueError):
+    raise SystemExit(1)
+
+if not isinstance(data, dict) or set(data) != {"generated_at", "stale_after", "machines"}:
+    raise SystemExit(1)
+if not valid_timestamp(data["generated_at"]) or data["stale_after"] != "4s":
+    raise SystemExit(1)
+machines = data["machines"]
+if not isinstance(machines, list) or len(machines) != 2:
+    raise SystemExit(1)
+if [entry.get("machine_id") if isinstance(entry, dict) else None for entry in machines] != [
+    "lab-coordinateur",
+    "lab-machine-1",
+]:
+    raise SystemExit(1)
+
+seen = {}
+for entry in machines:
+    if not isinstance(entry, dict):
+        raise SystemExit(1)
+    machine = entry.get("machine_id")
+    status = entry.get("status")
+    if machine not in expected or machine in seen or status not in {"absent", "recent", "old"}:
+        raise SystemExit(1)
+    if status == "absent":
+        if set(entry) != {"machine_id", "status"}:
+            raise SystemExit(1)
+    else:
+        if set(entry) != {
+            "machine_id",
+            "status",
+            "daemon_version",
+            "sent_at",
+            "received_at",
+        }:
+            raise SystemExit(1)
+        if entry["daemon_version"] != "v0.0.1":
+            raise SystemExit(1)
+        if not valid_timestamp(entry["sent_at"]) or not valid_timestamp(entry["received_at"]):
+            raise SystemExit(1)
+    seen[machine] = status
+
+if seen != expected:
+    raise SystemExit(1)
+PY
+}
+
+prove_state_parser_fail_closed() {
+  cat >"$workdir/state.json" <<'JSON'
+{"generated_at":"2026-07-17T00:00:00Z","stale_after":"4s","machines":[{"machine_id":"lab-coordinateur","status":"recent","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"},{"machine_id":"lab-machine-1","status":"old","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"}]}
+JSON
+  state_matches lab-coordinateur=recent lab-machine-1=old \
+    || fail "strict Relay state parser refused its canonical fixture"
+
+  cat >"$workdir/state.json" <<'JSON'
+{"generated_at":"2026-07-17T00:00:00Z","stale_after":"4s","machines":[{"machine_id":"lab-coordinateur","machine_id":"lab-machine-1","status":"recent","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"},{"machine_id":"lab-machine-1","status":"old","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"}]}
+JSON
+  if state_matches lab-coordinateur=recent lab-machine-1=old; then
+    fail "strict Relay state parser accepted a duplicate machine_id"
+  fi
+
+  cat >"$workdir/state.json" <<'JSON'
+{"generated_at":"2026-07-17T00:00:00Z","stale_after":"4s","machines":[{"machine_id":"lab-coordinateur","status":"recent","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"},{"machine_id":"lab-machine-1","status":"old","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"},{"machine_id":"lab-machine-2","status":"recent","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"}]}
+JSON
+  if state_matches lab-coordinateur=recent lab-machine-1=old; then
+    fail "strict Relay state parser accepted an extra machine"
+  fi
+
+  cat >"$workdir/state.json" <<'JSON'
+{"generated_at":"2026-07-17T00:00:00Z","stale_after":"4s","machines":[{"machine_id":"lab-machine-1","status":"old","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"},{"machine_id":"lab-coordinateur","status":"recent","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"}]}
+JSON
+  if state_matches lab-coordinateur=recent lab-machine-1=old; then
+    fail "strict Relay state parser accepted reversed machine order"
+  fi
+
+  cat >"$workdir/state.json" <<'JSON'
+{"generated_at":"2026-02-30T00:00:00Z","stale_after":"4s","machines":[{"machine_id":"lab-coordinateur","status":"recent","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"},{"machine_id":"lab-machine-1","status":"old","daemon_version":"v0.0.1","sent_at":"2026-07-17T00:00:00Z","received_at":"2026-07-17T00:00:00Z"}]}
+JSON
+  if state_matches lab-coordinateur=recent lab-machine-1=old; then
+    fail "strict Relay state parser accepted an invalid calendar date"
+  fi
+  printf 'PASS: strict Relay state parser rejected duplicates, extras, order drift and invalid dates\n'
+}
+
+prove_state_parser_fail_closed
+
+matched=0
+for attempt in $(seq 0 8); do
+  actual=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
+    --output "$workdir/state.json" --dump-header "$workdir/headers.txt" \
+    --write-out '%{http_code}' --request QUERY \
+    --header 'Content-Type: application/json' --data-binary '{}' \
+    "$relay_url/v0/machines") || actual=transport-error
+  if [[ "$actual" == 200 ]]; then
+    tr -d '\r' <"$workdir/headers.txt" | grep -Fxiq 'Cache-Control: no-store' \
+      || fail "QUERY response can be cached"
+    if state_matches "$@"; then
+      matched=1
+    else
+      matched=0
+    fi
+    [[ $matched -eq 0 ]] || break
+  fi
+  [[ $attempt -eq 8 ]] || sleep 1
+done
+
+[[ "$actual" == 200 ]] || fail "QUERY returned $actual"
+[[ $matched -eq 1 ]] \
+  || fail "the exact Relay state document did not converge within 8 seconds"
+printf 'PASS: exact Relay states: %s; %s\n' "$1" "$2"

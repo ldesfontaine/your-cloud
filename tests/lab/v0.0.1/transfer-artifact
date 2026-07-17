@@ -1,0 +1,492 @@
+#!/usr/bin/env bash
+# Transfer the v0.0.1 binary directly from lab-console to one guarded LAB target.
+# The private client key never leaves lab-console. Root only prepares and removes
+# a temporary account; the fixed receiver runs non-root, accepts at most 64 MiB
+# from the console's fixed IPv6, and cannot execute a caller-supplied command.
+# The host-key bootstrap remains the observation returned through the managed
+# labctl channel: the direct flow checks and pins it, but does not create an
+# independent cryptographic identity anchor.
+set -eEuo pipefail
+
+transfer_user=your-cloud-xfer
+transfer_group=your-cloud-xfer
+console_source_ipv6=fd66:241::193
+remote_artifact=/tmp/your-cloud-v0.0.1-artifact
+max_artifact_bytes=$((64 * 1024 * 1024))
+managed_marker=your-cloud-v0.0.1-direct-artifact-transfer
+host_key_refusal_status=42
+
+die() {
+  echo "artifact transfer refused: $*" >&2
+  exit 1
+}
+
+require_root() {
+  [[ $(id -u) -eq 0 ]] || die "root is required inside the isolated LAB VM"
+}
+
+require_command() {
+  command -v "$1" >/dev/null || die "required command is missing: $1"
+}
+
+target_ipv6() {
+  case "$1" in
+    lab-coordinateur) printf '%s\n' fd66:242::103 ;;
+    lab-machine-1) printf '%s\n' fd66:243::153 ;;
+    lab-machine-2) printf '%s\n' fd66:243::158 ;;
+    *) die "target is outside the v1-full artifact allowlist: $1" ;;
+  esac
+}
+
+validate_target() {
+  local target=$1 address=$2
+  [[ "$address" == "$(target_ipv6 "$target")" ]] || die "IPv6 address does not match the fixed v1-full target $target"
+}
+
+validate_sha256() {
+  [[ "$1" =~ ^[0-9a-f]{64}$ ]] || die "invalid SHA-256"
+}
+
+validate_size() {
+  [[ "$1" =~ ^[0-9]+$ && "$1" -gt 0 && "$1" -le "$max_artifact_bytes" ]] || die "artifact size is outside the 1..$max_artifact_bytes byte bound"
+}
+
+validate_key() {
+  [[ "$1" == ssh-ed25519 ]] || die "only an Ed25519 key is accepted"
+  [[ "$2" =~ ^[A-Za-z0-9+/]+={0,3}$ && ${#2} -le 256 ]] || die "invalid or unbounded Ed25519 public key"
+}
+
+validate_console_state() {
+  [[ "$1" =~ ^/tmp/your-cloud-v0\.0\.1-transfer-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "invalid lab-console transfer state path"
+}
+
+validate_target_state() {
+  [[ "$1" =~ ^/run/your-cloud-v0\.0\.1-transfer-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "invalid target transfer state path"
+}
+
+require_console() {
+  require_root
+  [[ $(hostname) == lab-console ]] || die "this operation must run in lab-console"
+}
+
+require_named_target() {
+  require_root
+  [[ $(hostname) == "$1" ]] || die "target hostname does not match $1"
+}
+
+has_ipv6_address() {
+  local expected=$1
+  ip -6 -o address show | awk -v expected="$expected" '
+        {
+          value = $4
+          sub(/\/.*/, "", value)
+          if (value == expected) found = 1
+        }
+        END { exit !found }
+      '
+}
+
+require_console_state() {
+  local state=$1
+  validate_console_state "$state"
+  [[ -d "$state" && ! -L "$state" ]] || die "lab-console transfer state is absent or unsafe"
+  [[ -f "$state/.managed" && ! -L "$state/.managed" ]] || die "lab-console transfer marker is absent"
+  [[ $(<"$state/.managed") == "$managed_marker" ]] || die "lab-console transfer marker is not owned by this helper"
+}
+
+require_target_state() {
+  local state=$1
+  validate_target_state "$state"
+  [[ -d "$state" && ! -L "$state" ]] || die "target transfer state is absent or unsafe"
+  [[ -f "$state/.managed" && ! -L "$state/.managed" ]] || die "target transfer marker is absent"
+  [[ $(<"$state/.managed") == "$managed_marker" ]] || die "target transfer marker is not owned by this helper"
+}
+
+artifact_metadata() {
+  local artifact=$1 sha size
+  [[ "$artifact" == /tmp/your-cloud-v0.0.1-src/dist/your-cloud ]] || die "unexpected lab-console artifact path"
+  [[ -f "$artifact" && ! -L "$artifact" && -x "$artifact" ]] || die "LAB build artifact is not a regular executable"
+  size=$(stat -c %s "$artifact")
+  validate_size "$size"
+  sha=$(sha256sum "$artifact")
+  sha=${sha%% *}
+  validate_sha256 "$sha"
+  printf '%s\t%s\n' "$sha" "$size"
+}
+
+console_prepare() {
+  [[ $# -eq 3 ]] || die "usage: console-prepare <state> <artifact> <source-ipv6>"
+  local state=$1 artifact=$2 source_ipv6=$3 metadata key_type key_blob ignored
+  require_console
+  validate_console_state "$state"
+  [[ "$source_ipv6" == "$console_source_ipv6" ]] || die "unexpected lab-console source IPv6"
+  has_ipv6_address "$source_ipv6" || die "fixed lab-console IPv6 address is absent"
+  [[ ! -e "$state" ]] || die "lab-console transfer state already exists"
+  require_command ssh-keygen
+  install -d -o root -g root -m 0700 "$state"
+  printf '%s\n' "$managed_marker" >"$state/.managed"
+  chmod 0400 "$state/.managed"
+  trap 'status=$?; trap - EXIT; if [[ $status -ne 0 ]]; then rm -rf -- "$state"; fi; exit "$status"' EXIT
+  ssh-keygen -q -t ed25519 -N '' -C your-cloud-v0.0.1-ephemeral-transfer -f "$state/id_ed25519"
+  chmod 0600 "$state/id_ed25519"
+  : >"$state/known_hosts"
+  chmod 0600 "$state/known_hosts"
+  metadata=$(artifact_metadata "$artifact")
+  read -r key_type key_blob ignored <"$state/id_ed25519.pub"
+  validate_key "$key_type" "$key_blob"
+  printf '%s\t%s\t%s\t%s\n' "${metadata%%$'\t'*}" "${metadata#*$'\t'}" "$key_type" "$key_blob"
+  trap - EXIT
+}
+
+observe_host_key() {
+  local target=$1 address=$2 managed_type=$3 managed_blob=$4 observed count
+  validate_target "$target" "$address"
+  validate_key "$managed_type" "$managed_blob"
+  require_command ssh-keyscan
+  require_command timeout
+  observed=$(timeout 8 ssh-keyscan -6 -T 5 -t ed25519 "$address" 2>/dev/null | awk '$2 == "ssh-ed25519" {print $2 "\t" $3}')
+  count=$(wc -l <<<"$observed")
+  [[ "$count" -eq 1 && "$observed" == "$managed_type"$'\t'"$managed_blob" ]] || die "target host key differs between the managed labctl observation and the direct IPv6 observation"
+}
+
+write_known_host() {
+  local state=$1 target=$2 key_type=$3 key_blob=$4
+  printf '%s %s %s\n' "$target" "$key_type" "$key_blob" >"$state/known_hosts"
+  chmod 0600 "$state/known_hosts"
+  ssh-keygen -l -f "$state/known_hosts" >/dev/null || die "pinned known_hosts entry is invalid"
+}
+
+console_pin_host() {
+  [[ $# -eq 5 ]] || die "usage: console-pin-host <state> <target> <target-ipv6> <key-type> <key>"
+  local state=$1 target=$2 address=$3 key_type=$4 key_blob=$5
+  require_console
+  require_console_state "$state"
+  observe_host_key "$target" "$address" "$key_type" "$key_blob"
+  write_known_host "$state" "$target" "$key_type" "$key_blob"
+}
+
+console_pin_wrong_host_for_test() {
+  [[ $# -eq 5 ]] || die "usage: console-pin-wrong-host-for-test <state> <target> <target-ipv6> <key-type> <key>"
+  local state=$1 target=$2 address=$3 host_type=$4 host_blob=$5
+  local client_type client_blob ignored
+  require_console
+  require_console_state "$state"
+  observe_host_key "$target" "$address" "$host_type" "$host_blob"
+  read -r client_type client_blob ignored <"$state/id_ed25519.pub"
+  validate_key "$client_type" "$client_blob"
+  [[ "$client_type $client_blob" != "$host_type $host_blob" ]] || die "ephemeral client key unexpectedly equals the target host key"
+  write_known_host "$state" "$target" "$client_type" "$client_blob"
+}
+
+guarded_ssh() {
+  [[ $# -eq 8 ]] || die "internal guarded SSH invocation is invalid"
+  local mode=$1 state=$2 artifact=$3 source_ipv6=$4 target=$5 address=$6
+  local expected_sha=$7 expected_size=$8 metadata actual_sha actual_size
+  local output expected_output ssh_error stderr_file status=0
+  local -a ssh_options
+  require_console
+  require_console_state "$state"
+  validate_target "$target" "$address"
+  [[ "$source_ipv6" == "$console_source_ipv6" ]] || die "unexpected transfer source IPv6"
+  has_ipv6_address "$source_ipv6" || die "fixed lab-console IPv6 address is absent"
+  validate_sha256 "$expected_sha"
+  validate_size "$expected_size"
+  metadata=$(artifact_metadata "$artifact")
+  actual_sha=${metadata%%$'\t'*}
+  actual_size=${metadata#*$'\t'}
+  [[ "$actual_sha" == "$expected_sha" && "$actual_size" == "$expected_size" ]] || die "artifact changed after the LAB build"
+  [[ -f "$state/id_ed25519" && ! -L "$state/id_ed25519" && -f "$state/known_hosts" && ! -L "$state/known_hosts" ]] || die "ephemeral SSH material is incomplete"
+  require_command ssh
+  require_command timeout
+  stderr_file="$state/ssh.stderr"
+  [[ ! -e "$stderr_file" ]] || die "stale guarded SSH diagnostic exists"
+  : >"$stderr_file"
+  chmod 0600 "$stderr_file"
+  ssh_options=(
+    -F /dev/null -6 -b "$source_ipv6" -l "$transfer_user"
+    -i "$state/id_ed25519"
+    -o IdentitiesOnly=yes -o IdentityAgent=none
+    -o BatchMode=yes -o NumberOfPasswordPrompts=0
+    -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no
+    -o GSSAPIAuthentication=no -o HostbasedAuthentication=no
+    -o PubkeyAuthentication=yes -o PreferredAuthentications=publickey
+    -o HostKeyAlgorithms=ssh-ed25519 -o PubkeyAcceptedAlgorithms=ssh-ed25519
+    -o StrictHostKeyChecking=yes -o CheckHostIP=no -o VerifyHostKeyDNS=no
+    -o UserKnownHostsFile="$state/known_hosts" -o GlobalKnownHostsFile=/dev/null
+    -o HostKeyAlias="$target" -o UpdateHostKeys=no
+    -o ProxyCommand=none -o ProxyJump=none
+    -o ControlMaster=no -o ControlPath=none -o ControlPersist=no
+    -o PermitLocalCommand=no -o CanonicalizeHostname=no
+    -o ClearAllForwardings=yes -o ForwardAgent=no -o ForwardX11=no
+    -o RequestTTY=no -o Tunnel=no -o ExitOnForwardFailure=yes
+    -o ConnectTimeout=5 -o ConnectionAttempts=1
+    -o ServerAliveInterval=2 -o ServerAliveCountMax=2
+  )
+  if output=$(LC_ALL=C timeout --signal=TERM --kill-after=5 60 \
+      ssh "${ssh_options[@]}" "$address" <"$artifact" 2>"$stderr_file"); then
+    status=0
+  else
+    status=$?
+  fi
+  ssh_error=$(<"$stderr_file")
+  rm -f -- "$stderr_file"
+
+  case "$mode" in
+    expect-host-key-refusal)
+      if [[ $status -eq 255 && -z "$output" \
+        && "$ssh_error" == *'REMOTE HOST IDENTIFICATION HAS CHANGED!'* \
+        && "$ssh_error" == *'Host key verification failed.'* ]]; then
+        echo "artifact transfer refused: direct SSH rejected the deliberately incorrect pinned host key" >&2
+        return "$host_key_refusal_status"
+      fi
+      case "$status" in
+        124|137) die "expected a host-key mismatch, but direct SSH timed out" ;;
+        255)
+          if [[ "$ssh_error" == *'Permission denied'* ]]; then
+            die "expected a host-key mismatch, but direct SSH authentication failed"
+          elif [[ "$ssh_error" == *'Host key verification failed.'* ]]; then
+            die "direct SSH returned a different host-key refusal than the deliberate mismatch"
+          else
+            die "expected a host-key mismatch, but direct SSH transport failed"
+          fi
+          ;;
+        0) die "deliberately incorrect pinned host key was accepted" ;;
+        *) die "expected a host-key mismatch, but direct SSH failed with status $status" ;;
+      esac
+      ;;
+    transfer) ;;
+    *) die "unknown guarded SSH mode: $mode" ;;
+  esac
+
+  if [[ $status -ne 0 ]]; then
+    case "$status" in
+      124|137) die "guarded SSH transfer timed out" ;;
+      255)
+        if [[ "$ssh_error" == *'Host key verification failed.'* ]]; then
+          die "direct SSH host-key validation failed unexpectedly"
+        elif [[ "$ssh_error" == *'Permission denied'* ]]; then
+          die "direct SSH authentication failed"
+        else
+          die "direct SSH transport failed"
+        fi
+        ;;
+      *) die "guarded SSH transfer failed with status $status" ;;
+    esac
+  fi
+  expected_output=$(printf 'artifact_sha256=%s\nartifact_size=%s' "$expected_sha" "$expected_size")
+  [[ "$output" == "$expected_output" ]] || die "target receiver returned an unexpected acknowledgement"
+  printf 'PASS: direct artifact transfer to %s verified SHA-256 and %s bytes\n' "$target" "$expected_size"
+}
+
+console_send() {
+  [[ $# -eq 7 ]] || die "usage: console-send <state> <artifact> <source-ipv6> <target> <target-ipv6> <sha256> <size>"
+  guarded_ssh transfer "$@"
+}
+
+console_prove_host_key_refusal() {
+  [[ $# -eq 7 ]] || die "usage: console-prove-host-key-refusal <state> <artifact> <source-ipv6> <target> <target-ipv6> <sha256> <size>"
+  guarded_ssh expect-host-key-refusal "$@"
+}
+
+console_cleanup() {
+  [[ $# -eq 1 ]] || die "usage: console-cleanup <state>"
+  local state=$1
+  require_console
+  validate_console_state "$state"
+  [[ -e "$state" ]] || return 0
+  require_console_state "$state"
+  rm -rf -- "$state"
+  [[ ! -e "$state" ]] || die "lab-console ephemeral SSH state remains"
+}
+
+target_host_key() {
+  [[ $# -eq 2 ]] || die "usage: target-host-key <target> <target-ipv6>"
+  local target=$1 address=$2 key_file=/etc/ssh/ssh_host_ed25519_key.pub
+  local key_type key_blob ignored
+  require_named_target "$target"
+  validate_target "$target" "$address"
+  has_ipv6_address "$address" || die "fixed target IPv6 address is absent"
+  [[ -f "$key_file" && ! -L "$key_file" && $(stat -c %U:%G "$key_file") == root:root ]] || die "target Ed25519 host public key metadata is unsafe"
+  read -r key_type key_blob ignored <"$key_file"
+  validate_key "$key_type" "$key_blob"
+  printf '%s\t%s\n' "$key_type" "$key_blob"
+}
+
+uid_has_processes() {
+  local uid=$1 real_status=0 effective_status=0
+  pgrep -U "$uid" >/dev/null 2>&1 || real_status=$?
+  pgrep -u "$uid" >/dev/null 2>&1 || effective_status=$?
+  [[ $real_status -le 1 && $effective_status -le 1 ]] \
+    || die "cannot inspect processes owned by the temporary transfer UID"
+  [[ $real_status -eq 0 || $effective_status -eq 0 ]]
+}
+
+target_cleanup() {
+  [[ $# -eq 1 ]] || die "usage: target-cleanup <state>"
+  local state=$1 home entry actual_uid actual_home stored_uid attempt
+  require_root
+  validate_target_state "$state"
+  home="$state/home"
+  if [[ ! -e "$state" ]]; then
+    getent passwd "$transfer_user" >/dev/null && die "unowned stale transfer identity exists without state"
+    getent group "$transfer_group" >/dev/null && die "unowned stale transfer group exists without state"
+    return 0
+  fi
+  require_target_state "$state"
+  if entry=$(getent passwd "$transfer_user"); then
+    IFS=: read -r _ _ actual_uid _ _ actual_home _ <<<"$entry"
+    [[ "$actual_uid" =~ ^[0-9]+$ && "$actual_uid" -ne 0 && "$actual_home" == "$home" ]] || die "transfer identity does not belong to this bounded state"
+    if [[ -f "$state/uid" && ! -L "$state/uid" ]]; then
+      stored_uid=$(<"$state/uid")
+      [[ "$stored_uid" == "$actual_uid" ]] || die "transfer identity UID drifted"
+    fi
+    require_command pkill
+    require_command pgrep
+    require_command sleep
+    pkill -KILL -U "$actual_uid" 2>/dev/null || true
+    pkill -KILL -u "$actual_uid" 2>/dev/null || true
+    # A killed SSH child may remain as a zombie until its parent sshd reaps it.
+    # userdel still sees that UID in /proc, so allow at most five seconds for
+    # both real-UID and effective-UID processes to disappear completely.
+    for ((attempt = 0; attempt < 50; attempt++)); do
+      if ! uid_has_processes "$actual_uid"; then
+        break
+      fi
+      sleep 0.1
+    done
+    if uid_has_processes "$actual_uid"; then
+      die "temporary transfer UID still owns a process after bounded termination"
+    fi
+    userdel --force "$transfer_user"
+  fi
+  if getent group "$transfer_group" >/dev/null; then
+    groupdel "$transfer_group"
+  fi
+  rm -rf -- "$state"
+  ! getent passwd "$transfer_user" >/dev/null || die "temporary transfer identity remains"
+  ! getent group "$transfer_group" >/dev/null || die "temporary transfer group remains"
+  [[ ! -e "$state" ]] || die "temporary target transfer state remains"
+}
+
+target_prepare() {
+  [[ $# -eq 8 ]] || die "usage: target-prepare <state> <target> <target-ipv6> <source-ipv6> <sha256> <size> <client-key-type> <client-key>"
+  local state=$1 target=$2 address=$3 source_ipv6=$4 expected_sha=$5 expected_size=$6
+  local client_type=$7 client_blob=$8 home uid password
+  require_named_target "$target"
+  validate_target_state "$state"
+  validate_target "$target" "$address"
+  [[ "$source_ipv6" == "$console_source_ipv6" ]] || die "unexpected authorized source IPv6"
+  has_ipv6_address "$address" || die "fixed target IPv6 address is absent"
+  validate_sha256 "$expected_sha"
+  validate_size "$expected_size"
+  validate_key "$client_type" "$client_blob"
+  [[ ! -e "$state" && ! -e "$remote_artifact" ]] || die "target transfer path is not initially absent"
+  ! getent passwd "$transfer_user" >/dev/null || die "temporary transfer identity already exists"
+  ! getent group "$transfer_group" >/dev/null || die "temporary transfer group already exists"
+  for command in useradd userdel groupdel chpasswd od head sha256sum stat install; do
+    require_command "$command"
+  done
+  install -d -o root -g root -m 0755 "$state"
+  printf '%s\n' "$managed_marker" >"$state/.managed"
+  chmod 0400 "$state/.managed"
+  trap 'status=$?; trap - EXIT; if [[ $status -ne 0 ]]; then target_cleanup "$state"; fi; exit "$status"' EXIT
+  home="$state/home"
+  useradd --system --create-home --home-dir "$home" --shell /bin/bash --user-group "$transfer_user"
+  uid=$(id -u "$transfer_user")
+  [[ "$uid" -ne 0 ]] || die "temporary transfer identity is privileged"
+  printf '%s\n' "$uid" >"$state/uid"
+  chmod 0400 "$state/uid"
+  password=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  [[ ${#password} -eq 64 ]] || die "synthetic temporary password generation failed"
+  printf '%s:%s\n' "$transfer_user" "$password" | chpasswd
+  unset password
+  printf '%s\n' "$expected_sha" >"$state/expected_sha"
+  printf '%s\n' "$expected_size" >"$state/expected_size"
+  chmod 0444 "$state/expected_sha" "$state/expected_size"
+  cat >"$state/receive" <<'RECEIVER'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 1 ]] || exit 1
+state=$1
+[[ "$state" =~ ^/run/your-cloud-v0\.0\.1-transfer-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || exit 1
+[[ $(id -un) == your-cloud-xfer ]] || exit 1
+original_command=${SSH_ORIGINAL_COMMAND-}
+[[ -z "$original_command" ]] || exit 1
+expected_sha=$(<"$state/expected_sha")
+expected_size=$(<"$state/expected_size")
+artifact="$state/home/artifact"
+partial="$artifact.partial"
+[[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || exit 1
+[[ "$expected_size" =~ ^[0-9]+$ && "$expected_size" -gt 0 && "$expected_size" -le $((64 * 1024 * 1024)) ]] || exit 1
+[[ ! -e "$artifact" && ! -e "$partial" ]] || exit 1
+umask 077
+trap 'rm -f -- "$partial"' EXIT
+head -c "$((expected_size + 1))" >"$partial"
+actual_size=$(stat -c %s "$partial")
+[[ "$actual_size" == "$expected_size" ]] || exit 1
+actual_sha=$(sha256sum "$partial")
+actual_sha=${actual_sha%% *}
+[[ "$actual_sha" == "$expected_sha" ]] || exit 1
+mv -- "$partial" "$artifact"
+trap - EXIT
+printf 'artifact_sha256=%s\nartifact_size=%s\n' "$actual_sha" "$actual_size"
+RECEIVER
+  chown root:root "$state/receive"
+  chmod 0555 "$state/receive"
+  install -d -o "$transfer_user" -g "$transfer_group" -m 0700 "$home/.ssh"
+  printf 'restrict,from="%s",command="/bin/bash %s/receive %s" %s %s your-cloud-v0.0.1-transfer\n' "$source_ipv6" "$state" "$state" "$client_type" "$client_blob" >"$state/authorized_keys"
+  install -o "$transfer_user" -g "$transfer_group" -m 0600 "$state/authorized_keys" "$home/.ssh/authorized_keys"
+  rm -f "$state/authorized_keys"
+  trap - EXIT
+}
+
+target_assert_empty() {
+  [[ $# -eq 1 ]] || die "usage: target-assert-empty <state>"
+  local state=$1
+  require_root
+  require_target_state "$state"
+  [[ ! -e "$state/home/artifact" && ! -e "$state/home/artifact.partial" && ! -e "$remote_artifact" ]] || die "host-key refusal still delivered artifact bytes"
+  printf 'PASS: incorrect pinned host key delivered zero artifact bytes\n'
+}
+
+target_finalize() {
+  [[ $# -eq 3 ]] || die "usage: target-finalize <state> <sha256> <size>"
+  local state=$1 expected_sha=$2 expected_size=$3 artifact owner mode actual_sha actual_size
+  require_root
+  require_target_state "$state"
+  validate_sha256 "$expected_sha"
+  validate_size "$expected_size"
+  artifact="$state/home/artifact"
+  [[ -f "$artifact" && ! -L "$artifact" ]] || die "received artifact is not a regular file"
+  owner=$(stat -c %U:%G "$artifact")
+  mode=$(stat -c %a "$artifact")
+  [[ "$owner" == "$transfer_user:$transfer_group" && "$mode" == 600 ]] || die "received artifact ownership or permissions are unsafe"
+  actual_size=$(stat -c %s "$artifact")
+  actual_sha=$(sha256sum "$artifact")
+  actual_sha=${actual_sha%% *}
+  [[ "$actual_size" == "$expected_size" && "$actual_sha" == "$expected_sha" ]] || die "received artifact differs from the LAB build"
+  [[ ! -e "$remote_artifact" ]] || die "final artifact path is not absent"
+  install -o root -g root -m 0755 "$artifact" "$remote_artifact"
+  [[ -f "$remote_artifact" && ! -L "$remote_artifact" && $(stat -c %U:%G:%a "$remote_artifact") == root:root:755 && $(stat -c %s "$remote_artifact") == "$expected_size" ]] || die "finalized target artifact metadata is invalid"
+  actual_sha=$(sha256sum "$remote_artifact")
+  actual_sha=${actual_sha%% *}
+  [[ "$actual_sha" == "$expected_sha" ]] || die "finalized target artifact hash changed"
+}
+
+[[ $# -gt 0 ]] || die "a transfer operation is required"
+operation=$1
+shift
+case "$operation" in
+  console-prepare) console_prepare "$@" ;;
+  console-pin-host) console_pin_host "$@" ;;
+  console-pin-wrong-host-for-test) console_pin_wrong_host_for_test "$@" ;;
+  console-send) console_send "$@" ;;
+  console-prove-host-key-refusal) console_prove_host_key_refusal "$@" ;;
+  console-cleanup) console_cleanup "$@" ;;
+  target-host-key) target_host_key "$@" ;;
+  target-prepare) target_prepare "$@" ;;
+  target-assert-empty) target_assert_empty "$@" ;;
+  target-finalize) target_finalize "$@" ;;
+  target-cleanup) target_cleanup "$@" ;;
+  *) die "unknown transfer operation: $operation" ;;
+esac

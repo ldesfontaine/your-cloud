@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Exercise the live Relay activation and binary listen-address allowlist.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: prove-hostile-listen-addresses" >&2; exit 2; }
+[[ $(id -u) -eq 0 ]] || { echo "prove-hostile-listen-addresses must run as root" >&2; exit 1; }
+[[ $(hostname) == lab-coordinateur ]] || { echo "listen-address proof requires lab-coordinateur" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "timeout is required" >&2; exit 1; }
+
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+source_root=$(cd -- "$script_dir/../../../.." && pwd)
+deploy_dir="$source_root/deploy/v0.0.1"
+[[ -d "$deploy_dir" && ! -L "$deploy_dir" ]] \
+  || { echo "v0.0.1 deploy source is missing or symbolic" >&2; exit 1; }
+artifact=/usr/local/lib/your-cloud/your-cloud
+unit=your-cloud-relay.service
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+managed_files=(
+  /usr/local/lib/your-cloud/your-cloud
+  /etc/your-cloud/daemon.env
+  /etc/your-cloud/relay.env
+  /etc/your-cloud/relay-candidate.json
+  /etc/systemd/system/your-cloud-daemon.service
+  /etc/systemd/system/your-cloud-relay.service
+)
+
+snapshot() {
+  local output=$1 path
+  : >"$output"
+  for path in "${managed_files[@]}"; do
+    [[ -f "$path" && ! -L "$path" ]] || fail "managed file is missing or symbolic: $path"
+    printf '%s\t%s\t' "$path" "$(stat -c '%U:%G:%a' "$path")" >>"$output"
+    sha256sum "$path" | awk '{print $1}' >>"$output"
+  done
+}
+
+expect_refusal() {
+  local label=$1 expected_status=$2 expected_message=$3 status match_count actual
+  shift 3
+  : >"$workdir/refusal.log"
+  if timeout --signal=TERM --kill-after=2s 10s "$@" >"$workdir/refusal.log" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  actual=$(<"$workdir/refusal.log")
+  [[ $status -eq $expected_status ]] \
+    || fail "$label returned $status instead of $expected_status: ${actual:-no diagnostic}"
+  match_count=$(grep -Fxc -- "$expected_message" "$workdir/refusal.log" || true)
+  [[ $match_count -eq 1 ]] \
+    || fail "$label did not emit its exact refusal reason: ${actual:-no diagnostic}"
+}
+
+snapshot "$workdir/before"
+initial_pid=$(systemctl show "$unit" --property=MainPID --value)
+[[ "$initial_pid" =~ ^[1-9][0-9]*$ ]] || { echo "Relay has no initial PID" >&2; exit 1; }
+initial_listeners=$(ss -H -ltn 'sport = :8443')
+[[ -n "$initial_listeners" && "$initial_listeners" != *$'\n'* \
+  && "$initial_listeners" == *'192.168.242.103:8443'* ]] \
+  || fail "Relay does not have exactly one initial listener: $initial_listeners"
+
+assert_unchanged() {
+  local label=$1 pid listeners
+  pid=$(systemctl show "$unit" --property=MainPID --value)
+  [[ "$pid" == "$initial_pid" ]] || fail "Relay PID changed during $label"
+  listeners=$(ss -H -ltn 'sport = :8443')
+  [[ "$listeners" == "$initial_listeners" ]] || fail "Relay listener changed during $label: $listeners"
+  snapshot "$workdir/after"
+  cmp -s -- "$workdir/before" "$workdir/after" || fail "managed files changed during $label"
+}
+
+for address in 127.0.0.1:8443 192.168.242.103:8444 0.0.0.0:8443; do
+  expect_refusal "enable-relay for $address" 1 \
+    'unexpected v0.0.1 LAB listen address' \
+    "$deploy_dir/enable-relay" "$address"
+  assert_unchanged "enable-relay refusal for $address"
+  expect_refusal "Relay binary for $address" 2 \
+    'your-cloud: relay listen address must be 192.168.242.103:8443 in v0.0.1' \
+    "$artifact" relay --listen="$address"
+  assert_unchanged "binary refusal for $address"
+done
+
+printf 'PASS: live activation and Relay refused local, wrong-port and wildcard listeners\n'

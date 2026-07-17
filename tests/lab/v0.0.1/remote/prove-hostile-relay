@@ -11,17 +11,34 @@ relay_url=$1
 [[ "$relay_url" == http://192.168.242.103:8443 ]] \
   || { echo "unexpected v0.0.1 LAB Relay URL" >&2; exit 1; }
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
+command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
+command -v setpriv >/dev/null || { echo "setpriv is required" >&2; exit 1; }
 command -v ss >/dev/null || { echo "ss is required" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "timeout is required" >&2; exit 1; }
 
 workdir=$(mktemp -d)
-trap 'rm -rf "$workdir"' EXIT
 artifact=/usr/local/lib/your-cloud/your-cloud
 initial_pid=
+silent_pid=
 
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [[ -n "$silent_pid" ]] && kill -0 "$silent_pid" 2>/dev/null; then
+    kill "$silent_pid" 2>/dev/null || true
+    wait "$silent_pid" 2>/dev/null || true
+  fi
+  rm -rf "$workdir"
+  exit "$status"
+}
+trap cleanup EXIT
+
 assert_runtime() {
-  local pid executable listeners listener_count
+  local pid executable listeners
+  local -a listener_addresses=()
+  local -a listener_pids=()
   systemctl is-active --quiet your-cloud-relay.service \
     || fail "Relay unit is not active"
   pid=$(systemctl show your-cloud-relay.service --property=MainPID --value) \
@@ -37,11 +54,56 @@ assert_runtime() {
     || fail "cannot resolve Relay executable"
   [[ "$executable" == "$artifact" ]] \
     || fail "Relay executable is $executable instead of $artifact"
-  listeners=$(ss -H -ltn 'sport = :8443') \
+  listeners=$(ss -H -ltnp 'sport = :8443') \
     || fail "cannot inspect Relay listener"
-  listener_count=$(grep -c '^' <<<"$listeners")
-  [[ $listener_count -eq 1 && "$listeners" == *"192.168.242.103:8443"* ]] \
+  mapfile -t listener_addresses < <(awk 'NF {print $4}' <<<"$listeners")
+  mapfile -t listener_pids < <(grep -oE 'pid=[0-9]+' <<<"$listeners" | cut -d= -f2)
+  [[ ${#listener_addresses[@]} -eq 1 && ${#listener_pids[@]} -eq 1 ]] \
     || fail "unexpected Relay listeners: $listeners"
+  [[ ${listener_addresses[0]} == "192.168.242.103:8443" ]] \
+    || fail "Relay listener address is not exact: ${listener_addresses[0]}"
+  [[ ${listener_pids[0]} == "$pid" ]] \
+    || fail "Relay listener PID ${listener_pids[0]} differs from unit PID $pid"
+}
+
+prove_bounded_unresponsive_destination() {
+  local attempt port status=0 started elapsed
+  setpriv --reuid=65534 --regid=65534 --clear-groups \
+    python3 -u - <<'PY' >"$workdir/silent-port" &
+import socket
+import time
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    print(server.getsockname()[1], flush=True)
+    connection, _ = server.accept()
+    with connection:
+        time.sleep(10)
+PY
+  silent_pid=$!
+  for attempt in $(seq 1 20); do
+    [[ -s "$workdir/silent-port" ]] && break
+    sleep 0.1
+  done
+  port=$(sed -n '1p' "$workdir/silent-port")
+  [[ "$port" =~ ^[1-9][0-9]{3,4}$ && $port -le 65535 ]] \
+    || fail "synthetic silent endpoint did not publish a bounded loopback port"
+  started=$(date +%s)
+  timeout --signal=TERM --kill-after=1s 4s \
+    curl --silent --show-error --noproxy '*' \
+    --connect-timeout 1 --max-time 2 --output /dev/null \
+    "http://127.0.0.1:$port/never-responds" || status=$?
+  elapsed=$(($(date +%s) - started))
+  [[ $status -eq 28 && $elapsed -le 4 ]] \
+    || fail "silent destination was not stopped by curl's bound: status=$status elapsed=${elapsed}s"
+  kill -0 "$silent_pid" 2>/dev/null \
+    || fail "synthetic silent endpoint exited before the client bound"
+  kill "$silent_pid" 2>/dev/null || true
+  wait "$silent_pid" 2>/dev/null || true
+  silent_pid=
+  printf 'PASS: unresponsive loopback destination stopped within %ss\n' "$elapsed"
 }
 
 assert_valid_query() {
@@ -93,6 +155,7 @@ valid_presence='{"machine_id":"lab-machine-1","daemon_version":"v0.0.1","sent_at
 dd if=/dev/zero of="$workdir/oversized.json" bs=513 count=1 status=none
 dd if=/dev/zero of="$workdir/oversized-query.json" bs=33 count=1 status=none
 
+prove_bounded_unresponsive_destination
 assert_healthy
 
 request_case 'POST missing machine_id' POST 400 application/json \

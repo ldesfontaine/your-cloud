@@ -1,9 +1,13 @@
 # Stratégie et registre d'automatisation des tests
 
-> Statut : stratégie active et registre des régressions. Le socle P0 possède un
-> pilote automatique ; ce document n'est toujours ni un journal d'exécution ni
-> une preuve. La preuve publiée pour `v0.0.1` reste le
-> [rapport LAB du 16 juillet 2026](../lab/v0.0.1-presence.md).
+> Statut : stratégie active et registre des régressions. Les P0, P1 et P2 du
+> pilote sont automatisés ; ce document n'est toujours ni un journal d'exécution
+> ni une preuve. La référence post-réorganisation conservée dans la
+> documentation est le run LAB `20260717T100150Z-1543398`, décrit dans le
+> [rapport `v0.0.1`](../lab/v0.0.1-presence.md). Il a réussi depuis les chemins
+> réorganisés avant le durcissement final de la CI et du banc de preuve ;
+> `20260717T093905Z-1478107` reste sa référence pré-réorganisation. L'identité
+> exacte d'un rejeu courant appartient à son dossier d'artefacts non versionné.
 
 Ce registre conserve les contrôles réalisés, les difficultés rencontrées et le
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
@@ -23,6 +27,9 @@ capacité d'un palier suivant.
 - Une **preuve LAB** relie une version des sources à un environnement identifié,
   aux commandes réellement exécutées et à leurs résultats. Un test vert sans
   ce contexte ne devient pas, à lui seul, une preuve publiée.
+- Un **contrôle générique** vérifie un contrat de source ou d'outil sans exiger
+  la topologie métier complète. Générique ne signifie pas « autorisé sur le
+  laptop » : il s'exécute dans le runner isolé prévu par le projet.
 
 Les tableaux utilisent trois niveaux : `automatique` signifie qu'une commande
 porte déjà l'assertion ou l'étape concernée ; `assisté` signifie qu'un script
@@ -50,8 +57,26 @@ Toute exécution du produit, des tests, du build ou d'un serveur reste dans
 contrôler l'inventaire et piloter `labctl`, conformément aux
 [règles LAB](../lab/README.md).
 
+L'arborescence rend cette frontière visible :
+
+- [`tests/checks/`](../../tests/checks/) contient les contrôles génériques,
+  réutilisables dans un runner CI isolé ;
+- [`tests/lab/v0.0.1/`](../../tests/lab/v0.0.1/) contient l'orchestrateur, les
+  scénarios distants et la restitution de la preuve multi-VM ;
+- [`deploy/v0.0.1/`](../../deploy/v0.0.1/) ne contient que le cycle de vie et
+  les unités installables, jamais un scénario hostile.
+
+Une image CI ordinaire peut fournir la première couche, mais elle ne remplace
+pas automatiquement KVM/libvirt, les réseaux et les quatre VM de `v1-full`.
+La preuve complète pourra entrer dans la CI sur un runner dédié : inventaire en
+lecture seule, mutation bornée, publication des artefacts, puis nettoyage
+vérifié même si une assertion échoue. `labctl` reste le même contrôleur pour une
+preuve lancée localement ou par ce runner dédié.
+
 Le pilote garde les phases séparées. Une mutation ne commence qu'après la garde
-d'inventaire ; chaque attente possède une échéance ; chaque
+d'inventaire et l'acquisition atomique d'un verrou LAB attribué au run ; un
+verrou déjà présent est laissé visible et provoque un refus. Chaque attente
+possède une échéance ; chaque
 assertion conserve son code de sortie ; le nettoyage s'exécute aussi après un
 échec. Aucun `|| true` global, agrégat de logs ou rapport visuel ne doit masquer
 le premier contrôle rouge.
@@ -63,13 +88,15 @@ le premier contrôle rouge.
 | Contrôle | Assertion | Préparation | Orchestration | Nettoyage | Limite actuelle |
 |---|---|---|---|---|---|
 | `gofmt -l` vide | automatique | automatique | automatique | sans objet | couvre les sources Go de `cmd/` et `internal/` |
-| `bash -n` sur les scripts Bash du lot | automatique | automatique | automatique | sans objet | sélection par shebang dans `deploy/` et `tools/` |
+| `bash -n` sur les scripts Bash du lot | automatique | automatique | automatique | sans objet | sélection par shebang dans `deploy/`, `tools/` et `tests/` |
+| syntaxe du générateur Python de restitution | automatique | automatique | automatique | automatique | compilation seule de `tests/lab/v0.0.1/report/renderer.py` ; le rendu réel reste vérifié dans `lab-console` |
+| résultat structuré Plumber absent, ambigu, incomplet, sauté ou dégradé | automatique | automatique | automatique | automatique | 23 cas de frontière (20 refus, 3 acceptations), liaison au lot et refus intégré d'un tag mutable exécutés dans `lab-console` ; le vrai workflow GitHub reste à exécuter après publication |
 | contrat `labctl list` humain et TSV | automatique | automatique | automatique | automatique | double `virsh` isolé ; le vrai inventaire reste contrôlé avant mutation |
 | `tools/check-docs` sur l'arbre complet | automatique | automatique | automatique | automatique | la cohérence sémantique reste une relecture humaine |
-| `go test -count=1 ./...` en root | automatique | automatique | automatique | automatique | le runner refuse de démarrer hors `lab-console` ou sans uid `0` |
+| `go test -count=1 ./...` | automatique | automatique | automatique | automatique | mode `lab` sur `lab-console` root ou mode `ci` sur runner distant non privilégié |
 | `go vet ./...` | automatique | automatique | automatique | automatique | intégré à la même entrée source |
-| build `CGO_ENABLED=0` de l'unique exécutable | automatique | automatique | automatique | automatique | le lot doit être initialement dépourvu de `dist/` |
-| SHA-256 identique dans le build, sur le VPS et sur la machine LAN | automatique | automatique | automatique | automatique | le pilote affiche l'empreinte ; le rapport structuré reste en P1 |
+| build `CGO_ENABLED=0` de l'unique exécutable | automatique | automatique | automatique | automatique | le lot doit être initialement dépourvu de `dist/` ; le mode CI construit dans un temporaire |
+| SHA-256 identique dans le build, sur le VPS et sur la machine LAN | automatique | automatique | automatique | automatique | le résultat structuré conserve l'empreinte exacte du lot exécuté |
 
 Les tests Go portent déjà les assertions suivantes :
 
@@ -79,8 +106,9 @@ Les tests Go portent déjà les assertions suivantes :
 - `internal/daemon` vérifie le schéma exact envoyé, les seules transitions de
   journal `indisponible` puis `rétabli`, les configurations dangereuses et la
   propagation d'un refus Relay ;
-- `internal/presence` refuse les champs absents, dupliqués, de casse différente,
-  les seconds objets, identifiants, versions et horodatages invalides ;
+- `internal/presence` refuse les documents non objets ou tronqués, les champs
+  absents, dupliqués, inconnus, de casse différente ou de type incorrect, les
+  seconds objets, identifiants, versions et horodatages invalides ;
 - `internal/relay` vérifie le passage `absent` vers `recent` puis `old`, le tri
   des machines, l'usage de l'heure de réception du Relay et la disponibilité du
   handler après chaque corps hostile ;
@@ -89,52 +117,58 @@ Les tests Go portent déjà les assertions suivantes :
   type incorrect et corps supérieur à 512 octets ;
 - la frontière `QUERY /v0/machines` accepte exactement `{}` en JSON, annonce
   `Accept-Query` et `Cache-Control: no-store`, puis refuse méthode, type,
-  `null`, filtre futur, second objet, partie query d'URI et corps supérieur à
-  32 octets ;
-- le manifeste Relay refuse document vide, tableau, champ absent ou inconnu,
-  schéma ou rôle incorrect, doublon, second objet, taille excessive, propriétaire
-  non-root, lien symbolique, fichier ou répertoire modifiable par d'autres.
+  `null`, tableau, document tronqué, filtre futur, second objet, partie query
+  d'URI et corps supérieur à 32 octets ;
+- le manifeste Relay refuse document vide, tableau ou tronqué, champ absent,
+  inconnu, de mauvaise casse ou de type incorrect, schéma ou rôle incorrect,
+  doublon, second objet, taille excessive, propriétaire non-root, lien
+  symbolique, fichier ou répertoire modifiable par d'autres.
 
 ### Pilote HTTP vivant
 
-[`deploy/v0.0.1/prove-hostile-relay`](../../deploy/v0.0.1/prove-hostile-relay)
+[`tests/lab/v0.0.1/remote/prove-hostile-relay`](../../tests/lab/v0.0.1/remote/prove-hostile-relay)
 exécute sur `lab-coordinateur` la matrice vivante `POST` et `QUERY` : schémas,
 tailles, méthodes croisées, `Content-Type`, partie query non vide ou vide et
 cache interdit. Après chaque refus, il vérifie le même PID, l'exécutable, le
-listener exact et une consultation valide. Chaque appel possède un délai de
-connexion de deux secondes et une durée totale de cinq secondes.
+listener exact relié à ce PID et une consultation valide. Chaque appel possède
+un délai de connexion de deux secondes et une durée totale de cinq secondes.
+Un serveur synthétique muet sur loopback prouve en plus que la borne totale
+interrompt réellement un client connecté qui ne reçoit aucune réponse.
 
 | Partie | Niveau actuel | Ce qui manque |
 |---|---|---|
 | Matrice `POST`, `QUERY` et méthodes croisées | automatique | étendre seulement avec un nouveau cas réellement introduit |
 | `Accept-Query` et `Cache-Control: no-store` | automatique | aucun cache intermédiaire réel n'est introduit dans ce palier |
-| Unité, PID, exécutable et listener après chaque refus | automatique | les journaux structurés restent en P1 |
+| Unité, PID, exécutable et listener après chaque refus | automatique | les transitions de journal sont comptées dans le cycle multi-VM |
 | Préparation de la candidate et de l'origine exacte | automatique | bornée au scénario LAB `v0.0.1` |
 | Nettoyage du client | automatique | le Relay reste géré par le cycle multi-VM |
 
 ### Placement et cycle multi-VM
 
-[`tools/prove-v0.0.1`](../../tools/prove-v0.0.1) est l'unique entrée du cycle.
-Le laptop ne fait que lire Git, fabriquer l'archive, calculer ses empreintes et
-piloter `labctl` ; tout code produit, test, build, HTTP et systemd s'exécute dans
-le LAB. Une erreur après mutation déclenche un retrait vérifié sur les trois
-cibles ; un succès réinstalle l'état final annoncé.
+[`tests/lab/v0.0.1/prove`](../../tests/lab/v0.0.1/prove) est l'unique entrée du cycle.
+Le laptop ne fait que lire Git, fabriquer depuis une liste positive Git
+l'archive non sensible, calculer ses empreintes et piloter `labctl` ; tout code
+produit, test, build, HTTP et systemd s'exécute dans le LAB. L'empreinte du lot
+est comparée après transit avant extraction. Une erreur après mutation déclenche
+un retrait vérifié sur les trois cibles ; un succès réinstalle l'état final
+annoncé.
 
 | Scénario réellement couvert | Assertions | Préparation | Orchestration | Nettoyage |
 |---|---|---|---|---|
 | garde `labctl list`, origine, gabarit, topologie et adresses interdites | automatique | sans objet | automatique | automatique |
+| verrou LAB exclusif attribué au run, refus sans vol du verrou et libération vérifiée | automatique | automatique | automatique | automatique |
 | build unique, copie et comparaison des trois empreintes SHA-256 | automatique | automatique | automatique | automatique |
 | installation du Daemon seul sur le LAN, puis Daemon et Relay parallèles sur le VPS | automatique | automatique | automatique | automatique |
 | unités distinctes, PID et UID dynamiques distincts, un processus par rôle et listener exact | automatique | automatique | automatique | automatique |
 | refus Relay sans candidature sur le LAN avant ouverture de `8443` | automatique | automatique | automatique | automatique |
-| refus d'une identité autorisée placée sur le mauvais hôte et d'une écoute sur `8444` | manuel | assisté | manuel | manuel |
-| manifeste `0666` : Relay en échec, Daemon indépendant et aucun listener | manuel | manuel | manuel | assisté par `reset-failed` |
+| chaque couple hôte/identifiant autorisé et écoute locale, wildcard ou mauvais port | automatique | automatique | automatique | automatique |
+| manifeste `0666` jusqu'à `start-limit-hit`, Daemon indépendant, aucun listener puis `reset-failed` | automatique | automatique | automatique | automatique |
 | deux machines `recent` malgré l'écart entre les horloges | automatique | automatique | automatique | automatique |
 | arrêt d'un Daemon : lui seul devient `old`, puis revient `recent` | automatique | automatique | automatique avec attente bornée | automatique |
 | arrêt des deux Daemons et redémarrage Relay : deux états `absent`, puis retour à `recent` | automatique | automatique | automatique | automatique |
-| un seul log d'indisponibilité puis un seul de rétablissement, aucun succès chaque seconde | manuel | assisté | manuel | sans objet |
-| Relay synthétique hors unité : `disable-relay` refuse et conserve le manifeste | manuel | manuel | manuel | manuel après arrêt explicite du PID |
-| Daemon synthétique hors unité : `remove-agent` refuse et conserve l'artefact | manuel | manuel | manuel | manuel après arrêt explicite du PID |
+| un seul log d'indisponibilité puis un seul de rétablissement, aucun succès chaque seconde | automatique | automatique | automatique | automatique |
+| Relay synthétique hors unité : `disable-relay` refuse et conserve le manifeste | automatique | automatique | automatique | automatique après arrêt explicite du PID |
+| Daemon synthétique hors unité : `remove-agent` refuse et conserve l'artefact | automatique | automatique | automatique | automatique après arrêt explicite du PID |
 | premier lot ou remplacement invalide : retour à l'état absent ou restauration de l'artefact et des deux rôles | automatique | automatique | automatique | automatique |
 | désactivation Relay : port, unité, configuration et manifeste absents, Daemon VPS inchangé | automatique | automatique | automatique | automatique |
 | retrait sur les trois machines : aucun processus, unité, binaire ou configuration | automatique | automatique | automatique | automatique |
@@ -142,16 +176,18 @@ cibles ; un succès réinstalle l'état final annoncé.
 
 ### Restitution visuelle
 
-La page HTML autonome a été servie temporairement depuis `lab-console`, ouverte
-dans un navigateur puis capturée après contrôle des mêmes placements, PID,
-empreintes et limites que le rapport Markdown.
+Le Markdown et la page HTML sont générés dans `lab-console` depuis les seuls
+champs autorisés du résultat P1. La page est servie sur `127.0.0.1:18080` sous
+`nobody`, vérifiée par HTTP puis capturée par Chromium headless. Un scénario
+injecte aussi un échec de capture et affirme l'arrêt du serveur avant le rendu
+nominal.
 
 | Partie | Niveau actuel | Limite |
 |---|---|---|
-| production de la page HTML | assisté | la cohérence sémantique avec le rapport reste relue par une personne |
-| démarrage et arrêt du serveur temporaire LAB | manuel | aucune enveloppe garantit encore l'arrêt après erreur du navigateur |
-| ouverture et capture | manuel | dépend d'une session de navigateur |
-| validation visuelle du contenu | manuel | une capture prouve un rendu, jamais le comportement du produit |
+| production des tableaux Markdown et de la page HTML | automatique | le schéma et les champs sont bornés ; le sens reste relu par une personne |
+| démarrage et arrêt du serveur temporaire LAB | automatique | identité, listener et absence finale sont affirmés, y compris après capture en échec |
+| ouverture et capture Chromium headless | automatique | Chromium est un prérequis du runner LAB, pas une dépendance du produit |
+| validation du contenu servi | automatique | une capture prouve un rendu, jamais le comportement du produit |
 
 ## Refus attendus, distincts des incidents
 
@@ -182,22 +218,29 @@ automatisée.
 |---|---|---|---|
 | `tools/labctl list` affichait l'inventaire correct puis quittait avec le code `1` | `virsh domifaddr` rend `1` pour une VM arrêtée sans adresse et interrompait la boucle | une VM arrêtée rend désormais `ips=-`, une erreur d'adresse sur une VM active reste bloquante ; TSV et code `0` sont testés avec un double `virsh` | garde automatique active avant chaque mutation |
 | une première archive LAB omettait `tools/labctl`, donc le contrôle documentaire signalait des liens cassés | lot préparé depuis une sélection incomplète de l'arbre | archive reconstruite depuis l'arbre complet | fabriquer le lot depuis une liste traçable et vérifier la présence de chaque cible de lien avant les tests |
-| les VM avaient des horloges différentes et `tar` avertissait de fichiers datés dans le futur | décalage d'environ quatre jours sur `lab-machine-1` et de quelques secondes entre contrôleur et builder | fraîcheur calculée sur l'heure de réception Relay ; avertissement de transport conservé visible | créer en P1 un décalage d'horloge contrôlé et distinguer dérive attendue et horloge LAB mal synchronisée |
+| les VM avaient des horloges différentes et `tar` avertissait de fichiers datés dans le futur | décalage d'environ quatre jours sur `lab-machine-1` et de quelques dizaines de secondes entre contrôleur et builder, dont environ 35 secondes mesurées le 17 juillet 2026 | fraîcheur calculée sur l'heure de réception Relay ; avertissement de transport conservé visible | décalage contrôlé de deux jours, état `recent` par réception Relay et restauration automatique prouvés en P1 |
 | `gofmt -d` a trouvé un alignement à corriger | formatage non exécuté assez tôt | source reformattée puis contrôle rejoué | exécuter le contrôle de format en première phase et bloquer avant tout build ou déploiement |
 | les premières commandes `curl` traversant `labctl ssh` souffraient de guillemets imbriqués | construction distante fragile entre plusieurs shells | requêtes corrigées puis regroupées dans le pilote copié au LAB | transférer un script à arguments bornés ; ne pas construire de JSON dans une commande SSH concaténée |
-| le manifeste hostile a épuisé la limite de redémarrage systemd après cinq refus | les échecs répétés laissaient l'unité en `start-limit-hit` après réparation | `enable-relay` exécute désormais `reset-failed` avant relance | provoquer ce cas précis avec le manifeste reste en P1 |
+| le manifeste hostile a épuisé la limite de redémarrage systemd après cinq refus | les échecs répétés laissaient l'unité en `start-limit-hit` après réparation | `enable-relay` exécute désormais `reset-failed` avant relance | événement journalisé, refus avant `reset-failed` et récupération après réinitialisation prouvés en P1 |
 | le client vivant envoyait `/chemin` au lieu de `/chemin?` | `curl` normalise un `?` final vide | le pilote force la cible de requête brute avec `--request-target` | le cas vide est vérifié après chaque build au niveau Go et HTTP vivant |
 | un cas nommé « Content-Type absent » envoyait en réalité le type formulaire de `curl` | `--data-binary` ajoute un en-tête par défaut | le pilote supprime explicitement cet en-tête | les réponses distinctes `400` absent et `415` non pris en charge sont vérifiées |
 | la première readiness transactionnelle pouvait accepter brièvement `/bin/false` | une observation instantanée a croisé un processus voué à mourir | le même PID doit rester `active/running` pendant trois contrôles consécutifs | l'injection du faux artefact appartient désormais au P0 vivant |
 | le premier rollback du faux artefact ne relançait pas l'ancien lot | les échecs avaient déclenché `start-limit-hit` | le rollback restaure les fichiers, réinitialise seulement les unités présentes, puis revérifie Daemon et Relay | injection `/bin/false`, état absent initial, empreinte restaurée et deux rôles actifs sont automatiques |
-| le premier serveur de preuve visuelle sous `DynamicUser` ne pouvait pas servir correctement le fichier temporaire | isolement de l'utilisateur dynamique et du répertoire temporaire | serveur relancé sous le compte non privilégié `nobody`, puis arrêté et nettoyé | créer un répertoire lisible dédié, lancer sous une identité non privilégiée connue et garantir l'arrêt par piège de sortie |
-| le retrait pouvait supprimer les fichiers malgré un arrêt ou une inspection incertaine | logique de retrait ouverte sur l'échec | contrôles `stop`, `show`, état, `MainPID`, processus hors unité et port ajoutés ; suppression bloquée au moindre doute | automatiser les injections de PID et listener résiduels et vérifier la conservation de tous les fichiers |
-| l'identifiant de machine n'était pas lié au nom d'hôte LAB | la liste positive seule n'empêchait pas un identifiant autorisé sur le mauvais hôte | égalité exacte avec le nom d'hôte ajoutée avant installation | tester chaque couple hôte/identifiant autorisé et affirmer zéro fichier créé après refus |
-| le Relay pouvait recevoir une autre adresse d'écoute | le port et la cible n'étaient pas figés dans le binaire du palier | adresse exacte `192.168.242.103:8443` imposée | tester adresse locale, wildcard et mauvais port, puis comparer les listeners avant/après |
+| le premier serveur de preuve visuelle sous `DynamicUser` ne pouvait pas servir correctement le fichier temporaire | isolement de l'utilisateur dynamique et du répertoire temporaire | serveur relancé sous le compte non privilégié `nobody`, puis arrêté et nettoyé | UID 65534, listener loopback et nettoyage après échec de capture prouvés en P2 |
+| le retrait pouvait supprimer les fichiers malgré un arrêt ou une inspection incertaine | logique de retrait ouverte sur l'échec | contrôles `stop`, `show`, état, `MainPID`, processus hors unité et port ajoutés ; suppression bloquée au moindre doute | Daemon et Relay synthétiques hors unité, refus et empreintes de fichiers inchangées prouvés en P1 |
+| l'identifiant de machine n'était pas lié au nom d'hôte LAB | la liste positive seule n'empêchait pas un identifiant autorisé sur le mauvais hôte | égalité exacte avec le nom d'hôte ajoutée avant installation | matrice de tous les couples entre les trois hôtes et les deux identifiants autorisés prouvée en P1 |
+| le Relay pouvait recevoir une autre adresse d'écoute | le port et la cible n'étaient pas figés dans le binaire du palier | adresse exacte `192.168.242.103:8443` imposée | écoute locale, wildcard et mauvais port refusés par activation et binaire vivant en P1 |
 | le décodage JSON acceptait des clés dupliquées ou une casse différente | comportement permissif du décodage JSON générique | décodeurs stricts ajoutés pour présence, candidature et requête | conserver la matrice hostile au niveau unitaire et vivant, avec un cas où la seconde valeur serait autorisée |
-| le Daemon pouvait produire un log à chaque signal ou tentative | journalisation pensée par événement réseau plutôt que par changement d'état | journal limité aux transitions indisponible/rétabli | compter les lignes sur plusieurs intervalles de réussite, panne prolongée et récupération |
-| les appels hostiles `curl` n'avaient pas tous de délai borné | une panne réseau pouvait bloquer le pilote | `--connect-timeout 2` et `--max-time 5` ajoutés partout | contrôle statique du pilote et test d'une destination qui ne répond pas |
+| le Daemon pouvait produire un log à chaque signal ou tentative | journalisation pensée par événement réseau plutôt que par changement d'état | journal limité aux transitions indisponible/rétabli | zéro ligne en réussite prolongée puis exactement une indisponibilité et une récupération sur les deux Daemons en P1 |
+| les appels hostiles `curl` n'avaient pas tous de délai borné | une panne réseau pouvait bloquer le pilote | `--connect-timeout` et `--max-time` ajoutés partout | comptage statique des bornes et destination synthétique muette sur loopback interrompue automatiquement |
 | les premiers diagrammes montraient un sens de flux incorrect | confusion visuelle entre placement et destination HTTP | flèches corrigées du Daemon vers le Relay | comparer une source unique de flux aux éditions Markdown et HTML pendant le contrôle documentaire |
+| le run `20260717T091821Z-1389363` a échoué pendant la dérive d'horloge et son nettoyage | la synchronisation NTP externe n'est pas revenue dans la fenêtre bornée | l'échec est resté classé `cleanup_failure`, les trois cibles ont été rendues absentes et `clock_restored=false` est resté visible | conserver la dépendance NTP comme incident d'infrastructure ; ne jamais transformer son absence en réussite |
+| le retrait de l'identité de transfert pouvait croiser un processus SSH tué mais encore visible dans `/proc` | course entre terminaison, récolte du processus par son parent et `userdel` | contrôle des UID réel et effectif, attente bornée de disparition puis suppression de l'identité ; le run `20260717T093905Z-1478107` a ensuite nettoyé proprement | le nettoyage final doit refuser tant qu'un processus du compte temporaire reste observable |
+| le premier run post-réorganisation `20260717T100017Z-1539228` a refusé le lot avant mutation produit | le répertoire `deploy/` copié avait conservé le mode `0775`, hors contrat root-owned `0755` | échec classé `infrastructure_failure`, état `not-mutated`, nettoyage et horloge verts ; modes distants normalisés avant les gardes | conserver le refus de permissions trop larges et vérifier le mode du lot avant toute installation |
+| les deux premières analyses Plumber n'ont pas trouvé de dépôt Git dans `lab-console` | l'image LAB ne contient pas `git`, alors que Plumber lit trois métadonnées avant les workflows | doublure bornée à l'origin public, la racine temporaire et l'identifiant dérivé du lot ; toute autre commande sort avec `2` | le runner GitHub utilisera le vrai checkout ; la doublure reste limitée à la simulation LAB |
+| le run générique `20260717T102446Z-1570931` s'est arrêté sur la mutation hostile | un délimiteur `sed` a été réinterprété pendant le transit SSH | délimiteur sans échappement ambigu puis vérification du rapport `ISSUE-701` ; chemins distants et locaux vérifiés absents après l'échec | la preuve doit attribuer le refus au rapport structuré, jamais au seul code de sortie |
+| le premier rejeu de la liste positive finale s'est arrêté avant copie LAB | GNU `tar` traite `--no-recursion` comme une option positionnelle lorsqu'elle suit `--files-from` | toutes les options d'archive précèdent désormais la liste NUL de fichiers | conserver le même constructeur de lot dans les preuves générique et multi-VM ; aucun résultat vert n'est publié après un échec d'empaquetage |
+| le téléchargement de Plumber du rejeu `20260717T112941Z-1606633` a dépassé 120 secondes après 14,5 Mio reçus | débit sortant du LAB insuffisant pour le binaire de 32,3 Mio dans l'ancienne fenêtre | code `28` conservé, aucun rapport publié, répertoire et archive distants vérifiés absents ; borne totale portée à 420 secondes | garder version, SHA-256, taille maximale et échéance explicites ; une lenteur réseau reste un échec d'infrastructure, jamais un scan vert |
 
 ## Écarts techniques révélés par l'audit statique
 
@@ -221,11 +264,13 @@ Deux notions sont utiles avant de lire le tableau :
 |---|---|---|---|
 | avant d'intercaler l'App, un proxy ou un cache | réponse `QUERY` cacheable | `Cache-Control: no-store` ajouté | en-tête vérifié dans les tests Go, chaque requête saine du pilote et la matrice vivante ; aucun proxy réel dans ce palier |
 | avant d'élargir le contrat HTTP | parties query d'URI ignorées | `RawQuery` et `ForceQuery` refusés sur les deux routes | paramètres et `?` vide vérifiés au niveau Go et HTTP vivant |
-| avant de donner une valeur opérationnelle au seuil d'âge | conversion UTC prématurée | temps brut conservé pour le calcul, UTC réservé au rendu | transitions automatiques ; saut contrôlé de l'horloge Relay encore en P1 |
+| avant de donner une valeur opérationnelle au seuil d'âge | conversion UTC prématurée | temps brut conservé pour le calcul, UTC réservé au rendu | recul contrôlé de l'émetteur et saut contrôlé du Relay, fraîcheur monotone et restauration ont réussi dans la référence post-réorganisation |
 | avant toute destination autre que le LAB figé | origine Daemon insuffisamment stricte | package et point d'entrée refusent utilisateur, chemin, query, fragment et toute origine autre que l'origine LAB exacte | cas hostiles Go ; la V1 définira son propre endpoint authentifié |
 | avant une fonction de mise à jour ou de rollback | installation ou remplacement partiel du lot | staging, restauration des fichiers, états systemd et rôles précédents | `/bin/false` injecté sur état absent puis installé ; absence ou ancienne empreinte et rôles parallèles sont restaurés automatiquement |
 | prochaine révision des tests HTTP | méthodes croisées non nommées | `GET /v0/machines`, `POST /v0/machines` et `QUERY /v0/presence` couverts | tests Go et pilote vivant |
 | lors de l'automatisation des retraits | la garde `stop_and_disable` est dupliquée dans `disable-relay` et `remove-agent` | les deux copies ont passé les scénarios LAB actuels | extraire seulement lorsque le pilote sait prouver les deux appelants, afin d'éviter leur divergence sans créer une bibliothèque shell prématurée |
+| avant deux preuves concurrentes | les chemins temporaires historiques du cycle P1 sont fixes | verrou atomique root-owned avec propriétaire de run exact ; aucun verrou existant n'est volé | libération vérifiée après nettoyage ; un arrêt non rattrapable peut laisser un verrou volontairement visible pour inspection |
+| avant de donner autorité aux états observés | l'assertion Relay cherchait une sous-chaîne JSON et le listener n'était pas lié au PID de l'unité | parseur JSON à schéma exact, doublons et machine supplémentaire refusés ; PID unique extrait de `ss -ltnp` | fixtures hostiles du parseur puis document vivant exact sur les deux machines |
 
 La [RFC 10008](https://www.rfc-editor.org/rfc/rfc10008.html) est la source du
 contrat HTTP `QUERY` : méthode sûre et idempotente, contenu typé obligatoire,
@@ -238,19 +283,21 @@ réponse cacheable et partie query de l'URI intégrée à la ressource ciblée.
 1. `labctl list` possède un code de sortie fiable et une sortie TSV
    stable contenant origine, gabarit, topologie et adresses ; le pilote doit
    s'arrêter avant mutation si cette garde n'est pas entièrement verte.
-2. `tools/test-v0.0.1` est l'entrée exécutée dans `lab-console` pour préparer le
-   lot complet puis lancer format, syntaxe shell, documentation, tests Go sans
-   cache, `go vet` et build statique. Elle publie le détail des étapes et
-   préserve le premier code d'échec.
-3. Cette entrée échoue si le runner n'est pas root, si un
-   lien documentaire vise un fichier absent du lot ou si l'exécutable n'est pas
-   le seul artefact Go attendu.
+2. `tests/checks/source-v0.0.1` est l'entrée source commune. Le mode `lab`
+   prépare le lot dans `lab-console` ; le mode `ci` utilise un runner distant
+   non privilégié. Les deux lancent format, syntaxe shell, documentation, tests
+   Go sans cache, `go vet` et build statique, publient le détail des étapes et
+   préservent le premier code d'échec.
+3. Cette entrée refuse un mode implicite, un mode `lab` qui n'est pas root sur
+   `lab-console`, un mode `ci` root ou hors GitHub Actions, un lien
+   documentaire absent et tout lot qui ne produit pas l'unique artefact Go
+   attendu à l'emplacement propre au runner.
 4. Le pilote HTTP vivant couvre la matrice `POST` et `QUERY`, avec une
    vérification automatique de l'unité, du PID, du listener et d'une requête
    valide après chaque refus.
    Cette matrice couvre aussi le cache interdit, les parties query d'URI et les
    méthodes croisées nommées par l'audit statique.
-5. `tools/prove-v0.0.1` orchestre le cycle `v1-full` depuis un état connu :
+5. `tests/lab/v0.0.1/prove` orchestre le cycle `v1-full` depuis un état connu :
    installation, placement, processus parallèles, transitions
    `recent`/`old`/`absent`, redémarrages, retrait, contrôle d'absence puis
    réinstallation finale.
@@ -258,49 +305,56 @@ réponse cacheable et partie query de l'URI intégrée à la ressource ciblée.
    propre tant qu'un PID, une unité, un listener ou un fichier qui devrait être
    absent subsiste.
 
-### P1 — automatiser les régressions révélées par la preuve
+### P1 réalisé — régressions historiques automatisées
 
-1. Injecter un manifeste invalide jusqu'à `start-limit-hit`, remettre un
-   manifeste valide et vérifier la récupération par `reset-failed`.
-2. Lancer des Daemon et Relay synthétiques hors unité, puis prouver que les
-   scripts de retrait échouent fermés et ne suppriment rien avant leur arrêt.
-3. Tester les couples nom d'hôte/identifiant, toutes les adresses d'écoute
-   interdites, les propriétaires et permissions de chaque fichier systemd.
-4. Décaler volontairement l'horloge d'un émetteur sans modifier l'horloge Relay
-   et affirmer que seule la réception décide de `recent` ou `old`.
-5. Compter automatiquement les transitions de journal pendant une réussite
-   prolongée, une panne prolongée et une récupération.
-6. Produire un résultat structuré par étape avec version Git, empreinte du lot,
-   topologie, cibles, horaires Relay et statut du nettoyage, en expurgeant toute
-   donnée sensible.
+1. Le manifeste invalide atteint la limite de démarrage ; le manifeste réparé
+   reste refusé avant `reset-failed`, puis le Relay récupère.
+2. Des Daemon et Relay synthétiques hors unité bloquent le retrait ; les
+   empreintes et métadonnées des fichiers gérés restent identiques avant arrêt.
+3. Les couples hôte/identifiant, les trois classes d'écoute interdites, les
+   propriétaires, permissions et protections systemd sont affirmés.
+4. L'horloge de l'émetteur est reculée de deux jours puis celle du Relay avancée
+   de deux jours ; la fraîcheur reste fondée sur la réception et la durée
+   monotone, puis les deux trajectoires d'horloge sont restaurées.
+5. Les deux Daemons produisent zéro transition en réussite prolongée, une seule
+   indisponibilité pendant la panne et une seule récupération.
+6. Les réponses d'état sont parsées selon leur schéma exact ; doublons, machine
+   supplémentaire ou listener porté par un autre PID sont refusés. La borne
+   réseau est éprouvée contre une destination muette strictement locale au LAB.
+7. `result.json` contient la révision Git, les empreintes, la topologie, les
+   cibles, la fenêtre Relay et le nettoyage puis, pour chaque étape, son
+   identifiant, sa catégorie, son titre et son statut. Cette liste fixe exclut
+   logs bruts et données sensibles.
 
-### P2 — automatiser la restitution sans lui donner une autorité indue
+### P2 réalisé — restitution automatisée sans autorité indue
 
-1. Générer les tableaux et la page visuelle depuis les résultats structurés du
-   pilote, sans recopier manuellement PID, empreintes ou états.
-2. Servir temporairement la page dans le LAB sous une identité non privilégiée,
-   effectuer les contrôles de présence du contenu puis arrêter le serveur même
-   si la capture échoue.
-3. Archiver la capture avec le rapport d'exécution, tout en gardant les
-   assertions machine comme critère de réussite principal.
+1. Le rapport Markdown et la page HTML sont générés depuis `result.json`, sans
+   recopier manuellement PID, empreintes ou états.
+2. La page est servie seulement dans `lab-console` sous `nobody` sur loopback ;
+   contenu, identité, listener et arrêt sont affirmés après échec injecté puis
+   après capture nominale.
+3. Chaque exécution archive sous `artifacts/proofs/v0.0.1/<horodatage>/` son
+   `result.json`. Une exécution P1 réussie archive en plus le résultat P2, le
+   rapport, la page et la capture. `result.json` reste l'autorité ;
+   `render-result.json` et l'image prouvent seulement la restitution.
 
 ## Condition de sortie de l'automatisation complète
 
-Le P0 satisfait déjà le socle source, HTTP et multi-VM ci-dessous.
-L'automatisation de toutes les régressions historiques et de la restitution ne
-pourra être dite complète qu'après P1 et P2, lorsqu'une seule exécution
-autorisée :
+Le run post-réorganisation historique `20260717T100150Z-1543398` a satisfait
+P0, P1 et P2 avant les derniers durcissements de CI et d'orchestration. Il ne
+prouve donc pas à lui seul les sources courantes. Chaque exécution autorisée
+doit :
 
-- part d'un inventaire LAB vérifié et d'un état initial déclaré ;
-- ne lance aucun code du projet sur le laptop ;
-- trace la révision testée et l'empreinte exacte de l'artefact déployé ;
-- exécute toutes les assertions statiques, unitaires, HTTP et multi-VM sans
+- partir d'un inventaire LAB vérifié et d'un état initial déclaré ;
+- ne lancer aucun code du projet sur le laptop ;
+- tracer la révision testée et l'empreinte exacte de l'artefact déployé ;
+- exécuter toutes les assertions statiques, unitaires, HTTP et multi-VM sans
   interprétation manuelle ;
-- distingue refus attendu, échec du produit, échec d'infrastructure et échec du
+- distinguer refus attendu, échec du produit, échec d'infrastructure et échec du
   nettoyage ;
-- borne toutes les attentes et toutes les communications réseau ;
-- restaure ou laisse un état final explicitement choisi et le vérifie ;
-- produit les données permettant un rapport LAB relisible, sans transformer ce
+- borner toutes les attentes et toutes les communications réseau ;
+- restaurer ou laisser un état final explicitement choisi et le vérifier ;
+- produire les données permettant un rapport LAB relisible, sans transformer ce
   rapport ou sa capture en substitut aux assertions.
 
 Le présent registre reste le cahier de reprise. Le statut prouvé de `v0.0.1`

@@ -6,7 +6,7 @@ root=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 mkdir "$workdir/bin"
-ln -s "$root/tools/tests/fixtures/virsh-list" "$workdir/bin/virsh"
+ln -s "$root/tests/checks/fixtures/virsh-list" "$workdir/bin/virsh"
 
 machine_output=$(PATH="$workdir/bin:$PATH" "$root/tools/labctl" list --format=tsv)
 expected=$'vm\tstate\tips\ttemplate\ttopology\torigin\nlab-managed\trunning\t192.0.2.10,198.51.100.20\tmachine\tv1-full\tyour-cloud/labctl\nlab-unmanaged\trunning\t192.0.2.10,198.51.100.20\t-\t-\t-\nlab-stopped\tshut off\t-\t-\t-\t-'

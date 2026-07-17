@@ -40,6 +40,30 @@ Une fonction concise est souhaitable, mais aucune limite arbitraire de lignes
 n'est imposée. Un découpage n'est utile que si les sous-fonctions possèdent un
 nom, un contrat et une responsabilité plus clairs que le flux initial.
 
+## Lisibilité des fonctions
+
+Par défaut, une fonction d'entrée ou d'orchestration doit pouvoir se lire de
+haut en bas comme une suite courte d'étapes métier nommées. Lorsqu'elles ont un
+contrat propre, séparer la validation, la construction des données, l'effet de
+bord, l'interprétation du résultat et la transition d'état dans des fonctions
+auxiliaires privées.
+
+- Nommer chaque fonction auxiliaire par l'intention qu'elle porte, pas par son
+  mécanisme interne.
+- Lui donner des entrées et une sortie aussi étroites que sa responsabilité,
+  sans lui transmettre un objet général uniquement par commodité.
+- Préférer les gardes précoces afin que le chemin nominal reste visible.
+- Garder l'ordre réel des opérations et les frontières de sécurité apparents
+  dans la fonction d'orchestration.
+- Ne pas extraire une fonction si elle ne fait que déplacer une expression sans
+  clarifier un contrat, une décision ou un effet de bord.
+- Lors d'un refactor de lisibilité, préserver les comportements observables,
+  notamment les erreurs, logs, formats, délais et effets réseau, puis rejouer
+  les tests normaux et hostiles qui couvrent ces contrats.
+
+Ce découpage reste proportionné : une fonction courte et déjà linéaire n'a pas
+à être fragmentée pour respecter un style uniforme.
+
 ## Justification de sécurité obligatoire
 
 Chaque choix technique ou de développement est accompagné, dans sa source

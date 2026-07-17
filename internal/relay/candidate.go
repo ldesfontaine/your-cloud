@@ -85,43 +85,19 @@ func validateRootOwnedMode(info os.FileInfo) error {
 
 func decodeCandidate(data []byte) (candidateManifest, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
-		return candidateManifest{}, errors.New("candidate manifest must be one JSON object")
+	if err := openCandidateObject(decoder); err != nil {
+		return candidateManifest{}, err
 	}
 
 	var manifest candidateManifest
 	seen := make(map[string]struct{}, 2)
 	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return candidateManifest{}, errors.New("candidate manifest contains an invalid field")
-		}
-		key, ok := token.(string)
-		if !ok {
-			return candidateManifest{}, errors.New("candidate manifest field name is invalid")
-		}
-		if _, duplicate := seen[key]; duplicate {
-			return candidateManifest{}, fmt.Errorf("candidate manifest repeats field %q", key)
-		}
-		seen[key] = struct{}{}
-		switch key {
-		case "schema":
-			err = decoder.Decode(&manifest.Schema)
-		case "role":
-			err = decoder.Decode(&manifest.Role)
-		default:
-			return candidateManifest{}, fmt.Errorf("candidate manifest contains unknown field %q", key)
-		}
-		if err != nil {
-			return candidateManifest{}, fmt.Errorf("candidate manifest field %q is invalid", key)
+		if err := decodeCandidateField(decoder, &manifest, seen); err != nil {
+			return candidateManifest{}, err
 		}
 	}
-	if end, err := decoder.Token(); err != nil || end != json.Delim('}') {
-		return candidateManifest{}, errors.New("candidate manifest is incomplete")
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return candidateManifest{}, errors.New("candidate manifest must contain only one JSON object")
+	if err := closeCandidateObject(decoder); err != nil {
+		return candidateManifest{}, err
 	}
 	if len(seen) != 2 {
 		return candidateManifest{}, errors.New("candidate manifest is missing a required field")
@@ -130,4 +106,50 @@ func decodeCandidate(data []byte) (candidateManifest, error) {
 		return candidateManifest{}, errors.New("candidate manifest has an unsupported schema or role")
 	}
 	return manifest, nil
+}
+
+func openCandidateObject(decoder *json.Decoder) error {
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return errors.New("candidate manifest must be one JSON object")
+	}
+	return nil
+}
+
+func decodeCandidateField(decoder *json.Decoder, manifest *candidateManifest, seen map[string]struct{}) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return errors.New("candidate manifest contains an invalid field")
+	}
+	key, ok := token.(string)
+	if !ok {
+		return errors.New("candidate manifest field name is invalid")
+	}
+	if _, duplicate := seen[key]; duplicate {
+		return fmt.Errorf("candidate manifest repeats field %q", key)
+	}
+	seen[key] = struct{}{}
+
+	switch key {
+	case "schema":
+		err = decoder.Decode(&manifest.Schema)
+	case "role":
+		err = decoder.Decode(&manifest.Role)
+	default:
+		return fmt.Errorf("candidate manifest contains unknown field %q", key)
+	}
+	if err != nil {
+		return fmt.Errorf("candidate manifest field %q is invalid", key)
+	}
+	return nil
+}
+
+func closeCandidateObject(decoder *json.Decoder) error {
+	if end, err := decoder.Token(); err != nil || end != json.Delim('}') {
+		return errors.New("candidate manifest is incomplete")
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("candidate manifest must contain only one JSON object")
+	}
+	return nil
 }

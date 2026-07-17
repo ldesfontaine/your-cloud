@@ -1,0 +1,3 @@
+# Routage de revue uniquement : le dépôt n'a pas de second mainteneur de
+# confiance, donc aucune protection de branche ne doit exiger cette revue.
+* @ldesfontaine

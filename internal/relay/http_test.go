@@ -163,6 +163,8 @@ func TestQueryMachinesRequiresTheExactV001Query(t *testing.T) {
 		{name: "unsupported content type", body: `{}`, contentType: "text/plain", wantStatus: http.StatusUnsupportedMediaType},
 		{name: "future filter", body: `{"machine_id":"lab-machine-1"}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "null", body: `null`, contentType: "application/json", wantStatus: http.StatusBadRequest},
+		{name: "array", body: `[]`, contentType: "application/json", wantStatus: http.StatusBadRequest},
+		{name: "truncated object", body: `{`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "second object", body: `{}{}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "oversized", body: strings.Repeat(" ", int(maxQueryBodyBytes)+1), contentType: "application/json", wantStatus: http.StatusRequestEntityTooLarge},
 	}

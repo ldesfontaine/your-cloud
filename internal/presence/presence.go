@@ -42,59 +42,81 @@ type Signal struct {
 // matches, which would make the network boundary wider than the contract.
 func DecodeSignal(reader io.Reader) (Signal, error) {
 	decoder := json.NewDecoder(reader)
-	start, err := decoder.Token()
-	if err != nil {
-		return Signal{}, fmt.Errorf("read presence object: %w", err)
-	}
-	if start != json.Delim('{') {
-		return Signal{}, errors.New("presence must be one JSON object")
+	if err := openSignalObject(decoder); err != nil {
+		return Signal{}, err
 	}
 
 	var signal Signal
 	seen := make(map[string]struct{}, 3)
 	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return Signal{}, fmt.Errorf("read presence field: %w", err)
-		}
-		key, ok := token.(string)
-		if !ok {
-			return Signal{}, errors.New("presence field name is invalid")
-		}
-		if _, duplicate := seen[key]; duplicate {
-			return Signal{}, fmt.Errorf("presence repeats field %q", key)
-		}
-		seen[key] = struct{}{}
-		switch key {
-		case "machine_id":
-			err = decoder.Decode(&signal.MachineID)
-		case "daemon_version":
-			err = decoder.Decode(&signal.DaemonVersion)
-		case "sent_at":
-			err = decoder.Decode(&signal.SentAt)
-		default:
-			return Signal{}, fmt.Errorf("presence contains unknown field %q", key)
-		}
-		if err != nil {
-			return Signal{}, fmt.Errorf("presence field %q is invalid: %w", key, err)
+		if err := decodeSignalField(decoder, &signal, seen); err != nil {
+			return Signal{}, err
 		}
 	}
-	if end, err := decoder.Token(); err != nil || end != json.Delim('}') {
-		if err != nil {
-			return Signal{}, fmt.Errorf("close presence object: %w", err)
-		}
-		return Signal{}, errors.New("presence object is incomplete")
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		if err != nil {
-			return Signal{}, fmt.Errorf("read after presence object: %w", err)
-		}
-		return Signal{}, errors.New("presence must contain only one JSON object")
+	if err := closeSignalObject(decoder); err != nil {
+		return Signal{}, err
 	}
 	if len(seen) != 3 {
 		return Signal{}, errors.New("presence is missing a required field")
 	}
 	return signal, nil
+}
+
+func openSignalObject(decoder *json.Decoder) error {
+	start, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("read presence object: %w", err)
+	}
+	if start != json.Delim('{') {
+		return errors.New("presence must be one JSON object")
+	}
+	return nil
+}
+
+func decodeSignalField(decoder *json.Decoder, signal *Signal, seen map[string]struct{}) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("read presence field: %w", err)
+	}
+	key, ok := token.(string)
+	if !ok {
+		return errors.New("presence field name is invalid")
+	}
+	if _, duplicate := seen[key]; duplicate {
+		return fmt.Errorf("presence repeats field %q", key)
+	}
+	seen[key] = struct{}{}
+
+	switch key {
+	case "machine_id":
+		err = decoder.Decode(&signal.MachineID)
+	case "daemon_version":
+		err = decoder.Decode(&signal.DaemonVersion)
+	case "sent_at":
+		err = decoder.Decode(&signal.SentAt)
+	default:
+		return fmt.Errorf("presence contains unknown field %q", key)
+	}
+	if err != nil {
+		return fmt.Errorf("presence field %q is invalid: %w", key, err)
+	}
+	return nil
+}
+
+func closeSignalObject(decoder *json.Decoder) error {
+	if end, err := decoder.Token(); err != nil || end != json.Delim('}') {
+		if err != nil {
+			return fmt.Errorf("close presence object: %w", err)
+		}
+		return errors.New("presence object is incomplete")
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return fmt.Errorf("read after presence object: %w", err)
+		}
+		return errors.New("presence must contain only one JSON object")
+	}
+	return nil
 }
 
 // ValidateMachineID rejects empty and syntactically unsafe identifiers before

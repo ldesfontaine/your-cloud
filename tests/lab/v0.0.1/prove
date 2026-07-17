@@ -1,0 +1,828 @@
+#!/usr/bin/env bash
+# Orchestrate the complete v0.0.1 proof; product execution stays inside the LAB.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: prove-v0.0.1" >&2; exit 2; }
+root=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
+labctl="$root/tools/labctl"
+workdir=$(mktemp -d)
+archive="$workdir/your-cloud-v0.0.1-src.tgz"
+source_files="$workdir/source-files.list"
+lock_marker="$workdir/lab-lock-owner"
+local_source_snapshot="$workdir/source-snapshot"
+snapshot_render="$local_source_snapshot/tests/lab/v0.0.1/report/render"
+remote_source=/tmp/your-cloud-v0.0.1-src
+remote_archive=/tmp/your-cloud-v0.0.1-src.tgz
+remote_lock=/run/your-cloud-v0.0.1-proof.lock
+remote_layout=/tmp/your-cloud-v0.0.1
+remote_target_archive="$remote_layout/source.tgz"
+remote_target_source="$remote_layout/source"
+remote_deploy="$remote_target_source/deploy/v0.0.1"
+remote_tests="$remote_target_source/tests/lab/v0.0.1/remote"
+remote_target_transfer="$remote_target_source/tests/lab/v0.0.1/transfer-artifact"
+remote_clock_state=/run/your-cloud-v0.0.1-proof-clock-state
+remote_artifact=/tmp/your-cloud-v0.0.1-artifact
+remote_console_artifact="$remote_source/dist/your-cloud"
+remote_console_source_check="$remote_source/tests/checks/source-v0.0.1"
+remote_console_transfer="$remote_source/tests/lab/v0.0.1/transfer-artifact"
+remote_transfer_helper=/tmp/your-cloud-v0.0.1-artifact-transfer
+transfer_source_ipv6=fd66:241::193
+host_key_refusal_status=42
+relay_url=http://192.168.242.103:8443
+relay_listen=192.168.242.103:8443
+targets=(lab-coordinateur lab-machine-1 lab-machine-2)
+declare -A transfer_target_ipv6=(
+  [lab-coordinateur]=fd66:242::103
+  [lab-machine-1]=fd66:243::153
+  [lab-machine-2]=fd66:243::158
+)
+declare -A transfer_host_key_type=()
+declare -A transfer_host_key_blob=()
+declare -A transfer_helper_copied=(
+  [lab-coordinateur]=0
+  [lab-machine-1]=0
+  [lab-machine-2]=0
+)
+mutated=0
+lab_guard_passed=0
+lock_acquired=0
+lock_marker_verified=0
+emitter_clock_dirty=0
+relay_clock_dirty=0
+console_transfer_prepared=0
+source_id=
+source_sha=
+artifact_sha=
+artifact_size=
+transfer_client_key_type=
+transfer_client_key_blob=
+relay_started_at=
+relay_finished_at=
+current_step_id=
+current_step_category=
+current_step_title=
+proof_outcome=failed
+failure_class=not_started
+cleanup_status=not_run
+failure_state=not-mutated
+success_state=not-reached
+declare -a step_results=()
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+console_transfer_state="/tmp/your-cloud-v0.0.1-transfer-$run_id"
+target_transfer_state="/run/your-cloud-v0.0.1-transfer-$run_id"
+result_dir="$root/artifacts/proofs/v0.0.1/$run_id"
+result_file="$result_dir/result.json"
+transport_failure_marker="$workdir/transport-failure"
+[[ "$run_id" =~ ^[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*$ ]] \
+  || { echo "invalid v0.0.1 proof run identifier" >&2; /bin/rm -rf "$workdir"; exit 1; }
+mkdir -p "$root/artifacts/proofs/v0.0.1"
+[[ ! -e "$result_dir" && ! -L "$result_dir" ]] \
+  || { echo "v0.0.1 proof result path already exists" >&2; /bin/rm -rf "$workdir"; exit 1; }
+mkdir -m 0755 "$result_dir" \
+  || { echo "cannot create the v0.0.1 proof result path" >&2; /bin/rm -rf "$workdir"; exit 1; }
+
+json_escape() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  printf '%s' "$value"
+}
+
+record_current_step() {
+  local status=$1
+  [[ -n "$current_step_id" ]] || return 0
+  step_results+=("{\"id\":\"$(json_escape "$current_step_id")\",\"category\":\"$(json_escape "$current_step_category")\",\"title\":\"$(json_escape "$current_step_title")\",\"status\":\"$status\"}")
+  current_step_id=
+  current_step_category=
+  current_step_title=
+}
+
+step() {
+  [[ $# -eq 3 ]] || fail "internal step declaration is invalid"
+  record_current_step passed
+  current_step_id=$1
+  current_step_category=$2
+  current_step_title=$3
+  printf '\n==> %s\n' "$current_step_title"
+}
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+bounded_labctl() {
+  [[ $# -ge 2 ]] || fail "internal bounded labctl invocation is invalid"
+  local timeout_seconds=$1 operation=$2 status=0
+  shift 2
+  timeout --signal=TERM --kill-after=5s "$timeout_seconds" \
+    "$labctl" "$operation" "$@" || status=$?
+  case "$status" in
+    124|125|126|127|137|255) : >"$transport_failure_marker" ;;
+  esac
+  return "$status"
+}
+
+lab_list() { bounded_labctl 30s list "$@"; }
+lab_copy_to() { bounded_labctl 120s copy-to "$@"; }
+lab_ssh() { bounded_labctl 300s ssh "$@"; }
+
+remote() { lab_ssh "$@"; }
+
+assert_remote_root_guard() {
+  [[ $# -eq 3 ]] || fail "internal remote ownership assertion is invalid"
+  local target=$1 path=$2 kind=$3 metadata owner group mode extra
+  if remote "$target" test -L "$path"; then
+    fail "$target guarded path is a symbolic link: $path"
+  fi
+  case "$kind" in
+    directory) remote "$target" test -d "$path" || fail "$target guarded directory is absent: $path" ;;
+    file) remote "$target" test -f "$path" || fail "$target guarded file is absent: $path" ;;
+    *) fail "internal remote path kind is invalid" ;;
+  esac
+  metadata=$(remote "$target" stat -c %U:%G:%a "$path") \
+    || fail "cannot inspect guarded ownership on $target: $path"
+  IFS=: read -r owner group mode extra <<<"$metadata"
+  [[ -z "$extra" && "$owner" == root && "$group" == root \
+    && "$mode" =~ ^[0-7][0145][0145]$ ]] \
+    || fail "$target guarded path is not root:root without group/other write bits: $path ($metadata)"
+}
+
+expect_remote_refusal() {
+  local expected_status=$1 expected_message=$2 status=0 output
+  shift 2
+  output=$(remote "$@" 2>&1) || status=$?
+  [[ -z "$output" ]] || printf '%s\n' "$output"
+  [[ $status -eq $expected_status ]] \
+    || fail "expected remote refusal status $expected_status, received $status"
+  [[ "$output" == *"$expected_message"* ]] \
+    || fail "expected remote refusal reason was absent"
+}
+
+json_value() {
+  if [[ -n "$1" ]]; then
+    printf '"%s"' "$(json_escape "$1")"
+  else
+    printf 'null'
+  fi
+}
+
+write_result() {
+  local index temporary="$result_dir/.result-$run_id.tmp"
+  [[ ! -L "$temporary" ]] || return 1
+  {
+    printf '{\n'
+    printf '  "schema": 1,\n'
+    printf '  "proof": "your-cloud-v0.0.1",\n'
+    printf '  "automation_scope": "P1",\n'
+    printf '  "outcome": "%s",\n' "$proof_outcome"
+    printf '  "failure_class": '; json_value "$failure_class"; printf ',\n'
+    printf '  "source_revision": '; json_value "$source_id"; printf ',\n'
+    printf '  "source_lot_sha256": '; json_value "$source_sha"; printf ',\n'
+    printf '  "artifact_sha256": '; json_value "$artifact_sha"; printf ',\n'
+    printf '  "topology": "v1-full",\n'
+    printf '  "targets": ["lab-console", "lab-coordinateur", "lab-machine-1", "lab-machine-2"],\n'
+    printf '  "relay_window": {"started_at": '; json_value "$relay_started_at"
+    printf ', "finished_at": '; json_value "$relay_finished_at"; printf '},\n'
+    printf '  "cleanup": {"status": "%s", "failure_state": "%s", "success_state": "%s", "clock_restored": %s},\n' \
+      "$cleanup_status" "$failure_state" "$success_state" \
+      "$([[ $emitter_clock_dirty -eq 0 && $relay_clock_dirty -eq 0 ]] && echo true || echo false)"
+    printf '  "redaction": {"policy": "fixed-field-allowlist", "sensitive_data_included": false},\n'
+    printf '  "steps": [\n'
+    for index in "${!step_results[@]}"; do
+      printf '    %s' "${step_results[$index]}"
+      [[ $index -eq $((${#step_results[@]} - 1)) ]] || printf ','
+      printf '\n'
+    done
+    printf '  ]\n}\n'
+  } >"$temporary" || {
+    /bin/rm -f "$temporary"
+    return 1
+  }
+  chmod 0644 "$temporary" || {
+    /bin/rm -f "$temporary"
+    return 1
+  }
+  mv -f -- "$temporary" "$result_file" || {
+    /bin/rm -f "$temporary"
+    return 1
+  }
+}
+
+finish() {
+  local status=$? cleanup_failed=0 render_failed=0 target failed_category=$current_step_category
+  local transfer_cleanup_ok console_transfer_cleanup_ok=1 absent_cleanup_failed=0 reference_epoch
+  local lock_owner lock_owner_ok=1 lock_removal_ok=1
+  trap - EXIT
+  set +e
+  if [[ $lock_acquired -eq 1 && $lock_marker_verified -eq 1 ]]; then
+    lock_owner=$(lab_ssh lab-console /bin/cat "$remote_lock/owner") \
+      || lock_owner_ok=0
+    if [[ $lock_owner_ok -eq 1 && "$lock_owner" != "$run_id" ]]; then
+      lock_owner_ok=0
+    fi
+    if [[ $lock_owner_ok -eq 0 ]]; then
+      cleanup_failed=1
+      echo "Exclusive LAB lock ownership is no longer attributable to this run" >&2
+    fi
+  fi
+  if [[ $status -eq 0 ]]; then
+    record_current_step passed
+    proof_outcome=passed
+    failure_class=
+    failure_state=not-required
+    success_state=documented-final
+  else
+    record_current_step failed
+    if [[ $status -eq 255 || -e "$transport_failure_marker" ]]; then
+      failure_class=infrastructure_failure
+    else
+      case "$failed_category" in
+        infrastructure) failure_class=infrastructure_failure ;;
+        cleanup) failure_class=cleanup_failure ;;
+        *) failure_class=product_or_assertion_failure ;;
+      esac
+    fi
+  fi
+  if [[ $lock_owner_ok -eq 0 ]]; then
+    if [[ $mutated -eq 1 ]]; then
+      failure_state=unknown
+    else
+      failure_state=not-mutated
+    fi
+    success_state=not-reached
+  fi
+  if [[ $emitter_clock_dirty -eq 1 ]]; then
+    if remote lab-machine-1 "$remote_tests/control-lab-clock" restore-if-active \
+      && reference_epoch=$(remote lab-console date -u +%s) \
+      && [[ "$reference_epoch" =~ ^[0-9]{10}$ ]] \
+      && remote lab-machine-1 "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"; then
+      emitter_clock_dirty=0
+    else
+      cleanup_failed=1
+    fi
+  fi
+  if [[ $relay_clock_dirty -eq 1 ]]; then
+    if remote lab-coordinateur "$remote_tests/control-lab-clock" restore-if-active \
+      && reference_epoch=$(remote lab-console date -u +%s) \
+      && [[ "$reference_epoch" =~ ^[0-9]{10}$ ]] \
+      && remote lab-coordinateur "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"; then
+      relay_clock_dirty=0
+    else
+      cleanup_failed=1
+    fi
+  fi
+  if [[ $status -ne 0 && $mutated -eq 1 && $lock_owner_ok -eq 1 ]]; then
+    echo "Proof failed after mutation; selecting and verifying the absent state" >&2
+    for target in "${targets[@]}"; do
+      if lab_ssh "$target" test -x "$remote_deploy/remove-agent"; then
+        lab_ssh "$target" "$remote_deploy/remove-agent" || absent_cleanup_failed=1
+        lab_ssh "$target" "$remote_tests/assert-agent-runtime" absent || absent_cleanup_failed=1
+      else
+        absent_cleanup_failed=1
+      fi
+    done
+    if [[ $absent_cleanup_failed -eq 0 ]]; then
+      failure_state=absent
+    else
+      failure_state=unknown
+      cleanup_failed=1
+    fi
+  fi
+  if [[ $lock_acquired -eq 1 && $lock_owner_ok -eq 1 ]]; then
+    for target in "${targets[@]}"; do
+      transfer_cleanup_ok=1
+      if [[ ${transfer_helper_copied[$target]} -eq 1 ]]; then
+        if lab_ssh "$target" test -f "$remote_transfer_helper"; then
+          lab_ssh "$target" /bin/bash "$remote_transfer_helper" target-cleanup "$target_transfer_state" || {
+            cleanup_failed=1
+            transfer_cleanup_ok=0
+          }
+        else
+          cleanup_failed=1
+          transfer_cleanup_ok=0
+        fi
+      elif ! lab_ssh "$target" test ! -e "$target_transfer_state"; then
+        cleanup_failed=1
+        transfer_cleanup_ok=0
+      fi
+      if [[ $transfer_cleanup_ok -eq 1 ]]; then
+        lab_ssh "$target" /bin/rm -f "$remote_transfer_helper" || cleanup_failed=1
+      fi
+      lab_ssh "$target" /bin/rm -f /run/your-cloud-v0.0.1-proof-journal.cursor \
+        || cleanup_failed=1
+      lab_ssh "$target" /bin/rm -rf "$remote_layout" "$remote_artifact" \
+        || cleanup_failed=1
+    done
+    if [[ $console_transfer_prepared -eq 1 ]]; then
+      if lab_ssh lab-console test -f "$remote_console_transfer"; then
+        lab_ssh lab-console /bin/bash "$remote_console_transfer" console-cleanup "$console_transfer_state" || {
+          cleanup_failed=1
+          console_transfer_cleanup_ok=0
+        }
+      else
+        cleanup_failed=1
+        console_transfer_cleanup_ok=0
+      fi
+    elif ! lab_ssh lab-console test ! -e "$console_transfer_state"; then
+      cleanup_failed=1
+      console_transfer_cleanup_ok=0
+    fi
+    if [[ $console_transfer_cleanup_ok -eq 1 ]]; then
+      lab_ssh lab-console /bin/rm -rf "$remote_source" "$remote_archive" || cleanup_failed=1
+    fi
+  fi
+  if [[ $lab_guard_passed -eq 1 ]]; then
+    if relay_finished_at=$(lab_ssh lab-coordinateur date -u +%Y-%m-%dT%H:%M:%SZ) \
+      && [[ "$relay_finished_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+      :
+    else
+      relay_finished_at=
+      cleanup_failed=1
+      echo "Final Relay timestamp evidence is absent or invalid" >&2
+    fi
+  fi
+  if [[ $lock_acquired -eq 1 ]]; then
+    if [[ $lock_marker_verified -eq 1 ]]; then
+      lock_owner=$(lab_ssh lab-console /bin/cat "$remote_lock/owner") \
+        || lock_owner_ok=0
+      if [[ $lock_owner_ok -eq 1 && "$lock_owner" != "$run_id" ]]; then
+        lock_owner_ok=0
+        echo "Exclusive LAB lock ownership changed; refusing to remove it" >&2
+      fi
+    fi
+    if [[ $lock_owner_ok -eq 1 ]]; then
+      lab_ssh lab-console /bin/rm -rf "$remote_lock" || lock_removal_ok=0
+      lab_ssh lab-console test ! -e "$remote_lock" || lock_removal_ok=0
+      if [[ $lock_removal_ok -eq 1 ]]; then
+        lock_acquired=0
+      else
+        cleanup_failed=1
+      fi
+    else
+      cleanup_failed=1
+    fi
+  fi
+  if [[ $cleanup_failed -ne 0 ]]; then
+    /bin/rm -rf "$workdir" || cleanup_failed=1
+    cleanup_status=failed
+    proof_outcome=failed
+    failure_class=cleanup_failure
+    if ! write_result; then
+      echo "FAILED: structured P1 result could not be published atomically" >&2
+    fi
+    echo "LAB temporary cleanup or final-state verification failed" >&2
+    exit 1
+  fi
+  cleanup_status=passed
+  if ! write_result; then
+    /bin/rm -rf "$workdir"
+    echo "FAILED: structured P1 result could not be published atomically" >&2
+    exit 1
+  fi
+  if [[ $status -eq 0 ]]; then
+    /bin/bash "$snapshot_render" "$result_file" "$result_dir" || render_failed=1
+  fi
+  if ! /bin/rm -rf "$workdir"; then
+    cleanup_status=failed
+    proof_outcome=failed
+    failure_class=cleanup_failure
+    /bin/rm -f \
+      "$result_dir/report.md" "$result_dir/report.html" \
+      "$result_dir/capture.png" "$result_dir/render-result.json" \
+      "$result_dir/failure-cleanup-result.json" \
+      "$result_dir/render-failure-result.json"
+    if ! write_result; then
+      echo "FAILED: cleanup-failure result could not be published atomically" >&2
+    fi
+    echo "Local source snapshot cleanup failed; P2 outputs were invalidated" >&2
+    exit 1
+  fi
+  printf 'structured_result=%s\n' "$result_file"
+  if [[ $render_failed -ne 0 ]]; then
+    echo "P2 restitution failed; P1 result remains authoritative and archived" >&2
+    exit 1
+  fi
+  exit "$status"
+}
+trap finish EXIT
+
+step inventory infrastructure "Read-only LAB inventory guard"
+inventory=$(lab_list --format=tsv) || fail "labctl list guard failed"
+printf '%s\n' "$inventory"
+
+require_vm() {
+  local name=$1 expected_template=$2 row state ips template topology origin
+  row=$(awk -F '\t' -v name="$name" 'NR > 1 && $1 == name {print}' <<<"$inventory")
+  [[ -n "$row" && $(wc -l <<<"$row") -eq 1 ]] || fail "inventory row missing or duplicated for $name"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$row"
+  [[ "$state" == running ]] || fail "$name is not running"
+  [[ "$ips" != - && -n "$ips" ]] || fail "$name has no LAB address"
+  [[ "$template" == "$expected_template" && "$topology" == v1-full \
+    && "$origin" == your-cloud/labctl ]] \
+    || fail "$name is outside the approved v1-full inventory"
+  [[ ",$ips," != *",192.168.122.123,"* && ",$ips," != *",10.66.66.1,"* ]] \
+    || fail "$name resolves to a forbidden address"
+}
+
+require_vm lab-gateway passerelle
+require_vm lab-console console
+require_vm lab-coordinateur coordinateur
+require_vm lab-machine-1 machine
+require_vm lab-machine-2 machine
+coordinateur_row=$(awk -F '\t' '$1 == "lab-coordinateur" {print $3}' <<<"$inventory")
+[[ "$coordinateur_row" == 192.168.242.103 ]] \
+  || fail "v0.0.1 Relay address drifted: $coordinateur_row"
+relay_started_at=$(remote lab-coordinateur date -u +%Y-%m-%dT%H:%M:%SZ) \
+  || fail "cannot read the Relay clock"
+[[ "$relay_started_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+  || fail "Relay returned an invalid start timestamp"
+lab_guard_passed=1
+
+revision=$(git -C "$root" rev-parse HEAD)
+source_id=$revision
+if ! git -C "$root" diff --quiet \
+  || ! git -C "$root" diff --cached --quiet \
+  || [[ -n $(git -C "$root" ls-files --others --exclude-standard) ]]; then
+  source_id="$revision+worktree"
+fi
+printf 'source_revision=%s\n' "$source_id"
+
+step package infrastructure "Lock the LAB workspace and package the complete non-sensitive source lot"
+printf '%s\n' "$run_id" >"$lock_marker"
+chmod 0600 "$lock_marker"
+if ! lab_ssh lab-console mkdir -m 0700 "$remote_lock"; then
+  fail "exclusive v0.0.1 LAB proof lock already exists; inspect it instead of stealing it"
+fi
+lock_acquired=1
+lab_copy_to lab-console "$lock_marker" "$remote_lock/owner"
+lab_ssh lab-console chmod 0600 "$remote_lock/owner"
+assert_remote_root_guard lab-console "$remote_lock" directory
+assert_remote_root_guard lab-console "$remote_lock/owner" file
+lock_owner=$(remote lab-console /bin/cat "$remote_lock/owner") \
+  || fail "cannot read the exclusive LAB proof lock owner"
+[[ "$lock_owner" == "$run_id" ]] \
+  || fail "exclusive LAB proof lock owner differs from this run"
+lock_marker_verified=1
+
+: >"$source_files"
+while IFS= read -r -d '' path; do
+  [[ "$path" != /* && "$path" != .. && "$path" != ../* \
+    && "$path" != */../* ]] \
+    || fail "v0.0.1 Git file list contains an unsafe path"
+  [[ "${path##*/}" != keys.txt ]] || continue
+  case "$path" in
+    AGENTS.md|AGENTS.proposal.md|CLAUDE.md)
+      continue
+      ;;
+    .git|.git/*|.agents|.agents/*|.codex|.codex/*|.claude|.claude/*|.cursor|.cursor/*)
+      continue
+      ;;
+    dist|dist/*|build|build/*|artifacts/proofs|artifacts/proofs/*)
+      continue
+      ;;
+  esac
+  if [[ -e "$root/$path" || -L "$root/$path" ]]; then
+    [[ ! -L "$root/$path" ]] \
+      || fail "v0.0.1 source lot refuses symbolic links"
+    printf '%s\0' "$path" >>"$source_files"
+  fi
+done < <(git -C "$root" ls-files --cached --others --exclude-standard -z)
+[[ -s "$source_files" ]] || fail "v0.0.1 Git file list is empty"
+tar -C "$root" --create --gzip --file "$archive" \
+  --null --no-recursion --files-from "$source_files"
+source_sha=$(sha256sum "$archive"); source_sha=${source_sha%% *}
+source_size=$(stat -c %s "$archive") \
+  || fail "cannot read the v0.0.1 source archive size"
+[[ "$source_size" =~ ^[1-9][0-9]*$ && $source_size -le $((128 * 1024 * 1024)) ]] \
+  || fail "v0.0.1 source archive exceeds its fixed 128 MiB bound"
+printf 'source_lot_sha256=%s\n' "$source_sha"
+mkdir -m 0700 "$local_source_snapshot"
+tar --extract --gzip --file "$archive" --directory "$local_source_snapshot" \
+  --no-same-owner --no-same-permissions
+for snapshot_file in \
+  "$snapshot_render" \
+  "$local_source_snapshot/tests/lab/v0.0.1/report/renderer.py" \
+  "$local_source_snapshot/tests/lab/v0.0.1/report/worker" \
+  "$local_source_snapshot/tools/labctl"; do
+  [[ -f "$snapshot_file" && ! -L "$snapshot_file" ]] \
+    || fail "source snapshot lacks a regular P2 controller file"
+done
+
+lab_ssh lab-console /bin/rm -rf "$remote_source" "$remote_archive"
+lab_copy_to lab-console "$archive" "$remote_archive"
+assert_remote_root_guard lab-console "$remote_archive" file
+remote_source_size=$(remote lab-console stat -c %s "$remote_archive") \
+  || fail "cannot read the source archive size after transfer"
+[[ "$remote_source_size" == "$source_size" ]] \
+  || fail "source archive size changed while entering the LAB"
+remote_source_sha=$(remote lab-console sha256sum "$remote_archive") \
+  || fail "cannot hash the source archive after transfer"
+remote_source_sha=${remote_source_sha%% *}
+[[ "$remote_source_sha" == "$source_sha" ]] \
+  || fail "source archive changed while entering the LAB"
+lab_ssh lab-console install -d -o root -g root -m 0755 "$remote_source"
+lab_ssh lab-console tar --extract --gzip --file "$remote_archive" \
+  --directory "$remote_source" --no-same-owner --no-same-permissions
+assert_remote_root_guard lab-console "$remote_source" directory
+assert_remote_root_guard lab-console "$remote_source/tools" directory
+assert_remote_root_guard lab-console "$remote_source/tests" directory
+assert_remote_root_guard lab-console "$remote_console_source_check" file
+assert_remote_root_guard lab-console "$remote_console_transfer" file
+
+step source-gate assertion "Single source-side gate and build in lab-console"
+lab_ssh lab-console "$remote_console_source_check" lab
+assert_remote_root_guard lab-console "$remote_source" directory
+assert_remote_root_guard lab-console "$remote_source/tools" directory
+assert_remote_root_guard lab-console "$remote_source/tests" directory
+assert_remote_root_guard lab-console "$remote_console_transfer" file
+assert_remote_root_guard lab-console "$remote_source/dist" directory
+assert_remote_root_guard lab-console "$remote_console_artifact" file
+console_transfer_prepared=1
+transfer_metadata=$(remote lab-console /bin/bash "$remote_console_transfer" console-prepare "$console_transfer_state" "$remote_console_artifact" "$transfer_source_ipv6")
+IFS=$'\t' read -r artifact_sha artifact_size transfer_client_key_type transfer_client_key_blob transfer_extra <<<"$transfer_metadata"
+[[ -z "$transfer_extra" && "$artifact_sha" =~ ^[0-9a-f]{64}$ && "$artifact_size" =~ ^[0-9]+$ && "$artifact_size" -gt 0 && "$artifact_size" -le $((64 * 1024 * 1024)) && "$transfer_client_key_type" == ssh-ed25519 && "$transfer_client_key_blob" =~ ^[A-Za-z0-9+/]+={0,3}$ && ${#transfer_client_key_blob} -le 256 ]] || fail "lab-console returned invalid or unbounded artifact transfer metadata"
+printf 'artifact_sha256=%s\n' "$artifact_sha"
+printf 'artifact_size=%s\n' "$artifact_size"
+
+step prepare-targets infrastructure "Transfer the LAB artifact with the managed labctl host-key observation pinned on direct SSH"
+echo "LIMIT: host-key bootstrap depends on the managed labctl channel; direct SSH pins that observation but adds no independent identity anchor."
+for target in "${targets[@]}"; do
+  lab_ssh "$target" /bin/rm -rf "$remote_layout" "$remote_artifact"
+  lab_ssh "$target" /bin/rm -f "$remote_transfer_helper"
+  lab_ssh "$target" install -d -o root -g root -m 0755 "$remote_layout"
+  lab_copy_to "$target" "$archive" "$remote_target_archive"
+  assert_remote_root_guard "$target" "$remote_target_archive" file
+  target_source_size=$(remote "$target" stat -c %s "$remote_target_archive") \
+    || fail "cannot read the source archive size on $target"
+  [[ "$target_source_size" == "$source_size" ]] \
+    || fail "source archive size changed while entering $target"
+  target_source_sha=$(remote "$target" sha256sum "$remote_target_archive") \
+    || fail "cannot hash the source archive on $target"
+  target_source_sha=${target_source_sha%% *}
+  [[ "$target_source_sha" == "$source_sha" ]] \
+    || fail "source archive changed while entering $target"
+  lab_ssh "$target" install -d -o root -g root -m 0755 "$remote_target_source"
+  lab_ssh "$target" tar --extract --gzip --file "$remote_target_archive" \
+    --directory "$remote_target_source" --no-same-owner --no-same-permissions
+  lab_ssh "$target" /bin/cp "$remote_target_transfer" "$remote_transfer_helper"
+  lab_ssh "$target" /bin/rm -f "$remote_target_archive"
+  lab_ssh "$target" test ! -e "$remote_target_archive" \
+    || fail "source archive remains on $target after extraction"
+  lab_ssh "$target" chmod 0755 \
+    "$remote_layout" "$remote_target_source" \
+    "$remote_target_source/deploy" "$remote_deploy" \
+    "$remote_target_source/tests" "$remote_target_source/tests/lab" \
+    "$remote_target_source/tests/lab/v0.0.1" "$remote_tests"
+  lab_ssh "$target" chmod 0644 "$remote_transfer_helper"
+  assert_remote_root_guard "$target" "$remote_layout" directory
+  assert_remote_root_guard "$target" "$remote_target_source" directory
+  assert_remote_root_guard "$target" "$remote_target_source/deploy" directory
+  assert_remote_root_guard "$target" "$remote_deploy" directory
+  assert_remote_root_guard "$target" "$remote_target_source/tests" directory
+  assert_remote_root_guard "$target" "$remote_target_source/tests/lab" directory
+  assert_remote_root_guard "$target" "$remote_target_source/tests/lab/v0.0.1" directory
+  assert_remote_root_guard "$target" "$remote_tests" directory
+  assert_remote_root_guard "$target" "$remote_target_transfer" file
+  assert_remote_root_guard "$target" "$remote_transfer_helper" file
+  transfer_helper_copied[$target]=1
+  target_address=${transfer_target_ipv6[$target]}
+  host_key_metadata=$(remote "$target" /bin/bash "$remote_transfer_helper" target-host-key "$target" "$target_address")
+  IFS=$'\t' read -r host_key_type host_key_blob transfer_extra <<<"$host_key_metadata"
+  [[ -z "$transfer_extra" && "$host_key_type" == ssh-ed25519 && "$host_key_blob" =~ ^[A-Za-z0-9+/]+={0,3}$ && ${#host_key_blob} -le 256 ]] || fail "$target returned an invalid or unbounded SSH host public key"
+  transfer_host_key_type[$target]=$host_key_type
+  transfer_host_key_blob[$target]=$host_key_blob
+  lab_ssh "$target" /bin/bash "$remote_transfer_helper" target-prepare "$target_transfer_state" "$target" "$target_address" "$transfer_source_ipv6" "$artifact_sha" "$artifact_size" "$transfer_client_key_type" "$transfer_client_key_blob"
+  lab_ssh "$target" chmod 0755 \
+    "$remote_deploy/install-agent" "$remote_deploy/enable-relay" \
+    "$remote_deploy/disable-relay" "$remote_deploy/remove-agent" \
+    "$remote_tests/prove-hostile-relay" \
+    "$remote_tests/assert-agent-runtime" "$remote_tests/assert-relay-state" \
+    "$remote_tests/prove-hostile-start-limit" \
+    "$remote_tests/prove-hostile-unmanaged-process" \
+    "$remote_tests/prove-hostile-listen-addresses" \
+    "$remote_tests/prove-log-transitions" \
+    "$remote_tests/control-lab-clock" \
+    "$remote_tests/assert-relay-clock-skew" \
+    "$remote_tests/prove-relay-clock-jump"
+done
+
+hostile_transfer_target=lab-coordinateur
+hostile_transfer_address=${transfer_target_ipv6[$hostile_transfer_target]}
+lab_ssh lab-console /bin/bash "$remote_console_transfer" console-pin-wrong-host-for-test "$console_transfer_state" "$hostile_transfer_target" "$hostile_transfer_address" "${transfer_host_key_type[$hostile_transfer_target]}" "${transfer_host_key_blob[$hostile_transfer_target]}"
+expect_remote_refusal "$host_key_refusal_status" 'artifact transfer refused: direct SSH rejected the deliberately incorrect pinned host key' \
+  lab-console /bin/bash "$remote_console_transfer" \
+  console-prove-host-key-refusal "$console_transfer_state" "$remote_console_artifact" \
+  "$transfer_source_ipv6" "$hostile_transfer_target" "$hostile_transfer_address" \
+  "$artifact_sha" "$artifact_size"
+lab_ssh "$hostile_transfer_target" /bin/bash "$remote_transfer_helper" target-assert-empty "$target_transfer_state"
+
+for target in "${targets[@]}"; do
+  target_address=${transfer_target_ipv6[$target]}
+  lab_ssh lab-console /bin/bash "$remote_console_transfer" console-pin-host "$console_transfer_state" "$target" "$target_address" "${transfer_host_key_type[$target]}" "${transfer_host_key_blob[$target]}"
+  lab_ssh lab-console /bin/bash "$remote_console_transfer" console-send "$console_transfer_state" "$remote_console_artifact" "$transfer_source_ipv6" "$target" "$target_address" "$artifact_sha" "$artifact_size"
+  lab_ssh "$target" /bin/bash "$remote_transfer_helper" target-finalize "$target_transfer_state" "$artifact_sha" "$artifact_size"
+  lab_ssh "$target" /bin/bash "$remote_transfer_helper" target-cleanup "$target_transfer_state"
+done
+lab_ssh lab-console /bin/bash "$remote_console_transfer" console-cleanup "$console_transfer_state"
+
+mutated=1
+step absent-start cleanup "Known absent starting state"
+for target in "${targets[@]}"; do
+  lab_ssh "$target" "$remote_deploy/remove-agent"
+  lab_ssh "$target" "$remote_tests/assert-agent-runtime" absent
+done
+
+step invalid-first-artifact expected_refusal "Transactional refusal of an invalid first artifact"
+expect_remote_refusal 1 'installation failed; restoring the previous v0.0.1 lot' \
+lab-machine-1 "$remote_deploy/install-agent" \
+  /bin/false lab-machine-1 "$relay_url"
+lab_ssh lab-machine-1 "$remote_tests/assert-agent-runtime" absent
+
+step host-identity-matrix expected_refusal "Host and allowed-identity mismatch matrix"
+for pair in \
+  lab-coordinateur:lab-machine-1 \
+  lab-machine-1:lab-coordinateur \
+  lab-machine-2:lab-coordinateur \
+  lab-machine-2:lab-machine-1; do
+  target=${pair%%:*}
+  identity=${pair#*:}
+  expect_remote_refusal 1 "machine ID $identity does not match host $target" \
+    "$target" "$remote_deploy/install-agent" \
+    "$remote_artifact" "$identity" "$relay_url"
+  lab_ssh "$target" "$remote_tests/assert-agent-runtime" absent
+done
+
+install_final_state() {
+  lab_ssh lab-coordinateur "$remote_deploy/install-agent" \
+    "$remote_artifact" lab-coordinateur "$relay_url"
+  lab_ssh lab-coordinateur "$remote_deploy/enable-relay" "$relay_listen"
+  lab_ssh lab-machine-1 "$remote_deploy/install-agent" \
+    "$remote_artifact" lab-machine-1 "$relay_url"
+}
+
+step install-roles assertion "Install one artifact with isolated parallel roles and managed metadata"
+install_final_state
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon-relay
+lab_ssh lab-machine-1 "$remote_tests/assert-agent-runtime" daemon
+lab_ssh lab-machine-2 "$remote_tests/assert-agent-runtime" absent
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+
+remote_hash() {
+  local output
+  output=$(remote "$1" sha256sum /usr/local/lib/your-cloud/your-cloud) \
+    || return
+  printf '%s\n' "${output%% *}"
+}
+[[ $(remote_hash lab-coordinateur) == "$artifact_sha" \
+  && $(remote_hash lab-machine-1) == "$artifact_sha" ]] \
+  || fail "deployed artifacts do not match the LAB build"
+
+step non-candidate-relay expected_refusal "Reject Relay activation on the non-candidate machine"
+expect_remote_refusal 2 'your-cloud: relay candidate:' \
+  lab-machine-1 timeout --signal=TERM --kill-after=2s 10s \
+  /usr/local/lib/your-cloud/your-cloud relay --listen="$relay_listen"
+lab_ssh lab-machine-1 "$remote_tests/assert-agent-runtime" daemon
+
+step listen-address-matrix expected_refusal "Reject every declared forbidden Relay listen-address class"
+lab_ssh lab-coordinateur "$remote_tests/prove-hostile-listen-addresses"
+
+step start-limit-recovery expected_refusal "Reach start-limit-hit and recover only after reset-failed"
+lab_ssh lab-coordinateur "$remote_tests/prove-hostile-start-limit"
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon-relay
+
+step unmanaged-processes expected_refusal "Refuse deletion around Daemon and Relay processes outside their units"
+lab_ssh lab-coordinateur "$remote_tests/prove-hostile-unmanaged-process" relay
+lab_ssh lab-machine-1 "$remote_tests/prove-hostile-unmanaged-process" daemon
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon-relay
+lab_ssh lab-machine-1 "$remote_tests/assert-agent-runtime" daemon
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+
+step controlled-clock-skew assertion "Skew emitter and Relay wall clocks while keeping freshness reception-owned"
+reference_epoch=$(remote lab-console date -u +%s) \
+  || fail "cannot read independent clock reference before emitter skew"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+emitter_apply_status=0
+if remote lab-machine-1 "$remote_tests/control-lab-clock" apply \
+  "$((reference_epoch - 172800))" "$reference_epoch"; then
+  emitter_clock_dirty=1
+else
+  emitter_apply_status=$?
+  emitter_clock_dirty=1
+  emitter_state_status=0
+  remote lab-machine-1 test -e "$remote_clock_state" || emitter_state_status=$?
+  if [[ $emitter_state_status -eq 1 ]]; then
+    emitter_link_status=0
+    remote lab-machine-1 test -L "$remote_clock_state" || emitter_link_status=$?
+    if [[ $emitter_link_status -eq 1 ]]; then
+      emitter_clock_dirty=0
+    fi
+  fi
+  echo "FAILED: emitter clock apply failed" >&2
+  exit "$emitter_apply_status"
+fi
+lab_ssh lab-machine-1 systemctl restart your-cloud-daemon.service
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-clock-skew"
+lab_ssh lab-machine-1 "$remote_tests/control-lab-clock" restore
+reference_epoch=$(remote lab-console date -u +%s) \
+  || fail "cannot read independent clock reference after emitter restoration"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+lab_ssh lab-machine-1 "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"
+emitter_clock_dirty=0
+lab_ssh lab-machine-1 systemctl restart your-cloud-daemon.service
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+relay_clock_dirty=1
+reference_epoch=$(remote lab-console date -u +%s) \
+  || fail "cannot read independent clock reference before Relay jump"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+lab_ssh lab-coordinateur "$remote_tests/prove-relay-clock-jump" "$reference_epoch"
+reference_epoch=$(remote lab-console date -u +%s) \
+  || fail "cannot read independent clock reference after Relay restoration"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+lab_ssh lab-coordinateur "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"
+relay_clock_dirty=0
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+
+step journal-transitions assertion "Count success, prolonged outage and recovery log transitions"
+for target in lab-coordinateur lab-machine-1; do
+  lab_ssh "$target" "$remote_tests/prove-log-transitions" mark
+done
+sleep 4
+for target in lab-coordinateur lab-machine-1; do
+  lab_ssh "$target" "$remote_tests/prove-log-transitions" assert-success
+done
+lab_ssh lab-coordinateur systemctl stop your-cloud-relay.service
+sleep 5
+lab_ssh lab-coordinateur systemctl start your-cloud-relay.service
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+for target in lab-coordinateur lab-machine-1; do
+  lab_ssh "$target" "$remote_tests/prove-log-transitions" assert-outage-recovery
+done
+
+step hostile-http expected_refusal "Live hostile POST and QUERY matrix"
+lab_ssh lab-coordinateur "$remote_tests/prove-hostile-relay" "$relay_url"
+
+step presence-transitions assertion "Presence transitions and independent restarts"
+lab_ssh lab-machine-1 systemctl stop your-cloud-daemon.service
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=old
+lab_ssh lab-machine-1 systemctl start your-cloud-daemon.service
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+
+lab_ssh lab-coordinateur systemctl stop your-cloud-daemon.service
+lab_ssh lab-machine-1 systemctl stop your-cloud-daemon.service
+lab_ssh lab-coordinateur systemctl restart your-cloud-relay.service
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=absent lab-machine-1=absent
+lab_ssh lab-coordinateur systemctl start your-cloud-daemon.service
+lab_ssh lab-machine-1 systemctl start your-cloud-daemon.service
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+
+lab_ssh lab-coordinateur systemctl restart your-cloud-daemon.service
+lab_ssh lab-machine-1 systemctl restart your-cloud-daemon.service
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon-relay
+lab_ssh lab-machine-1 "$remote_tests/assert-agent-runtime" daemon
+
+step replacement-rollback expected_refusal "Transactional rollback after an invalid shared artifact"
+before_rollback_hash=$(remote_hash lab-coordinateur)
+expect_remote_refusal 1 'installation failed; restoring the previous v0.0.1 lot' \
+  lab-coordinateur "$remote_deploy/install-agent" \
+  /bin/false lab-coordinateur "$relay_url"
+[[ $(remote_hash lab-coordinateur) == "$before_rollback_hash" ]] \
+  || fail "transactional rollback did not restore the artifact"
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon-relay
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+
+step relay-lifecycle assertion "Independent Relay disable and re-enable"
+lab_ssh lab-coordinateur "$remote_deploy/disable-relay"
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon
+lab_ssh lab-coordinateur "$remote_deploy/enable-relay" "$relay_listen"
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon-relay
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+
+step complete-removal cleanup "Complete removal and verified absence"
+for target in "${targets[@]}"; do
+  lab_ssh "$target" "$remote_deploy/remove-agent"
+  lab_ssh "$target" "$remote_tests/assert-agent-runtime" absent
+done
+
+step final-state assertion "Reinstall the documented final state"
+install_final_state
+lab_ssh lab-coordinateur "$remote_tests/assert-agent-runtime" daemon-relay
+lab_ssh lab-machine-1 "$remote_tests/assert-agent-runtime" daemon
+lab_ssh lab-machine-2 "$remote_tests/assert-agent-runtime" absent
+lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
+  lab-coordinateur=recent lab-machine-1=recent
+[[ $(remote_hash lab-coordinateur) == "$artifact_sha" \
+  && $(remote_hash lab-machine-1) == "$artifact_sha" ]] \
+  || fail "final installed artifacts do not match the LAB build"
+
+printf '\nPASS: complete v0.0.1 proof; final state installed; source=%s artifact=%s\n' \
+  "$source_id" "$artifact_sha"

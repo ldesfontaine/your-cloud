@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+# Render, serve and capture one P1 result entirely inside lab-console.
+set -euo pipefail
+umask 077
+
+usage() {
+  echo "usage: worker <result.json> <output-dir> <runtime-dir> [simulate-capture-failure]" >&2
+  echo "       worker --cleanup <runtime-dir>" >&2
+  exit 2
+}
+
+[[ $(hostname) == lab-console && $(id -u) -eq 0 ]] \
+  || { echo "render worker must run as root in lab-console" >&2; exit 1; }
+for command in chromium curl id pgrep ps python3 setsid setpriv sha256sum ss timeout; do
+  command -v "$command" >/dev/null || { echo "$command is required in lab-console" >&2; exit 1; }
+done
+[[ $(id -u nobody) == 65534 && $(id -g nobody) == 65534 ]] \
+  || { echo "uid and gid 65534 must resolve to nobody in lab-console" >&2; exit 1; }
+
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+port=18080
+server_pid=
+browser_pid=
+content_status=not_run
+capture_status=not_run
+server_status=not_run
+server_cleanup=not_run
+capture_sha=
+source_sha=
+diagnostic_class=
+diagnostic_detail=
+result=
+output=
+runtime=
+browser_home=
+server_log=
+
+validate_output_path() {
+  [[ "$1" =~ ^/tmp/your-cloud-v0\.0\.1-render-[0-9]{8}T[0-9]{6}Z-[0-9]+/(failure|success)$ ]]
+}
+
+read_process_state() {
+  local pid=$1 state
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  state=$(timeout --signal=KILL 1s awk '{print $3}' "/proc/$pid/stat" 2>/dev/null) \
+    || return 1
+  [[ "$state" =~ ^[A-Z]$ ]] || return 1
+  printf '%s\n' "$state"
+}
+
+terminate_group_from_file() {
+  local pid_file=$1 marker=$2 pid command_line pgid member member_uid state marker_seen=0
+  local -a members=()
+  [[ -e "$pid_file" ]] || return 0
+  IFS= read -r pid <"$pid_file" || return 1
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  if [[ -d "/proc/$pid" ]]; then
+    command_line=$(tr '\0' ' ' <"/proc/$pid/cmdline") || return 1
+    [[ "$command_line" == *"$marker"* ]] || return 1
+    pgid=$(ps -o pgid= -p "$pid" | tr -d ' ') || return 1
+    [[ "$pgid" == "$pid" ]] || return 1
+    marker_seen=1
+  fi
+  mapfile -t members < <(ps -eo pid=,pgid= | awk -v group="$pid" '$2 == group {print $1}')
+  for member in "${members[@]}"; do
+    member_uid=$(awk '/^Uid:/ {print $2}' "/proc/$member/status" 2>/dev/null) || continue
+    command_line=$(tr '\0' ' ' <"/proc/$member/cmdline" 2>/dev/null) || continue
+    if [[ "$member_uid" != 65534 ]]; then
+      [[ "$member" == "$pid" && "$member_uid" == 0 && "$command_line" == *"$marker"* ]] \
+        || return 1
+    fi
+    [[ "$command_line" != *"$marker"* ]] || marker_seen=1
+  done
+  [[ ${#members[@]} -eq 0 || $marker_seen -eq 1 ]] || return 1
+  if [[ ${#members[@]} -gt 0 ]]; then
+    kill -TERM -- "-$pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+      state=$(read_process_state "$pid") || state=
+      if [[ "$state" == Z ]]; then
+        wait "$pid" 2>/dev/null || true
+      fi
+      mapfile -t members < <(ps -eo pid=,pgid= | awk -v group="$pid" '$2 == group {print $1}')
+      [[ ${#members[@]} -eq 0 ]] && break
+      sleep 0.1
+    done
+    if [[ ${#members[@]} -gt 0 ]]; then
+      kill -KILL -- "-$pid" >/dev/null 2>&1 || true
+      for _ in $(seq 1 20); do
+        state=$(read_process_state "$pid") || state=
+        if [[ "$state" == Z ]]; then
+          wait "$pid" 2>/dev/null || true
+        fi
+        mapfile -t members < <(ps -eo pid=,pgid= | awk -v group="$pid" '$2 == group {print $1}')
+        [[ ${#members[@]} -eq 0 ]] && break
+        sleep 0.1
+      done
+    fi
+    [[ ${#members[@]} -eq 0 ]] || return 1
+  fi
+  rm -f "$pid_file"
+}
+
+terminate_browser_residuals() {
+  local marker=$1 process pid command_line failed=0
+  local -a pids=()
+  for process in /proc/[0-9]*; do
+    pid=${process##*/}
+    command_line=$(tr '\0' ' ' <"$process/cmdline" 2>/dev/null) || continue
+    [[ "$command_line" == *"$marker"* ]] && pids+=("$pid")
+  done
+  for pid in "${pids[@]}"; do
+    command_line=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null) || continue
+    [[ "$command_line" == *"$marker"* ]] || { failed=1; continue; }
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+  done
+  [[ ${#pids[@]} -eq 0 ]] || sleep 1
+  for pid in "${pids[@]}"; do
+    [[ -d "/proc/$pid" ]] || continue
+    command_line=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null) || continue
+    [[ "$command_line" == *"$marker"* ]] || { failed=1; continue; }
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  done
+  for process in /proc/[0-9]*; do
+    command_line=$(tr '\0' ' ' <"$process/cmdline" 2>/dev/null) || continue
+    [[ "$command_line" != *"$marker"* ]] || failed=1
+  done
+  [[ $failed -eq 0 ]]
+}
+
+cleanup_runtime() {
+  local cleanup_runtime=$1 cleanup_output
+  cleanup_output=${cleanup_runtime%-runtime}
+  validate_output_path "$cleanup_output" || return 1
+  [[ "$cleanup_runtime" == "$cleanup_output-runtime" ]] || return 1
+  if [[ -d "$cleanup_runtime" ]]; then
+    terminate_group_from_file "$cleanup_runtime/server.pid" "$cleanup_output" || return 1
+    terminate_group_from_file "$cleanup_runtime/browser.pid" "$cleanup_runtime/browser-home" || return 1
+  fi
+  terminate_browser_residuals "$cleanup_runtime/browser-home" || return 1
+  [[ -z $(ss -H -ltn "sport = :$port") ]] || return 1
+  [[ ! -d "$cleanup_runtime" ]] || rm -rf "$cleanup_runtime"
+}
+
+if [[ $# -eq 2 && $1 == --cleanup ]]; then
+  runtime=$2
+  cleanup_runtime "$runtime" \
+    || { echo "temporary proof processes or listener could not be cleaned" >&2; exit 1; }
+  echo "PASS: temporary proof processes and listener are absent"
+  exit 0
+fi
+
+[[ $# -eq 3 || $# -eq 4 ]] || usage
+result=$1
+output=$2
+runtime=$3
+mode=${4:-capture}
+[[ "$mode" == capture || "$mode" == simulate-capture-failure ]] || usage
+validate_output_path "$output" && [[ "$runtime" == "$output-runtime" ]] || usage
+[[ -f "$result" && ! -L "$result" ]] \
+  || { echo "structured result must be a regular file" >&2; exit 1; }
+[[ ! -e "$output" && ! -e "$runtime" ]] \
+  || { echo "render output or runtime already exists" >&2; exit 1; }
+mkdir -m 0711 "$runtime"
+browser_home="$runtime/browser-home"
+server_log="$runtime/server.log"
+mkdir -m 0700 "$browser_home"
+chown 65534:65534 "$browser_home"
+source_sha=$(sha256sum "$result"); source_sha=${source_sha%% *}
+[[ "$source_sha" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo "structured result SHA-256 is invalid" >&2; exit 1; }
+
+fail_with() {
+  diagnostic_class=$1
+  diagnostic_detail=$2
+  case "$diagnostic_class" in
+    server_start_failed|server_identity_failed|server_listener_failed) server_status=failed ;;
+    content_check_failed) content_status=failed ;;
+    capture_failed) capture_status=failed ;;
+  esac
+  echo "$diagnostic_detail" >&2
+  exit 1
+}
+
+write_render_result() {
+  local outcome=failed
+  [[ "$server_status" == passed && "$content_status" == passed \
+    && "$capture_status" == passed && "$server_cleanup" == passed ]] \
+    && outcome=passed
+  mkdir -p "$output" || return 1
+  {
+    printf '{\n'
+    printf '  "schema": 1,\n'
+    printf '  "automation_scope": "P2",\n'
+    printf '  "outcome": "%s",\n' "$outcome"
+    printf '  "source": {"name": "result.json", "sha256": "%s"},\n' "$source_sha"
+    printf '  "machine_assertions_authority": true,\n'
+    printf '  "server": {"status": "%s", "identity": "nobody", "uid": 65534, "listen": "127.0.0.1:18080", "cleanup": "%s"},\n' \
+      "$server_status" "$server_cleanup"
+    printf '  "content_check": "%s",\n' "$content_status"
+    printf '  "capture": {"status": "%s", "sha256": ' "$capture_status"
+    if [[ -n "$capture_sha" ]]; then printf '"%s"' "$capture_sha"; else printf 'null'; fi
+    printf '},\n'
+    if [[ -n "$diagnostic_class" ]]; then
+      printf '  "diagnostic": {"class": "%s", "detail": "%s"}\n' \
+        "$diagnostic_class" "$diagnostic_detail"
+    else
+      printf '  "diagnostic": {"class": null, "detail": null}\n'
+    fi
+    printf '}\n'
+  } >"$output/render-result.json"
+  chmod 0644 "$output/render-result.json"
+}
+
+finish() {
+  local status=$? cleanup_failed=0
+  trap - EXIT HUP INT TERM
+  set +e
+  cleanup_runtime "$runtime" || cleanup_failed=1
+  if [[ $cleanup_failed -eq 0 ]]; then
+    server_cleanup=passed
+  else
+    server_cleanup=failed
+    status=1
+    diagnostic_class=cleanup_failed
+    diagnostic_detail="temporary proof process or listener cleanup failed"
+  fi
+  if [[ $status -eq 0 \
+    && ( "$server_status" != passed || "$content_status" != passed \
+      || "$capture_status" != passed ) ]]; then
+    status=1
+    diagnostic_class=unexpected_worker_failure
+    diagnostic_detail="worker exited without all restitution assertions"
+  fi
+  if [[ $status -ne 0 && -z "$diagnostic_class" ]]; then
+    diagnostic_class=unexpected_worker_failure
+    diagnostic_detail="worker stopped outside an allowlisted failure point"
+  fi
+  write_render_result || status=1
+  exit "$status"
+}
+stop_requested() { exit 130; }
+trap stop_requested HUP INT TERM
+trap finish EXIT
+
+[[ -z $(ss -H -ltn "sport = :$port") ]] \
+  || fail_with server_start_failed "temporary proof port is already in use"
+"$script_dir/renderer.py" "$result" "$output" \
+  || fail_with render_refused "structured P1 result was refused by the renderer"
+chmod 0755 "$output"
+
+setsid setpriv --reuid=65534 --regid=65534 --clear-groups \
+  python3 -m http.server "$port" --bind 127.0.0.1 --directory "$output" \
+  >"$server_log" 2>&1 &
+server_pid=$!
+printf '%s\n' "$server_pid" >"$runtime/server.pid"
+for _ in $(seq 1 10); do
+  [[ -z $(ss -H -ltn "sport = :$port") ]] || break
+  [[ -d "/proc/$server_pid" ]] || break
+  sleep 1
+done
+[[ -d "/proc/$server_pid" && -n $(ss -H -ltn "sport = :$port") ]] \
+  || fail_with server_start_failed "temporary proof server did not start"
+server_uid=$(awk '/^Uid:/ {print $2}' "/proc/$server_pid/status")
+server_gid=$(awk '/^Gid:/ {print $2}' "/proc/$server_pid/status")
+server_groups=$(awk '/^Groups:/ {$1=""; sub(/^ /, ""); print}' "/proc/$server_pid/status")
+[[ "$server_uid" == 65534 && "$server_gid" == 65534 && -z "$server_groups" ]] \
+  || fail_with server_identity_failed "temporary proof server identity is not nobody with cleared groups"
+listeners=$(ss -H -ltnp "sport = :$port")
+listener_addresses=()
+listener_pids=()
+mapfile -t listener_addresses < <(awk 'NF {print $4}' <<<"$listeners")
+mapfile -t listener_pids < <(grep -oE 'pid=[0-9]+' <<<"$listeners" | cut -d= -f2)
+[[ ${#listener_addresses[@]} -eq 1 && ${#listener_pids[@]} -eq 1 ]] \
+  || fail_with server_listener_failed "temporary proof server listener is not the expected loopback process"
+[[ ${listener_addresses[0]} == '127.0.0.1:18080' \
+  && ${listener_pids[0]} == "$server_pid" ]] \
+  || fail_with server_listener_failed "temporary proof server listener is not the expected loopback process"
+server_status=passed
+
+served="$runtime/served.html"
+code=$(curl --silent --show-error --connect-timeout 2 --max-time 5 \
+  --output "$served" --write-out '%{http_code}' http://127.0.0.1:18080/report.html) \
+  || fail_with content_check_failed "temporary proof page request failed"
+[[ "$code" == 200 ]] \
+  || fail_with content_check_failed "temporary proof page did not return HTTP 200"
+grep -Fq 'Les assertions machine de result.json restent l’autorité.' "$served" \
+  || fail_with content_check_failed "machine-assertion authority warning is missing"
+if ! "$script_dir/renderer.py" --p1-fingerprints "$result" \
+  >"$runtime/fingerprints"; then
+  fail_with content_check_failed "P1 fingerprints could not be read strictly"
+fi
+mapfile -t fingerprints <"$runtime/fingerprints"
+[[ ${#fingerprints[@]} -eq 2 ]] \
+  || fail_with content_check_failed "P1 fingerprint list is not exact"
+for fingerprint in "${fingerprints[@]}"; do
+  [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] \
+    || fail_with content_check_failed "P1 fingerprint value is invalid"
+  grep -Fq "$fingerprint" "$served" \
+    || fail_with content_check_failed "served proof page omitted a P1 fingerprint"
+done
+if ! "$script_dir/renderer.py" --p1-step-identifiers "$result" \
+  >"$runtime/step-identifiers"; then
+  fail_with content_check_failed "P1 step identifier list could not be read strictly"
+fi
+mapfile -t step_identifiers <"$runtime/step-identifiers"
+[[ ${#step_identifiers[@]} -eq 20 ]] \
+  || fail_with content_check_failed "P1 step identifier list is not exact"
+for step_identifier in "${step_identifiers[@]}"; do
+  [[ "$step_identifier" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] \
+    || fail_with content_check_failed "P1 step identifier list is not exact"
+  grep -Fq "<code>$step_identifier</code>" "$served" \
+    || fail_with content_check_failed "generated proof projections omitted a P1 step identifier"
+  grep -Fq "\`$step_identifier\`" "$output/report.md" \
+    || fail_with content_check_failed "generated proof projections omitted a P1 step identifier"
+done
+content_status=passed
+
+setsid timeout --signal=TERM --kill-after=5s 45s \
+  setpriv --reuid=65534 --regid=65534 --clear-groups \
+  env HOME="$browser_home" XDG_CONFIG_HOME="$browser_home/config" XDG_CACHE_HOME="$browser_home/cache" \
+  chromium --headless=new --disable-gpu --no-first-run \
+  --user-data-dir="$browser_home/profile" --window-size=1440,2600 \
+  --screenshot="$browser_home/capture.png" http://127.0.0.1:18080/report.html \
+  >"$runtime/chromium.log" 2>&1 &
+browser_pid=$!
+printf '%s\n' "$browser_pid" >"$runtime/browser.pid"
+printf '%s\n' "$browser_pid" >"$output/browser.pgid"
+chmod 0600 "$output/browser.pgid"
+set +e
+wait "$browser_pid"
+browser_status=$?
+set -e
+browser_pid=
+[[ $browser_status -eq 0 ]] \
+  || { capture_status=failed; fail_with capture_failed "Chromium capture failed or exceeded 45 seconds"; }
+capture_size=$(stat -c '%s' "$browser_home/capture.png" 2>/dev/null) || capture_size=0
+[[ -f "$browser_home/capture.png" && "$capture_size" =~ ^[0-9]+$ \
+  && $capture_size -gt 10000 && $capture_size -le $((16 * 1024 * 1024)) ]] \
+  || { capture_status=failed; fail_with capture_failed "Chromium capture size is outside fixed bounds"; }
+[[ $(od -An -tx1 -N8 "$browser_home/capture.png" | tr -d ' \n') == 89504e470d0a1a0a ]] \
+  || { capture_status=failed; fail_with capture_failed "Chromium capture is not a PNG"; }
+
+if [[ "$mode" == simulate-capture-failure ]]; then
+  capture_status=failed
+  fail_with injected_capture_failure "capture failure injected after a real Chromium execution"
+fi
+
+install -o root -g root -m 0644 "$browser_home/capture.png" "$output/capture.png"
+capture_sha=$(sha256sum "$output/capture.png"); capture_sha=${capture_sha%% *}
+[[ "$capture_sha" =~ ^[0-9a-f]{64}$ ]] \
+  || { capture_status=failed; fail_with capture_failed "captured PNG SHA-256 is invalid"; }
+capture_status=passed
+printf 'PASS: generated, served as nobody, verified and captured P2 restitution\n'

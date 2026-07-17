@@ -25,6 +25,8 @@ type Handler struct {
 
 const maxQueryBodyBytes int64 = 32
 
+var errQueryMustBeEmpty = errors.New("v0.0.1 QUERY body must be an empty JSON object")
+
 // NewHandler builds a Relay handler for the exact synthetic LAB machines.
 func NewHandler(store *Store, allowedMachines []string, logger *log.Logger) *Handler {
 	allowed := make(map[string]struct{}, len(allowedMachines))
@@ -102,21 +104,31 @@ func (handler *Handler) queryMachines(response http.ResponseWriter, request *htt
 		return
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, maxQueryBodyBytes)
-	decoder := json.NewDecoder(request.Body)
+	err = decodeMachinesQuery(request.Body)
+	if errors.Is(err, errQueryMustBeEmpty) {
+		writeProblem(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		writeDecodeProblem(response, err, maxQueryBodyBytes, "query")
+		return
+	}
+	handler.writeMachineSnapshot(response)
+}
+
+func decodeMachinesQuery(reader io.Reader) error {
+	decoder := json.NewDecoder(reader)
 	var query map[string]json.RawMessage
 	if err := decoder.Decode(&query); err != nil {
-		writeDecodeProblem(response, err, maxQueryBodyBytes, "query")
-		return
+		return err
 	}
 	if query == nil || len(query) != 0 {
-		writeProblem(response, http.StatusBadRequest, "v0.0.1 QUERY body must be an empty JSON object")
-		return
+		return errQueryMustBeEmpty
 	}
-	if err := requireJSONEnd(decoder); err != nil {
-		writeDecodeProblem(response, err, maxQueryBodyBytes, "query")
-		return
-	}
+	return requireJSONEnd(decoder)
+}
 
+func (handler *Handler) writeMachineSnapshot(response http.ResponseWriter) {
 	now := handler.now()
 	payload := struct {
 		GeneratedAt string         `json:"generated_at"`

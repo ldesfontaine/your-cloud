@@ -1,0 +1,67 @@
+version: "2.0"
+
+# Cette première politique ne dépend que du contenu versionné. Les contrôles
+# nécessitant un jeton Administration:read restent exclus tant qu'un contexte
+# dédié et non privilégié au sens du produit n'est pas disponible.
+github:
+  controls:
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+      trustedOwners: []
+
+    githubActionMustComeFromAuthorizedSources:
+      enabled: true
+      trustGithubOfficialActions: true
+      trustSameOrgActions: false
+      minimumStars: 0
+      trustedGithubActions:
+        - getplumber/plumber
+
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+      forbiddenVariables:
+        - ACTIONS_STEP_DEBUG
+        - ACTIONS_RUNNER_DEBUG
+
+    pipelineMustNotUseDockerInDocker:
+      enabled: true
+      detectInsecureDaemon: true
+
+    reusableWorkflowsMustNotInheritSecrets:
+      enabled: true
+
+    workflowMustNotExportEntireSecretsContext:
+      enabled: true
+
+    securityJobsMustNotBeWeakened:
+      enabled: true
+      securityJobPatterns:
+        - ci/*
+      allowFailureMustBeFalse:
+        enabled: true
+      rulesMustNotBeRedefined:
+        enabled: true
+      whenMustNotBeManual:
+        enabled: true
+
+    pipelineMustNotExecuteUnverifiedScripts:
+      enabled: true
+      trustedUrls: []
+
+    workflowMustNotInjectUserInputInScripts:
+      enabled: true
+
+    workflowMustNotWriteUntrustedContentToGitHubEnv:
+      enabled: true
+
+    workflowMustNotUseDangerousTriggers:
+      enabled: true
+
+    pullRequestTargetMustNotCheckoutHead:
+      enabled: true
+
+    workflowsMustDeclarePermissions:
+      enabled: true
+
+    workflowMustNotGrantPermissionsWriteAll:
+      enabled: true

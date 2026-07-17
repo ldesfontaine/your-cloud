@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Pilot P2 while keeping generation, server and browser inside lab-console.
+set -euo pipefail
+
+[[ $# -eq 2 ]] || { echo "usage: render <result.json> <archive-dir>" >&2; exit 2; }
+result=$1
+archive_dir=$2
+report_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+root=$(cd -- "$report_dir/../../../.." && pwd)
+labctl="$root/tools/labctl"
+run_token=$(date -u +%Y%m%dT%H%M%SZ)-$$
+remote="/tmp/your-cloud-v0.0.1-render-$run_token"
+remote_renderer="$remote/renderer.py"
+remote_worker="$remote/worker"
+lock_dir=/run/lock/your-cloud-v0.0.1-render.lock
+failure_output="$remote/failure"
+success_output="$remote/success"
+failure_runtime="$failure_output-runtime"
+success_runtime="$success_output-runtime"
+guard_passed=0
+lock_acquired=0
+remote_created=0
+result_sha=
+
+[[ -f "$result" && ! -L "$result" ]] || { echo "P1 result must be a regular file" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "timeout is required by the P2 controller" >&2; exit 1; }
+mkdir -p "$archive_dir"
+
+bounded_local() {
+  local seconds=$1
+  shift
+  timeout --signal=TERM --kill-after=5s "${seconds}s" "$@"
+}
+
+bounded_lab_ssh() {
+  local local_seconds=$1 remote_seconds=$2
+  shift 2
+  bounded_local "$local_seconds" "$labctl" ssh lab-console \
+    timeout --signal=TERM --kill-after=3s "${remote_seconds}s" "$@"
+}
+
+remote_sha256() {
+  local path=$1 output
+  output=$(bounded_lab_ssh 15 10 sha256sum "$path") || return
+  output=${output%% *}
+  [[ "$output" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$output"
+}
+
+copy_verified() {
+  local remote_path=$1 local_path=$2 expected actual
+  expected=$(remote_sha256 "$remote_path") || return
+  bounded_local 60 "$labctl" copy-from lab-console "$remote_path" "$local_path" || return
+  [[ -f "$local_path" && ! -L "$local_path" ]] || return 1
+  actual=$(sha256sum "$local_path"); actual=${actual%% *}
+  [[ "$actual" == "$expected" ]]
+}
+
+verify_runtime_cleanup() {
+  local runtime=$1
+  bounded_lab_ssh 35 25 test -x "$remote_worker" \
+    && bounded_lab_ssh 35 25 "$remote_worker" --cleanup "$runtime"
+}
+
+verify_outer_absence() {
+  local runtime=$1 output browser_pattern browser_matches pgrep_status listeners
+  local browser_pgid= pgids candidate
+  output=${runtime%-runtime}
+  if bounded_lab_ssh 15 10 test -f "$output/browser.pgid"; then
+    browser_pgid=$(bounded_lab_ssh 15 10 /bin/cat "$output/browser.pgid") || return
+    [[ "$browser_pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+    pgids=$(bounded_lab_ssh 15 10 ps -eo pgid=) || return
+    while IFS= read -r candidate; do
+      candidate=${candidate//[[:space:]]/}
+      [[ "$candidate" != "$browser_pgid" ]] || return 1
+    done <<<"$pgids"
+  fi
+  browser_pattern="[/]${runtime#/}/browser-home"
+  if browser_matches=$(bounded_lab_ssh 15 10 /usr/bin/pgrep -f -- "$browser_pattern"); then
+    return 1
+  else
+    pgrep_status=$?
+  fi
+  [[ $pgrep_status -eq 1 && -z "$browser_matches" ]] || return 1
+  listeners=$(bounded_lab_ssh 15 10 ss -H -ltn "sport = :18080") || return
+  [[ -z "$listeners" ]] || return 1
+  if [[ -n "$browser_pgid" ]]; then
+    bounded_lab_ssh 15 10 /bin/rm -f "$output/browser.pgid" || return
+  fi
+}
+
+finish() {
+  local status=$? cleanup_failed=0 runtime
+  trap - EXIT HUP INT TERM
+  set +e
+  if [[ $guard_passed -eq 1 && $lock_acquired -eq 1 && $remote_created -eq 1 ]]; then
+    if bounded_lab_ssh 15 10 test -x "$remote_worker"; then
+      for runtime in "$failure_runtime" "$success_runtime"; do
+        verify_runtime_cleanup "$runtime" || cleanup_failed=1
+      done
+    else
+      cleanup_failed=1
+    fi
+    for runtime in "$failure_runtime" "$success_runtime"; do
+      verify_outer_absence "$runtime" || cleanup_failed=1
+    done
+  fi
+  if [[ $remote_created -eq 1 ]]; then
+    bounded_lab_ssh 35 25 /bin/rm -rf "$remote" || cleanup_failed=1
+  fi
+  if [[ $lock_acquired -eq 1 && $cleanup_failed -eq 0 ]]; then
+    bounded_lab_ssh 15 10 /bin/rmdir "$lock_dir" || cleanup_failed=1
+  fi
+  if [[ $cleanup_failed -ne 0 ]]; then
+    echo "P2 outer cleanup failed; the LAB render lock remains for inspection" >&2
+    status=1
+  fi
+  exit "$status"
+}
+stop_requested() { exit 130; }
+trap stop_requested HUP INT TERM
+trap finish EXIT
+
+inventory=$(bounded_local 30 "$labctl" list --format=tsv) \
+  || { echo "P2 LAB inventory guard failed" >&2; exit 1; }
+row=$(awk -F '\t' '$1 == "lab-console" {print}' <<<"$inventory")
+[[ $(wc -l <<<"$row") -eq 1 ]] || { echo "lab-console inventory row is missing or duplicated" >&2; exit 1; }
+IFS=$'\t' read -r _ state ips template topology origin <<<"$row"
+[[ "$state" == running && "$ips" != - && "$template" == console \
+  && "$topology" == v1-full && "$origin" == your-cloud/labctl ]] \
+  || { echo "lab-console is outside the approved P2 inventory" >&2; exit 1; }
+[[ ",$ips," != *",192.168.122.123,"* && ",$ips," != *",10.66.66.1,"* ]] \
+  || { echo "lab-console resolves to a forbidden address" >&2; exit 1; }
+guard_passed=1
+
+if ! bounded_lab_ssh 15 10 /bin/mkdir "$lock_dir"; then
+  echo "another P2 render holds the LAB lock, or a prior cleanup needs inspection" >&2
+  exit 1
+fi
+lock_acquired=1
+bounded_lab_ssh 15 10 test ! -e "$remote" \
+  || { echo "unique P2 remote path already exists" >&2; exit 1; }
+bounded_lab_ssh 15 10 /bin/mkdir "$remote"
+remote_created=1
+
+result_sha=$(sha256sum "$result"); result_sha=${result_sha%% *}
+[[ "$result_sha" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo "P1 result SHA-256 is invalid" >&2; exit 1; }
+bounded_local 60 "$labctl" copy-to lab-console \
+  "$report_dir/renderer.py" "$remote_renderer"
+bounded_local 60 "$labctl" copy-to lab-console \
+  "$report_dir/worker" "$remote_worker"
+bounded_local 60 "$labctl" copy-to lab-console "$result" "$remote/result.json"
+bounded_lab_ssh 15 10 chmod 0755 \
+  "$remote_renderer" "$remote_worker"
+bounded_lab_ssh 15 10 test -x /usr/bin/pgrep \
+  || { echo "pgrep is required for the independent browser-process check" >&2; exit 1; }
+[[ $(remote_sha256 "$remote/result.json") == "$result_sha" ]] \
+  || { echo "P1 result changed while entering lab-console" >&2; exit 1; }
+
+if bounded_lab_ssh 110 100 "$remote_worker" \
+  "$remote/result.json" "$failure_output" "$failure_runtime" simulate-capture-failure; then
+  echo "simulated capture failure unexpectedly succeeded" >&2
+  exit 1
+fi
+verify_runtime_cleanup "$failure_runtime" \
+  || { echo "outer cleanup did not pass after simulated capture failure" >&2; exit 1; }
+verify_outer_absence "$failure_runtime" \
+  || { echo "outer process or listener check failed after simulated capture failure" >&2; exit 1; }
+bounded_lab_ssh 20 15 "$remote_renderer" --validate-p2-result \
+  "$failure_output/render-result.json" failed "$result_sha" -
+copy_verified "$failure_output/render-result.json" "$archive_dir/failure-cleanup-result.json" \
+  || { echo "simulated-failure result changed while leaving the LAB" >&2; exit 1; }
+
+if ! bounded_lab_ssh 110 100 "$remote_worker" \
+  "$remote/result.json" "$success_output" "$success_runtime"; then
+  verify_runtime_cleanup "$success_runtime" || true
+  verify_outer_absence "$success_runtime" || true
+  if bounded_lab_ssh 15 10 test -f "$success_output/render-result.json" \
+    && bounded_lab_ssh 20 15 "$remote_renderer" --validate-p2-diagnostic \
+      "$success_output/render-result.json" "$result_sha" \
+    && copy_verified "$success_output/render-result.json" \
+      "$archive_dir/render-failure-result.json"; then
+    echo "P2 nominal restitution failed; bounded diagnostic archived" >&2
+  else
+    echo "P2 nominal restitution failed before a valid diagnostic could be archived" >&2
+  fi
+  exit 1
+fi
+verify_runtime_cleanup "$success_runtime" \
+  || { echo "outer cleanup did not pass after nominal capture" >&2; exit 1; }
+verify_outer_absence "$success_runtime" \
+  || { echo "outer process or listener check failed after nominal capture" >&2; exit 1; }
+bounded_lab_ssh 20 15 "$remote_renderer" --validate-p2-result \
+  "$success_output/render-result.json" passed "$result_sha" "$success_output/capture.png"
+for file in report.md report.html capture.png render-result.json; do
+  copy_verified "$success_output/$file" "$archive_dir/$file" \
+    || { echo "$file changed while leaving the LAB" >&2; exit 1; }
+done
+
+printf 'PASS: exact P2 restitution archived in %s; source_result_sha256=%s\n' \
+  "$archive_dir" "$result_sha"
