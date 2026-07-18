@@ -11,13 +11,18 @@ une machine cible. Il ne contient plus les assertions ni les pilotes de preuve.
 - `remove-agent`, qui retire tous les rôles et l'artefact commun ;
 - les deux modèles d'unité systemd.
 
+[`v0.0.2/`](v0.0.2/) ajoute séparément le Daemon d'observation authentifiée et
+le Relay mTLS, toujours avec systemd uniquement et sans moteur de déploiement.
+
 Ce dossier ne contient pas la logique métier du produit : elle vit dans
 [`internal/`](../internal/), puis l'exécutable est assemblé depuis
 [`cmd/`](../cmd/). Les scripts ne sont pas un second composant à maintenir sur
 une machine : ils servent à installer ou retirer les unités, puis peuvent
 disparaître de la cible.
 
-Les contrôles génériques sont sous [`tests/checks/`](../tests/checks/) et la
-preuve multi-VM sous [`tests/lab/v0.0.1/`](../tests/lab/v0.0.1/). Le binaire
-compilé n'est pas versionné dans `deploy/` : il est produit temporairement dans
-`dist/` à l'intérieur du runner LAB.
+Les contrôles génériques sont sous [`tests/checks/`](../tests/checks/).
+[`tests/lab/v0.0.1/`](../tests/lab/v0.0.1/) porte son orchestrateur multi-VM ;
+[`tests/lab/v0.0.2/`](../tests/lab/v0.0.2/) contient seulement les auxiliaires
+de sa preuve encore assistée. Le binaire compilé n'est pas versionné dans
+`deploy/` : il est produit temporairement dans `dist/` à l'intérieur du runner
+LAB.

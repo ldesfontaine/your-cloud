@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Remove the v0.0.2 processes and managed files only after their absence is
+# established. Persistent state under /var/lib/private is intentionally kept.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: remove" >&2; exit 2; }
+[[ $(id -u) -eq 0 ]] || { echo "remove must run as root" >&2; exit 1; }
+command -v readlink >/dev/null || { echo "readlink is required" >&2; exit 1; }
+command -v ss >/dev/null || { echo "ss is required" >&2; exit 1; }
+
+fail() { echo "$*" >&2; exit 1; }
+
+artifact=/usr/local/lib/your-cloud/your-cloud
+max_processes=131072
+
+stop_and_disable() {
+  local unit=$1 load active substate pid
+  if ! systemctl stop "$unit" >/dev/null 2>&1; then
+    load=$(systemctl show "$unit" --property=LoadState --value) \
+      || fail "cannot inspect $unit after stop failed"
+    [[ "$load" == not-found ]] || fail "cannot stop $unit"
+  fi
+  load=$(systemctl show "$unit" --property=LoadState --value) \
+    || fail "cannot inspect $unit LoadState"
+  active=$(systemctl show "$unit" --property=ActiveState --value) \
+    || fail "cannot inspect $unit ActiveState"
+  substate=$(systemctl show "$unit" --property=SubState --value) \
+    || fail "cannot inspect $unit SubState"
+  pid=$(systemctl show "$unit" --property=MainPID --value) \
+    || fail "cannot inspect $unit MainPID"
+  [[ "$pid" == 0 ]] || fail "$unit still has MainPID=$pid"
+  [[ "$active" == inactive || "$active" == failed ]] \
+    || fail "$unit remains $active/$substate"
+  if [[ "$load" != not-found ]]; then
+    systemctl disable "$unit" >/dev/null || fail "cannot disable $unit"
+  fi
+}
+
+task_has_no_executable() {
+  local process_dir=$1 line state= kthread=
+  while IFS= read -r line; do
+    case "$line" in
+      State:*) state=${line#State:} ;;
+      Kthread:*) kthread=${line#Kthread:} ;;
+    esac
+  done <"$process_dir/status" || return 1
+  [[ "$state" == *Z* || "$kthread" == *1* ]]
+}
+
+assert_artifact_unused() {
+  local process_dir pid executable inspected=0
+  for process_dir in /proc/[0-9]*; do
+    inspected=$((inspected + 1))
+    [[ $inspected -le $max_processes ]] \
+      || fail "process inspection exceeded its bound of $max_processes"
+    [[ -d "$process_dir" ]] || continue
+    pid=${process_dir#/proc/}
+
+    # -ef compares device and inode, so an alternate argv[0] or launch path
+    # cannot hide a process using the currently installed artifact.
+    if [[ -e "$artifact" && "$process_dir/exe" -ef "$artifact" ]]; then
+      fail "PID $pid still uses the installed Your Cloud artifact"
+    fi
+    if executable=$(readlink -- "$process_dir/exe" 2>/dev/null); then
+      case "$executable" in
+        "$artifact"|"$artifact (deleted)")
+          fail "PID $pid still uses the installed Your Cloud artifact"
+          ;;
+      esac
+      continue
+    fi
+
+    # A disappearing PID is harmless. Kernel threads and zombies legitimately
+    # have no executable link; every other unreadable task makes removal fail.
+    [[ -d "$process_dir" ]] || continue
+    task_has_no_executable "$process_dir" && continue
+    if executable=$(readlink -- "$process_dir/exe" 2>/dev/null); then
+      case "$executable" in
+        "$artifact"|"$artifact (deleted)")
+          fail "PID $pid still uses the installed Your Cloud artifact"
+          ;;
+      esac
+      continue
+    fi
+    [[ ! -d "$process_dir" ]] || fail "cannot inspect executable of PID $pid"
+  done
+}
+
+managed_targets=(
+  /etc/systemd/system/your-cloud-relay.service
+  /etc/systemd/system/your-cloud-daemon.service
+  /etc/your-cloud/daemon.env
+  /etc/your-cloud/daemon.crt
+  /etc/your-cloud/daemon.key
+  /etc/your-cloud/relay-ca.crt
+  /etc/your-cloud/relay.crt
+  /etc/your-cloud/relay.key
+  /etc/your-cloud/daemon-ca.crt
+  /etc/your-cloud/enrollment.json
+  /etc/your-cloud/relay-candidate.json
+  "$artifact"
+)
+for target in "${managed_targets[@]}"; do
+  [[ ! -L "$target" ]] || fail "managed target must not be a symbolic link: $target"
+  [[ ! -e "$target" || -f "$target" ]] || fail "managed target has an unsafe type: $target"
+done
+
+relay_unit=your-cloud-relay.service
+daemon_unit=your-cloud-daemon.service
+stop_and_disable "$relay_unit"
+stop_and_disable "$daemon_unit"
+assert_artifact_unused
+
+listeners=$(ss -H -ltn 'sport = :8443') || fail "cannot inspect Relay listeners"
+[[ -z "$listeners" ]] || fail "port 8443 is still listening"
+
+rm -f -- "${managed_targets[@]}"
+sed -i '/# your-cloud-v0\.0\.2$/d' /etc/hosts
+systemctl daemon-reload || fail "systemd could not reload after removal"
+
+for unit in "$relay_unit" "$daemon_unit"; do
+  load=$(systemctl show "$unit" --property=LoadState --value) \
+    || fail "cannot inspect $unit after removal"
+  if [[ "$load" != not-found ]]; then
+    systemctl reset-failed "$unit" >/dev/null || fail "cannot reset $unit after removal"
+  fi
+done
+for target in "${managed_targets[@]}"; do
+  [[ ! -e "$target" && ! -L "$target" ]] || fail "managed target remains after removal: $target"
+done
+
+rmdir /etc/your-cloud /usr/local/lib/your-cloud 2>/dev/null || true

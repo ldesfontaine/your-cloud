@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# Install or replace the v0.0.2 Relay and preserve the previous runnable lot
+# if activation or readiness fails.
+set -euo pipefail
+
+[[ $# -eq 5 ]] || { echo "usage: install-relay <binary> <relay-cert> <relay-key> <daemon-ca> <registry>" >&2; exit 2; }
+binary=$1
+relay_cert=$2
+relay_key=$3
+daemon_ca=$4
+registry=$5
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+
+fail() { echo "$*" >&2; exit 1; }
+[[ $(id -u) -eq 0 ]] || fail "install-relay must run as root"
+[[ $(hostname) == lab-coordinateur ]] || fail "only lab-coordinateur is the v0.0.2 Relay candidate"
+for source in "$binary" "$relay_cert" "$relay_key" "$daemon_ca" "$registry" "$script_dir/your-cloud-relay.service"; do
+  [[ -f "$source" && ! -L "$source" ]] || fail "regular installation source required: $source"
+done
+[[ -x "$binary" ]] || fail "binary must be executable"
+
+artifact=/usr/local/lib/your-cloud/your-cloud
+relay_certificate=/etc/your-cloud/relay.crt
+relay_private_key=/etc/your-cloud/relay.key
+daemon_authority=/etc/your-cloud/daemon-ca.crt
+enrollment_registry=/etc/your-cloud/enrollment.json
+candidate_manifest=/etc/your-cloud/relay-candidate.json
+relay_unit_path=/etc/systemd/system/your-cloud-relay.service
+relay_unit=your-cloud-relay.service
+daemon_unit=your-cloud-daemon.service
+
+for directory in /usr/local/lib/your-cloud /etc/your-cloud; do
+  [[ ! -L "$directory" ]] || fail "managed directory must not be a symbolic link: $directory"
+  [[ ! -e "$directory" || -d "$directory" ]] || fail "managed directory path has an unsafe type: $directory"
+done
+
+managed_targets=(
+  "$artifact"
+  "$relay_certificate"
+  "$relay_private_key"
+  "$daemon_authority"
+  "$enrollment_registry"
+  "$candidate_manifest"
+  "$relay_unit_path"
+)
+for target in "${managed_targets[@]}"; do
+  [[ ! -L "$target" ]] || fail "managed target must not be a symbolic link: $target"
+  [[ ! -e "$target" || -f "$target" ]] || fail "managed target has an unsafe type: $target"
+done
+
+candidate=$(mktemp)
+backup_dir=$(mktemp -d)
+staged_binary=
+cleanup() {
+  rm -f -- "$candidate"
+  [[ -z "$staged_binary" ]] || rm -f -- "$staged_binary"
+  rm -rf -- "$backup_dir"
+}
+trap cleanup EXIT
+printf '%s\n' '{"schema":1,"role":"relay-candidate"}' >"$candidate"
+
+for index in "${!managed_targets[@]}"; do
+  target=${managed_targets[$index]}
+  if [[ -e "$target" ]]; then
+    cp -a -- "$target" "$backup_dir/$index"
+    : >"$backup_dir/$index.present"
+  fi
+done
+
+active_state() {
+  systemctl show "$1" --property=ActiveState --value
+}
+
+enabled_state() {
+  local unit=$1 state
+  if state=$(systemctl is-enabled "$unit" 2>/dev/null); then
+    case "$state" in
+      enabled|enabled-runtime) echo enabled ;;
+      *) echo "unsupported enabled state for $unit: $state" >&2; return 1 ;;
+    esac
+    return
+  fi
+  case "$state" in
+    disabled|not-found) echo disabled ;;
+    *) echo "cannot establish enabled state for $unit: ${state:-unknown}" >&2; return 1 ;;
+  esac
+}
+
+reset_failed_if_needed() {
+  local unit=$1 state status=0
+  state=$(systemctl is-failed "$unit" 2>/dev/null) || status=$?
+  case "$status:$state" in
+    0:failed)
+      systemctl reset-failed "$unit" >/dev/null \
+        || { echo "systemd could not reset the failed $unit" >&2; return 1; }
+      ;;
+    1:active|1:inactive)
+      ;;
+    *)
+      echo "cannot establish whether $unit needs reset-failed: ${state:-unknown}" >&2
+      return 1
+      ;;
+  esac
+}
+
+assert_unit_running() {
+  local unit=$1 active=unknown substate=unknown pid=unknown executable attempt
+  local stable_pid= consecutive=0
+  for attempt in 1 2 3 4 5; do
+    active=$(systemctl show "$unit" --property=ActiveState --value) || return
+    substate=$(systemctl show "$unit" --property=SubState --value) || return
+    pid=$(systemctl show "$unit" --property=MainPID --value) || return
+    if [[ "$active" == active && "$substate" == running && "$pid" =~ ^[1-9][0-9]*$ ]]; then
+      executable=$(readlink -f "/proc/$pid/exe") || return
+      if [[ "$executable" == "$artifact" ]]; then
+        if [[ "$pid" == "$stable_pid" ]]; then
+          consecutive=$((consecutive + 1))
+        else
+          stable_pid=$pid
+          consecutive=1
+        fi
+        [[ $consecutive -lt 3 ]] || return 0
+      else
+        stable_pid=
+        consecutive=0
+      fi
+    else
+      stable_pid=
+      consecutive=0
+    fi
+    [[ $attempt -eq 5 ]] || sleep 1
+  done
+  echo "$unit did not stabilize for three checks: ActiveState=$active SubState=$substate MainPID=$pid" >&2
+  return 1
+}
+
+relay_active_before=$(active_state "$relay_unit") || fail "cannot inspect Relay state before installation"
+relay_enabled_before=$(enabled_state "$relay_unit") || exit 1
+daemon_active_before=$(active_state "$daemon_unit") || fail "cannot inspect Daemon state before installation"
+
+restore_previous_lot() {
+  local index target unit load failed=0
+  echo "installation failed; restoring the previous v0.0.2 lot" >&2
+
+  for unit in "$relay_unit" "$daemon_unit"; do
+    load=$(systemctl show "$unit" --property=LoadState --value) || { failed=1; continue; }
+    if [[ "$load" != not-found ]]; then
+      systemctl stop "$unit" >/dev/null 2>&1 || failed=1
+    fi
+  done
+  if [[ "$relay_enabled_before" == disabled ]]; then
+    load=$(systemctl show "$relay_unit" --property=LoadState --value) || failed=1
+    if [[ "$load" != not-found ]]; then
+      systemctl disable "$relay_unit" >/dev/null 2>&1 || failed=1
+    fi
+  fi
+
+  for index in "${!managed_targets[@]}"; do
+    target=${managed_targets[$index]}
+    rm -f -- "$target" || failed=1
+    if [[ -e "$backup_dir/$index.present" ]]; then
+      cp -a -- "$backup_dir/$index" "$target" || failed=1
+    fi
+  done
+
+  systemctl daemon-reload || failed=1
+  for unit in "$relay_unit" "$daemon_unit"; do
+    load=$(systemctl show "$unit" --property=LoadState --value) || { failed=1; continue; }
+    if [[ "$load" != not-found ]]; then
+      systemctl reset-failed "$unit" >/dev/null 2>&1 || failed=1
+    fi
+  done
+
+  if [[ "$relay_enabled_before" == enabled ]]; then
+    systemctl enable "$relay_unit" >/dev/null || failed=1
+  fi
+  if [[ "$relay_active_before" == active ]]; then
+    systemctl restart "$relay_unit" || failed=1
+    assert_unit_running "$relay_unit" || failed=1
+  else
+    load=$(systemctl show "$relay_unit" --property=LoadState --value) || failed=1
+    if [[ "$load" != not-found ]]; then
+      systemctl stop "$relay_unit" >/dev/null 2>&1 || failed=1
+    fi
+  fi
+  if [[ "$daemon_active_before" == active ]]; then
+    systemctl restart "$daemon_unit" || failed=1
+    assert_unit_running "$daemon_unit" || failed=1
+  fi
+
+  rmdir /etc/your-cloud /usr/local/lib/your-cloud 2>/dev/null || true
+  [[ $failed -eq 0 ]] || {
+    echo "rollback of the previous v0.0.2 lot is incomplete; manual inspection required" >&2
+    return 1
+  }
+}
+
+activate_new_lot() {
+  install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud \
+    || { echo "cannot prepare managed directories" >&2; return 1; }
+  staged_binary=$(mktemp /usr/local/lib/your-cloud/.your-cloud.XXXXXX) \
+    || { echo "cannot stage the common artifact" >&2; return 1; }
+  install -o root -g root -m 0755 "$binary" "$staged_binary" \
+    || { echo "cannot copy the staged common artifact" >&2; return 1; }
+  mv -f -- "$staged_binary" "$artifact" \
+    || { echo "cannot activate the staged common artifact" >&2; return 1; }
+  staged_binary=
+  install -o root -g root -m 0644 "$relay_cert" "$relay_certificate" || return 1
+  install -o root -g root -m 0600 "$relay_key" "$relay_private_key" || return 1
+  install -o root -g root -m 0644 "$daemon_ca" "$daemon_authority" || return 1
+  install -o root -g root -m 0644 "$registry" "$enrollment_registry" || return 1
+  install -o root -g root -m 0644 "$candidate" "$candidate_manifest" || return 1
+  install -o root -g root -m 0644 "$script_dir/your-cloud-relay.service" "$relay_unit_path" || return 1
+
+  systemctl daemon-reload || return 1
+  reset_failed_if_needed "$relay_unit" || return 1
+  systemctl enable "$relay_unit" >/dev/null || return 1
+  systemctl restart "$relay_unit" || return 1
+  assert_unit_running "$relay_unit" || return 1
+
+  # Both roles use the same bytes. Restart only a colocated Daemon that was
+  # already active so it cannot keep running the replaced inode.
+  if [[ "$daemon_active_before" == active ]]; then
+    reset_failed_if_needed "$daemon_unit" || return 1
+    systemctl restart "$daemon_unit" || return 1
+    assert_unit_running "$daemon_unit" || return 1
+  fi
+}
+
+if ! activate_new_lot; then
+  restore_previous_lot || exit 1
+  exit 1
+fi
