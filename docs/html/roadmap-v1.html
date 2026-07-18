@@ -14,7 +14,7 @@
     <p class="eyebrow">Chemin borné · aucune roadmap globale</p>
     <h1>Une preuve à la fois jusqu'à la V1.</h1>
     <p class="lead">Le cap décrit le futur. Cette roadmap s'arrête à la première version complète et refuse de numéroter aujourd'hui toutes les micro-versions à venir.</p>
-    <div class="statebar"><span class="pill decided">Ordre de construction validé</span><span class="pill decided"><code>v0.0.1</code> décidée</span><span class="pill decided">Implémentée</span><span class="pill decided">Prouvée dans le LAB</span></div>
+    <div class="statebar"><span class="pill decided">Ordre de construction validé</span><span class="pill decided"><code>v0.0.1</code> prouvée</span><span class="pill decided"><code>v0.0.2</code> implémentée et prouvée</span><span class="pill off">Palier suivant non ouvert</span></div>
 
     <div class="rule"><strong>Règle :</strong> décidé → implémenté → prouvé. Seul le prochain incrément reçoit un numéro et un périmètre détaillé. Chaque palier montre un résultat, une preuve nominale, un refus hostile, une limite et la justification OWASP/NIS2 proportionnée exigée par la politique de qualité.</div>
 
@@ -45,10 +45,10 @@
       <p><strong>Pas encore :</strong> interface, métriques, mTLS, déploiement, WireGuard ou exécution sur le laptop.</p>
     </section>
 
-    <h2>Paliers nécessaires ensuite</h2>
+    <h2>Paliers de la V1</h2>
     <div class="timeline">
       <!-- coherence: V1-OBSERVATION:start -->
-      <article class="stage"><div class="number">1</div><div><h3>Observation authentifiée et bornée</h3><p>Enrôlement, identité par Daemon, mTLS, profil approuvé, collecteurs nommés et tampon local mesuré.</p><p class="proof"><strong>Sortie :</strong> identité inconnue ou révoquée refusée, aucune commande ou scan, état local lisible sans API réseau, limites d'âge/taille prouvées et lacune visible à saturation.</p><p><strong>Dépendance validée :</strong> l'identité, l'âge et les lacunes des données sont fiables avant de construire l'App.</p></div></article>
+      <article class="stage"><div class="number">0.0.2</div><div><h3>Observation authentifiée et bornée · incrément prouvé</h3><p>Enrôlement manuel hors réseau, identité distincte par Daemon, deux autorités de certification séparées dans le contrôleur LAB, mTLS, profil <code>host-health.v1</code> et tampon local mesuré.</p><p class="proof"><strong>Preuve obtenue :</strong> identités inconnue et révoquée refusées, endpoint et certificats incorrects refusés, diagnostic local, saturation à 120 éléments, lacune <code>15..30</code>, reprise, redémarrages et réinstallation.</p><p><strong>État :</strong> décidé, implémenté et prouvé le 18 juillet 2026 ; orchestration encore assistée. Voir le <a href="../objectifs/v1/CONTRAT-V0.0.2.md">contrat</a> et le <a href="../lab/v0.0.2-observation.md">rapport LAB</a>.</p></div></article>
       <!-- coherence: V1-OBSERVATION:end -->
       <!-- coherence: V1-APP-ACCESS:start -->
       <article class="stage"><div class="number">2</div><div><h3>App de lecture privée</h3><p>Infrastructure et deux machines visibles depuis l'App de la VM de contrôle ; App→Relay en HTTPS authentifié.</p><p><strong>Précondition :</strong> observation authentifiée, tampon borné et données anciennes ou lacunaires déjà prouvés.</p><p class="proof"><strong>Sortie :</strong> tunnel navigateur sur <code>127.0.0.1</code>, aucun port public ou Podman sur le laptop, et identité ou endpoint Relay incorrect refusé.</p><p>Ce chemin est propre à la V1 ; l'App finale aura un accès HTTPS authentifié sans VPN manuel et sans dépendre du laptop.</p></div></article>
@@ -71,9 +71,9 @@
 
     <div class="after"><strong>Premier jalon demandé après la V1 :</strong> <code>v1.0.1</code> ajoutera un petit parcours SSO OIDC pour Vaultwarden. Le fournisseur, son placement et sa récupération seront cadrés après la preuve V1.</div>
 
-    <div class="after"><strong>Encore ouverts :</strong> numéros des paliers après <code>v0.0.1</code>, enveloppe de distribution autour de l'exécutable unique, valeurs du tampon avant mesure, commande et port local de l'App, hébergement/authentification finale de l'App et détails du SSO.</div>
+    <div class="after"><strong>Encore ouverts :</strong> numéros des paliers après <code>v0.0.2</code>, enveloppe de distribution autour de l'exécutable unique, commande et port local de l'App, hébergement/authentification finale de l'App et détails du SSO.</div>
 
-    <section class="next"><h2>Point d'arrêt</h2><p><code>v0.0.1</code> est fermée par son contrat et son rapport LAB. Aucun palier suivant n'est ouvert par cette clôture.</p></section>
+    <section class="next"><h2>Point d'arrêt</h2><p><code>v0.0.1</code> et <code>v0.0.2</code> sont fermées par leurs preuves. Le palier App n'est pas ouvert ; aucune App, action distante, Ansible métier, Auxiliaire, WireGuard, OCI, Proxmox, OpenStack, worker d'automatisation, projet IaC ou autre capacité post-V1 n'est entrée dans ce chantier.</p></section>
 
     <footer>Source : <a href="../objectifs/v1/ROADMAP.md">ROADMAP.md</a> · Destination : <a href="../projet/CAP.md">cap du projet</a> · Ligne d'arrivée : <a href="../objectifs/v1/README.md">objectif V1</a></footer>
   </main>

@@ -103,6 +103,10 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.0.2` — observation authentifiée et bornée](v0.0.2-observation.md) :
+  mTLS, enrôlement et révocation, profil fixe, tampon saturé avec lacune,
+  reprise, redémarrages et cycle retrait-réinstallation exécutés dans
+  `v1-full` le 18 juillet 2026 ; orchestration encore assistée.
 - [`v0.0.1` — un artefact, trois processus isolés](v0.0.1-presence.md) : build
   Go unique, Daemon et Relay parallèles sur le VPS, Daemon seul sur le LAN,
   refus candidat et HTTP, transitions `recent`/`old`/`absent`, retrait et

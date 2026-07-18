@@ -1,7 +1,8 @@
 # Roadmap V1
 
-> Statut : `v0.0.1` décidée, implémentée et prouvée dans le LAB le 16 juillet
-> 2026. Les paliers suivants restent proposés et aucun n'est ouvert.
+> Statut : `v0.0.1` et `v0.0.2` sont décidées, implémentées et prouvées dans le
+> LAB. La preuve assistée de `v0.0.2` date du 18 juillet 2026 ; aucun palier
+> suivant n'est ouvert par cette clôture.
 
 Une [édition HTML autonome et visuelle](../../html/roadmap-v1.html) accompagne cette source
 Markdown.
@@ -48,6 +49,7 @@ Le développement produit commence avec le prochain incrément décrit ci-dessou
 | Cap global | oui | sans objet | sans objet |
 | Contrat V1 | oui | non | non |
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
+| `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
 | Paliers postérieurs de la V1 | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
@@ -133,7 +135,12 @@ exact, publier ou basculer, observer, puis retirer l'ancien état.
 <!-- coherence: SERVICE-LIFECYCLE:end -->
 
 <!-- coherence: V1-OBSERVATION:start -->
-### 1. Observation authentifiée et bornée
+### Incrément prouvé : `v0.0.2` — observation authentifiée et bornée
+
+Le comportement mesurable, les paramètres décidés et les exclusions de ce
+palier sont figés dans son
+[contrat exécutable](CONTRAT-V0.0.2.md) et exécuté dans son
+[rapport LAB](../../lab/v0.0.2-observation.md).
 
 **Résultat :** enrôler explicitement les deux machines, donner une identité
 distincte à chaque Daemon, protéger le transport Daemon–Relay par mTLS, puis
@@ -310,10 +317,9 @@ la présente roadmap.
 
 ## Points volontairement non décidés
 
-- Les numéros et le découpage exacts des paliers postérieurs à `v0.0.1`.
+- Les numéros et le découpage exacts des paliers postérieurs à `v0.0.2`.
 - L'enveloppe de distribution autour de l'exécutable unique — paquet Debian,
   archive signée ou autre format — sans rouvrir la séparation des processus.
-- Les valeurs du tampon avant leur mesure par le premier profil réel.
 - Le port local et le nom de la commande qui ouvrira l'App dans le LAB.
 - Le placement final, l'identité utilisateur et le mécanisme d'authentification
   de l'App publiquement hébergée après la V1.
@@ -321,5 +327,7 @@ la présente roadmap.
 
 ## Point d'arrêt
 
-`v0.0.1` est fermée par son contrat et son rapport LAB. Aucun palier postérieur
-n'est ouvert par cette clôture.
+`v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. La
+prochaine décision est le cadrage du palier App ; aucune App, action distante,
+Ansible métier, Auxiliaire, WireGuard, OCI, Proxmox, OpenStack, worker
+d'automatisation, projet IaC ou autre capacité post-V1 n'a été ouverte ici.

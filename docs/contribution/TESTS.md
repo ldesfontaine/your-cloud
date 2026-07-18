@@ -11,8 +11,8 @@
 
 Ce registre conserve les contrôles réalisés, les difficultés rencontrées et le
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
-décrit uniquement le périmètre `v0.0.1` : il ne crée aucune exigence ni aucune
-capacité d'un palier suivant.
+distingue la couverture automatisée de `v0.0.1` de la preuve assistée de
+`v0.0.2` ; une ligne planifiée ne constitue jamais une preuve.
 
 ## Vocabulaire de travail
 
@@ -63,8 +63,12 @@ L'arborescence rend cette frontière visible :
   réutilisables dans un runner CI isolé ;
 - [`tests/lab/v0.0.1/`](../../tests/lab/v0.0.1/) contient l'orchestrateur, les
   scénarios distants et la restitution de la preuve multi-VM ;
-- [`deploy/v0.0.1/`](../../deploy/v0.0.1/) ne contient que le cycle de vie et
-  les unités installables, jamais un scénario hostile.
+- [`tests/lab/v0.0.2/`](../../tests/lab/v0.0.2/) contient seulement les
+  auxiliaires synthétiques déjà utilisés par la preuve assistée, pas encore un
+  orchestrateur multi-VM ;
+- [`deploy/v0.0.1/`](../../deploy/v0.0.1/) et
+  [`deploy/v0.0.2/`](../../deploy/v0.0.2/) ne contiennent que les cycles de vie
+  et unités installables de leur contrat, jamais un scénario hostile.
 
 Une image CI ordinaire peut fournir la première couche, mais elle ne remplace
 pas automatiquement KVM/libvirt, les réseaux et les quatre VM de `v1-full`.
@@ -80,6 +84,31 @@ possède une échéance ; chaque
 assertion conserve son code de sortie ; le nettoyage s'exécute aussi après un
 échec. Aucun `|| true` global, agrégat de logs ou rapport visuel ne doit masquer
 le premier contrôle rouge.
+
+## Matrice exécutée de `v0.0.2` — orchestration assistée
+
+Cette matrice vient du
+[contrat exécutable](../objectifs/v1/CONTRAT-V0.0.2.md). Les résultats du 18
+juillet 2026 sont conservés dans le
+[rapport LAB](../lab/v0.0.2-observation.md). Les tests Go sont automatiques ;
+le cycle multi-VM a été exécuté et affirmé, mais son enchaînement reste assisté
+et doit devenir un pilote rejouable.
+
+| Frontière | Résultat exécuté | Automatisation restante |
+|---|---|---|
+| certificats mTLS | nominal et certificats inconnu, révoqué, expiré, mauvaise CA, mauvais usage et mauvaise association refusés | intégrer les commandes vivantes au pilote unique |
+| endpoint Relay | HTTPS exact ; HTTP, mauvais nom/CA, chemin et query refusés ; port, fragment et redirection couverts en tests Go | rejouer toute la matrice en réseau vivant |
+| profil `host-health.v1` | trois collecteurs réels ; profil, champ, version et entrée libre refusés en tests Go | intégrer coûts et schémas au rapport structuré |
+| accusé durable | retrait après accusé, rejeu exact accepté, collision refusée et échec de persistance injecté sans faux état mémoire | porter ensuite l'injection au pilote multi-VM |
+| tampon | Relay indisponible, 120 éléments, 46 272 octets, lacune `15..30`, redémarrage et reprise | automatiser l'accélération sans boucle manuelle |
+| diagnostic administratif local en `root` | nominal, indisponible, saturé et repris ; format, sujet et chemin libres refusés | capturer automatiquement les quatre états |
+| cycle systemd | rôles séparés, redémarrages, rollbacks d'artefact invalide, gardes processus/listener, retrait, état absent et réinstallation finale | intégrer ces étapes au pilote et lancer le processus hostile avec l'UID du service |
+
+Les mesures LAB ont fixé `64 KiB`, 120 observations et une heure, sous les
+plafonds absolus. Les microbenchmarks et leurs limites figurent dans le rapport.
+La matrice ne s'étend pas à l'App, Ansible métier, un canal d'action,
+l'Auxiliaire, WireGuard, OCI, Proxmox, OpenStack, un worker d'automatisation ou
+un projet IaC.
 
 ## Couverture actuelle de `v0.0.1`
 

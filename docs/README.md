@@ -13,7 +13,7 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Savoir ce qui doit être vrai pour la V1 | [`objectifs/v1/README.md`](objectifs/v1/README.md) |
 | Voir l'ordre des preuves jusqu'à la V1 | [`objectifs/v1/ROADMAP.md`](objectifs/v1/ROADMAP.md) |
 | Comprendre les machines, composants et flux | [`architecture/ANATOMIE.md`](architecture/ANATOMIE.md) |
-| Comprendre Daemon, Relay, présence et leur coordination | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
+| Comprendre les appels, données, états et protections de la chaîne d'observation | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |
 | Contribuer ou travailler avec un agent | [`contribution/README.md`](contribution/README.md) |
 | Lire les exigences de qualité | [`contribution/QUALITE.md`](contribution/QUALITE.md) |

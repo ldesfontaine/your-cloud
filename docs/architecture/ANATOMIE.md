@@ -6,9 +6,9 @@ Une [édition HTML autonome et visuelle](../html/anatomie.html) accompagne
 cette source Markdown. Elle évolue à chaque incrément qui modifie un composant,
 un placement, une autorité ou un flux réseau.
 
-La [chaîne d'observation détaillée](CHAINE-D-OBSERVATION.md) explique
-progressivement les rôles Daemon et Relay, le signal de présence, les moments
-où ils agissent et les limites propres à `v0.0.1`.
+La [chaîne d'observation détaillée](CHAINE-D-OBSERVATION.md) cartographie les
+rôles Daemon, Relay et Diagnose, leurs appels, états, données, protections et
+limites dans `v0.0.2`.
 
 ## Comment lire ce document
 
@@ -20,26 +20,26 @@ Trois états ne doivent jamais être confondus :
 - **prouvé** : le scénario annoncé a réellement réussi dans le LAB avec ses
   refus hostiles.
 
-À ce jour, le protocole de présence minimal, sa distribution par un artefact
-unique, la cohabitation Daemon/Relay et le refus Relay par défaut de `v0.0.1`
-sont implémentés et prouvés dans le LAB. Le reste du placement V1 ci-dessous est
-décidé mais pas implémenté.
+À ce jour, `v0.0.1` et la chaîne d'observation authentifiée et bornée de
+`v0.0.2` sont implémentées et prouvées dans le LAB. L'App, le chemin d'action et
+les services du reste de la V1 restent décidés mais pas implémentés.
 
-## Distribution réellement prouvée pour `v0.0.1`
+## Distribution réellement prouvée pour `v0.0.2`
 
 ```text
-Machine du LAN / non candidate           VPS simulé / candidat Relay
-/usr/local/lib/your-cloud/your-cloud     /usr/local/lib/your-cloud/your-cloud
-`- Daemon, compte daemon -- HTTP :8443 -> |- Relay, compte relay
-                                            `- Daemon, compte daemon -> Relay local
+Machine du LAN / non candidate              VPS simulé / candidat Relay
+/usr/local/lib/your-cloud/your-cloud        /usr/local/lib/your-cloud/your-cloud
+`- Daemon LAN -- mTLS :8443 --------------> |- Relay <--- mTLS local ---+
+                                             `- Daemon VPS -------------+
 ```
 
 Les mêmes octets sont installés sur les deux machines. Sur le VPS seulement, le
 Daemon et le Relay fonctionnent en parallèle avec des comptes, configurations,
-identités et politiques systemd distincts. La présence du fichier ne suffit pas
-à ouvrir le port : sans manifeste candidat provisionné localement, le mode
-Relay refuse avant toute écoute. Le [rapport LAB](../lab/v0.0.1-presence.md)
-prouve cette frontière, ses refus hostiles et son cycle de retrait.
+identités, credentials, états et politiques systemd distincts. La présence du
+fichier ne suffit pas à ouvrir le port : sans manifeste candidat provisionné
+localement, le mode Relay refuse avant toute écoute. Le
+[rapport LAB](../lab/v0.0.2-observation.md) prouve mTLS, révocation, saturation,
+lacune, reprise et cycle de retrait-réinstallation.
 
 <!-- coherence: V1-NETWORK:start -->
 ## Placement V1
@@ -226,10 +226,16 @@ Le Daemon n'ouvre aucun port réseau. Il conserve l'état courant et les donnée
 non confirmées par le Relay dans un tampon limité. Une perte provoquée par la
 limite apparaît comme une lacune explicite, jamais comme une période saine.
 
-L'utilisateur choisit ses observations parmi des collecteurs connus. Chaque
-choix annonce les données, la fréquence, les ressources et les lectures locales
-nécessaires. Ni commande shell, ni chemin arbitraire, ni plugin téléchargé à la
-demande ne peut devenir une observation.
+Le diagnostic de cet état est une commande administrative locale, exécutée
+ponctuellement par `root` parce que le tampon du compte dynamique est protégé
+sous `/var/lib/private`. Cette lecture seule n'ouvre aucun port et ne donne
+aucun privilège supplémentaire au Daemon permanent.
+
+Le premier profil prouvé `host-health.v1` fixe trois collecteurs : uptime,
+mémoire et système de fichiers racine. Il annonce les données, la fréquence,
+les ressources et les lectures locales nécessaires. Ni commande shell, ni
+chemin arbitraire, ni plugin téléchargé à la demande ne peut devenir une
+observation.
 
 À l'avenir, une source d'observation nécessitant plus de droits demandera un
 contrat local borné et une justification propre. Le Daemon entier ne devient

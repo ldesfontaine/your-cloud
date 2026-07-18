@@ -1,454 +1,509 @@
-# Chaîne d'observation — Daemon, Relay et signal de présence
+# Chaîne d'observation — carte technique de `v0.0.2`
 
-> Statut : guide d'architecture vivant. Il décrit ce qui est réellement prouvé
-> par `v0.0.1`, puis sépare les décisions V1 qui ne sont pas encore
-> implémentées. La V1 complète n'est pas déclarée prouvée.
+> Statut : guide d'architecture vivant. `v0.0.2` est implémentée et prouvée
+> dans le LAB. Ce document explique où le code s'exécute, qui appelle quoi,
+> quelles données circulent et quelles limites restent ouvertes.
 
-## Les notions avant le schéma
+Une [édition HTML autonome et visuelle](../html/chaine-observation.html)
+accompagne cette source canonique.
 
-Une **chaîne d'observation** est le chemin suivi par une information depuis la
-machine qui la produit jusqu'au composant qui permet de la consulter. Ce chemin
-transporte des faits observés ; il ne transporte aucun ordre vers les machines.
+## Pourquoi cette carte existe
 
-Pour lire les schémas sans confondre installation, programme et exécution :
+Une fonction peut être courte et correcte tout en restant difficile à replacer
+dans le produit. Cette carte complète donc le code avec les questions de cycle
+de vie :
 
-- l'**Agent** est la frontière de l'installation locale de Your Cloud sur une
-  machine. Ce n'est ni un processus, ni un troisième service : il fournit
-  seulement les rôles explicitement activés sur cette machine ;
-- un **artefact** est le fichier exécutable construit pour une version ; dans
-  `v0.0.1`, ce fichier unique s'appelle `your-cloud` ;
-- un **rôle** est une capacité choisie au démarrage de cet exécutable, comme
-  `daemon` ou `relay` ;
-- un **processus** est une exécution en mémoire. Deux rôles issus des mêmes
-  octets restent deux processus lorsqu'ils sont lancés séparément ;
-- une **autorité** est l'ensemble des ressources qu'un processus peut lire,
-  modifier ou joindre. Des comptes, configurations et cycles systemd séparés
-  empêchent les rôles de partager implicitement la même autorité ;
-- un **signal de présence** est le petit message par lequel un Daemon indique
-  au Relay qu'il vient de communiquer.
+- qui lance le binaire et avec quel rôle ;
+- quelle fonction assemble chaque processus ;
+- quels packages portent la logique métier ;
+- où vivent les certificats, les états et les limites ;
+- quels algorithmes sont utilisés et pourquoi ;
+- quelles parties appartiennent encore à `v0.0.1` sans être appelées par le
+  chemin courant.
 
-La **Présence n'est donc pas un troisième processus**. Dans `v0.0.1`, c'est le
-contrat de données partagé entre le Daemon et le Relay. Le package Go
-`internal/presence` décrit ce contrat ; son nom ne crée pas un rôle à déployer.
+## Les notions avant les appels
 
-Le nom du dossier [`artifacts/`](../../artifacts/README.md) emploie le même mot
-pour les **artefacts de preuve** générés : résultats, rapports et captures. Il
-ne contient pas le binaire déployé. Celui-ci apparaît temporairement sous
-`dist/` dans le runner LAB. Aucun répertoire `build/` ne fait partie de
-l'arborescence du projet.
-
-## Vue rapide
-
-```text
-machine du LAN                              VPS simulé
-Agent                                      Agent
-`- processus Daemon                        |- processus Daemon
-      |                                    |      |
-      | POST /v0/presence                  |      | POST /v0/presence
-      | HTTP sortant                       |      | HTTP local
-      +-----------------------------+      |      |
-                                    v      v      |
-                                  processus Relay-+
-                                          |
-                                          | QUERY /v0/machines
-                                          v
-                             client de consultation du LAB
-                             future App : décidée, non présente ici
-```
-
-Le Daemon produit et envoie. Le Relay reçoit, valide, mémorise le dernier
-signal et calcule son âge. Le client consulte cette vue. Aucun de ces échanges
-ne demande au Daemon d'exécuter une commande.
+- L'**Agent** est l'installation locale de Your Cloud. Ce n'est pas un
+  processus supplémentaire.
+- L'**artefact** est le fichier exécutable unique `your-cloud`.
+- Un **rôle** est choisi au lancement : `daemon`, `relay` ou `diagnose`.
+- Un **processus** est une exécution en mémoire de l'artefact. Deux rôles lancés
+  séparément restent deux processus indépendants.
+- Une **goroutine** est une fonction exécutée concurremment dans le même
+  processus Go. Elle ne crée ni VM, ni service, ni worker d'automatisation.
+- Un **collecteur** lit une source locale fixe et produit une donnée typée.
+- Une **observation** est l'enveloppe JSON versionnée qui regroupe les trois
+  résultats `host-health.v1`.
+- Le **tampon** conserve localement les observations non encore accusées.
+- Une **lacune** décrit explicitement les séquences supprimées lorsque le
+  tampon atteint une limite.
+- Le **diagnostic** est une commande ponctuelle en lecture seule. Ce n'est pas
+  une unité systemd et elle n'ouvre aucun port.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
-## Placement réellement prouvé par `v0.0.1`
-
-Une **machine candidate Relay** est une machine sur laquelle l'administrateur a
-explicitement autorisé le rôle Relay. La simple présence de l'exécutable ne
-suffit pas. `v0.0.1` matérialise cette autorisation par un manifeste local
-provisionné par root et vérifié avant l'ouverture du port.
+## Placement réellement exécuté
 
 ```text
 lab-console
-`- construit et teste ; aucun rôle produit permanent
+|- go test / go vet / go build
+|- génération des deux CA synthétiques pendant la preuve
+`- aucun processus produit permanent
 
-lab-machine-1 · LAN privé · non candidate
-/usr/local/lib/your-cloud/your-cloud
-`- your-cloud daemon
-
-lab-coordinateur · VPS simulé · seule candidate Relay
-/usr/local/lib/your-cloud/your-cloud
-|- your-cloud daemon
-`- your-cloud relay
-
-lab-machine-2
-`- aucun composant Your Cloud dans l'état final de la preuve
+lab-machine-1                         lab-coordinateur
+/usr/local/lib/your-cloud/your-cloud  /usr/local/lib/your-cloud/your-cloud
+`- processus daemon                  |- processus daemon
+    `- aucune écoute entrante        |   `- mTLS local vers le Relay
+                                     `- processus relay
+                                           `- écoute mTLS :8443
 ```
 
-Les mêmes octets sont installés sur `lab-machine-1` et `lab-coordinateur`. Sur
-le VPS simulé, les deux rôles ont des PID, comptes dynamiques, configurations
-et unités systemd distincts. Ils peuvent donc démarrer, échouer et redémarrer
-indépendamment, même si une défaillance de l'artefact commun peut toucher les
-deux.
+Les mêmes octets sont installés sur les deux machines. Sur
+`lab-coordinateur`, systemd lance deux unités, donc deux processus, comptes
+dynamiques, jeux de credentials et répertoires d'état distincts. Le rôle Relay
+reste refusé sans manifeste candidat root-owned.
 
-## Rôles et autorités
+Le Daemon et le Relay partagent l'artefact, pas leur autorité :
 
-### Daemon
+| Rôle | Peut lire | Peut modifier | Réseau |
+|---|---|---|---|
+| Daemon | son certificat, sa clé, la CA Relay et les trois sources système fixes | son tampon sous `/var/lib/private/your-cloud-daemon` | HTTPS sortant vers l'origine Relay exacte |
+| Relay | son certificat, sa clé, la CA Daemon, le registre et le manifeste candidat | son état sous `/var/lib/private/your-cloud-relay` | écoute TLS exacte sur `192.168.242.103:8443` |
+| Diagnose | lancé ponctuellement par `root`, certificat public Daemon et état local déjà produit | rien | aucun accès réseau |
 
-Le **Daemon** est le processus permanent d'observation fourni par l'Agent. Dans
-`v0.0.1`, il ne relève encore aucune métrique système : il connaît seulement
-son identifiant synthétique, la version de l'exécutable et l'heure courante.
+## Du système à la fonction Go
 
-Ses actions sont bornées :
+```mermaid
+flowchart TD
+    SD[systemd ou shell local] --> BIN[exécutable your-cloud]
+    BIN --> MAIN[main]
+    MAIN --> RUN[run arguments]
+    RUN -->|daemon| RD[runDaemon]
+    RUN -->|relay| RR[runRelay]
+    RUN -->|diagnose observation| RG[runDiagnose]
+    RD --> DP[processus Daemon permanent]
+    RR --> RP[processus Relay permanent]
+    RG --> OUT[sortie texte ou JSON puis fin]
+```
 
-1. valider son identifiant et les bornes HTTP actuellement reconnues pour la
-   destination Relay ;
-2. construire un signal de présence ;
-3. ouvrir une connexion sortante vers le Relay ;
-4. envoyer immédiatement, puis toutes les secondes ;
-5. attendre exactement `204 No Content` ;
-6. réessayer après une indisponibilité sans s'arrêter ni produire un log à
-   chaque seconde.
+[`cmd/your-cloud/main.go`](../../cmd/your-cloud/main.go) est le seul sélecteur
+de rôle. `main()` transmet `os.Args[1:]` à `run()`. `run()` refuse un rôle
+inconnu, puis appelle exactement l'une des trois fonctions d'assemblage.
 
-Le Daemon n'écoute aucun port et ne reçoit aucun ordre. Il journalise seulement
-la première transition vers `presence unavailable`, puis le retour
-`presence recovered`. Cette limitation évite qu'une panne répétée du Relay
-remplisse les journaux avec un message identique par tentative.
+Le dossier `cmd/` est donc la **couture** du programme : il relie arguments,
+credentials, stockage, réseau et arrêt propre. La logique détaillée reste dans
+`internal/` afin d'être testable sans démarrer le processus complet.
 
-### Relay
+## Chemin `daemon`
 
-Le **Relay** est le processus qui reçoit les observations des Daemons et expose
-une vue consultable. Il ne relaie pas du trafic Web, ne découvre pas le LAN et
-ne transporte aucune action vers les Daemons.
+L'unité [`your-cloud-daemon.service`](../../deploy/v0.0.2/your-cloud-daemon.service)
+lance :
 
-Avant d'assembler son serveur HTTP, il vérifie :
+```text
+your-cloud daemon
+  --machine-id=<identité fixée par l'installation>
+  --relay-url=https://relay.v0-0-2.your-cloud.test:8443
+```
 
-- l'adresse d'écoute exacte autorisée par ce palier ;
-- l'existence du manifeste candidat au chemin fixe
-  `/etc/your-cloud/relay-candidate.json` ;
-- un répertoire et un fichier réels, détenus par root et non modifiables par le
-  groupe ou les autres utilisateurs ;
-- un document JSON court contenant exactement le schéma et le rôle attendus.
+`runDaemon` ne récupère pas toute sa configuration dans l'environnement :
 
-En l'absence de cette autorisation locale, le Relay refuse avant toute écoute.
-Le manifeste protège contre une activation accidentelle ; il n'est ni une
-identité réseau, ni une élection, ni une protection contre root.
+- `machine-id` et `relay-url` sont des arguments de commande produits par
+  systemd ;
+- seul `CREDENTIALS_DIRECTORY` vient de l'environnement créé par
+  `LoadCredential=` afin de localiser les copies privées temporaires des
+  credentials systemd.
 
-Une fois démarré, le Relay :
+```mermaid
+flowchart TD
+    RD[runDaemon] --> A[parseDaemonArguments]
+    A --> C[credentials.LoadPair / LoadPublic]
+    C --> T[transport.NewDaemonClient]
+    T --> B[buffer.Open]
+    B --> NC[daemon.NewCollector]
+    B --> NP[daemon.NewPublisher]
+    NC --> G1[goroutine Collector.Run]
+    NP --> G2[goroutine Publisher.Run]
+    SIG[SIGINT ou SIGTERM] --> CTX[annulation du context]
+    CTX --> G1
+    CTX --> G2
+    G1 --> WG[WaitGroup]
+    G2 --> WG
+    WG --> END[fin propre du processus]
+```
 
-1. représente toutes les machines de la liste positive comme `absent` ;
-2. reçoit et valide les signaux ;
-3. conserve uniquement le dernier signal valide de chaque machine, en mémoire ;
-4. ajoute sa propre heure de réception ;
-5. calcule `recent` ou `old` à partir de cette heure ;
-6. rend la vue disponible à un client de consultation.
+Les deux « workers » sont seulement deux goroutines du même Daemon :
+
+1. **Collector** : collecte immédiatement, puis toutes les trente secondes. Il
+   lit `/proc/uptime`, `/proc/meminfo` et les statistiques de `/`, construit
+   une observation et la persiste dans le tampon.
+2. **Publisher** : lit la plus ancienne observation en attente, l'envoie au
+   Relay, vérifie l'accusé exact puis la retire. Si le Relay est indisponible,
+   il conserve le tampon et applique un backoff borné.
+
+Cette séparation permet à la collecte de continuer pendant une panne Relay.
+Le `context` commun demande l'arrêt aux deux goroutines ; le `WaitGroup` attend
+qu'elles aient réellement terminé avant que `runDaemon` retourne.
+
+## Chemin `relay`
+
+L'unité [`your-cloud-relay.service`](../../deploy/v0.0.2/your-cloud-relay.service)
+lance le rôle uniquement sur la candidate :
+
+```text
+your-cloud relay --listen=192.168.242.103:8443
+```
+
+```mermaid
+flowchart TD
+    RR[runRelay] --> A[parseRelayArguments]
+    A --> M[relay.LoadCandidate]
+    M --> E[enrollment.OpenStore]
+    E --> C[credentials.LoadPair / LoadPublic]
+    C --> TLS[transport.NewRelayConfig]
+    TLS --> S[relay.OpenObservationStore]
+    S --> H[relay.NewObservationHandler]
+    H --> HTTP[newRelayServer]
+    HTTP --> SERVE[serveRelayUntilStopped]
+    HUP[SIGHUP] --> RELOAD[Store.Reload]
+    RELOAD --> SERVE
+    STOP[SIGINT ou SIGTERM] --> SHUT[shutdown HTTP borné à 3 s]
+```
+
+L'ordre est une frontière de sécurité : adresse, candidature, enrôlement,
+credentials et stockage sont validés avant l'ouverture du socket. Le callback
+d'autorisation est appliqué pendant la négociation TLS et à chaque requête ;
+une révocation rechargée ne dépend donc pas d'une nouvelle connexion.
+
+Le Relay expose uniquement `POST /v0/observations`. Il ne possède ni route de
+lecture, ni route d'enrôlement, ni réponse contenant un ordre pour le Daemon.
+
+## Chemin `diagnose`
+
+La commande est appelée manuellement par `root` sur la machine concernée :
+
+```text
+your-cloud diagnose observation
+your-cloud diagnose observation --format=json
+```
+
+```mermaid
+flowchart LR
+    D[runDiagnose] --> A[parseDiagnosticArguments]
+    A --> B[buffer.Inspect]
+    A --> C[securefile.ReadRootOwned du certificat public]
+    C --> P[parsePublicCertificate]
+    B --> BUILD[buildObservationDiagnostic]
+    P --> BUILD
+    BUILD --> R[renderObservationDiagnostic]
+    R --> STDOUT[stdout puis fin]
+```
+
+Le privilège administratif sert uniquement à lire le tampon protégé du compte
+dynamique sous `/var/lib/private`. Le diagnostic ne transforme pas le Daemon en
+processus root, ne devient pas une unité systemd et ne reçoit aucune autorité
+réseau.
+
+Son rôle est d'expliquer l'état local du Daemon sans dépendre du Relay :
+identité, version, profil, endpoint fixe, expiration du certificat, dernière
+collecte, dernière livraison, état `available` ou `unavailable`, taille des
+enveloppes en attente, prochaine séquence et nombre de lacunes.
+
+`buffer.Inspect` lit sans créer, réordonner, purger ou réécrire. La commande
+refuse un chemin, un sujet ou un format libre. Elle ne montre ni clé privée ni
+valeurs de santé collectées.
 
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: V1-OBSERVATION:start -->
-### Signal de présence
+## Trajet d'une observation
 
-Le **signal de présence `v0.0.1`** est un objet JSON contenant exactement :
+```mermaid
+sequenceDiagram
+    participant K as Noyau Linux
+    participant C as Collector
+    participant B as Tampon local
+    participant P as Publisher
+    participant R as Relay mTLS
+    K->>C: uptime, mémoire, statfs de /
+    C->>B: Enqueue séquence N
+    B-->>P: Peek plus ancienne attente
+    P->>R: POST /v0/observations
+    R->>R: chaîne X.509 + enrôlement + schéma + séquence
+    R->>R: fichier temporaire + fsync + rename + fsync répertoire
+    R-->>P: accusé machine + séquence N
+    P->>B: Acknowledge N
+```
 
-| Champ | Produit par | Utilisé pour | Limite |
+Une observation contient exactement : version de schéma, identité machine,
+version Daemon, profil, séquence persistante, heure de collecte, résultats des
+trois collecteurs et éventuelles lacunes.
+
+Le Relay accuse seulement après publication durable. Un accusé erroné ne
+retire rien du tampon. Un rejeu octet pour octet est idempotent ; la même
+séquence avec d'autres octets est une collision refusée.
+
+## États et fichiers persistants
+
+| Fichier logique | Responsable | Contenu | Écriture |
 |---|---|---|---|
-| `machine_id` | configuration locale du Daemon | rattacher le signal à une machine autorisée | syntaxe contrôlée et liste positive exacte |
-| `daemon_version` | exécutable | refuser une version incompatible | exactement `v0.0.1` |
-| `sent_at` | horloge de la machine | information visible | RFC 3339, jamais utilisé pour décider de la fraîcheur |
+| `observation-buffer.json` | Daemon | état courant, attente ordonnée, prochaine séquence, lacunes, livraison | temporaire `0600`, `fsync`, renommage atomique, `fsync` du répertoire |
+| `relay-observations.json` | Relay | dernier état durable et lacunes cumulées par machine | même protocole atomique |
+| `enrollment.json` | root, lu par Relay | machine, URI SAN, série, SHA-256 du certificat, état | provisionnement manuel puis reload explicite |
+| `relay-candidate.json` | root, lu par Relay | autorisation locale du seul rôle Relay | provisionnement manuel |
 
-Le Relay ajoute `received_at` avec sa propre horloge. Cette distinction est
-essentielle : une horloge de machine fausse ne peut pas maintenir
-artificiellement un état `recent`.
+Les limites d'exploitation du tampon sont 64 KiB, 120 observations et une
+heure, première atteinte. Les plus anciennes attentes partent d'abord ; l'état
+courant reste disponible et l'intervalle supprimé devient une lacune.
 
-## Moments du cycle
+La limite en octets porte sur le fichier d'état complet. Le champ de diagnostic
+`pending_bytes` additionne seulement les enveloppes encore en attente : il vaut
+zéro lorsque la file est vide, même si le fichier durable garde ses métadonnées
+et son état courant.
 
-Une **séquence** décrit l'ordre des interactions ; elle ne signifie pas qu'un
-coordinateur central ordonne toutes les étapes.
+## Carte des packages
 
-```text
-Administrateur       systemd Daemon        systemd Relay       client LAB
-      |                     |                    |                   |
-      | installe Agent      |                    |                   |
-      |-------------------->| démarre            |                   |
-      |                     |                    |                   |
-      | active candidature Relay sur le VPS      |                   |
-      |----------------------------------------->| vérifie manifeste |
-      |                                         | ouvre :8443       |
-      |                     | POST présence      |                   |
-      |                     |------------------->| valide + mémorise |
-      |                     |<-------------------| 204               |
-      |                     |                    |                   |
-      |                     |                    |<------------------| QUERY {}
-      |                     |                    |------------------>| vue machines
-      |                     |                    |                   |
-      |                     | nouvel envoi après 1 s                 |
-```
-
-Le Daemon peut démarrer avant le Relay : son premier envoi échoue, puis ses
-tentatives reprennent automatiquement. Le Relay n'a pas besoin de démarrer le
-Daemon et ne se connecte jamais à lui.
-
-## Schéma réseau HTTP actuel
-
-Une **frontière réseau** est l'endroit où une entrée non fiable arrive dans un
-processus. Dans `v0.0.1`, cette frontière est volontairement petite et reste
-limitée au LAB :
-
-```text
-origine                              destination Relay
-lab-machine-1 Daemon  ----HTTP---->  192.168.242.103:8443
-lab-coordinateur Daemon --HTTP---->  192.168.242.103:8443
-client LAB             ----HTTP---->  192.168.242.103:8443
-
-écriture :     POST  /v0/presence
-consultation : QUERY /v0/machines
-```
-
-Une **origine HTTP** contient seulement le schéma, l'hôte et le port. Le package
-Daemon refuse utilisateur, chemin, partie query et fragment, puis ajoute
-`/v0/presence`. Le point d'entrée du binaire et le script d'installation
-revérifient tous deux l'origine LAB exacte
-`http://192.168.242.103:8443`. Le Relay revérifie de la même manière son écoute
-exacte sur `192.168.242.103:8443`. Ces valeurs bornent un scénario LAB ; elles
-ne constituent pas une configuration de production.
-
-### Pourquoi `POST` pour le signal
-
-Une **écriture** modifie l'état conservé par le serveur. Chaque signal valide
-remplace la dernière présence de la machine et crée une nouvelle heure de
-réception côté Relay. `POST /v0/presence` exprime donc cette écriture. Le corps
-doit être un JSON de 512 octets au maximum, avec `Content-Type:
-application/json`. Un succès reçoit `204 No Content`.
-
-### Pourquoi `QUERY` pour consulter
-
-Une méthode HTTP est dite **sûre** lorsqu'elle est destinée à lire sans demander
-de modification de l'état du serveur. Une opération est **idempotente** lorsque
-la répéter n'ajoute pas d'effet de bord. Ces propriétés ne promettent pas une
-réponse octet pour octet identique : l'heure et l'âge des présences peuvent
-continuer d'évoluer entre deux lectures.
-
-`QUERY /v0/machines` exprime cette consultation avec un corps structuré. Dans
-`v0.0.1`, aucun filtre n'existe encore : le corps doit être exactement l'objet
-JSON vide `{}`, avec `Content-Type: application/json`, et rester inférieur ou
-égal à 32 octets. Le Relay annonce le format accepté avec :
-
-```text
-Accept-Query: "application/json"
-Cache-Control: no-store
-```
-
-Répéter cette requête ne modifie pas le stockage du Relay. L'ancien
-`GET /v0/machines` est refusé avec `405 Method Not Allowed`; un corps absent,
-`null`, non JSON, trop grand, contenant un filtre ou suivi d'un second objet est
-également refusé. La réponse valide contient l'heure de génération, la limite
-d'ancienneté et la vue des machines.
-
-Un **cache HTTP** est un intermédiaire capable de conserver une réponse et de
-la réutiliser. La RFC rend une réponse `QUERY` cacheable ; le Relay envoie donc
-`Cache-Control: no-store` pour interdire la conservation de cette vue vivante.
-La preuve LAB initiale n'incluait aucun cache : le contrôle de cet en-tête fait
-partie de la nouvelle matrice automatisée.
-
-La **partie query d'une URI** est le texte situé après `?`. Le corps JSON est le
-seul emplacement prévu ici pour décrire la consultation. Les deux routes
-refusent donc une partie query, y compris un `?` final vide, au lieu de
-l'ignorer ou de créer un second langage de paramètres.
-
-## Destination Relay future : besoin figé, mécanisme ouvert
-
-Un **endpoint Relay** est la destination complète approuvée remise à un
-Daemon : une route joignable, un port et l'identité cryptographique attendue du
-Relay. Une adresse IP seule permet de router des paquets ; elle ne prouve pas
-l'identité du processus rejoint.
-
-Chaque machine enrôlée devra connaître au moins un endpoint Relay approuvé pour
-envoyer ses observations. Cet endpoint n'a pas besoin d'une IP publique : un
-routage interne, un réseau privé fournisseur ou un passage privé borné
-suffisent si le flux sortant du Daemon et la consultation de l'App peuvent
-atteindre le Relay. Une IP publique ne devient nécessaire que si la topologie
-retenue impose réellement une arrivée directe depuis Internet.
-
-La continuité future du Relay exige davantage qu'un second processus prêt à
-démarrer. Avant tout remplacement automatique, le contrat devra fixer :
-
-1. quelles machines sont candidates et avec quelle autorité locale ;
-2. quel signal borné distingue une panne d'une coupure réseau temporaire ;
-3. comment l'endpoint approuvé et son identité sont redistribués ;
-4. quel état est repris et quelle perte d'observation reste acceptée ;
-5. comment empêcher deux Relay de se déclarer simultanément responsables ;
-6. quels délais, retours arrière et preuves autorisent la bascule.
-
-Le choix entre nom stable, liste d'endpoints, découverte signée ou autre
-mécanisme reste ouvert. Il n'appartient ni à `v0.0.1`, ni automatiquement au
-prochain palier. Le stockage mémoire actuel interdit de présenter un simple
-redémarrage ailleurs comme une reprise transparente.
-
-## États `absent`, `recent` et `old`
-
-Un **état de présence** décrit seulement l'âge du dernier signal reçu. Il ne
-prouve ni la santé complète de la machine, ni celle de ses services, ni
-l'absence de compromission.
-
-- `absent` : le Relay n'a reçu aucun signal depuis son propre démarrage ;
-- `recent` : un signal valide a été reçu depuis moins de quatre secondes ;
-- `old` : le dernier signal a été reçu il y a au moins quatre secondes.
-
-```text
-                         premier signal valide
-             +------------------------------------------+
-             |                                          v
-        +---------+                                +----------+
-        | absent  |                                | recent   |
-        +---------+                                +----------+
-             ^                                          |
-             | redémarrage du Relay                     | âge >= 4 s
-             | mémoire perdue                            v
-             +-------------------------------------+----------+
-                                                   | old      |
-                                                   +----------+
-                                                        |
-                                                        | nouveau signal valide
-                                                        +----------> recent
-```
-
-Un message refusé ne change pas cet automate. Le seuil utilise `received_at`,
-pas `sent_at`.
-
-Une **horloge monotone** mesure une durée écoulée sans être perturbée par une
-correction de l'heure civile. Le Relay conserve désormais l'instant brut pour
-le calcul de l'âge et le convertit en UTC uniquement lors du rendu. Les
-transitions observées dans le LAB restent prouvées ; l'injection d'un saut de
-l'horloge civile du Relay reste une preuve hostile à automatiser avant de
-donner au seuil une valeur opérationnelle.
-
-## Pannes et redémarrages
-
-| Événement | Effet visible | Ce qui continue |
+| Emplacement | Responsabilité actuelle | Appelé par |
 |---|---|---|
-| arrêt d'un Daemon | sa machine devient `old` après quatre secondes | l'autre Daemon et le Relay |
-| retour du Daemon | son premier nouveau signal la rend `recent` | le PID Relay ne doit pas changer |
-| Relay indisponible | les envois échouent et le Daemon réessaie | les Daemons restent démarrés |
-| redémarrage du Relay | toutes les machines redeviennent `absent` | les Daemons renvoient ensuite leurs signaux |
-| manifeste candidat invalide | le Relay échoue avant écoute | le Daemon colocalisé reste indépendant |
-| nouvel artefact incapable de rester actif | le lot précédent est restauré après contrôle de stabilité borné | les rôles précédemment actifs sont relancés avec l'ancienne empreinte |
-| désactivation du Relay | unité, configuration et manifeste Relay sont retirés | le Daemon et l'artefact commun restent installés |
-| retrait complet de l'Agent | les deux rôles doivent être arrêtés avant suppression | aucun processus orphelin n'est accepté |
+| `cmd/your-cloud/main.go` | sélection stricte du rôle | système d'exploitation |
+| `cmd/your-cloud/daemon.go` | assemblage et durée de vie du Daemon | `run()` |
+| `cmd/your-cloud/relay.go` | assemblage, signaux et serveur Relay | `run()` |
+| `cmd/your-cloud/diagnose.go` | lecture et rendu ponctuels | `run()` |
+| `internal/observation` | schéma, validation et trois collecteurs | Collector, Buffer, Relay |
+| `internal/buffer` | file locale bornée, séquences, lacunes et diagnostic | Daemon, Diagnose |
+| `internal/daemon/observer.go` | boucles Collector et Publisher | `runDaemon` |
+| `internal/transport` | politiques TLS 1.3 client et serveur | Daemon, Relay |
+| `internal/enrollment` | registre, empreinte et révocation rechargeable | Relay |
+| `internal/relay/observation_http.go` | frontière HTTP d'écriture | `runRelay` |
+| `internal/relay/observation_store.go` | persistance, rejeu, collision et lacunes | handler Relay |
+| `internal/credentials` | lecture bornée des noms systemd fixes | Daemon, Relay |
+| `internal/securefile` | lecture root-owned sans suivre de lien | candidature, enrôlement, diagnostic |
+| `internal/strictjson` | refus des noms non canoniques, champs inconnus, doublons et valeurs multiples | schémas persistés et réseau |
+| `internal/machineid` | syntaxe commune d'identité | présence historique et observation |
 
-Le stockage Relay est volontairement en mémoire dans `v0.0.1`. Un redémarrage
-ne doit donc jamais être présenté comme une continuité historique.
+### Index d'appel du palier
 
-## Où vit le code réel
+Ce tableau sert de point d'entrée quand un nom apparaît dans le code sans que
+son moment d'exécution soit encore évident. Il couvre les contrats qui portent
+le comportement de `v0.0.2` ; les petites fonctions de parsing ou de formatage
+restent auprès de leur appelant dans le fichier concerné.
 
-Un **point d'entrée** transforme des arguments de lancement en objets métier et
-gère le cycle du processus. Une **logique métier** exprime les validations et
-décisions propres au produit. Un **outil de déploiement** installe ou retire ces
-éléments sur une machine.
+| Fonction ou méthode | Appelée par | Quand | Effet ou décision |
+|---|---|---|---|
+| `main` puis `run` | système d'exploitation | une fois par invocation | sélectionne un seul rôle et transforme toute erreur finale en code de sortie `2` |
+| `runDaemon` | `run` | démarrage du service Daemon | charge l'identité, construit transport et tampon, puis lance Collector et Publisher |
+| `Collector.Run` | goroutine créée par `runDaemon` | immédiatement puis toutes les 30 s | cadence la collecte jusqu'à l'annulation |
+| `Collector.CollectOnce` | `Collector.Run` | à chaque cadence | appelle `CollectHostHealth`, puis `Buffer.Enqueue` |
+| `observation.CollectHostHealth` | Collector | à chaque collecte | lit uniquement les trois sources fixes et transforme une erreur locale en code borné |
+| `Buffer.Open` | `runDaemon` | avant les goroutines | crée ou valide l'état durable, reprend séquences, attentes et lacunes |
+| `Buffer.Enqueue` | Collector | après chaque collecte | prépare une observation candidate, applique les limites puis la publie durablement |
+| `Publisher.Run` | seconde goroutine de `runDaemon` | pendant toute la vie du Daemon | réessaie avec backoff et journalise seulement les transitions de disponibilité |
+| `Publisher.SendOnce` | `Publisher.Run` | tant qu'une attente existe | `Peek`, POST mTLS, validation de l'accusé, puis `Acknowledge` exact |
+| `Buffer.Peek` / `Acknowledge` | Publisher | avant / après un accusé valide | expose l'attente la plus ancienne, attache une lacune, puis retire uniquement la bonne séquence |
+| `Buffer.SetDeliveryState` | Publisher | panne ou reprise | persiste `available` ou `unavailable`, sans texte d'erreur libre |
+| `runRelay` | `run` | démarrage du service Relay | refuse d'abord adresse, candidature, registre et credentials, puis ouvre HTTPS |
+| `enrollment.Authorize` | handshake TLS et handler HTTP | connexion puis chaque POST | associe certificat exact, URI SAN et machine active ; une révocation reste effective sur une connexion réutilisée |
+| `enrollment.Reload` | `serveRelayUntilStopped` | réception de `SIGHUP` | remplace la politique seulement si le nouveau registre entier est valide |
+| `ObservationHandler.ServeHTTP` | serveur HTTPS | chaque requête | borne méthode, chemin, query, type, taille, certificat et schéma avant stockage |
+| `ObservationStore.Save` | handler Relay | après authentification | contrôle identité, séquence, lacunes, rejeu ou collision, puis publie l'état durable avant accusé |
+| `runDiagnose` | `run` | commande administrative locale ponctuelle, en `root` | appelle `Buffer.Inspect`, lit le certificat public et rend une synthèse bornée |
+| `strictjson.Decode` | frontières réseau et fichiers d'état | à chaque décodage concerné | refuse doublons, noms non canoniques, champs inconnus et seconde valeur |
+| `securefile.ReadRootOwned` | candidature, enrôlement, diagnostic | avant de faire confiance à un fichier root | refuse chemin non canonique, lien, propriétaire ou mode dangereux et taille excessive |
 
-```text
-cmd/your-cloud/
-|- main.go       choisit strictement le rôle daemon ou relay
-|- daemon.go     assemble le Sender et son arrêt propre
-`- relay.go      vérifie l'écoute et assemble le serveur HTTP
+### Code historique `v0.0.1`
 
-internal/
-|- presence/     schéma, limites et validation du signal partagé
-|- daemon/       construction, envoi, retry et logs du Daemon
-`- relay/        manifeste candidat, frontière HTTP et stockage mémoire
+`internal/presence`, `internal/daemon/daemon.go`, `internal/relay/http.go` et
+`internal/relay/store.go` conservent le contrat et les tests de présence
+`v0.0.1`. Le chemin `cmd/your-cloud` de `v0.0.2` ne les assemble plus : il
+utilise `observer.go`, `observation_http.go` et `observation_store.go`.
 
-deploy/v0.0.1/
-|- unités systemd
-|- installation et retrait de l'Agent
-`- activation et désactivation explicites du Relay
+Cette coexistence rend encore la preuve historique relisible. Elle ne signifie
+pas que deux protocoles sont actifs simultanément. Leur retrait ou migration
+sera une décision de distribution explicite, pas un nettoyage opportuniste.
 
-tests/lab/v0.0.1/remote/
-`- pilote de refus HTTP hostile réservé à la preuve LAB
+## Pourquoi deux dossiers dans `deploy/`
+
+`deploy/v0.0.1` et `deploy/v0.0.2` sont des recettes reproductibles de deux
+contrats différents, pas deux installations actives en parallèle :
+
+| Palier | Transport et données | Credentials | État |
+|---|---|---|---|
+| `v0.0.1` | présence HTTP LAB | aucun certificat | présence Relay en mémoire |
+| `v0.0.2` | observations HTTPS mTLS | identité Daemon, identité Relay et CA séparées | tampon Daemon et stockage Relay durables |
+
+Réutiliser les scripts `v0.0.1` aurait imposé des branches conditionnelles
+entre deux formats, deux modèles de secrets et deux preuves de retrait. Les
+dossiers versionnés permettent de rejouer exactement un palier et d'expliquer
+sa migration. Une future enveloppe de distribution pourra factoriser le cycle
+commun lorsqu'elle possédera son propre contrat ; `v0.0.2` ne l'anticipe pas.
+
+## Cryptographie et algorithmes
+
+Your Cloud n'implémente aucune primitive cryptographique maison.
+
+| Mécanisme | Où | Utilité | Ne garantit pas |
+|---|---|---|---|
+| TLS 1.3 standard Go | `internal/transport` | confidentialité et intégrité du trajet, authentification mutuelle | véracité d'une machine compromise |
+| X.509 avec signatures Ed25519 | PKI synthétique du LAB | séparer les autorités Relay et Daemon, accepter exactement une CA et un usage `serverAuth` ou `clientAuth` | PKI de production ou renouvellement automatique |
+| URI SAN `urn:your-cloud:daemon:<id>` | certificat Daemon et enrôlement | porter l'identité sans se fier au Common Name | autorisation si le certificat n'est pas enregistré |
+| SHA-256 du certificat | `internal/enrollment` | épingler exactement la feuille enrôlée | secret ou preuve de possession à lui seul |
+| SHA-256 du message | stockage Relay | reconnaître un rejeu identique et une collision | chiffrement du message stocké |
+| comparaison en temps constant | empreinte d'enrôlement | éviter une comparaison octet par octet à arrêt précoce | protection d'un hôte déjà compromis |
+| backoff exponentiel borné | Publisher | éviter une boucle réseau agressive pendant une panne | livraison si la panne dépasse le tampon |
+| séquence croissante + fusion de lacunes | Buffer et Relay | ordre visible et pertes explicites | reconstruction des observations supprimées |
+| écriture temporaire + `fsync` + rename | Buffer et Relay | état ancien ou nouveau après crash, pas un fichier partiel annoncé | survie à toute panne matérielle imaginable |
+
+## Petit guide de lecture Go
+
+### `:=`
+
+```go
+client, err := transport.NewDaemonClient(...)
 ```
 
-La logique réelle vit donc principalement dans `internal/`. En Go, ce nom a
-aussi un effet : les packages concernés ne peuvent pas être importés directement
-depuis un autre module. `cmd/` reste la couture de l'exécutable et de ses cycles
-de vie. `deploy/` ne devient pas un troisième composant permanent : ses scripts
-préparent les fichiers et unités puis peuvent disparaître de la cible.
+`:=` déclare des variables locales et leur donne immédiatement une valeur. Ici
+Go déduit les types de `client` et `err`. Plus tard, `=` modifie une variable
+déjà déclarée.
 
-Le pilote `tests/lab/v0.0.1/remote/prove-hostile-relay` est spécifique à la
-preuve LAB. Les scripts d'installation et les unités systemd décrivent, eux,
-le cycle de déploiement de ce palier, mais ne constituent pas encore un
-installateur de production V1.
+### La garde d'erreur immédiate
 
-## Ce qui est prouvé, décidé ou absent
+```go
+if err != nil {
+    return fmt.Errorf("daemon transport: %w", err)
+}
+```
 
-| Niveau | Chaîne d'observation concernée |
+Go utilise des erreurs retournées plutôt que des exceptions implicites. La
+fonction arrête tôt le chemin invalide ; le chemin nominal reste ensuite
+lisible de haut en bas. `%w` ajoute du contexte tout en conservant l'erreur
+d'origine.
+
+Cette forme compacte déclare puis vérifie une erreur dans le même bloc :
+
+```go
+if err := buffer.persist(); err != nil {
+    return err
+}
+```
+
+La variable `err` n'existe que dans ce `if`. Ce n'est pas une erreur ignorée ;
+c'est une portée volontairement courte.
+
+### `defer`
+
+```go
+defer response.Body.Close()
+```
+
+`defer` planifie l'appel juste avant la sortie de la fonction, quel que soit le
+retour emprunté. Il sert ici à toujours libérer la ressource.
+
+### `&`, `*` et `nil`
+
+`&configuration.machineID` donne au package `flag` l'adresse du champ à
+remplir. Dans un type comme `*Buffer`, l'étoile indique un pointeur vers la même
+instance plutôt qu'une copie. `nil` signifie qu'un pointeur, une map, une slice,
+un canal, une interface ou une fonction ne désigne encore aucune valeur.
+
+### Méthodes et pointeurs
+
+```go
+func (buffer *Buffer) Acknowledge(sequence uint64, deliveredAt time.Time) error
+```
+
+`(buffer *Buffer)` signifie que la fonction est une méthode de `Buffer` et peut
+modifier cette instance. Un récepteur sans `*` travaille sur une copie de la
+valeur.
+
+### `go`, `context` et `WaitGroup`
+
+```go
+go collector.Run(ctx)
+```
+
+`go` démarre la fonction concurremment dans le même processus. Le `context`
+transporte l'annulation ; le `WaitGroup` compte les goroutines encore actives
+et empêche le processus de sortir avant leur arrêt.
+
+### Canaux et `select`
+
+Un `chan error` transporte ici la fin du serveur HTTP depuis sa goroutine.
+`select` attend le premier événement disponible : signal système, annulation,
+fin d'un délai ou erreur serveur. Cette attente bloque sans boucle active.
+
+### Majuscule initiale et tags JSON
+
+En Go, `Save` ou `ObservationStore` avec une majuscule initiale est exporté et
+peut être appelé depuis un autre package ; `gapsCover` reste privé au package.
+Dans `` `json:"machine_id"` ``, le tag fixe le nom exact du champ sur le fil ;
+`strictjson` refuse aussi les variantes de casse que le décodeur Go accepterait
+sinon par tolérance.
+
+### `io.EOF`
+
+Dans le Publisher, `io.EOF` signifie « aucune observation en attente ». Ce
+n'est pas une panne du Relay. Le code le distingue donc des erreurs réseau.
+
+## Pannes et comportement attendu
+
+| Événement | Comportement |
 |---|---|
-| **Prouvé dans `v0.0.1`** | un exécutable commun ; processus Daemon et Relay isolés ; signal minimal ; HTTP `POST` et `QUERY` ; schémas et tailles bornés ; liste de deux machines LAB ; dernier état en mémoire ; transitions `absent`/`recent`/`old` ; refus Relay par défaut ; retraits fail-closed |
-| **Décidé pour la V1, non encore prouvé ici** | identité propre à chaque Daemon ; endpoint Relay approuvé joignable par routage public ou privé ; transport mTLS ; collecteurs nommés ; tampon local borné et lacunes visibles ; enregistrement durable côté Relay ; consultation HTTPS authentifiée par l'App |
-| **Absent de ce contrat** | Auxiliaire local ; commande distante ; plugin arbitraire ; scan du LAN ; élection, réplication ou remplacement automatique du Relay ; base ou historique durable ; métriques système réelles |
+| Relay absent | collecte continue, état `unavailable`, backoff de 1 s à 1 min |
+| tampon saturé | plus anciennes attentes supprimées, état courant conservé, lacune persistée |
+| redémarrage Daemon | séquence, attente et lacunes relues avant reprise |
+| redémarrage Relay | dernier état et lacunes durables relus |
+| certificat inconnu ou révoqué | négociation ou requête refusée, aucun accusé |
+| registre invalide au reload | ancienne politique valide conservée |
+| accusé faux | observation maintenue localement |
+| même séquence, mêmes octets | rejeu idempotent accepté |
+| même séquence, autres octets | collision refusée |
+| signal d'arrêt | arrêt coordonné des goroutines ou shutdown HTTP borné |
 
-Cette séparation doit rester visible à chaque évolution. Ajouter un dessin V1
-ne transforme jamais une décision en implémentation ou en preuve.
+## Preuve et automatisation
+
+La [preuve LAB `v0.0.2`](../lab/v0.0.2-observation.md) a réellement exécuté le
+nominal, les certificats hostiles, la révocation, l'indisponibilité, la
+saturation, la lacune, la reprise, les redémarrages, le retrait et la
+réinstallation.
+
+Le scénario multi-VM a été piloté étape par étape. Le prochain travail
+d'automatisation éventuel consiste à encapsuler ces mêmes étapes dans une
+commande reproductible avec verrou, échéances, nettoyage d'échec et résultat
+structuré. Cela aiderait les revalidations locales et, plus tard, une CI munie
+d'un runner libvirt dédié. Une CI GitHub standard sans ces VM ne peut pas
+remplacer la preuve. Ce sujet reste noté ; il n'est pas implémenté dans ce
+palier.
+
+## Ce qui est prouvé et ce qui reste absent
+
+| Niveau | Contenu |
+|---|---|
+| **Prouvé dans `v0.0.2`** | artefact commun ; processus isolés ; profil fixe ; mTLS ; enrôlement et révocation ; tampon et lacunes ; accusé durable ; diagnostic ; redémarrages et réinstallation |
+| **Décidé plus tard dans la V1** | consultation par l'App avec son identité propre et représentation utilisateur de l'âge et des lacunes |
+| **Absent** | App actuelle ; Ansible métier ; canal d'action ; commande distante ; Auxiliaire ; WireGuard ; service OCI ; plugin libre ; scan LAN ; enrôlement en ligne ; renouvellement automatique ; failover ou élection Relay ; Proxmox ; OpenStack ; worker d'automatisation ; projet IaC |
+
+## Limites de sécurité
+
+- root peut remplacer les fichiers et contourner les protections locales ;
+- une machine compromise peut mentir dans les champs qu'elle est autorisée à
+  produire ;
+- le Relay voit les observations en clair après terminaison TLS ;
+- les autorités synthétiques de preuve ne sont pas une PKI de production ;
+- le diagnostic local ne constitue pas une API de supervision ;
+- une lacune rend une perte visible mais ne récupère pas les données ;
+- les microbenchmarks du LAB ne sont pas des plafonds de production ;
+- aucune propriété isolée ne suffit à déclarer une conformité OWASP ou NIS2.
+
+Les listes positives, identités séparées, schémas stricts, sorties bornées et
+refus par défaut appliquent moindre privilège, réduction de surface, séparation
+des responsabilités et défense en profondeur. Ils contribuent aux mesures de
+cryptographie, contrôle d'accès, continuité, développement sûr et mesure
+d'efficacité de NIS2 sans constituer une déclaration de conformité.
 <!-- coherence: V1-OBSERVATION:end -->
 
-## Limites et sécurité proportionnée
+## Sources pour aller plus loin
 
-Une **valeur sûre par défaut** laisse une capacité sensible désactivée jusqu'à
-une autorisation explicite. Le refus du Relay sans manifeste applique ce
-principe. Le compte non privilégié du Daemon, les processus distincts, les
-listes positives, les corps bornés et les délais HTTP contribuent aussi au
-moindre privilège, à la réduction de surface et à la séparation des
-responsabilités recommandés par
-[OWASP Secure Product Design](https://cheatsheetseries.owasp.org/cheatsheets/Secure_Product_Design_Cheat_Sheet.html).
-
-Ces choix participent de manière proportionnée aux mesures de gestion des
-risques, de contrôle d'accès, de développement sûr, de continuité et de mesure
-d'efficacité citées par
-[NIS2, article 21](https://eur-lex.europa.eu/legal-content/FR/TXT/?uri=CELEX:32022L2555).
-Ils ne suffisent pas à déclarer Your Cloud ou son utilisateur conforme à OWASP
-ou NIS2.
-
-Les limites actuelles restent explicites :
-
-- HTTP n'apporte ni chiffrement ni authentification ; le port `8443` ne change
-  pas cette réalité ;
-- la liste d'identifiants autorisés n'authentifie pas la machine émettrice ;
-- un pair capable d'atteindre le Relay peut lire la vue ou usurper un signal
-  autorisé ;
-- root conserve l'autorité de modifier ou contourner les fichiers locaux ;
-- un redémarrage Relay perd l'état mémoire ;
-- un défaut de l'artefact partagé peut toucher plusieurs rôles malgré leur
-  isolation d'exécution ;
-- une présence `recent` ne garantit pas la véracité d'une machine compromise.
-
-La V1 devra apporter ses propres preuves pour mTLS, identités, tampon borné,
-persistance et App. Ce document ne les déduit pas du succès de `v0.0.1`.
-
-## Sources et évolution de ce document
-
-Ce guide relie plusieurs sources sans les remplacer :
-
-- le vocabulaire du produit reste dans [`CONTEXT.md`](../../CONTEXT.md) ;
-- les contraintes durables de l'Agent sont dans
-  [`CAP.md`](../projet/CAP.md) ;
-- la ligne d'arrivée V1 est dans
-  [`objectifs/v1/README.md`](../objectifs/v1/README.md) ;
-- le contrat exécutable du palier est dans
-  [`CONTRAT-V0.0.1.md`](../objectifs/v1/CONTRAT-V0.0.1.md) ;
-- les résultats réellement exécutés sont dans le
-  [rapport LAB `v0.0.1`](../lab/v0.0.1-presence.md) ;
-- les contrôles, incidents et écarts à automatiser sont dans le
-  [registre des tests](../contribution/TESTS.md) ;
-- la vue d'ensemble des autres composants reste dans
-  [`ANATOMIE.md`](ANATOMIE.md).
-
-Lorsqu'une évolution modifie :
-
-- un terme métier, elle commence par `CONTEXT.md` ;
-- le rôle ou l'autorité d'un composant, elle propage le cap, l'objectif,
-  l'anatomie et ce guide selon le registre de cohérence ;
-- le schéma, la méthode HTTP, les états ou les limites d'un palier, elle met à
-  jour son contrat, son code, ses tests et ce guide ;
-- un résultat réellement exécuté, elle l'inscrit d'abord dans un rapport LAB ;
-- un flux visuel, elle met à jour la source Markdown et son édition HTML dans le
-  même changement.
-
-Chaque mise à jour conserve la distinction **décidé / implémenté / prouvé**, et
-nomme les limites que l'automatisation ne sait pas encore vérifier.
+- contrat : [`CONTRAT-V0.0.2.md`](../objectifs/v1/CONTRAT-V0.0.2.md) ;
+- preuve exécutée : [`v0.0.2-observation.md`](../lab/v0.0.2-observation.md) ;
+- contrôles et automatisation restante :
+  [`TESTS.md`](../contribution/TESTS.md) ;
+- placement global : [`ANATOMIE.md`](ANATOMIE.md) ;
+- règles de code : [`QUALITE.md`](../contribution/QUALITE.md).

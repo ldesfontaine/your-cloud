@@ -3,266 +3,160 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Vue visuelle de la chaîne d'observation Your Cloud : Daemon, Relay et signal de présence.">
-  <title>Chaîne d'observation — Your Cloud</title>
+  <meta name="description" content="Carte technique de la chaîne d'observation v0.0.2 de Your Cloud.">
+  <title>Chaîne d'observation v0.0.2 — Your Cloud</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #06111d;
-      --panel: #0d1c2c;
-      --panel-2: #12263a;
-      --text: #f4f8fb;
-      --muted: #a8b8c7;
-      --line: #29465e;
-      --cyan: #62d9e8;
-      --green: #71dfa7;
-      --amber: #f4c66b;
-      --red: #ff8e88;
-      --blue: #7aa8ff;
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      color: var(--text);
-      background:
-        radial-gradient(circle at 15% -10%, rgba(33, 126, 153, .28), transparent 34rem),
-        radial-gradient(circle at 100% 20%, rgba(56, 91, 167, .18), transparent 30rem),
-        var(--bg);
-      font: 16px/1.6 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    a { color: var(--cyan); }
-    main { width: min(1180px, calc(100% - 34px)); margin: auto; padding: 52px 0 90px; }
-    header { max-width: 930px; margin-bottom: 42px; }
-    h1 { margin: .16em 0; font-size: clamp(2.55rem, 7vw, 5.4rem); line-height: 1.02; letter-spacing: -.047em; }
-    h2 { margin: 2.4em 0 .75em; font-size: clamp(1.55rem, 3vw, 2.3rem); letter-spacing: -.025em; }
-    h3 { margin: 0 0 .45em; font-size: 1.2rem; }
-    p { margin: .6em 0; }
-    .eyebrow { color: var(--cyan); font: 760 .76rem ui-monospace, SFMono-Regular, monospace; letter-spacing: .15em; text-transform: uppercase; }
-    .lead { color: var(--muted); font-size: 1.16rem; max-width: 820px; }
-    .status { display: inline-flex; gap: 8px; align-items: center; margin-top: 18px; padding: 8px 13px; border: 1px solid #426f62; border-radius: 999px; color: var(--green); background: rgba(30, 91, 70, .22); font-size: .9rem; }
-    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
-    .card { grid-column: span 4; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, rgba(17, 38, 58, .96), rgba(8, 22, 35, .96)); box-shadow: 0 20px 50px rgba(0, 0, 0, .15); }
-    .card.wide { grid-column: span 6; }
-    .card.full { grid-column: 1 / -1; }
-    .card p, .card li { color: var(--muted); }
-    .card strong { color: var(--text); }
-    .tag { display: inline-block; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--cyan); font: 700 .72rem ui-monospace, monospace; text-transform: uppercase; }
-    .placement { display: grid; grid-template-columns: minmax(0, 1fr) 80px minmax(0, 1fr); gap: 16px; align-items: stretch; }
-    .machine { padding: 22px; border: 1px solid var(--line); border-radius: 20px; background: rgba(12, 29, 45, .9); }
-    .machine h3 { color: var(--green); }
-    .process { margin-top: 13px; padding: 13px; border-left: 3px solid var(--blue); border-radius: 8px; background: rgba(42, 73, 112, .2); }
-    .process.relay { border-left-color: var(--cyan); }
-    .flow { display: flex; align-items: center; justify-content: center; color: var(--cyan); font: 800 1.7rem ui-monospace, monospace; }
-    .flow small { display: block; color: var(--muted); font-size: .63rem; line-height: 1.3; text-align: center; }
-    .note { margin-top: 16px; padding: 14px 17px; border-left: 4px solid var(--amber); background: rgba(95, 70, 25, .18); color: #f6ddac; border-radius: 8px; }
-    .danger { border-left-color: var(--red); background: rgba(102, 39, 39, .18); color: #ffd0cc; }
-    .method { font: 800 .84rem ui-monospace, monospace; color: var(--green); }
-    code { padding: .12em .38em; border-radius: 5px; background: #06101a; color: #bceff4; font: .9em ui-monospace, SFMono-Regular, monospace; }
-    pre { overflow: auto; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: #050d16; color: #c5e6ed; font: .87rem/1.6 ui-monospace, SFMono-Regular, monospace; }
-    table { width: 100%; border-collapse: collapse; border: 1px solid var(--line); background: rgba(9, 24, 38, .82); }
-    th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-    th { color: var(--green); background: rgba(24, 52, 70, .65); }
-    td { color: var(--muted); }
-    .timeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; counter-reset: step; }
-    .step { position: relative; padding: 18px 16px 18px 48px; border: 1px solid var(--line); border-radius: 15px; background: rgba(12, 29, 45, .82); }
-    .step::before { counter-increment: step; content: counter(step); position: absolute; left: 15px; top: 17px; width: 23px; height: 23px; display: grid; place-items: center; border-radius: 50%; color: #06111d; background: var(--cyan); font-weight: 900; }
-    .state-flow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: rgba(8, 22, 35, .8); }
-    .state { min-width: 120px; padding: 14px 18px; text-align: center; border: 1px solid #466887; border-radius: 999px; background: var(--panel-2); font-weight: 800; }
-    .arrow { color: var(--cyan); font: 800 1.25rem ui-monospace, monospace; }
-    .legend { color: var(--muted); font-size: .9rem; text-align: center; }
-    .scope.proved { border-top: 4px solid var(--green); }
-    .scope.decided { border-top: 4px solid var(--amber); }
-    .scope.absent { border-top: 4px solid var(--red); }
-    footer { margin-top: 54px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); }
-    @media (max-width: 820px) {
-      .card, .card.wide { grid-column: 1 / -1; }
-      .placement { grid-template-columns: 1fr; }
-      .flow { min-height: 55px; transform: rotate(90deg); }
-      .timeline { grid-template-columns: 1fr; }
-      table { display: block; overflow-x: auto; }
-    }
+    :root{color-scheme:dark;--bg:#07111e;--panel:#0e1d31;--panel2:#12243a;--text:#f3f7fb;--muted:#aab9ca;--line:#29445f;--cyan:#62d9e8;--green:#72dda8;--amber:#ffca70;--pink:#f594bc;--blue:#8aaeff}*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 8% 0,#12354b,transparent 32rem),radial-gradient(circle at 100% 35%,#211d44,transparent 30rem),var(--bg);font:16px/1.6 Inter,system-ui,sans-serif}main{width:min(1120px,calc(100% - 36px));margin:auto;padding:58px 0 90px}h1,h2,h3{line-height:1.15}h1{margin:.15em 0;font-size:clamp(2.7rem,7vw,5.5rem);letter-spacing:-.045em}h2{margin-top:62px;font-size:clamp(1.65rem,4vw,2.55rem)}h3{margin:.15em 0 .45em}.eyebrow{color:var(--cyan);font:750 .78rem ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}.lead{max-width:850px;color:var(--muted);font-size:1.16rem}.status{display:inline-block;padding:7px 11px;border:1px solid var(--green);border-radius:999px;color:var(--green)}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card,.machine{grid-column:span 4;padding:19px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(18,36,58,.96),rgba(8,20,34,.96))}.wide{grid-column:span 6}.full{grid-column:1/-1}.card p,.card li,.machine p{color:var(--muted)}.tag{color:var(--cyan);font:700 .76rem ui-monospace,monospace;text-transform:uppercase}.placement{display:grid;grid-template-columns:1fr 90px 1fr;gap:16px;align-items:center}.machine{grid-column:auto}.process{margin-top:12px;padding:12px;border-left:3px solid var(--green);background:rgba(114,221,168,.07)}.process.relay{border-color:var(--blue)}.arrow{text-align:center;color:var(--cyan);font-weight:800}.flow{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}.dispatch{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.fork{text-align:center;color:var(--amber);font-weight:750}.role-branches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.step{position:relative;padding:13px 10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);text-align:center}.step:not(:last-child)::after{content:"→";position:absolute;right:-14px;top:50%;z-index:2;color:var(--cyan);font-weight:900;transform:translateY(-50%)}.lanes{display:grid;gap:12px}.lane{display:grid;grid-template-columns:150px repeat(5,1fr);gap:8px;align-items:stretch}.lane-label{padding:12px;color:var(--amber);font-weight:750}.node{padding:12px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}.node.active{border-color:var(--green)}.note{margin-top:20px;padding:17px;border-left:4px solid var(--pink);border-radius:8px;background:rgba(245,148,188,.07);color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--cyan)}code{color:var(--green)}pre{overflow:auto;padding:15px;border:1px solid var(--line);border-radius:12px;background:#07101b;color:var(--text)}a{color:var(--cyan)}footer{margin-top:68px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted)}@media(max-width:850px){.card,.wide{grid-column:span 6}.placement,.dispatch,.role-branches{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.flow{grid-template-columns:1fr}.step:not(:last-child)::after{content:"↓";right:50%;top:auto;bottom:-20px;transform:translateX(50%)}.lane{grid-template-columns:1fr}.lane-label{padding-bottom:0}}@media(max-width:560px){.card,.wide{grid-column:1/-1}}
   </style>
 </head>
 <body>
   <main>
     <header>
       <p class="eyebrow">Your Cloud · architecture vivante</p>
-      <h1>Daemon, Relay et signal de présence</h1>
-      <p class="lead">Une vue progressive de la chaîne d'observation : où chaque processus vit, quand il agit, ce qu'il envoie et ce que sa réussite ne prouve pas.</p>
-      <p class="status">● v0.0.1 prouvée dans le LAB · V1 complète non prouvée</p>
+      <h1>La carte technique de l'observation.</h1>
+      <p class="lead">Du lancement systemd jusqu'au fichier durable : processus, appels Go, données, crypto, pannes et preuves de <code>v0.0.2</code>.</p>
+      <p class="status">● implémentée et prouvée dans le LAB</p>
     </header>
 
-    <section aria-labelledby="notions">
-      <h2 id="notions">Les notions avant les flux</h2>
+    <section>
+      <h2>Les trois rôles du même exécutable</h2>
       <div class="grid">
-        <article class="card"><span class="tag">installation</span><h3>Agent</h3><p>La frontière de l'installation locale de Your Cloud sur une machine. <strong>Ce n'est pas un processus</strong> : elle fournit seulement les rôles activés.</p></article>
-        <article class="card"><span class="tag">fichier</span><h3>Artefact</h3><p>Le fichier <code>your-cloud</code>. Les mêmes octets peuvent lancer des rôles différents.</p></article>
-        <article class="card"><span class="tag">exécution</span><h3>Processus</h3><p>Une instance en mémoire. Daemon et Relay restent deux processus avec leurs propres comptes et cycles.</p></article>
-        <article class="card"><span class="tag">droits</span><h3>Autorité</h3><p>Ce qu'un processus peut lire, modifier ou joindre. Partager un artefact ne partage pas automatiquement cette autorité.</p></article>
-        <article class="card"><span class="tag">rôle</span><h3>Daemon</h3><p>Le processus permanent qui produit et envoie l'observation. Il n'écoute aucun port.</p></article>
-        <article class="card"><span class="tag">rôle</span><h3>Relay</h3><p>Le processus qui reçoit, valide et rend consultable l'état. Il n'envoie aucun ordre au Daemon.</p></article>
-        <article class="card full"><span class="tag">donnée</span><h3>Présence</h3><p><strong>Ce n'est pas un troisième processus.</strong> C'est le petit signal partagé entre Daemon et Relay : identifiant synthétique, version et heure d'émission.</p></article>
+        <article class="card"><span class="tag">processus permanent</span><h3>Daemon</h3><p>Collecte localement, persiste puis livre. Il n'écoute aucun port.</p></article>
+        <article class="card"><span class="tag">processus permanent</span><h3>Relay</h3><p>Authentifie, refuse ou persiste. Il ne renvoie aucun ordre.</p></article>
+        <article class="card"><span class="tag">commande administrative ponctuelle</span><h3>Diagnose</h3><p>Lancé localement par root, lit l'état protégé, écrit sur stdout puis termine sans réseau.</p></article>
       </div>
     </section>
 
     <!-- coherence: AGENT-AUTHORITY:start -->
-    <section aria-labelledby="placement">
-      <h2 id="placement">Un artefact, trois processus prouvés</h2>
+    <section>
+      <h2>Où ils vivent</h2>
       <div class="placement">
-        <article class="machine">
-          <p class="eyebrow">LAN · non candidate Relay</p>
-          <h3>lab-machine-1</h3>
-          <p><code>/usr/local/lib/your-cloud/your-cloud</code></p>
-          <div class="process"><strong>Daemon</strong><br><small>compte dynamique · sortie HTTP seulement</small></div>
-        </article>
-        <div class="flow" aria-label="Flux vers le Relay">→<small>POST<br>présence</small></div>
-        <article class="machine">
-          <p class="eyebrow">VPS simulé · candidate explicite</p>
-          <h3>lab-coordinateur</h3>
-          <p><code>/usr/local/lib/your-cloud/your-cloud</code></p>
-          <div class="process"><strong>Daemon</strong><br><small>processus et configuration propres</small></div>
-          <div class="process relay"><strong>Relay</strong><br><small>processus, compte et unité propres</small></div>
-        </article>
+        <article class="machine"><p class="eyebrow">LAN · lab-machine-1</p><h3>Un processus</h3><div class="process"><strong>Daemon</strong><br>identité client · tampon privé</div><p>Aucune candidature Relay, aucune écoute produit.</p></article>
+        <div class="arrow">mTLS<br>→ :8443</div>
+        <article class="machine"><p class="eyebrow">VPS simulé · lab-coordinateur</p><h3>Deux processus</h3><div class="process"><strong>Daemon</strong><br>identité et état propres · mTLS local vers le Relay</div><div class="process relay"><strong>Relay</strong><br>identité serveur · registre · état propre</div></article>
       </div>
-      <p class="note">Le manifeste candidat autorise localement l'activation du Relay avant l'ouverture du port. Il n'est ni une identité réseau, ni une élection, ni une protection contre root.</p>
+      <p class="note">Même artefact, mais comptes dynamiques, credentials, états et unités systemd séparés. Partager les octets ne partage pas l'autorité.</p>
     </section>
 
-    <section aria-labelledby="roles">
-      <h2 id="roles">Qui fait quoi, et à quel moment ?</h2>
-      <div class="grid">
-        <article class="card wide">
-          <span class="tag">Daemon</span>
-          <h3>Produit et envoie</h3>
-          <ol>
-            <li>valide sa configuration bornée ;</li>
-            <li>construit le signal ;</li>
-            <li>envoie immédiatement puis chaque seconde ;</li>
-            <li>attend <code>204</code> ;</li>
-            <li>réessaie après une panne sans loguer chaque tentative.</li>
-          </ol>
-          <p><strong>Interdit :</strong> écouter un port, recevoir une commande, modifier le système.</p>
-        </article>
-        <article class="card wide">
-          <span class="tag">Relay</span>
-          <h3>Valide, mémorise et restitue</h3>
-          <ol>
-            <li>refuse sans candidature locale valide ;</li>
-            <li>ouvre l'écoute LAB exacte ;</li>
-            <li>valide le schéma et la liste positive ;</li>
-            <li>garde le dernier signal en mémoire ;</li>
-            <li>calcule son âge depuis la réception ;</li>
-            <li>répond au client de consultation.</li>
-          </ol>
-          <p><strong>Interdit :</strong> commander le Daemon, scanner le LAN, devenir proxy Web.</p>
-        </article>
+    <section>
+      <h2>Qui appelle quoi</h2>
+      <div class="dispatch" aria-label="Entrée commune avant sélection du rôle"><div class="step">systemd ou shell</div><div class="step"><code>main()</code></div><div class="step"><code>run(args)</code></div></div>
+      <p class="fork"><code>run(args)</code> choisit exactement une branche ↓</p>
+      <div class="role-branches" aria-label="Branches exclusives daemon, relay et diagnose"><div class="node active"><code>daemon</code><br><code>runDaemon</code><br>processus permanent</div><div class="node active"><code>relay</code><br><code>runRelay</code><br>processus permanent</div><div class="node active"><code>diagnose observation</code><br><code>runDiagnose</code><br>commande puis fin</div></div>
+      <p class="note">Une seule branche est appelée par invocation. <code>runDaemon</code>, <code>runRelay</code> et <code>runDiagnose</code> ne s'appellent jamais entre elles.</p>
+
+      <div class="lanes">
+        <div class="lane"><div class="lane-label">Daemon</div><div class="node">arguments + credentials</div><div class="node">client TLS + tampon</div><div class="node active">Collector goroutine</div><div class="node active">Publisher goroutine</div><div class="node">WaitGroup + arrêt</div></div>
+        <div class="lane"><div class="lane-label">Relay</div><div class="node">écoute + candidature</div><div class="node">enrôlement + credentials</div><div class="node">TLS + stockage</div><div class="node active">handler POST</div><div class="node">reload / shutdown</div></div>
+        <div class="lane"><div class="lane-label">Diagnose · root local</div><div class="node">arguments fixes</div><div class="node">Inspect tampon protégé</div><div class="node">certificat public</div><div class="node active">vue bornée</div><div class="node">stdout + fin</div></div>
       </div>
+      <p class="note">Le diagnostic utilise root uniquement pour lire l'état privé du compte dynamique. Il ne rend pas le Daemon privilégié, ne devient pas une unité systemd et n'ouvre aucun réseau.</p>
+    </section>
+
+    <section>
+      <h2>Les deux “workers” du Daemon</h2>
+      <div class="grid">
+        <article class="card wide"><span class="tag">goroutine 1</span><h3>Collector</h3><ol><li>lit uptime, mémoire et racine ;</li><li>construit <code>host-health.v1</code> ;</li><li>ajoute une séquence ;</li><li>persiste toutes les 30 secondes.</li></ol></article>
+        <article class="card wide"><span class="tag">goroutine 2</span><h3>Publisher</h3><ol><li>prend la plus ancienne attente ;</li><li>POST vers le Relay exact ;</li><li>vérifie l'accusé durable ;</li><li>retire seulement cette séquence.</li></ol></article>
+      </div>
+      <p class="note">Ce ne sont pas deux services ni le futur worker d'automatisation : ce sont deux fonctions concurrentes dans le même PID. Le <code>context</code> les arrête ensemble et le <code>WaitGroup</code> attend leur sortie.</p>
     </section>
     <!-- coherence: AGENT-AUTHORITY:end -->
 
     <!-- coherence: V1-OBSERVATION:start -->
-    <section aria-labelledby="sequence">
-      <h2 id="sequence">La séquence de coordination</h2>
-      <div class="timeline">
-        <div class="step"><strong>Installer</strong><br><span class="legend">systemd démarre le Daemon.</span></div>
-        <div class="step"><strong>Autoriser</strong><br><span class="legend">root provisionne la candidature Relay sur le VPS.</span></div>
-        <div class="step"><strong>Observer</strong><br><span class="legend">le Daemon envoie ; le Relay valide et mémorise.</span></div>
-        <div class="step"><strong>Consulter</strong><br><span class="legend">un client lit la vue sans modifier le Relay.</span></div>
-      </div>
-      <p class="note">Le Daemon peut démarrer avant le Relay : il échoue, attend, puis réessaie. Le Relay ne se connecte jamais au Daemon.</p>
-    </section>
-
-    <section aria-labelledby="http">
-      <h2 id="http">Deux méthodes HTTP, deux intentions</h2>
+    <section>
+      <h2>Trajet durable d'une observation</h2>
+      <div class="flow"><div class="step">Noyau Linux</div><div class="step">Collector</div><div class="step">tampon + séquence</div><div class="step">POST mTLS</div><div class="step">Relay + fsync</div><div class="step">accusé puis retrait</div></div>
       <div class="grid">
-        <article class="card wide">
-          <p class="method">POST /v0/presence</p>
-          <h3>Écriture</h3>
-          <p>Chaque signal valide remplace le dernier état reçu pour une machine. <code>POST</code> convient parce que le Relay est modifié.</p>
-          <pre>{
-  "machine_id": "lab-machine-1",
-  "daemon_version": "v0.0.1",
-  "sent_at": "..."
-}</pre>
-        </article>
-        <article class="card wide">
-          <p class="method">QUERY /v0/machines</p>
-          <h3>Consultation sûre et idempotente</h3>
-          <p><strong>Sûre</strong> signifie que le client ne demande aucun changement. <strong>Idempotente</strong> signifie que répéter la requête n'ajoute aucun effet de bord.</p>
-          <pre>Content-Type: application/json
-Accept-Query: "application/json"
-Cache-Control: no-store
-
-{}</pre>
-        </article>
-      </div>
-      <table>
-        <thead><tr><th>Flux actuel</th><th>Origine</th><th>Destination</th><th>Protection</th></tr></thead>
-        <tbody>
-          <tr><td><code>POST /v0/presence</code></td><td>Daemon LAN ou Daemon VPS</td><td>Relay <code>192.168.242.103:8443</code></td><td>HTTP clair, LAB uniquement</td></tr>
-          <tr><td><code>QUERY /v0/machines</code></td><td>client de preuve LAB</td><td>Relay <code>192.168.242.103:8443</code></td><td>HTTP clair, LAB uniquement</td></tr>
-        </tbody>
-      </table>
-      <p class="note"><strong>Contrat fermé :</strong> la réponse <code>QUERY</code> porte <code>Cache-Control: no-store</code>. Les deux routes refusent toute partie d'URI après <code>?</code>, même vide ; le corps JSON reste l'unique entrée structurée.</p>
-    </section>
-
-    <section aria-labelledby="relay-endpoint">
-      <h2 id="relay-endpoint">Relay futur : joignable ne veut pas dire public</h2>
-      <div class="grid">
-        <article class="card wide"><span class="tag">besoin V1</span><h3>Endpoint approuvé</h3><p>Chaque Daemon reçoit une route, un port et l'identité cryptographique attendue. Une IP seule ne prouve pas quel Relay répond.</p></article>
-        <article class="card wide"><span class="tag">réseau</span><h3>Routage privé accepté</h3><p>Réseau fournisseur, segment interne ou passage privé borné conviennent. Une IP publique n'est requise que si la topologie impose une arrivée directe depuis Internet.</p></article>
-        <article class="card wide"><span class="tag">continuité future</span><h3>Remplacement sous conditions</h3><p>Candidature, panne prouvée, endpoint redistribué, état repris et autorité active unique doivent être définis avant toute bascule automatique.</p></article>
-        <article class="card wide"><span class="tag">hors palier</span><h3>Mécanisme encore ouvert</h3><p>Nom stable, liste d'endpoints ou découverte signée ne sont pas choisis. Aucun failover Relay n'est ajouté à <code>v0.0.1</code> ni promis au palier suivant.</p></article>
+        <article class="card wide"><h3>Relay absent</h3><p>La collecte continue. Le tampon passe <code>unavailable</code> et le Publisher applique un backoff de 1 seconde à 1 minute.</p></article>
+        <article class="card wide"><h3>Tampon saturé</h3><p>À 64 KiB d'état complet, 120 observations ou une heure, les plus anciennes partent et une lacune exacte reste persistée. <code>pending_bytes</code> compte seulement les enveloppes en attente et revient à zéro avec la file.</p></article>
       </div>
     </section>
 
-    <section aria-labelledby="states">
-      <h2 id="states">Présence : trois états, pas un diagnostic de santé</h2>
-      <div class="state-flow" aria-label="Automate des états de présence">
-        <span class="state">absent</span><span class="arrow">→ signal →</span><span class="state">recent</span><span class="arrow">→ 4 s →</span><span class="state">old</span><span class="arrow">→ signal → recent</span>
-      </div>
-      <p class="legend">Un redémarrage du Relay efface sa mémoire et ramène toutes les machines à <strong>absent</strong>.</p>
-      <div class="grid">
-        <article class="card"><h3>absent</h3><p>Aucun signal reçu depuis le démarrage actuel du Relay.</p></article>
-        <article class="card"><h3>recent</h3><p>Dernière réception Relay vieille de moins de quatre secondes.</p></article>
-        <article class="card"><h3>old</h3><p>Dernière réception Relay vieille d'au moins quatre secondes.</p></article>
-      </div>
-      <p class="note">Une horloge monotone mesure une durée sans être faussée par une correction de l'heure civile. Le Relay garde maintenant le temps brut pour calculer l'âge et ne convertit en UTC qu'au rendu. L'injection d'un saut d'horloge Relay reste à automatiser.</p>
+    <section>
+      <h2>Packages et responsabilités</h2>
+      <table><thead><tr><th>Zone</th><th>Rôle</th><th>Moment</th></tr></thead><tbody>
+        <tr><td><code>cmd/your-cloud</code></td><td>assemble les processus et leur durée de vie</td><td>au démarrage</td></tr>
+        <tr><td><code>internal/observation</code></td><td>collecteurs, schéma et validation</td><td>à chaque collecte/réception</td></tr>
+        <tr><td><code>internal/buffer</code></td><td>attentes, séquences, lacunes et diagnostic</td><td>avant et après chaque livraison</td></tr>
+        <tr><td><code>internal/daemon</code></td><td>boucles Collector et Publisher</td><td>pendant toute la vie du Daemon</td></tr>
+        <tr><td><code>internal/transport</code></td><td>politiques TLS 1.3</td><td>connexion client/serveur</td></tr>
+        <tr><td><code>internal/enrollment</code></td><td>identité, empreinte et révocation</td><td>handshake, requête, reload</td></tr>
+        <tr><td><code>internal/relay</code></td><td>HTTP, accusé et stockage durable</td><td>à chaque POST</td></tr>
+        <tr><td><code>credentials / securefile / strictjson</code></td><td>lectures et décodages défensifs communs</td><td>aux frontières fichier/réseau</td></tr>
+      </tbody></table>
     </section>
 
-    <section aria-labelledby="code">
-      <h2 id="code">Où vit le code réel ?</h2>
+    <section>
+      <h2>Quand les appels importants arrivent</h2>
+      <table><thead><tr><th>Moment</th><th>Chaîne d'appel</th><th>Effet</th></tr></thead><tbody>
+        <tr><td>démarrage Daemon</td><td><code>run → runDaemon → Buffer.Open → NewCollector + NewPublisher</code></td><td>valide tout avant de lancer deux goroutines</td></tr>
+        <tr><td>toutes les 30 s</td><td><code>Collector.Run → CollectOnce → CollectHostHealth → Buffer.Enqueue</code></td><td>collecte puis publie une nouvelle séquence durable</td></tr>
+        <tr><td>attente présente</td><td><code>Publisher.Run → SendOnce → Peek → POST → Acknowledge</code></td><td>retire uniquement après l'accusé exact du Relay</td></tr>
+        <tr><td>démarrage Relay</td><td><code>run → runRelay → LoadCandidate → OpenStore → TLS → HTTP</code></td><td>refuse toute précondition avant l'écoute</td></tr>
+        <tr><td>chaque POST</td><td><code>ServeHTTP → Authorize → Decode → ObservationStore.Save</code></td><td>borne, authentifie et persiste avant de répondre</td></tr>
+        <tr><td><code>SIGHUP</code></td><td><code>serveRelayUntilStopped → enrollment.Reload</code></td><td>remplace uniquement un registre entièrement valide</td></tr>
+        <tr><td>commande administrative locale, en root</td><td><code>runDiagnose → Buffer.Inspect → build → render</code></td><td>lit l'état privé sans modifier et termine</td></tr>
+      </tbody></table>
+    </section>
+
+    <section>
+      <h2>Crypto et algorithmes</h2>
       <div class="grid">
-        <article class="card"><span class="tag">cmd</span><h3>Couture de l'exécutable</h3><p>Choisit <code>daemon</code> ou <code>relay</code>, lit les arguments et gère le cycle du processus.</p></article>
-        <article class="card"><span class="tag">internal</span><h3>Logique du produit</h3><p>Schéma de présence, validation, envoi, frontière HTTP, manifeste et stockage mémoire.</p></article>
-        <article class="card"><span class="tag">deploy</span><h3>Cycle système</h3><p>Unités et scripts d'installation/retrait. Ils ne deviennent pas des processus permanents.</p></article>
+        <article class="card"><span class="tag">transport</span><h3>TLS 1.3</h3><p>Confidentialité, intégrité et authentification mutuelle avec la bibliothèque Go.</p></article>
+        <article class="card"><span class="tag">certificats</span><h3>X.509 + Ed25519</h3><p>Deux CA séparées et usages client/serveur. Aucune primitive maison.</p></article>
+        <article class="card"><span class="tag">identité</span><h3>URI SAN</h3><p><code>urn:your-cloud:daemon:&lt;id&gt;</code>, série et empreinte exacte.</p></article>
+        <article class="card"><span class="tag">empreinte</span><h3>SHA-256</h3><p>Épingle le certificat et distingue rejeu identique de collision.</p></article>
+        <article class="card"><span class="tag">continuité</span><h3>Séquences + lacunes</h3><p>Ordre persistant et perte visible, jamais reconstruite.</p></article>
+        <article class="card"><span class="tag">disque</span><h3>fsync + rename</h3><p>Publication atomique du tampon et de l'état Relay.</p></article>
       </div>
     </section>
 
-    <section aria-labelledby="scope">
-      <h2 id="scope">Ne pas confondre les niveaux</h2>
+    <section>
+      <h2>Pourquoi <code>deploy/v0.0.1</code> et <code>v0.0.2</code></h2>
+      <table><thead><tr><th>Palier</th><th>Contrat</th><th>Cycle installé</th></tr></thead><tbody>
+        <tr><td><code>v0.0.1</code></td><td>présence HTTP de LAB</td><td>aucun certificat, état Relay mémoire</td></tr>
+        <tr><td><code>v0.0.2</code></td><td>observation mTLS bornée</td><td>credentials séparés et états durables</td></tr>
+      </tbody></table>
+      <p class="note">Les dossiers sont des recettes reproductibles, pas deux versions actives. Les fusionner aurait créé des conditions entre deux modèles de secrets, de données et de retrait. Une future distribution commune sera cadrée séparément.</p>
+    </section>
+
+    <section>
+      <h2>Repères Go rencontrés</h2>
       <div class="grid">
-        <article class="card scope proved"><h3>Prouvé · v0.0.1</h3><p>Artefact commun, processus isolés, signal minimal, HTTP POST/QUERY, états mémoire, refus Relay et cycle de retrait.</p></article>
-        <article class="card scope decided"><h3>Décidé · V1</h3><p>Identités Daemon, endpoint Relay approuvé public ou privé, mTLS, collecteurs nommés, tampon borné, enregistrement durable et App authentifiée.</p></article>
-        <article class="card scope absent"><h3>Absent</h3><p>Auxiliaire, commandes distantes, scan LAN, élection, réplication ou remplacement automatique du Relay.</p></article>
+        <article class="card wide"><h3><code>:=</code></h3><p>Déclare une variable locale et laisse Go déduire son type. <code>=</code> réassigne une variable existante.</p><pre><code>client, err := transport.NewDaemonClient(...)</code></pre></article>
+        <article class="card wide"><h3>Garde d'erreur</h3><p>Le cas invalide retourne immédiatement ; le chemin normal reste lisible de haut en bas.</p><pre><code>if err != nil {
+    return fmt.Errorf("daemon transport: %w", err)
+}</code></pre></article>
+        <article class="card wide"><h3><code>defer</code></h3><p>Planifie un nettoyage à la sortie de la fonction, même après un retour anticipé.</p></article>
+        <article class="card wide"><h3><code>go</code> + context</h3><p>Lance une goroutine dans le même processus ; le contexte transporte l'annulation.</p></article>
+        <article class="card wide"><h3><code>&amp;</code>, <code>*</code> et <code>nil</code></h3><p><code>&amp;</code> prend une adresse, <code>*T</code> désigne la même instance de <code>T</code> et <code>nil</code> l'absence de valeur référencée.</p></article>
+        <article class="card wide"><h3>Canal + <code>select</code></h3><p>Un canal transporte un événement entre goroutines ; <code>select</code> attend le premier signal, délai ou résultat disponible.</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Preuve et limite d'automatisation</h2>
+      <div class="grid">
+        <article class="card wide"><span class="tag">prouvé</span><h3>Scénario réel</h3><p>Nominal, certificats hostiles, révocation, panne, saturation, lacune, reprise, redémarrages, retrait et réinstallation.</p></article>
+        <article class="card wide"><span class="tag">à discuter</span><h3>Pilote mono-commande</h3><p>Les étapes multi-VM restent assistées. Un futur pilote servirait aux revalidations et à une CI avec runner libvirt dédié, pas à une CI standard sans VM.</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Limites honnêtes</h2>
+      <div class="grid">
+        <article class="card"><h3>Machine compromise</h3><p>Elle peut mentir dans les champs autorisés.</p></article>
+        <article class="card"><h3>Relay compromis</h3><p>Il voit les observations après TLS.</p></article>
+        <article class="card"><h3>PKI de preuve</h3><p>Pas de renouvellement ou réponse à incident de production.</p></article>
+        <article class="card"><h3>Hors palier</h3><p>App, Ansible métier, action distante, Auxiliaire, WireGuard, OCI, scan, failover Relay, Proxmox, OpenStack, worker d'automatisation et IaC.</p></article>
+        <article class="card"><h3>Lacune</h3><p>Elle révèle une perte mais ne recrée pas les données.</p></article>
+        <article class="card"><h3>Conformité</h3><p>Les contrôles aident OWASP/NIS2 sans suffire à une déclaration.</p></article>
       </div>
     </section>
     <!-- coherence: V1-OBSERVATION:end -->
 
-    <section aria-labelledby="limits">
-      <h2 id="limits">Ce que la présence ne garantit pas</h2>
-      <div class="grid">
-        <article class="card wide"><h3>Pas d'identité cryptographique</h3><p>Un identifiant autorisé n'authentifie pas encore la machine. HTTP n'apporte ni chiffrement ni authentification.</p></article>
-        <article class="card wide"><h3>Pas de santé globale</h3><p><code>recent</code> prouve seulement une réception récente. Ni services, ni intégrité, ni absence de compromission.</p></article>
-        <article class="card wide"><h3>Pas de continuité historique</h3><p>Le stockage est volatile. Un redémarrage Relay perd les derniers signaux.</p></article>
-        <article class="card wide"><h3>Pas de conformité magique</h3><p>Moindre privilège et refus sûr aident une démarche OWASP/NIS2 ; ils ne rendent pas le produit conforme à eux seuls.</p></article>
-      </div>
-    </section>
-
-    <footer>
-      <p>Source canonique de cette vue : <a href="../architecture/CHAINE-D-OBSERVATION.md">CHAINE-D-OBSERVATION.md</a>. Contrôles et écarts à automatiser : <a href="../contribution/TESTS.md">TESTS.md</a>. Preuve exécutée : <a href="../lab/v0.0.1-presence.md">rapport LAB v0.0.1</a>.</p>
-      <p><a href="index.html">← Documentation visuelle</a></p>
-    </footer>
+    <footer><p>Source canonique : <a href="../architecture/CHAINE-D-OBSERVATION.md">CHAINE-D-OBSERVATION.md</a> · Contrat : <a href="../objectifs/v1/CONTRAT-V0.0.2.md">v0.0.2</a> · Preuve : <a href="../lab/v0.0.2-observation.md">rapport LAB</a> · Automatisation : <a href="../contribution/TESTS.md">registre des tests</a>.</p><p><a href="index.html">← Documentation visuelle</a></p></footer>
   </main>
 </body>
 </html>
