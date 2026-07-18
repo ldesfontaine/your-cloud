@@ -6,9 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"syscall"
+
+	"github.com/ldesfontaine/your-cloud/internal/securefile"
 )
 
 const (
@@ -26,61 +25,12 @@ type candidateManifest struct {
 // LoadCandidate proves that root explicitly provisioned this machine before
 // the Relay opens a socket. The marker grants no identity or privilege.
 func LoadCandidate(path string) error {
-	if filepath.Clean(path) != path || filepath.Base(path) == "." {
-		return errors.New("candidate path is not canonical")
-	}
-	if err := validateRootOwnedDirectory(filepath.Dir(path)); err != nil {
-		return fmt.Errorf("candidate directory: %w", err)
-	}
-
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("candidate file: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("candidate file must not be a symbolic link")
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New("candidate file must be regular")
-	}
-	if err := validateRootOwnedMode(info); err != nil {
-		return fmt.Errorf("candidate file: %w", err)
-	}
-	if info.Size() <= 0 || info.Size() > maxCandidateBytes {
-		return fmt.Errorf("candidate file must contain 1..%d bytes", maxCandidateBytes)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read candidate file: %w", err)
-	}
-	_, err = decodeCandidate(data)
-	return err
-}
-
-func validateRootOwnedDirectory(path string) error {
-	info, err := os.Lstat(path)
+	data, err := securefile.ReadRootOwned(path, maxCandidateBytes)
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("must be a real directory")
-	}
-	return validateRootOwnedMode(info)
-}
-
-func validateRootOwnedMode(info os.FileInfo) error {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return errors.New("ownership is unavailable")
-	}
-	if stat.Uid != 0 {
-		return errors.New("must be owned by root")
-	}
-	if info.Mode().Perm()&0o022 != 0 {
-		return errors.New("must not be writable by group or others")
-	}
-	return nil
+	_, err = decodeCandidate(data)
+	return err
 }
 
 func decodeCandidate(data []byte) (candidateManifest, error) {

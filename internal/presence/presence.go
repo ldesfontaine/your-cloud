@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"time"
+
+	"github.com/ldesfontaine/your-cloud/internal/machineid"
 )
 
 const (
@@ -20,8 +21,6 @@ const (
 	// StaleAfter is the Relay-side age at which a machine becomes old.
 	StaleAfter = 4 * time.Second
 )
-
-var machineIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,62}$`)
 
 // AllowedMachineIDs returns the complete synthetic v0.0.1 topology. The VPS
 // runs one Daemon beside the Relay; the other Daemon runs on the LAN machine.
@@ -122,13 +121,7 @@ func closeSignalObject(decoder *json.Decoder) error {
 // ValidateMachineID rejects empty and syntactically unsafe identifiers before
 // the Relay applies its exact LAB allowlist.
 func ValidateMachineID(machineID string) error {
-	if machineID == "" {
-		return errors.New("machine_id is required")
-	}
-	if !machineIDPattern.MatchString(machineID) {
-		return errors.New("machine_id is malformed")
-	}
-	return nil
+	return machineid.Validate(machineID)
 }
 
 // Validate checks the complete input contract at the Relay boundary.
