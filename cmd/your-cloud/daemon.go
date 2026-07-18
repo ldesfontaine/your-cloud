@@ -7,13 +7,22 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
+	"github.com/ldesfontaine/your-cloud/internal/buffer"
+	"github.com/ldesfontaine/your-cloud/internal/credentials"
 	"github.com/ldesfontaine/your-cloud/internal/daemon"
-	"github.com/ldesfontaine/your-cloud/internal/presence"
+	"github.com/ldesfontaine/your-cloud/internal/machineid"
+	"github.com/ldesfontaine/your-cloud/internal/observation"
+	"github.com/ldesfontaine/your-cloud/internal/transport"
 )
 
-const v001RelayOrigin = "http://192.168.242.103:8443"
+const (
+	daemonStateDirectory = "/var/lib/private/your-cloud-daemon"
+	relayServerName      = "relay.v0-0-2.your-cloud.test"
+	v002RelayOrigin      = daemon.ApprovedRelayOrigin
+)
 
 type daemonArguments struct {
 	machineID string
@@ -26,20 +35,47 @@ func runDaemon(arguments []string) error {
 		return err
 	}
 
-	logger := log.New(os.Stdout, "your-cloud daemon: ", log.LstdFlags|log.LUTC)
-	sender, err := daemon.NewSender(
-		configuration.machineID,
-		configuration.relayURL,
-		presence.SendInterval,
-		logger,
-	)
+	credentialDirectory := os.Getenv(credentials.DirectoryEnvironment)
+	identity, err := credentials.LoadPair(credentialDirectory, "daemon.crt", "daemon.key")
 	if err != nil {
-		return fmt.Errorf("daemon configuration: %w", err)
+		return fmt.Errorf("daemon credentials: %w", err)
+	}
+	relayCA, err := credentials.LoadPublic(credentialDirectory, "relay-ca.crt")
+	if err != nil {
+		return fmt.Errorf("daemon credentials: %w", err)
+	}
+	client, err := transport.NewDaemonClient(relayCA, identity, relayServerName)
+	if err != nil {
+		return fmt.Errorf("daemon transport: %w", err)
+	}
+	localBuffer, err := buffer.Open(daemonStateDirectory, buffer.DefaultLimits())
+	if err != nil {
+		return fmt.Errorf("daemon buffer: %w", err)
+	}
+
+	logger := log.New(os.Stdout, "your-cloud daemon: ", log.LstdFlags|log.LUTC)
+	collector, err := daemon.NewCollector(configuration.machineID, localBuffer, observation.SystemSources(), logger)
+	if err != nil {
+		return fmt.Errorf("daemon collector: %w", err)
+	}
+	publisher, err := daemon.NewPublisher(configuration.machineID, configuration.relayURL, localBuffer, client, logger)
+	if err != nil {
+		return fmt.Errorf("daemon publisher: %w", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	sender.Run(ctx)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		collector.Run(ctx)
+	}()
+	go func() {
+		defer workers.Done()
+		publisher.Run(ctx)
+	}()
+	workers.Wait()
 	return nil
 }
 
@@ -56,7 +92,7 @@ func parseDaemonArguments(arguments []string) (daemonArguments, error) {
 		&configuration.relayURL,
 		"relay-url",
 		"",
-		"HTTP origin of the v0.0.1 LAB Relay",
+		"approved HTTPS origin of the v0.0.2 LAB Relay",
 	)
 	if err := flags.Parse(arguments); err != nil {
 		return daemonArguments{}, fmt.Errorf("daemon arguments: %w", err)
@@ -64,8 +100,11 @@ func parseDaemonArguments(arguments []string) (daemonArguments, error) {
 	if flags.NArg() != 0 {
 		return daemonArguments{}, errorsForUnexpectedArguments("daemon", flags.Args())
 	}
-	if configuration.relayURL != v001RelayOrigin {
-		return daemonArguments{}, fmt.Errorf("daemon relay URL must be %s in v0.0.1", v001RelayOrigin)
+	if err := machineid.Validate(configuration.machineID); err != nil {
+		return daemonArguments{}, fmt.Errorf("daemon machine ID: %w", err)
+	}
+	if configuration.relayURL != daemon.ApprovedRelayOrigin {
+		return daemonArguments{}, fmt.Errorf("daemon relay URL must be %s in v0.0.2", daemon.ApprovedRelayOrigin)
 	}
 	return configuration, nil
 }
