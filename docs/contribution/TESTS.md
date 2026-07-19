@@ -96,6 +96,7 @@ et doit devenir un pilote rejouable.
 
 | Frontière | Résultat exécuté | Automatisation restante |
 |---|---|---|
+| provenance commit → artefact | le commit final de l'implémentation `2f93f71` a été exporté directement par Git le 19 juillet, son lot transféré avec la même empreinte, puis le gate complet a reconstruit l'artefact final `f4a791f8...423d` | intégrer l'export exact, les empreintes et le gate au futur pilote et à son rapport structuré |
 | certificats mTLS | nominal et certificats inconnu, révoqué, expiré, mauvaise CA, mauvais usage et mauvaise association refusés | intégrer les commandes vivantes au pilote unique |
 | endpoint Relay | HTTPS exact ; HTTP, mauvais nom/CA, chemin et query refusés ; port, fragment et redirection couverts en tests Go | rejouer toute la matrice en réseau vivant |
 | profil `host-health.v1` | trois collecteurs réels ; profil, champ, version et entrée libre refusés en tests Go | intégrer coûts et schémas au rapport structuré |
