@@ -12,6 +12,7 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Comprendre la destination à long terme | [`projet/CAP.md`](projet/CAP.md) |
 | Savoir ce qui doit être vrai pour la V1 | [`objectifs/v1/README.md`](objectifs/v1/README.md) |
 | Voir l'ordre des preuves jusqu'à la V1 | [`objectifs/v1/ROADMAP.md`](objectifs/v1/ROADMAP.md) |
+| Cadrer la Console cliente et le Controller de lecture `v0.0.3` | [`objectifs/v1/CONTRAT-V0.0.3.md`](objectifs/v1/CONTRAT-V0.0.3.md) |
 | Comprendre les machines, composants et flux | [`architecture/ANATOMIE.md`](architecture/ANATOMIE.md) |
 | Comprendre les appels, données, états et protections de la chaîne d'observation | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |

@@ -42,9 +42,9 @@
       </article>
     </section>
     <!-- coherence: V1-APP-ACCESS:start -->
-    <div class="admin"><b>Environnement d'administration</b><br>Console navigateur → tunnel SSH local → Controller dans la VM de contrôle<br>Controller → lecture privée authentifiée → Relay<br>Controller → plan lisible → approbation humaine → Ansible → vérification</div>
-    <p class="boundary"><strong>Décision V1 :</strong> le tunnel écoute uniquement sur <code>127.0.0.1</code> du laptop. La Console ne contacte que le Controller ; le Controller initie la lecture du Relay et les Daemons ne connaissent aucun Controller. Ansible et le Controller restent dans la VM, Podman n'est pas requis sur le laptop et seuls BentoPDF et Vaultwarden sont publiés sur le VPS.</p>
-    <p class="boundary"><strong>Cible :</strong> un Controller privé par infrastructure derrière WireGuard, avec une clé de pair individuelle et révocable par appareil administrateur, un routage limité et un refus serveur par défaut. La possession de cette clé ne prouve ni l'intégrité de l'appareil ni l'identité humaine ; le Controller impose une authentification distincte et SSO/OIDC reste facultatif. Les services publiés gardent leur HTTPS normal sans VPN. Une passerelle Web publique demeure une option future sans autorité d'administration ni secret de machine, mais avec des pouvoirs résiduels à borner.</p>
+    <div class="admin"><b>Environnement d'administration</b><br>Console installée et signée → API privée → Controller backend<br>Controller → lecture privée authentifiée → Relay<br>Controller → plan lisible → approbation humaine → Ansible → vérification</div>
+    <p class="boundary"><strong>Décision V1 :</strong> la Console embarque son frontend et n'ouvre aucun serveur local ; le Controller ne sert aucun code d'interface. La Console contacte seulement les Controllers approuvés, le Controller initie la lecture du Relay et les Daemons ne connaissent aucun Controller. La preuve produit reste dans le LAB ou un runner isolé.</p>
+    <p class="boundary"><strong>Cible :</strong> une Console Linux et Windows puis téléphone, un Controller backend privé par infrastructure derrière WireGuard, une clé de pair et une identité individuelles par appareil administrateur, authentification humaine distincte et SSO/OIDC facultatif. Les services publiés gardent leur HTTPS normal sans VPN. Un mode navigateur demeure une option future séparée.</p>
     <!-- coherence: V1-APP-ACCESS:end -->
 
     <h2>Une IP publique, deux noms de service</h2>

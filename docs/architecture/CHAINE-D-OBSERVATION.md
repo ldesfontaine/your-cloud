@@ -214,7 +214,7 @@ valeurs de santé collectées.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-## Invariant Controller–Relay décidé — contrat non ouvert
+## Invariant Controller–Relay décidé — contrat `v0.0.3` en cadrage
 
 La séparation des responsabilités et le sens de lecture ci-dessous sont des
 invariants validés. Le protocole, les identités, les bornes et la reprise restent
@@ -239,16 +239,17 @@ Daemon -- POST mTLS --> Relay
 
 Controller -- requête privée authentifiée --> Relay
 Controller <-- dernier état validé, séquence et lacunes -- Relay
-Controller -- état métier interprété --> Console
+Controller -- API privée authentifiée --> Console installée
 ```
 
 Le Controller initie la lecture. Le Relay n'a donc pas besoin de connaître son
 emplacement réseau. Il doit toutefois refuser toute identité de lecteur non
 autorisée et valider la méthode, la route, la portée infrastructure ou machine,
-le schéma, la cohérence et les tailles de la requête et de la réponse. Une Console
-contacte son Controller, jamais le Relay. Un Controller porte l'autorité d'une
-seule infrastructure ; une Console peut conserver plusieurs associations
-indépendantes.
+le schéma, la cohérence et les tailles de la requête et de la réponse. Une
+Console installée contacte ses Controllers approuvés, jamais le Relay. Aucun
+Controller ne lui fournit son frontend ou son code exécutable. Un Controller
+porte l'autorité d'une seule infrastructure ; une Console peut conserver
+plusieurs associations indépendantes.
 
 | Sujet | Relay | Controller |
 |---|---|---|
@@ -298,12 +299,14 @@ intégrité, authenticité et confidentialité de bout en bout restent donc troi
 questions distinctes, hors de `v0.0.2`.
 
 Avant le code de l'incrément Console–Controller, le contrat doit encore fixer le
-protocole de lecture, sa frontière réseau, l'autorité de certificats, l'identité
-du Controller, les méthodes, routes et portées, les schémas et bornes, la
-stratégie d'horloge, la sémantique d'instantané et la reprise après
+format et la chaîne de distribution signée de la Console, son stockage sécurisé,
+les identités d'appareil et humaines, les sessions, l'API Controller, puis le
+protocole de lecture Relay, sa frontière réseau, l'autorité de certificats,
+l'identité du Controller, les méthodes, routes et portées, les schémas et
+bornes, la stratégie d'horloge, la sémantique d'instantané et la reprise après
 indisponibilité. Le Controller initial reste en lecture seule : aucun SSH,
-Ansible, plan appliqué, SSO, session utilisateur publique ou canal d'action
-n'est ajouté au Relay.
+Ansible, plan appliqué, SSO obligatoire, session utilisateur publique ou canal
+d'action n'est ajouté au Relay.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: V1-OBSERVATION:start -->

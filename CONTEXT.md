@@ -25,10 +25,10 @@ Application ou capacité que l'utilisateur veut exécuter sur une ou plusieurs m
 Produit formé par une Console et un ou plusieurs Controllers, sans confondre leur interface et leur autorité.
 
 **Console**:
-Interface utilisateur qui présente les données et recueille les demandes destinées à des Controllers approuvés, sans être la source de leur inventaire ni détenir de secret de machine. Le modèle d'identité et de session appartient au contrat du Controller.
+Application cliente installée et signée sur un appareil administrateur. Elle embarque l'interface, conserve les associations approuvées vers des Controllers et recueille les demandes sans être la source de leur inventaire ni détenir de secret de machine. Elle n'héberge aucun serveur local et ne télécharge pas son code depuis un Controller.
 
 **Controller**:
-Service d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination.
+Backend privé d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination. Il expose une API authentifiée mais n'héberge aucun frontend.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: AGENT-AUTHORITY:start -->
@@ -188,10 +188,13 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
 - L'utilisateur n'a pas à mémoriser l'adresse d'un **Controller**, mais la
   **Console** possède nécessairement une association approuvée pour le joindre.
   Cela ne donne aucune connaissance du Controller aux **Daemons**.
-- Rendre une **Console** accessible depuis le Web ne signifie pas publier le
-  **Controller** directement, SSH, le Daemon ou l'Auxiliaire d'une machine. Cela
-  exige néanmoins un chemin distinct et explicitement contracté entre le
-  navigateur et le Controller, par accès privé ou par passerelle.
-- Une Console multi-Controller reste une cible. Son modèle de distribution,
-  d'origine Web et de session devra empêcher qu'un Controller fournisse du code
-  ou une session donnant silencieusement autorité sur les autres.
+- Une **Console** installée n'est ni un site hébergé par le Controller, ni une
+  page servie sur `localhost`. Son interface peut employer des technologies Web
+  embarquées sans ouvrir de serveur local ni dépendre d'une origine distante.
+- Une Console multi-Controller reste une cible. Sa distribution signée, ses
+  identités d'appareil et ses sessions séparées doivent empêcher qu'un
+  Controller fournisse du code ou obtienne silencieusement autorité sur les
+  autres.
+- Un futur accès par navigateur serait un mode distinct à contracter. Il ne
+  remplace pas implicitement la Console installée et ne rend aucun Controller
+  public.

@@ -50,9 +50,10 @@ VPS avec adresse publique
 ```
 
 Le Controller s'exécute dans l'environnement d'administration et la Console est
-rendue dans le navigateur. Dans le LAB, le Controller tourne dans une VM de
-contrôle séparée : les « deux machines » du scénario désignent les deux machines
-gérées, pas toutes les VM nécessaires à la preuve.
+une application installée sur l'appareil administrateur. Dans le LAB, le
+Controller et la Console sont exécutés dans des environnements isolés distincts :
+les « deux machines » du scénario désignent les deux machines gérées, pas toutes
+les VM nécessaires à la preuve.
 
 ## Comment l'utilisateur atteint chaque interface
 
@@ -89,88 +90,67 @@ redirection éventuelle depuis `80` et le refus des ports internes.
 L'**App** désigne le produit formé de deux rôles qui ne partagent pas la même
 autorité :
 
-- la **Console** est l'interface rendue dans le navigateur. Elle n'est pas la
-  source de l'inventaire, ne détient aucun secret de machine ou de runner et ne
-  possède aucune identité de service lui permettant d'exécuter seule. Elle
-  manipule cependant des données de présentation sensibles ; l'identité et la
-  session associées à ses requêtes doivent être établies et validées selon le
-  contrat du Controller ;
+- la **Console** est une application cliente installée et signée. Elle embarque
+  le frontend et le client réseau sans héberger de serveur local ni télécharger
+  son code depuis un Controller. Elle n'est pas la source de l'inventaire, ne
+  détient aucun secret de machine ou de runner et ne possède aucune identité lui
+  permettant d'exécuter seule une action d'infrastructure ;
 - le **Controller** est le backend d'une seule infrastructure. À terme, il porte
   son inventaire, ses utilisateurs et rôles, ses décisions d'enrôlement, ses
   plans, son état attendu et son audit. En V1, il coordonne Ansible par le chemin
-  d'administration distinct.
+  d'administration distinct. Il expose une API privée authentifiée mais ne sert
+  aucun frontend.
 
-La V1 prouve une Console servie pour un Controller et une infrastructure. La
-cible permettra à une Console de conserver plusieurs associations approuvées,
-une par Controller. L'utilisateur n'a pas à mémoriser leurs adresses, mais la
-Console doit connaître et vérifier l'identité de chaque Controller qu'elle
-contacte. La distribution de cette Console, ses origines Web et l'isolation de
-ses sessions devront être cadrées avant de revendiquer qu'un Controller compromis
-ne peut influencer l'accès aux autres.
+La V1 prouve une Console installée, un Controller et une infrastructure. La
+Console peut conserver plusieurs associations approuvées, une par Controller.
+L'utilisateur n'a pas à mémoriser leurs adresses, mais l'application connaît et
+vérifie l'identité de chaque Controller. Sa distribution signée, ses identités
+d'appareil et ses sessions séparées empêchent un Controller de fournir le code
+de l'interface ou d'obtenir silencieusement autorité sur les autres.
 
-Pour la V1 dans le LAB, la décision retenue est :
+Le trajet retenu est :
 
 ```text
-Console dans le navigateur du laptop
-        |
-        v
-127.0.0.1:<port local>
-        |
-        | tunnel SSH local, clé et hôte vérifiés
-        v
-VM de contrôle:127.0.0.1:<port Controller> -> Controller
-                                             |
-                                             `-> lecture privée authentifiée du Relay
+Appareil administrateur
+`- Console installée et signée
+   |- frontend embarqué, aucun serveur local
+   |- identité d'appareil dans le stockage sécurisé
+   `- API privée authentifiée ----> Controller d'une infrastructure
+                                      `- lecture authentifiée du Relay
 ```
 
-Le port local est lié uniquement à `127.0.0.1` : aucun autre appareil du LAN ne
-peut l'utiliser. Le laptop exécute seulement la Console dans le navigateur et le
-client SSH ; le Controller, Ansible et le projet restent dans la VM du LAB. La
-Console ne contacte jamais le Relay et le Daemon ne reçoit aucune adresse ou
-identité de Controller.
+La première Console est fonctionnelle sur Linux et Windows depuis le même
+frontend. Son interface peut employer HTML, CSS et TypeScript dans une enveloppe
+native légère, mais ces fichiers appartiennent à l'artefact signé : ce n'est ni
+un site hébergé, ni une page `localhost`. Le design responsive prépare le
+téléphone sans faire entrer dès `v0.0.3` la signature, le stockage sécurisé et
+la distribution Android ou iOS.
 
-Podman n'est donc pas un prérequis du laptop utilisateur en V1. Un Controller
-hébergé localement dans un conteneur pourra être étudié plus tard comme mode
-optionnel, mais il ne deviendra ni le chemin par défaut ni le seul moyen
-d'accéder au produit : rootless limite les privilèges sans supprimer les risques
-liés aux montages, au réseau, au noyau partagé ou aux identités
-d'administration.
+La preuve de cette application, ses builds et ses tests restent dans le LAB ou
+un runner isolé. Le laptop de développement continue de servir uniquement à
+Git, l'édition, aux contrôles statiques et au pilotage de `labctl`.
 
-`labctl` sait actuellement ouvrir une session SSH, mais ne possède pas encore de
-commande dédiée à ce tunnel. Lorsque l'incrément de l'interface arrivera, une
-commande bornée pourra ouvrir et fermer uniquement ce transfert pour le LAB. Ce
-pilotage reste un outil de preuve, pas un composant du produit. Les numéros de
-ports exacts seront choisis à cet incrément.
-
-Ce tunnel est le moyen d'accès privé retenu pour la V1, pas le transport final.
-À terme, le Controller et l'interface Web qu'il sert restent privés derrière
-WireGuard. Une clé privée de pair distincte et révocable est attribuée à chaque
-appareil d'administration ; un routage fractionné n'envoie dans le tunnel que
-les adresses d'administration. Le réseau d'administration refuse aussi par
-défaut les destinations et ports non nécessaires. Les personnes qui ne
-l'administrent pas et les utilisateurs des services publiés ne passent pas par
-ce VPN.
+À terme, l'API du Controller reste privée derrière WireGuard. Une clé privée de
+pair distincte et révocable est attribuée à chaque appareil d'administration ;
+un routage fractionné n'envoie dans le tunnel que les adresses d'administration.
+Le réseau d'administration refuse aussi par défaut les destinations et ports non
+nécessaires. Les personnes qui ne l'administrent pas et les utilisateurs des
+services publiés ne passent pas par ce VPN.
 
 WireGuard authentifie la possession de la clé du pair ; il ne prouve ni
-l'intégrité de l'appareil ni l'identité de l'humain. Le Controller exige encore
-une authentification forte et applique ses rôles locaux. Une organisation qui
-possède déjà un fournisseur central d'identité pourra intégrer SSO/OIDC sans le
-rendre obligatoire ; les effets de sa panne ou compromission et la récupération
-locale privée resteront à contracter.
+l'intégrité de l'appareil ni l'identité de l'humain. La Console possède donc une
+identité d'appareil distincte et le Controller exige une authentification humaine
+forte avant d'émettre une session courte liée à cet appareil. Le frontend ne
+reçoit aucun secret long terme. Une passkey locale constitue le premier profil
+visé ; une organisation pourra intégrer SSO/OIDC sans le rendre obligatoire.
+Les effets de sa panne ou compromission et la récupération locale privée restent
+à contracter.
 
-Une passerelle Web publique pourra être étudiée plus tard pour les navigateurs
-sans WireGuard. Elle restera facultative et hors V1, sans autorité
-d'administration ni secret de machine. Ses pouvoirs résiduels sur le routage, la
-disponibilité, TLS et la transmission d'identité devront néanmoins être bornés.
-
-Le tunnel SSH protège le trajet et authentifie un principal SSH ; il ne définit
-pas automatiquement l'identité humaine d'une session applicative. Le palier de
-lecture doit donc fixer son modèle de session. Avant toute action, la V1 devra
-choisir et prouver soit un opérateur LAB unique explicitement lié au principal
-SSH avec ses limites, soit une authentification et une session minimales dans le
-Controller. L'accès privé ne remplace jamais cette décision. Garder le Controller
-sur le plan d'administration réduit la surface de la première preuve sans
-coupler son exposition à celle des services destinés à Internet.
+Un futur accès par navigateur constituerait un mode distinct avec son propre
+frontend distribué et, si nécessaire, une passerelle publique. Il reste hors V1,
+facultatif et sans autorité d'administration ni secret de machine. Ses pouvoirs
+résiduels sur le routage, la disponibilité, TLS, l'intégrité du code livré et la
+transmission d'identité devront être bornés.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 ## Quatre chemins différents
@@ -207,11 +187,12 @@ Le Daemon ne reçoit donc jamais le clic de l'utilisateur et n'exécute aucune
 commande. La V1 automatise les seules opérations prévues par son contrat ; elle
 ne promet pas encore une console d'administration générale.
 
-Le navigateur communique uniquement avec le Controller au travers de la
-Console. Dans le LAB V1, le Controller vit dans l'environnement d'administration
-et possède un chemin réseau explicitement autorisé vers SSH, sans exposition
-publique du port de la machine du LAN. La V1 ne prétend pas encore qu'une
-Console hébergée n'importe où peut traverser seule n'importe quel NAT.
+La Console communique uniquement avec les Controllers qui lui ont été
+explicitement associés. Dans le LAB V1, le Controller vit dans l'environnement
+d'administration et possède un chemin réseau explicitement autorisé vers SSH,
+sans exposition publique du port de la machine du LAN. La V1 ne prétend pas
+encore qu'une Console installée n'importe où peut traverser seule n'importe quel
+NAT.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 ### Compatibilité avec la cible finale
@@ -276,7 +257,7 @@ mécanisme adapté au chemin :
 |---|---|
 | Paquets privés entre machines enrôlées | WireGuard, pairs nommés et routes bornées |
 | Daemon vers Relay | mTLS avec une identité propre à chaque Daemon, y compris au-dessus de WireGuard lorsque le Relay est distant |
-| Console du navigateur vers Controller | Tunnel SSH local lié à `127.0.0.1` ; protocole applicatif, origine Web et session à figer dans l'incrément Console–Controller |
+| Console installée vers Controller | API privée authentifiée ; identité d'appareil, authentification humaine, session, endpoint et stockage sécurisé à figer dans l'incrément Console–Controller |
 | Controller vers Relay | Canal privé authentifié par une identité de service distincte ; adresse d'écoute, CA et contrat de lecture à figer dans l'incrément Console–Controller |
 | Controller vers machine pour un plan approuvé | SSH avec identité d'administration distincte et clé d'hôte vérifiée |
 | Navigateur vers service publié | HTTPS jusqu'au point d'entrée public |

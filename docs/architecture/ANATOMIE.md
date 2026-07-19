@@ -74,7 +74,7 @@ lacune, reprise et cycle de retrait-réinstallation.
 
        +--------------------------------------------------+
        | Environnement d'administration                   |
-       | Console navigateur -- tunnel SSH --> Controller  |
+       | Console installée -- API privée --> Controller   |
        | Controller -- lecture authentifiée --> Relay     |
        | Controller -> plan -> approbation -> Ansible     |
        +--------------------------------------------------+
@@ -84,28 +84,28 @@ lacune, reprise et cycle de retrait-réinstallation.
 La Console, le Controller et le Relay restent hors du chemin emprunté par le
 trafic Web vers les services : leur panne ne doit pas arrêter BentoPDF ou
 Vaultwarden. Le Controller porte l'autorité d'une seule infrastructure. La V1
-prouve une Console, un Controller et une infrastructure ; l'association future
-à plusieurs Controllers devra encore isoler distribution, origine Web et
+prouve une Console installée, un Controller et une infrastructure ; les
+associations futures à plusieurs Controllers isolent identités d'appareil et
 sessions.
 
-La décision V1 est que la Console rendue dans le navigateur du laptop rejoint le
-Controller de la VM de contrôle au travers d'un transfert SSH lié à
-`127.0.0.1`. Cela ne lance aucun serveur Your Cloud sur le laptop, ne nécessite
-pas Podman sur celui-ci et ne publie pas le port du Controller sur Internet. Le
-Controller initie lui-même sa lecture privée authentifiée du Relay ; la Console
-ne contacte jamais le Relay et les Daemons ne connaissent aucun Controller.
+La Console est une application signée qui embarque son frontend et son client
+réseau. Elle n'ouvre aucun serveur local, n'utilise pas une page `localhost` et
+ne télécharge jamais son code depuis un Controller. Le premier palier vise Linux
+et Windows depuis le même frontend responsive ; le téléphone conserve ce design
+mais exige une preuve ultérieure de son empaquetage et de son stockage sécurisé.
+Le Controller reste un backend API privé sans frontend. Il initie sa lecture
+authentifiée du Relay ; la Console ne contacte jamais le Relay et les Daemons ne
+connaissent aucun Controller.
 
-À long terme, le Controller et l'interface Web qu'il sert restent privés derrière
-WireGuard. Chaque appareil administrateur possède un pair distinct et révocable,
-avec un routage limité aux adresses d'administration et un refus serveur par
-défaut. La possession de la clé du pair ne prouve ni l'intégrité de l'appareil ni
-l'identité de l'humain. Une authentification humaine forte reste obligatoire
-après l'accès réseau ; SSO/OIDC, l'appui sur un fournisseur central d'identité,
-est facultatif.
-Une passerelle Web publique pourra être étudiée comme option sans autorité
-d'administration ni secret de machine. Ses pouvoirs résiduels de routage, de
-disponibilité, de terminaison TLS ou de transmission d'identité devront rester
-bornés. Les services publiés conservent leur propre accès HTTPS sans WireGuard.
+À long terme, l'API du Controller reste privée derrière WireGuard. Chaque
+appareil administrateur possède un pair distinct et révocable, avec un routage
+limité aux adresses d'administration et un refus serveur par défaut. La
+possession de la clé du pair ne prouve ni l'intégrité de l'appareil ni l'identité
+de l'humain. Une identité d'appareil et une authentification humaine forte
+restent obligatoires après l'accès réseau ; SSO/OIDC est facultatif. Une
+passerelle Web publique et un frontend navigateur pourront être étudiés comme un
+mode futur distinct, sans autorité d'administration ni secret de machine. Les
+services publiés conservent leur propre accès HTTPS sans WireGuard.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 Les deux services suivent un autre chemin. Leurs noms DNS pointent vers la même

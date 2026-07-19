@@ -39,16 +39,21 @@ ces actions ; il ne transforme pas chaque machine en serveur d'administration
 général et ne réimplémente pas les API d'OpenStack ou de K3s.
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### Une Console distincte d'un Controller privé
+### Une Console installée distincte d'un Controller privé
 
-L'App désigne le produit, mais pas une autorité unique. La **Console** est
-l'interface ouverte sur un laptop ou un téléphone. Le **Controller** est le
-backend d'autorité d'une seule infrastructure : il porte son inventaire, ses
-utilisateurs et rôles, ses décisions d'enrôlement, ses plans, son état attendu
-et son audit. Chaque Controller ne détient aucune autorité ni secret d'un autre.
+L'App désigne le produit, mais pas une autorité unique. La **Console** est une
+application cliente installée et signée sur un appareil administrateur. Elle
+embarque son frontend et son client réseau sans héberger de serveur local ni
+télécharger son code depuis l'infrastructure. Le **Controller** est le backend
+d'autorité d'une seule infrastructure : il porte son inventaire, ses utilisateurs
+et rôles, ses décisions d'enrôlement, ses plans, son état attendu et son audit,
+mais aucun frontend. Chaque Controller ne détient aucune autorité ni secret d'un
+autre.
+
 La Console, l'appareil d'administration et un éventuel fournisseur d'identité
-restent toutefois des points communs : l'isolation multi-Controller dépendra du
-futur modèle de distribution, d'origine Web et de session et devra être prouvée.
+restent toutefois des points communs. L'isolation multi-Controller dépend de la
+distribution signée de l'application, des associations approuvées, des identités
+d'appareil et des sessions séparées ; elle doit être prouvée.
 
 Le trajet humain est `utilisateur -> Console -> Controller`. Le trajet
 d'observation est `Daemon -> Relay -> Controller`. Le trajet d'action part du
@@ -57,8 +62,8 @@ des services publiés suit encore un quatrième chemin indépendant. La Console 
 contacte jamais directement le Relay ; le Daemon connaît seulement son endpoint
 Relay approuvé et ne connaît aucun Controller.
 
-Par défaut à long terme, le Controller et l'interface Web qu'il sert restent
-privés derrière WireGuard. Une clé privée de pair distincte et révocable est
+Par défaut à long terme, l'API du Controller reste privée derrière WireGuard.
+Une clé privée de pair distincte et révocable est
 attribuée à chaque appareil d'administration ; un routage fractionné limite le
 tunnel aux seules adresses d'administration. Le réseau d'administration refuse
 aussi par défaut toute destination et tout port non nécessaires. WireGuard
@@ -67,32 +72,36 @@ l'identité de l'humain : le Controller exige encore une authentification humain
 forte et autorise chaque demande pour l'infrastructure, la cible et l'action
 concernées.
 
-Pour un usage personnel, une authentification locale forte et du matériel de
-récupération conservé hors ligne peuvent constituer le premier profil. Pour une
-organisation qui possède déjà un fournisseur d'identité maîtrisé, SSO/OIDC peut
-centraliser l'authentification et la révocation. Chaque Controller conserve son
-autorisation locale ; les effets d'une panne ou d'une compromission du
-fournisseur ainsi qu'un compte de récupération local utilisable seulement depuis
-le réseau d'administration restent à contracter. SSO n'est donc ni une
-dépendance obligatoire du produit, ni une autorisation implicite sur plusieurs
-infrastructures.
+La Console conserve son identité d'appareil et ses sessions dans le stockage
+sécurisé du système lorsqu'il fournit les propriétés exigées ; le frontend ne
+reçoit aucun secret long terme. Pour un usage personnel, une passkey locale et
+du matériel de récupération conservé hors ligne constituent la cible du premier
+profil. Pour une organisation qui possède déjà un fournisseur d'identité
+maîtrisé, SSO/OIDC peut centraliser l'authentification et la révocation. Chaque
+Controller conserve son autorisation locale ; les effets d'une panne ou d'une
+compromission du fournisseur ainsi qu'un compte de récupération local utilisable
+seulement depuis le réseau d'administration restent à contracter. SSO n'est donc
+ni une dépendance obligatoire du produit, ni une autorisation implicite sur
+plusieurs infrastructures.
 
-Un futur accès depuis un navigateur sans WireGuard pourra ajouter une passerelle
-publique facultative reliée au Controller privé par un canal dédié. Elle ne
+Un futur accès par navigateur pourra ajouter un frontend distribué et une
+passerelle publique facultative reliée au Controller privé par un canal dédié.
+Ce mode ne fait pas partie de la V1. La passerelle ne
 détiendra aucune autorité d'administration ni secret de machine, mais gardera des
 pouvoirs sur le routage et la disponibilité, voire sur TLS ou la transmission
 d'identité selon son contrat. Ces pouvoirs devront être bornés ; l'absence de
 pouvoir d'usurpation exigera une authentification de bout en bout réellement
-prouvée. La passerelle ne fait pas partie de la V1 et ne devient pas le chemin
-requis.
+prouvée. Elle ne devient pas le chemin requis.
 
-En V1, la Console est rendue dans le navigateur et rejoint le Controller d'une
-VM de contrôle privée par un tunnel SSH local lié à `127.0.0.1` ;
-seuls BentoPDF et Vaultwarden sont publiés par le VPS. Ce placement prouve un
-premier accès privé sans faire du laptop un serveur ni implémenter par avance la
-cible WireGuard des appareils d'administration.
+La V1 introduit d'abord une Console installable sur Linux et Windows depuis le
+même frontend et un Controller backend dans l'environnement d'administration.
+Le téléphone reste une cible du même contrat visuel et réseau, mais son
+empaquetage, son stockage sécurisé, sa signature et sa distribution sont prouvés
+dans un incrément ultérieur. La preuve `v0.0.3` s'exécute dans le LAB ou un runner
+isolé : elle ne lance pas le produit sur le laptop de développement et
+n'implémente pas WireGuard par avance.
 
-Le navigateur ne reçoit jamais une clé de machine, un secret de runner ou une
+La Console ne reçoit jamais une clé de machine, un secret de runner ou une
 identité d'Agent. Une panne de la Console, du Controller, du Relay ou du chemin
 d'administration ne doit pas interrompre les services déjà déployés. Les
 services destinés à Internet restent accessibles par leur HTTPS normal, sans
