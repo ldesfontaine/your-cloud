@@ -9,8 +9,8 @@ Markdown.
 
 ## Résultat attendu
 
-Depuis l'App, un utilisateur crée une infrastructure composée de deux machines
-Linux déjà installées :
+Depuis la Console, un utilisateur demande au Controller de créer une
+infrastructure composée de deux machines Linux déjà installées :
 
 - un VPS disposant d'une adresse publique ;
 - une machine située dans un LAN privé, sans adresse publique et sans port
@@ -20,9 +20,10 @@ Your Cloud observe les deux machines, y déploie proprement deux véritables
 services et les rend accessibles en HTTPS par le VPS. Un service tourne sur le
 VPS ; l'autre tourne dans le LAN derrière un passage chiffré sortant.
 
-Your Cloud ne suppose pas ce passage et le proxy déjà préparés. L'App présente
-le plan, puis configure elle-même le passage privé, les restrictions réseau, le
-point d'entrée HTTPS et la route vers le service après approbation.
+Your Cloud ne suppose pas ce passage et le proxy déjà préparés. Le Controller
+prépare le plan, la Console le présente, puis l'autorité adaptée configure le
+passage privé, les restrictions réseau, le point d'entrée HTTPS et la route vers
+le service après approbation.
 
 Atteindre ce scénario de manière reproductible, compréhensible et vérifiée
 constitue la ligne d'arrivée fonctionnelle de la V1.
@@ -48,9 +49,10 @@ VPS avec adresse publique
          `- Service B
 ```
 
-L'App s'exécute dans l'environnement d'administration. Dans le LAB, elle tourne
-dans une VM de contrôle séparée : les « deux machines » du scénario désignent
-les deux machines gérées, pas toutes les VM nécessaires à la preuve.
+Le Controller s'exécute dans l'environnement d'administration et la Console est
+rendue dans le navigateur. Dans le LAB, le Controller tourne dans une VM de
+contrôle séparée : les « deux machines » du scénario désignent les deux machines
+gérées, pas toutes les VM nécessaires à la preuve.
 
 ## Comment l'utilisateur atteint chaque interface
 
@@ -82,86 +84,134 @@ vers le VPS simulé. La preuve extérieure vérifiera les deux noms, `443`, la
 redirection éventuelle depuis `80` et le refus des ports internes.
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### App Your Cloud
+### App Your Cloud : Console et Controller
 
-L'**App** désigne à la fois l'interface Web visible dans le navigateur et son
-service backend, qui prépare les plans et coordonne Ansible. Elle ne tourne pas
-dans le navigateur ni sur le laptop.
+L'**App** désigne le produit formé de deux rôles qui ne partagent pas la même
+autorité :
+
+- la **Console** est l'interface rendue dans le navigateur. Elle n'est pas la
+  source de l'inventaire, ne détient aucun secret de machine ou de runner et ne
+  possède aucune identité de service lui permettant d'exécuter seule. Elle
+  manipule cependant des données de présentation sensibles ; l'identité et la
+  session associées à ses requêtes doivent être établies et validées selon le
+  contrat du Controller ;
+- le **Controller** est le backend d'une seule infrastructure. À terme, il porte
+  son inventaire, ses utilisateurs et rôles, ses décisions d'enrôlement, ses
+  plans, son état attendu et son audit. En V1, il coordonne Ansible par le chemin
+  d'administration distinct.
+
+La V1 prouve une Console servie pour un Controller et une infrastructure. La
+cible permettra à une Console de conserver plusieurs associations approuvées,
+une par Controller. L'utilisateur n'a pas à mémoriser leurs adresses, mais la
+Console doit connaître et vérifier l'identité de chaque Controller qu'elle
+contacte. La distribution de cette Console, ses origines Web et l'isolation de
+ses sessions devront être cadrées avant de revendiquer qu'un Controller compromis
+ne peut influencer l'accès aux autres.
 
 Pour la V1 dans le LAB, la décision retenue est :
 
 ```text
-Navigateur du laptop
+Console dans le navigateur du laptop
         |
         v
 127.0.0.1:<port local>
         |
         | tunnel SSH local, clé et hôte vérifiés
         v
-VM de contrôle:127.0.0.1:<port App> -> App
+VM de contrôle:127.0.0.1:<port Controller> -> Controller
+                                             |
+                                             `-> lecture privée authentifiée du Relay
 ```
 
 Le port local est lié uniquement à `127.0.0.1` : aucun autre appareil du LAN ne
-peut l'utiliser. Le laptop exécute seulement le navigateur et le client SSH ;
-l'App, son backend, Ansible et le projet restent dans la VM du LAB.
+peut l'utiliser. Le laptop exécute seulement la Console dans le navigateur et le
+client SSH ; le Controller, Ansible et le projet restent dans la VM du LAB. La
+Console ne contacte jamais le Relay et le Daemon ne reçoit aucune adresse ou
+identité de Controller.
 
-Podman n'est donc pas un prérequis du laptop utilisateur en V1. Une App locale
-conteneurisée pourra être étudiée plus tard comme mode d'hébergement optionnel,
-mais elle ne deviendra ni le chemin par défaut ni le seul moyen d'accéder au
-produit : rootless limite les privilèges sans supprimer les risques liés aux
-montages, au réseau, au noyau partagé ou aux identités d'administration.
+Podman n'est donc pas un prérequis du laptop utilisateur en V1. Un Controller
+hébergé localement dans un conteneur pourra être étudié plus tard comme mode
+optionnel, mais il ne deviendra ni le chemin par défaut ni le seul moyen
+d'accéder au produit : rootless limite les privilèges sans supprimer les risques
+liés aux montages, au réseau, au noyau partagé ou aux identités
+d'administration.
 
 `labctl` sait actuellement ouvrir une session SSH, mais ne possède pas encore de
 commande dédiée à ce tunnel. Lorsque l'incrément de l'interface arrivera, une
-commande bornée pourra ouvrir et fermer uniquement ce transfert. Les numéros de
+commande bornée pourra ouvrir et fermer uniquement ce transfert pour le LAB. Ce
+pilotage reste un outil de preuve, pas un composant du produit. Les numéros de
 ports exacts seront choisis à cet incrément.
 
-Ce tunnel est un moyen d'accès privé à la V1, pas l'architecture finale. À terme,
-l'App possédera son propre nom HTTPS et une authentification adaptée afin d'être
-utilisable depuis un navigateur ou un téléphone sans dépendre du laptop.
+Ce tunnel est le moyen d'accès privé retenu pour la V1, pas le transport final.
+À terme, le Controller et l'interface Web qu'il sert restent privés derrière
+WireGuard. Une clé privée de pair distincte et révocable est attribuée à chaque
+appareil d'administration ; un routage fractionné n'envoie dans le tunnel que
+les adresses d'administration. Le réseau d'administration refuse aussi par
+défaut les destinations et ports non nécessaires. Les personnes qui ne
+l'administrent pas et les utilisateurs des services publiés ne passent pas par
+ce VPN.
 
-Publier l'App dès la V1 ajouterait l'identité utilisateur, les autorisations par
-infrastructure et par action, les sessions, la protection CSRF, la limitation
-des tentatives, la réauthentification des opérations critiques et l'isolation
-des clés SSH et du runner Ansible au périmètre déjà large des deux services.
-La garder sur le plan d'administration réduit cette première preuve, sans
-revendiquer encore l'accès Web final sans tunnel.
+WireGuard authentifie la possession de la clé du pair ; il ne prouve ni
+l'intégrité de l'appareil ni l'identité de l'humain. Le Controller exige encore
+une authentification forte et applique ses rôles locaux. Une organisation qui
+possède déjà un fournisseur central d'identité pourra intégrer SSO/OIDC sans le
+rendre obligatoire ; les effets de sa panne ou compromission et la récupération
+locale privée resteront à contracter.
+
+Une passerelle Web publique pourra être étudiée plus tard pour les navigateurs
+sans WireGuard. Elle restera facultative et hors V1, sans autorité
+d'administration ni secret de machine. Ses pouvoirs résiduels sur le routage, la
+disponibilité, TLS et la transmission d'identité devront néanmoins être bornés.
+
+Le tunnel SSH protège le trajet et authentifie un principal SSH ; il ne définit
+pas automatiquement l'identité humaine d'une session applicative. Le palier de
+lecture doit donc fixer son modèle de session. Avant toute action, la V1 devra
+choisir et prouver soit un opérateur LAB unique explicitement lié au principal
+SSH avec ses limites, soit une authentification et une session minimales dans le
+Controller. L'accès privé ne remplace jamais cette décision. Garder le Controller
+sur le plan d'administration réduit la surface de la première preuve sans
+coupler son exposition à celle des services destinés à Internet.
 <!-- coherence: V1-APP-ACCESS:end -->
 
-## Trois chemins différents
+## Quatre chemins différents
 
 | Chemin | Rôle |
 |---|---|
-| Daemon vers Relay | Transporter l'état et les métriques des machines |
-| App vers machines | Préparer puis exécuter les changements approuvés |
-| Internet vers VPS vers service | Publier les applications destinées au Web |
+| Utilisateur vers Console vers Controller | Authentifier l'humain, présenter l'infrastructure et recueillir ses demandes |
+| Daemon vers Relay vers Controller | Transporter puis interpréter les observations des machines |
+| Controller vers exécution contrôlée vers machine | Préparer puis exécuter les changements approuvés |
+| Internet vers VPS vers service | Publier les applications destinées au Web, indépendamment de l'administration |
 
-Le Relay ne devient pas le proxy Web. Le Daemon ne devient pas un accès
-d'administration. Une panne de l'observation ne doit pas arrêter les services.
+La Console ne devient pas un accès direct au Relay. Le Relay ne devient ni le
+proxy Web, ni le backend métier, ni un canal d'action. Le Daemon ne devient pas
+un accès d'administration. Une panne de la Console, du Controller ou de
+l'observation ne doit pas arrêter les services.
 
 ### Comment l'interface agit réellement en V1
 
 Quand l'utilisateur demande un déploiement ou une modification prise en charge :
 
-1. l'App consulte l'état connu sans le confondre avec une preuve actuelle ;
-2. elle construit un plan borné pour les machines et services explicitement
+1. le Controller obtient le dernier état d'observation validé du Relay sans le
+   confondre avec une preuve actuelle ;
+2. il construit un plan borné pour les machines et services explicitement
    choisis ;
-3. elle affiche les changements, privilèges, flux, effets d'un échec et limites ;
-4. l'utilisateur approuve ce plan ;
-5. l'environnement d'administration l'applique avec Ansible par le chemin SSH
+3. la Console affiche les changements, privilèges, flux, effets d'un échec et
+   limites ;
+4. l'utilisateur approuve ce plan dans la Console ;
+5. le Controller l'applique avec Ansible par le chemin SSH
    distinct ;
-6. l'App vérifie le résultat par des contrôles directs puis par les nouvelles
-   observations reçues du Daemon.
+6. le Controller vérifie le résultat par des contrôles directs puis par les
+   nouvelles observations du Daemon obtenues auprès du Relay.
 
 Le Daemon ne reçoit donc jamais le clic de l'utilisateur et n'exécute aucune
 commande. La V1 automatise les seules opérations prévues par son contrat ; elle
 ne promet pas encore une console d'administration générale.
 
-Le navigateur communique uniquement avec l'App. Dans le LAB V1, son backend vit
-dans l'environnement d'administration et possède un chemin réseau explicitement
-autorisé vers SSH, sans exposition publique du port de la machine du LAN. La V1
-ne prétend pas encore qu'une App hébergée n'importe où peut traverser seule
-n'importe quel NAT.
+Le navigateur communique uniquement avec le Controller au travers de la
+Console. Dans le LAB V1, le Controller vit dans l'environnement d'administration
+et possède un chemin réseau explicitement autorisé vers SSH, sans exposition
+publique du port de la machine du LAN. La V1 ne prétend pas encore qu'une
+Console hébergée n'importe où peut traverser seule n'importe quel NAT.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 ### Compatibilité avec la cible finale
@@ -181,11 +231,11 @@ sans provisionnement local explicite de la machine candidate. Une seule version
 
 Dans la V1, cette autorité est Ansible par SSH. Après la V1, une machine placée
 en mode géré pourra recevoir une capacité optionnelle d'action dans son Agent :
-le Daemon non privilégié récupérera un plan par une communication sortante
-séparée du Relay, puis un Auxiliaire local sans réseau pourra appliquer une
-opération nommée. OpenStack, Terraform, OpenTofu et K3s utiliseront plutôt leurs
-API ou un runner isolé lorsque cette autorité est plus adaptée. Cette cible est
-détaillée dans le [cap du projet](../../projet/CAP.md).
+un chemin encore à cadrer, distinct du Daemon et du Relay d'observation, pourra
+activer un Auxiliaire local sans réseau pour une opération nommée. OpenStack,
+Terraform, OpenTofu et K3s utiliseront plutôt leurs API ou un runner isolé
+lorsque cette autorité est plus adaptée. Cette cible est détaillée dans le
+[cap du projet](../../projet/CAP.md).
 
 Le contrat V1 n'ajoute aucun canal d'action au Daemon et aucun Auxiliaire local.
 La roadmap conserve Ansible et SSH comme unique chemin d'application géré. Une
@@ -196,7 +246,7 @@ validation du contrat V1. Les contraintes imposées dès maintenant sont :
 - l'approbation identifie le contenu exact qui sera appliqué ;
 - tout artefact ou paramètre généré qui ne correspond plus à l'empreinte
   approuvée arrête l'application avant la première mutation ;
-- le backend ne reçoit depuis l'interface ni playbook, inventaire, commande,
+- le Controller ne reçoit depuis la Console ni playbook, inventaire, commande,
   argument libre ou chemin arbitraire : il sélectionne un parcours connu et des
   entrées typées, puis borne la cible à une machine enrôlée ;
 - l'identité SSH, la clé d'hôte et les droits `sudo` sont propres au chemin
@@ -204,10 +254,10 @@ validation du contrat V1. Les contraintes imposées dès maintenant sont :
 - le Daemon et le Relay restent consacrés à l'observation ;
 - la cohabitation sur le VPS ne leur donne aucun fichier d'identité, secret,
   stockage ou compte commun ;
-- l'échec de l'App, du chemin SSH ou d'une future action ne doit pas arrêter un
-  service déjà déployé ;
+- l'échec de la Console, du Controller, du chemin SSH ou d'une future action ne
+  doit pas arrêter un service déjà déployé ;
 - les résultats directs et les observations ultérieures restent deux preuves
-  distinctes, visibles dans l'App.
+  distinctes, visibles dans la Console.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: V1-NETWORK:start -->
@@ -226,22 +276,27 @@ mécanisme adapté au chemin :
 |---|---|
 | Paquets privés entre machines enrôlées | WireGuard, pairs nommés et routes bornées |
 | Daemon vers Relay | mTLS avec une identité propre à chaque Daemon, y compris au-dessus de WireGuard lorsque le Relay est distant |
-| App vers Relay | HTTPS avec authentification forte de l'App |
-| App vers machine pour un plan approuvé | SSH avec identité d'administration distincte et clé d'hôte vérifiée |
+| Console du navigateur vers Controller | Tunnel SSH local lié à `127.0.0.1` ; protocole applicatif, origine Web et session à figer dans l'incrément Console–Controller |
+| Controller vers Relay | Canal privé authentifié par une identité de service distincte ; adresse d'écoute, CA et contrat de lecture à figer dans l'incrément Console–Controller |
+| Controller vers machine pour un plan approuvé | SSH avec identité d'administration distincte et clé d'hôte vérifiée |
 | Navigateur vers service publié | HTTPS jusqu'au point d'entrée public |
 | VPS vers service du LAN | WireGuard et autorisation limitée à la destination et au port du service |
 
 WireGuard et mTLS ne sont pas deux synonymes. WireGuard chiffre et authentifie
 les paquets entre machines ; mTLS identifie les composants Your Cloud qui
 échangent des données applicatives. SSH protège le chemin d'administration et
-HTTPS protège les accès Web. Ajouter mTLS indistinctement à tous les services
-tiers n'apporterait pas automatiquement une meilleure sécurité ; une couche
-supplémentaire doit protéger une identité ou une menace réellement définie.
+HTTPS protège les accès Web. Après la V1, l'accès d'un appareil administrateur
+au Controller utilisera aussi un passage WireGuard borné, sans remplacer
+l'authentification de l'humain dans le Controller. Ajouter mTLS indistinctement
+à tous les services tiers n'apporterait pas automatiquement une meilleure
+sécurité ; une couche supplémentaire doit protéger une identité ou une menace
+réellement définie.
 
 La règle « seules les machines enrôlées communiquent » concerne le réseau privé
 de Your Cloud. Elle n'interdit pas les flux explicitement attendus vers un
-navigateur, l'App, le DNS, l'heure ou un registre d'artefacts. Ces exceptions
-restent déclarées, limitées et vérifiables. Le chiffrement protège le contenu,
+navigateur, la Console, le Controller, le DNS, l'heure ou un registre
+d'artefacts. Ces exceptions restent déclarées, limitées et vérifiables. Le
+chiffrement protège le contenu,
 pas les métadonnées nécessaires au routage telles que les adresses IP, les ports
 et les horaires de communication.
 
@@ -737,7 +792,7 @@ avant d'ajouter une nouvelle capacité.
 
 Le LAB simulera au minimum :
 
-- une VM de contrôle pour l'App ;
+- une VM de contrôle pour le Controller et Ansible ;
 - une VM jouant le rôle du VPS sur un réseau exposé ;
 - une VM placée derrière un réseau LAN sans entrée directe ;
 - une sonde extérieure au LAN pour vérifier les accès publics et l'absence
@@ -786,16 +841,18 @@ et son mode de récupération seront choisis seulement lors du cadrage de ce
 jalon ; cette note ne les impose pas à la V1 et ne préconçoit pas encore sa
 solution.
 
-## Paramètres décidés au bon incrément
+## Paramètres fixés au bon incrément
 
-Le profil détaillé et les chiffres du tampon ne bloquent plus l'écriture de la
-roadmap. Nous n'inventerons pas aujourd'hui une taille ou une fréquence sans
-connaître la taille réelle des messages et leur coût sur une machine du LAB.
+`v0.0.2` a mesuré le profil `host-health.v1` dans le LAB et fixé un tampon de
+`64 KiB`, 120 observations ou une heure, première limite atteinte. Ces valeurs
+sont prouvées pour ce profil et cet environnement ; elles ne constituent pas un
+plafond de charge de production et ne préjugent pas des profils futurs.
 
 Le contrat suffisant pour découper la V1 est le suivant :
 
 - `v0.0.1` ne conserve que le signal de présence décrit plus haut ;
-- chaque incrément suivant ajoute uniquement l'observation nécessaire à sa
+- `v0.0.2` ajoute la santé bornée de la machine et les limites mesurées ci-dessus ;
+- chaque incrément ultérieur ajoute uniquement l'observation nécessaire à sa
   preuve : santé de la machine, état des services, du passage privé ou du point
   d'entrée ;
 - aucun log, contenu de fichier, secret ou inventaire libre n'entre dans le
@@ -804,10 +861,11 @@ Le contrat suffisant pour découper la V1 est le suivant :
   maximum non contournable ;
 - l'état courant est conservé, les plus anciens événements historiques sont
   retirés en premier et chaque perte crée une lacune visible ;
-- le premier incrément qui ajoute de vraies observations mesure leur taille,
-  leur fréquence et leur coût disque dans le LAB, puis fixe et documente les
-  valeurs par défaut ainsi que les tests de saturation.
+- tout incrément qui change le profil ou ses limites remesure leur taille, leur
+  fréquence et leur coût disque dans le LAB, puis documente ses valeurs par
+  défaut et ses tests de saturation.
 
-Ces paramètres deviendront alors une petite décision d'implémentation prouvée,
-pas une hypothèse architecturale prise trop tôt. La roadmap V1 utilise ce
-travail comme porte de sortie du palier concerné.
+Ces paramètres sont une décision d'implémentation prouvée, pas une hypothèse
+architecturale prise trop tôt. Le
+[rapport LAB `v0.0.2`](../../lab/v0.0.2-observation.md) conserve les mesures et
+leurs limites.

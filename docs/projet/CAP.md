@@ -39,24 +39,64 @@ ces actions ; il ne transforme pas chaque machine en serveur d'administration
 général et ne réimplémente pas les API d'OpenStack ou de K3s.
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### Une interface Web sans exposer les machines
+### Une Console distincte d'un Controller privé
 
-À terme, un utilisateur autorisé doit pouvoir ouvrir l'App en HTTPS depuis le
-Web sans établir lui-même un VPN. Cela n'expose ni SSH, ni l'Agent, ni une API
-d'administration sur les machines du LAN : seul le point d'entrée de l'App est
-public, et les machines continuent d'ouvrir leurs communications nécessaires
-vers l'extérieur.
+L'App désigne le produit, mais pas une autorité unique. La **Console** est
+l'interface ouverte sur un laptop ou un téléphone. Le **Controller** est le
+backend d'autorité d'une seule infrastructure : il porte son inventaire, ses
+utilisateurs et rôles, ses décisions d'enrôlement, ses plans, son état attendu
+et son audit. Chaque Controller ne détient aucune autorité ni secret d'un autre.
+La Console, l'appareil d'administration et un éventuel fournisseur d'identité
+restent toutefois des points communs : l'isolation multi-Controller dépendra du
+futur modèle de distribution, d'origine Web et de session et devra être prouvée.
+
+Le trajet humain est `utilisateur -> Console -> Controller`. Le trajet
+d'observation est `Daemon -> Relay -> Controller`. Le trajet d'action part du
+Controller vers l'autorité d'exécution adaptée, puis vers la machine. Le trafic
+des services publiés suit encore un quatrième chemin indépendant. La Console ne
+contacte jamais directement le Relay ; le Daemon connaît seulement son endpoint
+Relay approuvé et ne connaît aucun Controller.
+
+Par défaut à long terme, le Controller et l'interface Web qu'il sert restent
+privés derrière WireGuard. Une clé privée de pair distincte et révocable est
+attribuée à chaque appareil d'administration ; un routage fractionné limite le
+tunnel aux seules adresses d'administration. Le réseau d'administration refuse
+aussi par défaut toute destination et tout port non nécessaires. WireGuard
+authentifie la possession de cette clé, pas l'intégrité de l'appareil ni
+l'identité de l'humain : le Controller exige encore une authentification humaine
+forte et autorise chaque demande pour l'infrastructure, la cible et l'action
+concernées.
+
+Pour un usage personnel, une authentification locale forte et du matériel de
+récupération conservé hors ligne peuvent constituer le premier profil. Pour une
+organisation qui possède déjà un fournisseur d'identité maîtrisé, SSO/OIDC peut
+centraliser l'authentification et la révocation. Chaque Controller conserve son
+autorisation locale ; les effets d'une panne ou d'une compromission du
+fournisseur ainsi qu'un compte de récupération local utilisable seulement depuis
+le réseau d'administration restent à contracter. SSO n'est donc ni une
+dépendance obligatoire du produit, ni une autorisation implicite sur plusieurs
+infrastructures.
+
+Un futur accès depuis un navigateur sans WireGuard pourra ajouter une passerelle
+publique facultative reliée au Controller privé par un canal dédié. Elle ne
+détiendra aucune autorité d'administration ni secret de machine, mais gardera des
+pouvoirs sur le routage et la disponibilité, voire sur TLS ou la transmission
+d'identité selon son contrat. Ces pouvoirs devront être bornés ; l'absence de
+pouvoir d'usurpation exigera une authentification de bout en bout réellement
+prouvée. La passerelle ne fait pas partie de la V1 et ne devient pas le chemin
+requis.
+
+En V1, la Console est rendue dans le navigateur et rejoint le Controller d'une
+VM de contrôle privée par un tunnel SSH local lié à `127.0.0.1` ;
+seuls BentoPDF et Vaultwarden sont publiés par le VPS. Ce placement prouve un
+premier accès privé sans faire du laptop un serveur ni implémenter par avance la
+cible WireGuard des appareils d'administration.
 
 Le navigateur ne reçoit jamais une clé de machine, un secret de runner ou une
-identité d'Agent. Le backend authentifie l'utilisateur, autorise chaque demande
-pour l'infrastructure, la cible et l'action concernées, protège sa session et
-demande une preuve renforcée pour les opérations critiques.
-
-En V1, ce backend reste dans une VM de contrôle privée. Le navigateur du laptop
-le rejoint par un tunnel SSH local lié à `127.0.0.1` ; seuls BentoPDF et
-Vaultwarden sont publiés par le VPS. Ce placement réduit la première surface
-d'attaque sans décider du placement final : à terme, l'App aura son propre
-point d'entrée HTTPS authentifié et ne dépendra pas du laptop.
+identité d'Agent. Une panne de la Console, du Controller, du Relay ou du chemin
+d'administration ne doit pas interrompre les services déjà déployés. Les
+services destinés à Internet restent accessibles par leur HTTPS normal, sans
+imposer WireGuard à leurs utilisateurs.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 ### Un seul artefact, des rôles réellement isolés
@@ -73,13 +113,14 @@ présence :
 
 - son **Daemon** permanent fonctionne sans privilège d'administration. Il
   observe la machine, conserve les données en attente et ouvre lui-même les
-  communications sortantes authentifiées. Il ne modifie pas directement le
-  système ;
+  communications sortantes authentifiées vers son Relay approuvé. Il ne connaît
+  aucun Controller et ne modifie pas directement le système ;
 - le **Relay** reste un processus réseau distinct, non privilégié et consacré
   aux observations. Il peut cohabiter avec le Daemon sur une machine déclarée
   candidate, mais son démarrage refuse toute machine qui n'a pas reçu au
   préalable une configuration et une identité Relay explicitement
-  provisionnées ;
+  provisionnées. Cette capacité est optionnelle sur chaque Agent, mais la chaîne
+  d'observation V1 provisionne exactement un Relay ;
 - un **Auxiliaire local** optionnel peut être activé uniquement pour une machine
   placée en mode géré. Il n'est pas permanent, n'écoute aucun port, est lancé
   pour un plan précis, applique une opération nommée avec les seuls privilèges
@@ -89,16 +130,18 @@ Une machine ordinaire lance donc seulement `your-cloud daemon`. Une candidate
 Relay explicitement provisionnée peut lancer simultanément `your-cloud daemon`
 et `your-cloud relay` depuis les mêmes octets, sous deux comptes différents.
 Lorsqu'il sera implémenté après la V1, `your-cloud aux` sera un troisième
-processus ponctuel : le Daemon pourra demander son activation pour un plan
-exact, mais l'autorité locale de lancement et l'Auxiliaire revérifieront ce plan
-indépendamment avant tout privilège. Les versions qui ne prennent pas encore
-l'Auxiliaire en charge ne l'exposent pas et ne l'installent pas par avance.
+processus ponctuel : un chemin d'action distinct de l'observation pourra demander
+son activation pour un plan exact, mais son mécanisme de transport et de
+lancement devra être cadré avant implémentation. L'autorité locale et
+l'Auxiliaire revérifieront le plan indépendamment avant tout privilège. Les
+versions qui ne prennent pas encore l'Auxiliaire en charge ne l'exposent pas et
+ne l'installent pas par avance.
 
 Cette séparation constitue une frontière de sécurité réellement maintenue et
 testée. Une machine limitée à l'observation ne possède aucune élévation dormante
-de type binaire `setuid` ou règle `sudo` générale. Le Daemon est traité comme un
-transport non fiable : il ne peut transmettre ni shell, ni script libre, ni
-chemin arbitraire, et l'Auxiliaire revérifie indépendamment le plan avant tout
+de type binaire `setuid` ou règle `sudo` générale. Ni le Daemon ni le Relay ne
+transportent un plan, un shell, un script libre ou un chemin arbitraire. Le futur
+chemin d'action et l'Auxiliaire revérifieront indépendamment le plan avant tout
 changement privilégié. Les privilèges appartiennent à l'opération autorisée,
 pas à un auxiliaire root universel.
 
@@ -126,9 +169,10 @@ Toutes les actions de l'interface ne traversent donc pas l'Agent :
 | K3s | Agent pour l'amorçage local si nécessaire, puis adaptateur utilisant l'API du cluster |
 | Élément conservé en mode externe | Outil de l'utilisateur ; Your Cloud observe sans reprendre l'autorité |
 
-Pour une opération coordonnée sur plusieurs machines, l'App construit un plan
-global puis une partie ciblée par machine ou plateforme. Chaque autorité ne voit
-et ne peut appliquer que la partie qui la concerne.
+Pour une opération coordonnée sur plusieurs machines, le Controller construit un
+plan global puis une partie ciblée par machine ou plateforme. La Console le rend
+lisible et recueille son approbation. Chaque autorité ne voit et ne peut appliquer
+que la partie qui la concerne.
 
 ### Contrat commun d'une action
 
@@ -136,7 +180,7 @@ Quel que soit l'adaptateur, le parcours final conserve les mêmes garanties :
 
 1. l'utilisateur est authentifié et autorisé pour l'infrastructure, la cible et
    l'opération demandée ;
-2. l'App produit un plan typé qui nomme la cible, l'action et sa version, les
+2. le Controller produit un plan typé qui nomme la cible, l'action et sa version, les
    changements, privilèges, flux, effets d'échec et possibilités de retour ;
 3. l'approbation est liée au contenu exact du plan, pas seulement à son titre ;
 4. l'ordre résultant est authentifié, ciblé, unique, de courte durée et protégé
@@ -150,7 +194,7 @@ Quel que soit l'adaptateur, le parcours final conserve les mêmes garanties :
 7. l'adaptateur applique de façon idempotente lorsqu'il le promet et annonce
    honnêtement les effets partiels ainsi que son rollback ;
 8. le résultat direct puis l'observation indépendante rendent le succès,
-   l'échec ou l'état partiel visibles dans l'App ;
+   l'échec ou l'état partiel visibles dans la Console ;
 9. demande, approbation, identité, empreinte du plan et résultat forment une
    trace d'audit expurgée des secrets.
 
@@ -172,7 +216,7 @@ autorité de mise à jour distincte.
 | Option | Conclusion |
 |---|---|
 | Daemon unique fonctionnant en root | Plus simple, mais sa compromission donnerait une autorité générale : refusé |
-| SSH et Ansible comme unique chemin final | Valable pour la V1 et le mode manuel, mais insuffisant pour une App distante face au NAT : conservé sans devenir l'unique modèle |
+| SSH et Ansible comme unique chemin final | Valable pour la V1 et le mode manuel, mais insuffisant pour un Controller distant face au NAT : conservé sans devenir l'unique modèle |
 | Binaires indépendants pour Daemon et Relay | Isolation visible, mais versions, signatures, SBOM et mises à jour peuvent dériver : écarté |
 | Exécutable unique lancé comme un seul processus multi-rôle | Distribution simple, mais mémoire, compte, secrets, crash et surface réseau partagés : refusé |
 | Exécutable unique, processus et comptes séparés | Une version et une chaîne d'approvisionnement, avec des frontières d'exécution par rôle : cible retenue |
@@ -195,8 +239,8 @@ recommandés par le
 
 - l'observation seule est le profil initial le moins privilégié ;
 - activer une capacité d'action constitue une décision explicite par machine ;
-- l'App, l'autorité de plan, le Daemon et l'autorité locale n'ont pas les mêmes
-  droits, même lorsqu'ils appartiennent au même produit ;
+- la Console, le Controller, le Daemon, le Relay et l'autorité locale n'ont pas
+  les mêmes droits, même lorsqu'ils appartiennent au même produit ;
 - un schéma positif d'opérations remplace les commandes libres ;
 - la validation porte sur le type et sur la portée réelle des paramètres, afin
   qu'une opération autorisée ne puisse pas devenir un montage de `/`, une règle
@@ -220,7 +264,7 @@ passe ou contenu applicatif sensible.
 | Autorisation et refus par défaut | Décision par utilisateur, infrastructure, cible, action, version et durée | Mauvaise combinaison refusée avant toute mutation |
 | Validation des entrées | Schéma strict et contraintes sémantiques locales | Chemin, port, volume, capacité et destination hors liste refusés |
 | Journalisation et incident | Identifiant, acteur, empreinte, transitions et résultat sans secret | Reconstituer une action et une erreur sans exposer ses secrets |
-| Continuité NIS2 | Services indépendants de l'App, du Relay et du canal d'action | Une panne du contrôle retarde les actions sans arrêter les services |
+| Continuité NIS2 | Services indépendants de la Console, du Controller, du Relay et du canal d'action | Une panne du contrôle retarde les actions sans arrêter les services |
 | Chaîne d'approvisionnement et développement sûr | Artefacts épinglés et signés, SBOM, tests hostiles, mise à jour séparée | Refus d'un lot altéré et retour vers le dernier lot valide |
 | Cryptographie, accès et actifs | Identités bornées, communications chiffrées, inventaire et révocation | Pair, identité, cible ou plan inconnu refusé et révocable |
 
@@ -243,10 +287,10 @@ Cloud à NIS2.
 - Une erreur dans un adaptateur privilégié peut endommager sa cible malgré un
   plan valide ; ses entrées, effets et rollback doivent donc être testés de
   façon hostile.
-- Regrouper observation et transport d'action dans un même Daemon réduit
-  l'exploitation quotidienne, mais augmente l'impact de sa compromission. La
-  validation indépendante par l'Auxiliaire, les identités bornées et la
-  révocation constituent les défenses compensatoires.
+- Le futur chemin d'action ajoutera une autorité sensible même s'il reste séparé
+  du Daemon et du Relay. Sa compromission pourrait utiliser les opérations qui
+  lui sont permises ; l'identité bornée, la révocation et la validation
+  indépendante par l'Auxiliaire resteront nécessaires.
 - Un défaut ou un lot compromis dans l'exécutable partagé peut toucher Daemon,
   Relay et futur Auxiliaire. Les comptes séparés limitent les droits à
   l'exécution, mais ne remplacent ni signature, SBOM, tests par mode, déploiement
@@ -385,13 +429,13 @@ aucune autorisation envers les autres appareils.
   générale : chaque pair, destination, port et protocole reste borné au besoin
   approuvé, et chaque donnée Your Cloud qui traverse ce réseau privé est
   protégée avant de quitter sa machine.
-- Un service déjà déployé ne s'arrête pas uniquement parce que l'App ou le Relay
-  est indisponible.
+- Un service déjà déployé ne s'arrête pas uniquement parce que la Console, le
+  Controller ou le Relay est indisponible.
 <!-- coherence: V1-OBSERVATION:start -->
 - Chaque Daemon enrôlé reçoit un endpoint Relay approuvé qui borne la route, le
   port et l'identité cryptographique attendue. Le Relay n'exige pas d'adresse
-  publique lorsqu'un routage privé autorisé le rend joignable aux Daemons et à
-  l'App ; une adresse IP seule ne constitue jamais son identité.
+  publique lorsqu'un routage privé autorisé le rend joignable aux Daemons et au
+  Controller ; une adresse IP seule ne constitue jamais son identité.
 - Un futur remplacement automatique du Relay reste limité aux machines
   candidates explicitement autorisées. Il doit prouver la panne, empêcher deux
   autorités actives concurrentes, redistribuer un endpoint authentifié et

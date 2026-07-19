@@ -63,6 +63,28 @@
     </section>
     <!-- coherence: AGENT-AUTHORITY:end -->
 
+    <!-- coherence: V1-APP-ACCESS:start -->
+    <section>
+      <h2>Invariant Controller–Relay décidé : contrat non ouvert</h2>
+      <p class="note">La séparation des responsabilités et le sens de lecture sont validés. Protocole, identités, bornes et reprise restent à approuver dans le contrat du prochain palier avant toute implémentation.</p>
+      <p class="note"><code>v0.0.2</code> expose seulement <code>POST /v0/observations</code> aux Daemons. Il n'existe encore aucune route de lecture pour un Controller ; la Console ne doit donc jamais appeler directement le Relay.</p>
+      <p class="note">Le listener TLS actuel accepte seulement l'autorité cliente et l'enrôlement des Daemons. Une route Controller ne peut pas y être ajoutée sans mélanger deux classes d'identité : il faut une frontière distincte ou une séparation équivalente prouvée.</p>
+      <div class="flow"><div class="step">Daemon</div><div class="step">POST mTLS</div><div class="step">Relay</div><div class="step">validation</div><div class="step">dernier état</div><div class="step">accusé durable</div></div>
+      <div class="flow"><div class="step">Controller</div><div class="step">requête privée</div><div class="step">Relay</div><div class="step">instantané validé</div><div class="step">Controller</div><div class="step">Console</div></div>
+      <table><thead><tr><th>Sujet</th><th>Relay</th><th>Controller</th></tr></thead><tbody>
+        <tr><td>Enrôlement</td><td>applique le registre local provisionné par root</td><td>portera à terme la décision métier et l'inventaire de référence</td></tr>
+        <tr><td>Séquences et lacunes</td><td>contrôle et persiste le dernier fait d'observation validé</td><td>interprète l'impact et fournit l'état métier à la Console</td></tr>
+        <tr><td>Fraîcheur</td><td>heure locale de réception de l'hôte Relay</td><td>traite la dérive d'horloge et applique sa politique</td></tr>
+        <tr><td>Humains et actions</td><td>aucun utilisateur, plan ou ordre</td><td>authentification, autorisation et chemin d'action distinct</td></tr>
+      </tbody></table>
+      <p class="note">Le premier Controller reste en lecture seule : l'enrôlement demeure provisionné manuellement comme dans <code>v0.0.2</code>. L'autorité qui émettra et révoquera ses certificats reste à choisir ; l'inventaire métier ne la remplace pas.</p>
+      <p class="note">L'accusé actuel signifie seulement que la séquence exacte est durable sur le Relay ; il ne prouve pas la lecture du Controller. Le Relay garde le dernier état, pas un historique complet. Si 10, 11 et 12 arrivent entre deux lectures, le Controller peut ne voir que 12 : ce remplacement n'est pas une <code>Lacune d'observation</code> du tampon Daemon.</p>
+      <p class="note">Relay et Controller peuvent cohabiter sur une petite infrastructure avec processus, comptes, identités, stockages et politiques d'accès distincts. Ils partagent alors malgré tout la même zone de compromission root ; cette cohabitation ne constitue pas une isolation d'hôte.</p>
+      <p class="note">Le Controller initie la lecture. Le Relay devra contrôler identité, méthode, route, portée, schéma, cohérence et tailles. CA, identité, horloges, instantané, bornes et reprise restent à contracter. Une signature de bout en bout pourrait détecter une altération, mais ne cacherait pas les données à un hôte Relay compromis.</p>
+      <p class="note">Le code historique <code>QUERY /v0/machines</code> de <code>v0.0.1</code> et son calcul <code>recent</code>/<code>old</code>/<code>absent</code> ne définissent pas ce futur contrat : l'inventaire et la politique de fraîcheur appartiennent au Controller.</p>
+    </section>
+    <!-- coherence: V1-APP-ACCESS:end -->
+
     <!-- coherence: V1-OBSERVATION:start -->
     <section>
       <h2>Trajet durable d'une observation</h2>
@@ -147,9 +169,9 @@
       <h2>Limites honnêtes</h2>
       <div class="grid">
         <article class="card"><h3>Machine compromise</h3><p>Elle peut mentir dans les champs autorisés.</p></article>
-        <article class="card"><h3>Relay compromis</h3><p>Il voit les observations après TLS.</p></article>
+        <article class="card"><h3>Relay compromis</h3><p>Root voit et peut altérer l'état après TLS ; une intégrité de bout en bout reste ouverte.</p></article>
         <article class="card"><h3>PKI de preuve</h3><p>Pas de renouvellement ou réponse à incident de production.</p></article>
-        <article class="card"><h3>Hors palier</h3><p>App, Ansible métier, action distante, Auxiliaire, WireGuard, OCI, scan, failover Relay, Proxmox, OpenStack, worker d'automatisation et IaC.</p></article>
+        <article class="card"><h3>Hors palier</h3><p>Console, Controller, Ansible métier, action distante, Auxiliaire, WireGuard, OCI, scan, failover Relay, Proxmox, OpenStack, worker d'automatisation et IaC.</p></article>
         <article class="card"><h3>Lacune</h3><p>Elle révèle une perte mais ne recrée pas les données.</p></article>
         <article class="card"><h3>Conformité</h3><p>Les contrôles aident OWASP/NIS2 sans suffire à une déclaration.</p></article>
       </div>

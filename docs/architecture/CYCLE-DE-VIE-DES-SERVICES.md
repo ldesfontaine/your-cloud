@@ -41,7 +41,7 @@ dernier.
 
 ## Contrat d'une opération
 
-| Phase | Ce que l'App doit rendre visible | Comportement sûr en cas d'échec |
+| Phase | Ce que la Console doit rendre visible | Comportement sûr en cas d'échec |
 |---|---|---|
 | Inventaire | cible, propriétaire, état observé et âge de la preuve | refuser une cible ou une autorité ambiguë |
 | Plan | changements, privilèges, flux, interruption et conséquences | aucune mutation avant approbation liée au plan exact |
@@ -49,12 +49,13 @@ dernier.
 | Préparation | identités, secrets, destination et règles encore fermées | retirer les éléments temporaires sans exposer le service |
 | Déploiement | version, digest, volumes, état local et tests | conserver la route actuelle et ne rien publier |
 | Ouverture ou bascule | source, destination, flux exact et détenteur des écritures | appliquer une bascule atomique ou annoncer un résultat inconnu |
-| Observation | santé du service, refus hostiles et fraîcheur de chaque preuve | ne pas confondre panne de l'App, du Relay et du service |
+| Observation | santé du service, refus hostiles et fraîcheur de chaque preuve | ne pas confondre panne de la Console, du Controller, du Relay et du service |
 | Retrait | ancienne instance, règles, secrets et date de fin de rétention | conserver ce qui est encore nécessaire au retour |
 
-Une coupure au milieu d'une mutation ne déclenche aucun rejeu aveugle. L'App
-affiche `résultat inconnu`, observe le système par un chemin indépendant, puis
-propose seulement les actions compatibles avec l'état réellement constaté.
+Une coupure au milieu d'une mutation ne déclenche aucun rejeu aveugle. Le
+Controller marque `résultat inconnu`, la Console l'affiche, puis le Controller
+observe le système par un chemin indépendant et propose seulement les actions
+compatibles avec l'état réellement constaté.
 
 ## Scénario homelab : VPS public et mini-PC privé
 
@@ -141,13 +142,13 @@ après la première écriture sur la destination
 ```
 
 Après de nouvelles écritures, remettre simplement l'ancienne route peut perdre
-des données ou créer deux sources d'autorité. L'App doit donc nommer le détenteur
-actuel des écritures, la fraîcheur de la synchronisation et un retour
+des données ou créer deux sources d'autorité. La Console doit donc nommer le
+détenteur actuel des écritures, la fraîcheur de la synchronisation et un retour
 `disponible`, `conditionnel` ou `indisponible`.
 
 ## Panne pendant une bascule
 
-Si l'App perd sa connexion après avoir demandé une nouvelle route :
+Si le Controller perd sa connexion après avoir demandé une nouvelle route :
 
 1. bloquer toute nouvelle mutation et tout rejeu automatique ;
 2. annoncer un résultat inconnu ;
@@ -157,9 +158,9 @@ Si l'App perd sa connexion après avoir demandé une nouvelle route :
 5. sinon, empêcher les deux côtés d'écrire et demander une décision de reprise ;
 6. conserver la chronologie et les preuves avant toute nouvelle opération.
 
-Le service déjà en fonctionnement ne dépend pas de la disponibilité de l'App ou
-du Relay. Une panne du plan de contrôle arrête les nouvelles actions, pas les
-charges utiles déjà déployées.
+Le service déjà en fonctionnement ne dépend pas de la disponibilité de la
+Console, du Controller ou du Relay. Une panne du plan de contrôle arrête les
+nouvelles actions, pas les charges utiles déjà déployées.
 
 ## Lecture OWASP et NIS2
 

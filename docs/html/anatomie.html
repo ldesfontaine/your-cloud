@@ -42,8 +42,9 @@
       </article>
     </section>
     <!-- coherence: V1-APP-ACCESS:start -->
-    <div class="admin"><b>Environnement d'administration</b><br>Navigateur laptop → tunnel SSH local → App dans la VM de contrôle<br>App → HTTPS authentifié → Relay<br>App → plan lisible → approbation humaine → Ansible → vérification</div>
-    <p class="boundary"><strong>Décision V1 :</strong> le tunnel écoute uniquement sur <code>127.0.0.1</code> du laptop. L'App et Ansible restent dans la VM ; Podman n'est pas requis sur le laptop et seuls BentoPDF et Vaultwarden sont publiés sur le VPS. À terme, l'App aura son propre accès HTTPS authentifié sans dépendre du laptop.</p>
+    <div class="admin"><b>Environnement d'administration</b><br>Console navigateur → tunnel SSH local → Controller dans la VM de contrôle<br>Controller → lecture privée authentifiée → Relay<br>Controller → plan lisible → approbation humaine → Ansible → vérification</div>
+    <p class="boundary"><strong>Décision V1 :</strong> le tunnel écoute uniquement sur <code>127.0.0.1</code> du laptop. La Console ne contacte que le Controller ; le Controller initie la lecture du Relay et les Daemons ne connaissent aucun Controller. Ansible et le Controller restent dans la VM, Podman n'est pas requis sur le laptop et seuls BentoPDF et Vaultwarden sont publiés sur le VPS.</p>
+    <p class="boundary"><strong>Cible :</strong> un Controller privé par infrastructure derrière WireGuard, avec une clé de pair individuelle et révocable par appareil administrateur, un routage limité et un refus serveur par défaut. La possession de cette clé ne prouve ni l'intégrité de l'appareil ni l'identité humaine ; le Controller impose une authentification distincte et SSO/OIDC reste facultatif. Les services publiés gardent leur HTTPS normal sans VPN. Une passerelle Web publique demeure une option future sans autorité d'administration ni secret de machine, mais avec des pouvoirs résiduels à borner.</p>
     <!-- coherence: V1-APP-ACCESS:end -->
 
     <h2>Une IP publique, deux noms de service</h2>
@@ -63,16 +64,16 @@
 
     <!-- coherence: AGENT-AUTHORITY:start -->
     <h2>Observer et agir sont deux chemins</h2>
-    <div class="flow" aria-label="Chemin d'action V1"><div class="step">Demande utilisateur</div><div class="step">Plan lisible</div><div class="step">Approbation</div><div class="step">Ansible</div><div class="step">SSH distinct</div><div class="step">Machine vérifiée</div></div>
-    <p class="boundary">Le Daemon ne reçoit aucun ordre. Il renvoie seulement des observations au Relay afin que l'App puisse constater le résultat et une dérive ultérieure.</p>
+    <div class="flow" aria-label="Chemin d'action V1"><div class="step">Console</div><div class="step">Controller + plan</div><div class="step">Approbation</div><div class="step">Ansible</div><div class="step">SSH distinct</div><div class="step">Machine vérifiée</div></div>
+    <p class="boundary">Le Daemon ne reçoit aucun ordre et ne connaît aucun Controller. Il envoie seulement ses observations au Relay. Le Controller rapproche le dernier état d'observation validé de son inventaire et de sa politique de fraîcheur, puis la Console présente le résultat et les lacunes.</p>
     <div class="compare">
       <article class="explain"><h3>V1 décidée</h3><ul><li>Application par Ansible et SSH</li><li>Identité d'administration distincte</li><li>Plan approuvé avant mutation</li><li>Vérification après application</li></ul></article>
-      <article class="explain warning"><h3>Cible finale validée</h3><ul><li>Un exécutable signé par version</li><li>Rôles en processus, comptes et identités séparés</li><li>Relay activé seulement sur une candidate provisionnée</li><li>Auxiliaire futur ponctuel, sans réseau</li></ul></article>
+      <article class="explain warning"><h3>Cible finale validée</h3><ul><li>Console distincte du Controller</li><li>Un Controller privé par infrastructure</li><li>Daemon et Relay limités à l'observation</li><li>Auxiliaire futur ponctuel, sans réseau</li></ul></article>
     </div>
 
     <h2>Une action locale future avec un Agent unique</h2>
-    <div class="flow" aria-label="Chemin d'action local futur"><div class="step">Plan exact</div><div class="step">Approbation liée</div><div class="step">Connexion sortante</div><div class="step">Daemon transport</div><div class="step">Validation locale</div><div class="step">Auxiliaire ponctuel</div></div>
-    <p class="boundary">Le Daemon est traité comme non fiable pour l'autorité. L'Auxiliaire revérifie la cible, l'action, l'expiration, l'anti-rejeu et les contraintes sémantiques locales. Il refuse notamment chemin, volume, capacité, règle réseau ou destination hors liste positive.</p>
+    <div class="flow" aria-label="Chemin d'action local futur"><div class="step">Controller</div><div class="step">Plan exact</div><div class="step">Approbation liée</div><div class="step">Chemin distinct</div><div class="step">Validation locale</div><div class="step">Auxiliaire ponctuel</div></div>
+    <p class="boundary">Le transport et le lancement de ce futur chemin restent à cadrer ; ils ne passent ni par le Daemon ni par le Relay. L'Auxiliaire revérifie la cible, l'action, l'expiration, l'anti-rejeu et les contraintes sémantiques locales. Il refuse notamment chemin, volume, capacité, règle réseau ou destination hors liste positive.</p>
     <table><thead><tr><th>Cible du plan</th><th>Autorité adaptée</th></tr></thead><tbody>
       <tr><td>Linux ou service local</td><td>Agent puis Auxiliaire local</td></tr>
       <tr><td>OpenStack</td><td>Adaptateur de l'API OpenStack</td></tr>

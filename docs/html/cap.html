@@ -17,20 +17,23 @@
     <h2>La destination</h2>
     <p>Un utilisateur représente son infrastructure, rattache des machines Linux, comprend visuellement leur état, puis déploie et gère progressivement des services sans perdre la visibilité sur les opérations réellement exécutées.</p>
     <!-- coherence: V1-APP-ACCESS:start -->
-    <h2>Une interface Web sans exposer les machines</h2>
-    <p>À terme, l'utilisateur autorisé ouvre l'App en HTTPS depuis le Web sans établir lui-même un VPN. Seul le point d'entrée de l'App est public : ni SSH, ni l'Agent, ni une API d'administration du LAN ne le deviennent. Le navigateur ne reçoit aucune clé de machine ou de runner.</p>
-    <div class="notice"><strong>Décision V1 :</strong> l'App et Ansible restent dans une VM de contrôle privée. Le navigateur du laptop rejoint l'App par un tunnel SSH local lié à <code>127.0.0.1</code> ; seuls BentoPDF et Vaultwarden sont publiés par le VPS. À terme, l'App aura son propre accès HTTPS authentifié sans dépendre du laptop.</div>
+    <h2>Une Console distincte d'un Controller privé</h2>
+    <p>L'App est le produit. La <strong>Console</strong> est l'interface du laptop ou du téléphone ; le <strong>Controller</strong> est l'autorité d'une seule infrastructure. Une Console peut être associée à plusieurs Controllers indépendants sans posséder leurs secrets de machine. L'origine Web, la distribution et les sessions partagées restent toutefois des points communs dont l'isolation devra être prouvée.</p>
+    <p>Les chemins restent séparés : utilisateur → Console → Controller ; Daemon → Relay → Controller ; Controller → exécution contrôlée → machine ; Internet → services publiés. La Console ne contacte jamais le Relay et le Daemon ne connaît aucun Controller.</p>
+    <p>La cible par défaut garde le Controller privé derrière WireGuard. Chaque appareil administrateur reçoit une clé de pair individuelle et révocable, un routage limité aux adresses d'administration et un refus serveur par défaut. WireGuard prouve la possession de cette clé, pas l'intégrité de l'appareil ni l'identité humaine ; l'authentification forte et l'autorisation locale du Controller restent nécessaires. SSO/OIDC est facultatif et la récupération locale reste à contracter.</p>
+    <p>Une passerelle Web publique pourra être étudiée comme option future sans autorité d'administration ni secret de machine. Ses pouvoirs résiduels sur le routage, la disponibilité, TLS et la transmission d'identité devront être bornés. Elle n'est ni un prérequis du Controller, ni le chemin des services publiés, qui conservent leur HTTPS normal sans WireGuard.</p>
+    <div class="notice"><strong>Décision V1 :</strong> la Console du navigateur rejoint le Controller et Ansible dans une VM de contrôle privée par un tunnel SSH local lié à <code>127.0.0.1</code>. Seuls BentoPDF et Vaultwarden sont publiés par le VPS ; aucun serveur Your Cloud ne tourne sur le laptop.</div>
     <!-- coherence: V1-APP-ACCESS:end -->
     <!-- coherence: AGENT-AUTHORITY:start -->
     <h2>Un seul artefact, des rôles réellement isolés</h2>
     <div class="grid">
       <article class="card"><h3>Exécutable commun</h3><p>Une version signée et inventoriée fournit les rôles connus sans les activer par sa seule présence.</p></article>
       <article class="card"><h3>Daemon permanent</h3><p>Non-root, il observe et ouvre les communications sortantes. Il ne modifie jamais directement le système.</p></article>
-      <article class="card"><h3>Relay explicite</h3><p>Optionnel, il refuse de démarrer sans machine candidate provisionnée. Il garde son propre processus, compte, identité et stockage.</p></article>
+      <article class="card"><h3>Relay explicite</h3><p>Optionnel sur chaque Agent, il refuse de démarrer sans machine candidate provisionnée ; la chaîne V1 en provisionne exactement un. Il garde son propre processus, compte, identité et stockage.</p></article>
       <article class="card"><h3>Auxiliaire futur</h3><p>Optionnel, ponctuel, sans réseau et absent de la V1. Il revérifiera un plan exact, appliquera une opération bornée puis s'arrêtera.</p></article>
     </div>
     <p>Un fichier partagé n'est pas une isolation. Une machine ordinaire lance uniquement <code>your-cloud daemon</code>. Une candidate Relay explicitement provisionnée peut lancer simultanément <code>your-cloud daemon</code> et <code>your-cloud relay</code> depuis les mêmes octets, sous deux comptes et politiques systemd distincts. Un défaut du lot commun peut toucher plusieurs rôles : tests par rôle, déploiement progressif et retour atomique restent obligatoires.</p>
-    <p>Le Daemon est traité comme un transport non fiable. Lorsqu'il sera conçu après la V1, l'Auxiliaire vérifiera indépendamment l'origine, la cible, l'approbation, l'expiration et l'anti-rejeu. Une liste positive bornera aussi le sens des paramètres : aucun montage de <code>/</code>, règle pare-feu libre, destination arbitraire, shell ou script transmis depuis l'interface.</p>
+    <p>Le Daemon et le Relay restent consacrés à l'observation et ne transportent aucun plan. Lorsqu'il sera conçu après la V1, un chemin d'action distinct pourra activer l'Auxiliaire, qui vérifiera indépendamment l'origine, la cible, l'approbation, l'expiration et l'anti-rejeu. Une liste positive bornera aussi le sens des paramètres : aucun montage de <code>/</code>, règle pare-feu libre, destination arbitraire, shell ou script transmis depuis l'interface.</p>
     <h2>Chaque action va vers la bonne autorité</h2>
     <div class="grid">
       <article class="card"><h3>Linux local</h3><p>Agent puis Auxiliaire local avec privilèges propres à l'opération.</p></article>
@@ -40,7 +43,7 @@
     </div>
     <h2>Un contrat d'action commun</h2>
     <p>Demande autorisée, plan exact, approbation liée à son empreinte, ordre ciblé et expirant, validation locale, opération idempotente lorsque promis, résultat honnête et audit expurgé. Les états distinguent attente, exécution, réussite, échec et résultat inconnu ; aucune coupure ne provoque un rejeu aveugle.</p>
-    <div class="notice"><strong>La V1 reste volontairement plus petite :</strong> l'exécutable contient seulement les modes Daemon et Relay ; le Relay reste désactivé par défaut. App → plan → approbation → Ansible → SSH demeure l'unique chemin d'action et l'Auxiliaire reste hors V1.</div>
+    <div class="notice"><strong>La V1 reste volontairement plus petite :</strong> l'exécutable contient seulement les modes Daemon et Relay ; le Relay reste désactivé par défaut. Console → Controller → plan → approbation → Ansible → SSH demeure l'unique chemin d'action et l'Auxiliaire reste hors V1.</div>
     <p>OWASP et NIS2 n'imposent pas cette technologie : l'architecture est notre traduction de leurs principes et devra être prouvée. Elle applique les valeurs sûres par défaut, le moindre privilège, le refus par défaut, la défense en profondeur et la séparation des responsabilités de <a href="https://cheatsheetseries.owasp.org/cheatsheets/Secure_Product_Design_Cheat_Sheet.html">l'OWASP Secure Product Design</a> et de son <a href="https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html">guide d'autorisation</a>. La <a href="https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html">validation sémantique</a> borne chaque paramètre et la <a href="https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html">journalisation</a> relie demande, approbation et résultat sans secret. Elle contribue aux contrôles d'accès, à la cryptographie, au développement sûr, à la chaîne d'approvisionnement et à l'évaluation d'efficacité de <a href="https://eur-lex.europa.eu/legal-content/FR/TXT/?uri=CELEX:32022L2555">NIS2, article 21</a>, sans valoir déclaration de conformité.</p>
     <!-- coherence: AGENT-AUTHORITY:end -->
     <!-- coherence: SERVICE-LIFECYCLE:start -->
@@ -58,7 +61,8 @@
       <article class="card"><h3>Infrastructure</h3><p>Le groupe logique dans lequel l'utilisateur rassemble ses machines.</p></article>
       <article class="card"><h3>Machine</h3><p>Un hôte Linux physique ou virtuel, existant avant la V1.</p></article>
       <article class="card"><h3>Service</h3><p>Une capacité déployée et suivie sur une ou plusieurs machines.</p></article>
-      <article class="card"><h3>App</h3><p>L'interface Web et son backend, qui montrent, préparent, font approuver puis coordonnent les opérations.</p></article>
+      <article class="card"><h3>Console</h3><p>L'interface utilisateur sans secret d'administration, associée à un ou plusieurs Controllers approuvés.</p></article>
+      <article class="card"><h3>Controller</h3><p>Le backend d'autorité d'une seule infrastructure : inventaire, utilisateurs, plans, état métier et audit.</p></article>
       <article class="card"><h3>Agent</h3><p>L'installation locale unique qui regroupe les capacités explicitement activées.</p></article>
       <article class="card"><h3>Daemon</h3><p>Le processus permanent non privilégié de l'Agent.</p></article>
       <article class="card"><h3>Relay</h3><p>Le point qui reçoit les observations des machines.</p></article>

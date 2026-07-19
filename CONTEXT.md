@@ -20,21 +20,29 @@ Machine dont l'identité a été explicitement approuvée pour rejoindre une inf
 **Service**:
 Application ou capacité que l'utilisateur veut exécuter sur une ou plusieurs machines.
 
+<!-- coherence: V1-APP-ACCESS:start -->
 **App**:
-Interface utilisateur et service qui présente l'infrastructure, prépare les plans, recueille leur approbation et coordonne leur application.
+Produit formé par une Console et un ou plusieurs Controllers, sans confondre leur interface et leur autorité.
+
+**Console**:
+Interface utilisateur qui présente les données et recueille les demandes destinées à des Controllers approuvés, sans être la source de leur inventaire ni détenir de secret de machine. Le modèle d'identité et de session appartient au contrat du Controller.
+
+**Controller**:
+Service d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination.
+<!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 **Agent**:
 Frontière de l'installation locale unique de Your Cloud sur une machine enrôlée, qui n'est pas elle-même un processus et ne regroupe que les rôles explicitement activés pour cette machine.
 
 **Daemon**:
-Processus permanent non privilégié fourni par l'Agent, chargé des échanges sortants et de l'observation sans appliquer lui-même de changement privilégié.
+Processus permanent non privilégié fourni par l'Agent, chargé uniquement des échanges sortants d'observation sans connaître le Controller ni appliquer lui-même de changement privilégié.
 
 **Auxiliaire local**:
 Autorité optionnelle et ponctuelle de l'Agent capable d'appliquer sur sa propre machine une opération nommée et approuvée, sans devenir un shell général.
 
 **Relay**:
-Rôle optionnel, activé explicitement sur une machine candidate, qui reçoit les observations des Daemons et les rend disponibles à l'App lorsqu'elle les consulte.
+Rôle activé seulement sur une machine candidate qui authentifie, borne, persiste et accuse les observations des Daemons sans porter d'utilisateur ni d'action.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: V1-NETWORK:start -->
@@ -110,6 +118,13 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
 - Chaque **Machine** gérée par la V1 reçoit un **Agent** dont le **Daemon** ne
   fait encore qu'observer.
 - Les **Daemons** transmettent leurs observations au **Relay**.
+- Une machine n'active pas nécessairement le rôle **Relay**, mais la chaîne
+  d'observation V1 exige un Relay explicitement provisionné pour l'infrastructure.
+- Un **Daemon** connaît uniquement son **Relay** approuvé. Il ne connaît aucun
+  **Controller** et ne reçoit aucune action de sa part.
+- L'**Utilisateur** agit dans une **Console**. La Console contacte le
+  **Controller** approuvé de l'**Infrastructure** concernée ; elle peut conserver
+  plusieurs associations indépendantes sans fusionner leurs autorités.
 - Un **Agent** peut rester limité à l'observation. Activer un **Auxiliaire local**
   constitue un choix explicite de gestion pour la machine concernée.
 - Un **Auxiliaire local** n'applique qu'un **Plan d'action** approuvé qui cible
@@ -119,14 +134,16 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
   commande arbitraire.
 - Une **Lacune d'observation** reste visible et ne doit jamais être remplacée par
   une continuité supposée.
-- L'**App** consulte le **Relay**, mais dirige les **Plans d'action** approuvés
-  vers une autorité distincte adaptée à leur cible. Le **Relay** ne transporte
-  jamais ces actions.
+- Le **Controller** obtient les observations auprès du **Relay**, mais dirige les
+  **Plans d'action** approuvés vers une autorité distincte adaptée à leur cible.
+  La **Console** ne contacte pas le Relay et le Relay ne transporte jamais ces
+  actions.
 - Un **Plan de déploiement** est une forme de **Plan d'action**.
 - Une **Bascule** avec données nomme son **Point de non-retour** et conserve
   l'ancien état pendant la **Fenêtre de retour** annoncée.
-- Pour publier un service privé, l'**App** prépare et fait appliquer un plan qui
-  configure le **Passage privé** et le **Point d'entrée public**.
+- Pour publier un service privé, le **Controller** prépare un plan que la
+  **Console** présente avant de faire configurer le **Passage privé** et le
+  **Point d'entrée public** par l'autorité adaptée.
 - Un **Point d'entrée public** appartient à une **Zone d'exposition**, mais cette
   zone ne devient une **DMZ** que si sa séparation réseau avec Internet et les
   zones privées est réellement appliquée et vérifiée.
@@ -137,16 +154,16 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
   son **État vérifié**.
 - Un **Élément détecté** ne devient jamais géré par sa seule découverte. Une
   **Adoption** réussie est nécessaire pour transférer cette autorité.
-- Une panne de l'**App** ou du **Relay** ne doit pas arrêter un **Service** déjà
-  déployé.
+- Une panne de la **Console**, du **Controller** ou du **Relay** ne doit pas
+  arrêter un **Service** déjà déployé.
 
 ## Example dialogue
 
 > **Utilisateur :** « Je publie ce service du LAN par mon VPS. Qu'est-ce que
 > Your Cloud va modifier ? »
 >
-> **App :** « Voici le plan : créer le passage privé, limiter le trafic autorisé
-> et ajouter la route HTTPS sur le VPS. Rien ne sera appliqué avant ton
+> **Console :** « Voici le plan : créer le passage privé, limiter le trafic
+> autorisé et ajouter la route HTTPS sur le VPS. Rien ne sera appliqué avant ton
 > approbation. »
 
 ## Flagged ambiguities
@@ -168,5 +185,13 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
 - « Agent unique » signifie une seule installation locale, pas une autorité ou
   une exécution unique : son Daemon permanent, son éventuel Relay et son futur
   Auxiliaire local restent des rôles séparés avec des droits différents.
-- Rendre l'App accessible depuis le Web ne signifie pas publier SSH, le Daemon
-  ou l'Auxiliaire d'une machine. Seul le point d'entrée de l'App est concerné.
+- L'utilisateur n'a pas à mémoriser l'adresse d'un **Controller**, mais la
+  **Console** possède nécessairement une association approuvée pour le joindre.
+  Cela ne donne aucune connaissance du Controller aux **Daemons**.
+- Rendre une **Console** accessible depuis le Web ne signifie pas publier le
+  **Controller** directement, SSH, le Daemon ou l'Auxiliaire d'une machine. Cela
+  exige néanmoins un chemin distinct et explicitement contracté entre le
+  navigateur et le Controller, par accès privé ou par passerelle.
+- Une Console multi-Controller reste une cible. Son modèle de distribution,
+  d'origine Web et de session devra empêcher qu'un Controller fournisse du code
+  ou une session donnant silencieusement autorité sur les autres.

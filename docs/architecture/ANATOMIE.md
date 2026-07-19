@@ -74,21 +74,38 @@ lacune, reprise et cycle de retrait-réinstallation.
 
        +--------------------------------------------------+
        | Environnement d'administration                   |
-       | navigateur laptop -- tunnel SSH local --> App    |
-       | App -- HTTPS authentifié --> Relay               |
-       | App -> plan lisible -> approbation -> Ansible    |
+       | Console navigateur -- tunnel SSH --> Controller  |
+       | Controller -- lecture authentifiée --> Relay     |
+       | Controller -> plan -> approbation -> Ansible     |
        +--------------------------------------------------+
 ```
 
 <!-- coherence: V1-APP-ACCESS:start -->
-L'App reste hors du chemin emprunté par le trafic Web vers les services : une
-panne de l'App ou du Relay ne doit pas arrêter BentoPDF ou Vaultwarden.
+La Console, le Controller et le Relay restent hors du chemin emprunté par le
+trafic Web vers les services : leur panne ne doit pas arrêter BentoPDF ou
+Vaultwarden. Le Controller porte l'autorité d'une seule infrastructure. La V1
+prouve une Console, un Controller et une infrastructure ; l'association future
+à plusieurs Controllers devra encore isoler distribution, origine Web et
+sessions.
 
-La décision V1 est que le navigateur du laptop rejoint l'App de la VM de
-contrôle au travers d'un transfert SSH lié à `127.0.0.1`. Cela ne lance pas
-l'App sur le laptop, ne nécessite pas Podman sur celui-ci et ne publie pas son
-port sur Internet. À long terme, l'App possédera un point d'entrée HTTPS
-authentifié sans exposer SSH ou l'Agent et sans dépendre du laptop.
+La décision V1 est que la Console rendue dans le navigateur du laptop rejoint le
+Controller de la VM de contrôle au travers d'un transfert SSH lié à
+`127.0.0.1`. Cela ne lance aucun serveur Your Cloud sur le laptop, ne nécessite
+pas Podman sur celui-ci et ne publie pas le port du Controller sur Internet. Le
+Controller initie lui-même sa lecture privée authentifiée du Relay ; la Console
+ne contacte jamais le Relay et les Daemons ne connaissent aucun Controller.
+
+À long terme, le Controller et l'interface Web qu'il sert restent privés derrière
+WireGuard. Chaque appareil administrateur possède un pair distinct et révocable,
+avec un routage limité aux adresses d'administration et un refus serveur par
+défaut. La possession de la clé du pair ne prouve ni l'intégrité de l'appareil ni
+l'identité de l'humain. Une authentification humaine forte reste obligatoire
+après l'accès réseau ; SSO/OIDC, l'appui sur un fournisseur central d'identité,
+est facultatif.
+Une passerelle Web publique pourra être étudiée comme option sans autorité
+d'administration ni secret de machine. Ses pouvoirs résiduels de routage, de
+disponibilité, de terminaison TLS ou de transmission d'identité devront rester
+bornés. Les services publiés conservent leur propre accès HTTPS sans WireGuard.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 Les deux services suivent un autre chemin. Leurs noms DNS pointent vers la même
@@ -133,8 +150,9 @@ route publique qu'en dernier.
 Une migration avec données affiche la source qui possède l'écriture, la
 synchronisation et le point de non-retour. Après les premières écritures sur la
 destination, un retour devient conditionnel : aucune route ancienne n'est
-restaurée automatiquement. Une panne de l'App produit un résultat inconnu sans
-arrêter le service ni rejouer aveuglément l'opération.
+restaurée automatiquement. Une panne du Controller ou de son chemin d'action
+produit un résultat inconnu sans arrêter le service ni rejouer aveuglément
+l'opération.
 
 Le contrat et ses scénarios sont détaillés dans le
 [cycle de vie sûr des services](CYCLE-DE-VIE-DES-SERVICES.md).
@@ -146,38 +164,42 @@ Le contrat et ses scénarios sont détaillés dans le
 En V1, une action demandée dans l'interface suit ce chemin :
 
 ```text
-Utilisateur -> App -> plan lisible -> approbation
-                                      |
-                                      v
-Backend de l'App -> Ansible -> SSH distinct -> machine
-machine -> contrôles directs -> App
-Daemon de la machine -> observations -> Relay -> App
+Utilisateur -> Console -> Controller -> plan lisible -> approbation
+                                                       |
+                                                       v
+Controller -> Ansible -> SSH distinct -> machine
+machine -> contrôles directs -> Controller -> Console
+Daemon de la machine -> observations -> Relay -> Controller -> Console
 ```
 
-Le Daemon ne reçoit aucun ordre. Il aide seulement l'App à constater l'état
-obtenu après qu'un autre chemin a appliqué le plan.
+Le Daemon ne reçoit aucun ordre et ne connaît aucun Controller. Le Relay accuse
+et conserve le dernier état d'observation validé sans porter l'inventaire métier
+ni calculer le statut affiché. Le Controller rapproche les machines attendues,
+les heures de réception, les séquences et les lacunes afin que la Console montre
+l'état obtenu après qu'un autre chemin a appliqué le plan.
 
 À terme, une machine gérée pourra recevoir les plans sans ouvrir de port
 d'administration sur le LAN, au moyen de son Agent unique :
 
 ```text
-App / autorité du plan
+Controller / autorité du plan
         |
         | plan exact, approuvé, ciblé et expirant
         v
-connexion authentifiée ouverte vers l'extérieur par le Daemon
+chemin d'action distinct, transport et lancement encore à cadrer
         |
         v
 Agent sur la machine
 |- même artefact signé
-|- Daemon non-root : transport traité comme non fiable
+|- Daemon non-root : observation uniquement
 `- Auxiliaire local : processus ponctuel, revérifie, applique, puis s'arrête
 ```
 
 L'Auxiliaire n'a aucun réseau, aucun shell général et aucune élévation dormante.
 Il refuse une opération ou un paramètre hors de sa liste positive locale. Une
-machine d'observation ne l'active pas. Le Relay reste consacré aux observations
-et le chemin Ansible ou externe reste disponible.
+machine d'observation ne l'active pas. Le Daemon et le Relay restent consacrés
+aux observations ; le chemin d'action sera contracté séparément et le chemin
+Ansible ou externe reste disponible.
 
 Les autres cibles utilisent leur propre autorité plutôt que ce chemin local :
 
@@ -190,9 +212,9 @@ Plan approuvé
 ```
 
 Cette cible n'appartient pas au contrat V1. La roadmap garde
-`App -> Ansible -> SSH` et un Daemon d'observation seulement. La modifier exige
-une nouvelle validation du contrat ; elle ne peut pas dériver silencieusement
-au cours d'un incrément.
+`Console -> Controller -> plan -> approbation -> Ansible -> SSH` et un Daemon
+d'observation seulement. La modifier exige une nouvelle validation du contrat ;
+elle ne peut pas dériver silencieusement au cours d'un incrément.
 
 Le Relay peut provenir du même exécutable que le Daemon sans appartenir au même
 processus. Son compte, son identité réseau, ses secrets, son stockage et son

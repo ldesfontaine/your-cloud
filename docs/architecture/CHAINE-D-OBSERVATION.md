@@ -213,6 +213,99 @@ valeurs de santé collectées.
 
 <!-- coherence: AGENT-AUTHORITY:end -->
 
+<!-- coherence: V1-APP-ACCESS:start -->
+## Invariant Controller–Relay décidé — contrat non ouvert
+
+La séparation des responsabilités et le sens de lecture ci-dessous sont des
+invariants validés. Le protocole, les identités, les bornes et la reprise restent
+à approuver dans le contrat du prochain palier avant toute implémentation.
+
+`v0.0.2` s'arrête volontairement au stockage Relay. Le processus actif expose
+uniquement `POST /v0/observations` aux Daemons : aucune route ne permet encore à
+un Controller de lire cet état. Cette absence est une limite réelle du palier,
+pas une invitation à laisser la Console appeler le Relay.
+
+Le listener TLS actuel est lui aussi réservé aux Daemons : il fait confiance à
+l'autorité cliente des Daemons et exige leur enrôlement dès la connexion. Ajouter
+simplement une route Controller sur ce listener mélangerait donc deux classes
+d'identité. Le prochain contrat doit créer une frontière de lecture distincte ou
+prouver une séparation équivalente.
+
+Le prochain incrément de lecture doit respecter ce trajet :
+
+```text
+Daemon -- POST mTLS --> Relay
+   `- aucune connaissance du Controller
+
+Controller -- requête privée authentifiée --> Relay
+Controller <-- dernier état validé, séquence et lacunes -- Relay
+Controller -- état métier interprété --> Console
+```
+
+Le Controller initie la lecture. Le Relay n'a donc pas besoin de connaître son
+emplacement réseau. Il doit toutefois refuser toute identité de lecteur non
+autorisée et valider la méthode, la route, la portée infrastructure ou machine,
+le schéma, la cohérence et les tailles de la requête et de la réponse. Une Console
+contacte son Controller, jamais le Relay. Un Controller porte l'autorité d'une
+seule infrastructure ; une Console peut conserver plusieurs associations
+indépendantes.
+
+| Sujet | Relay | Controller |
+|---|---|---|
+| Enrôlement machine | applique le registre d'autorisation local provisionné par root et refuse immédiatement | porte à terme la décision métier et l'inventaire de référence |
+| Réception | authentifie le Daemon, valide le schéma et persiste avant accusé | relit sans faire confiance aveuglément à la donnée reçue |
+| Séquence et lacune | contrôle et conserve le dernier fait d'observation validé | interprète l'impact et fournit l'état métier à la Console |
+| Fraîcheur | fournit l'heure locale de réception de l'hôte Relay | traite la dérive d'horloge et décide des seuils `récent`, `ancien` ou `absent` |
+| Utilisateurs et rôles | aucun | authentifie l'humain et autorise la consultation ou l'action |
+| Plans et exécution | aucun | prépare le plan puis utilise un chemin d'action distinct |
+
+Pour le premier Controller en lecture seule, l'enrôlement reste provisionné
+manuellement comme dans `v0.0.2`. Le tableau fixe la future source d'autorité ;
+il ne décide ni d'une synchronisation du registre, ni d'une mutation pendant le
+prochain incrément. L'autorité qui émettra les certificats Controller, leur
+placement et leur révocation cryptographique restent à choisir ; ils ne se
+déduisent pas de l'inventaire métier.
+
+L'accusé actuel signifie seulement « la séquence exacte est durable sur le
+Relay ». Il autorise le Daemon à retirer cette attente ; il ne prouve ni que le
+Controller l'a lue, ni qu'un utilisateur l'a vue. Le Relay conserve le dernier
+état accepté par machine, pas un historique de séries temporelles. Une rétention
+historique ou un accusé de bout en bout demanderait donc un autre contrat.
+
+La première lecture est par conséquent un instantané. Si les séquences 10, 11 et
+12 sont acceptées entre deux lectures du Controller, celui-ci peut ne recevoir
+que 12. Ce remplacement n'est pas une `Lacune d'observation` : ce terme désigne
+uniquement un intervalle supprimé du tampon borné du Daemon. Une livraison
+exhaustive ou une série temporelle exigerait un stockage et un protocole
+différents.
+
+La fraîcheur ne peut pas reposer uniquement sur `observed_at`, déclaré par
+l'horloge de la machine observée. Le Controller doit partir de l'heure locale de
+réception du Relay et le prochain contrat doit fixer comment détecter ou borner
+la dérive entre les horloges Relay et Controller.
+
+Relay et Controller peuvent cohabiter sur une petite infrastructure, mais ils
+doivent rester des processus, comptes, identités, stockages et politiques
+d'accès séparés ; la frontière réseau exacte reste à contracter. Leur cohabitation
+partage malgré tout la zone de compromission root de l'hôte. Un placement plus
+exposé du Relay ne doit donc pas entraîner le Controller dans la même zone sans
+accepter explicitement ce risque.
+
+La compromission root de l'hôte Relay permet de lire ou d'altérer son état après
+terminaison TLS. Une signature de bout en bout pourrait rendre une altération
+détectable par le Controller, mais ne cacherait pas les données au Relay ;
+intégrité, authenticité et confidentialité de bout en bout restent donc trois
+questions distinctes, hors de `v0.0.2`.
+
+Avant le code de l'incrément Console–Controller, le contrat doit encore fixer le
+protocole de lecture, sa frontière réseau, l'autorité de certificats, l'identité
+du Controller, les méthodes, routes et portées, les schémas et bornes, la
+stratégie d'horloge, la sémantique d'instantané et la reprise après
+indisponibilité. Le Controller initial reste en lecture seule : aucun SSH,
+Ansible, plan appliqué, SSO, session utilisateur publique ou canal d'action
+n'est ajouté au Relay.
+<!-- coherence: V1-APP-ACCESS:end -->
+
 <!-- coherence: V1-OBSERVATION:start -->
 ## Trajet d'une observation
 
@@ -317,7 +410,11 @@ utilise `observer.go`, `observation_http.go` et `observation_store.go`.
 
 Cette coexistence rend encore la preuve historique relisible. Elle ne signifie
 pas que deux protocoles sont actifs simultanément. Leur retrait ou migration
-sera une décision de distribution explicite, pas un nettoyage opportuniste.
+sera une décision de distribution explicite, pas un nettoyage opportuniste. En
+particulier, `QUERY /v0/machines` et le calcul `recent`/`old`/`absent` de
+`v0.0.1` ne définissent pas la lecture du prochain Controller : l'inventaire et
+la politique de fraîcheur appartiennent au Controller, tandis que le nouveau
+contrat Relay reste à borner.
 
 ## Pourquoi deux dossiers dans `deploy/`
 
@@ -477,8 +574,8 @@ palier.
 | Niveau | Contenu |
 |---|---|
 | **Prouvé dans `v0.0.2`** | artefact commun ; processus isolés ; profil fixe ; mTLS ; enrôlement et révocation ; tampon et lacunes ; accusé durable ; diagnostic ; redémarrages et réinstallation |
-| **Décidé plus tard dans la V1** | consultation par l'App avec son identité propre et représentation utilisateur de l'âge et des lacunes |
-| **Absent** | App actuelle ; Ansible métier ; canal d'action ; commande distante ; Auxiliaire ; WireGuard ; service OCI ; plugin libre ; scan LAN ; enrôlement en ligne ; renouvellement automatique ; failover ou élection Relay ; Proxmox ; OpenStack ; worker d'automatisation ; projet IaC |
+| **Décidé plus tard dans la V1** | lecture privée du Relay par l'identité propre d'un Controller, politique de fraîcheur dans ce Controller et rendu par la Console |
+| **Absent** | Console et Controller actuels ; API de lecture Relay ; Ansible métier ; canal d'action ; commande distante ; Auxiliaire ; WireGuard ; service OCI ; plugin libre ; scan LAN ; enrôlement en ligne ; renouvellement automatique ; failover ou élection Relay ; Proxmox ; OpenStack ; worker d'automatisation ; projet IaC |
 
 ## Limites de sécurité
 
