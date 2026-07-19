@@ -72,6 +72,25 @@ l'identité de l'humain : le Controller exige encore une authentification humain
 forte et autorise chaque demande pour l'infrastructure, la cible et l'action
 concernées.
 
+Dans le profil géré, cette liaison ne devient pas une configuration WireGuard à
+administrer à la main. La Console expose une opération bornée du type
+`connecter cette infrastructure` ; son cœur natif déverrouille uniquement la clé
+de pair associée, limite la liaison à l'API du Controller, puis la ferme et
+reverrouille la clé au timeout ou à la déconnexion explicite. La clé brute ne
+traverse jamais le frontend. La fermeture locale n'est pas une révocation du
+pair : révocation, rotation et retrait d'un appareil restent des opérations
+distinctes.
+
+Deux familles techniques restent à comparer avant ce palier post-V1 : piloter
+un tunnel fourni par le système, avec une autorité privilégiée minimale, ou
+intégrer une pile WireGuard en espace utilisateur qui ne transporte que le
+client du Controller. Un coffre portable protégé par phrase secrète reste
+également ouvert ; il devra utiliser une dérivation mémoire-dure et un
+chiffrement authentifié, puis rendre visible le risque résiduel d'attaque hors
+ligne. Aucun
+choix n'autorise une route libre, un shell réseau ou une confiance implicite
+envers les autres machines.
+
 La Console conserve son identité d'appareil et ses sessions dans le stockage
 sécurisé du système lorsqu'il fournit les propriétés exigées ; le frontend ne
 reçoit aucun secret long terme. Pour un usage personnel, une passkey locale et

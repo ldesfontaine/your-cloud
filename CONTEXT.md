@@ -26,6 +26,9 @@ Produit formé par une Console et un ou plusieurs Controllers, sans confondre le
 
 **Console**:
 Application cliente installée et signée sur un appareil administrateur. Elle embarque l'interface, conserve les associations approuvées vers des Controllers et recueille les demandes sans être la source de leur inventaire ni détenir de secret de machine. Elle n'héberge aucun serveur local et ne télécharge pas son code depuis un Controller.
+Dans le profil géré, elle présente une opération de connexion privée nommée pour
+chaque infrastructure sans exposer à l'administrateur une configuration réseau
+libre.
 
 **Controller**:
 Backend privé d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination. Il expose une API authentifiée mais n'héberge aucun frontend.

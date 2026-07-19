@@ -167,6 +167,12 @@ local, WireGuard, service OCI, téléphone, navigateur public, passerelle Web,
 Proxmox, OpenStack, worker d'automatisation, projet IaC, série temporelle,
 plugin libre, scan LAN, renouvellement automatique ou élection de Relay.
 
+La cible ultérieure où la Console déverrouille et ferme elle-même une liaison
+privée bornée au Controller est conservée dans le [cap du projet](../../projet/CAP.md).
+Elle appartient à un palier post-V1 et
+ne fournit ici ni dépendance, ni abstraction anticipée, ni exception à cette
+exclusion.
+
 ## Paramètres encore ouverts avant le code
 
 1. enveloppe cliente et framework frontend, avec leur coût, leurs dépendances et

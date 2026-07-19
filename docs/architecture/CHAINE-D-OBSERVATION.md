@@ -251,6 +251,12 @@ Controller ne lui fournit son frontend ou son code exécutable. Un Controller
 porte l'autorité d'une seule infrastructure ; une Console peut conserver
 plusieurs associations indépendantes.
 
+La future liaison WireGuard post-V1 Console–Controller reste un chemin d'accès distinct
+de cette chaîne d'observation. La Console devra la présenter comme une opération
+de connexion bornée à l'infrastructure choisie, avec déverrouillage et fermeture
+explicites, sans transporter la clé par le Relay ni ajouter ce mécanisme à la V1
+ou à `v0.0.3`.
+
 | Sujet | Relay | Controller |
 |---|---|---|
 | Enrôlement machine | applique le registre d'autorisation local provisionné par root et refuse immédiatement | porte à terme la décision métier et l'inventaire de référence |

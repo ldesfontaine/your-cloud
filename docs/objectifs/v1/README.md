@@ -137,6 +137,25 @@ Le réseau d'administration refuse aussi par défaut les destinations et ports n
 nécessaires. Les personnes qui ne l'administrent pas et les utilisateurs des
 services publiés ne passent pas par ce VPN.
 
+Dans le profil géré, la Console doit abstraire cette liaison : l'administrateur
+choisit une infrastructure et demande `connecter`, sans importer un fichier
+WireGuard ni modifier des routes à la main. Le cœur natif déverrouille seulement
+la clé de pair de cette association, établit une liaison bornée à l'API du
+Controller, puis la ferme et reverrouille la clé après expiration ou
+déconnexion explicite. La clé reste chiffrée au repos dans un stockage sécurisé
+dont les propriétés sont prouvées ; sa valeur brute n'est jamais exposée au
+frontend. Fermer la liaison ne révoque pas le pair côté infrastructure :
+révocation et rotation restent des opérations distinctes et visibles.
+
+Le mécanisme exact reste à contracter dans un palier post-V1 : tunnel géré par le
+système ou pile WireGuard intégrée et limitée au seul client Controller. Un
+coffre portable déverrouillé par phrase secrète reste aussi une option, pas une
+décision. S'il est retenu, la phrase ne devient jamais directement une clé
+WireGuard : une fonction de dérivation mémoire-dure produit une clé d'enveloppe
+pour un chiffrement authentifié. Le risque d'essais hors ligne, la récupération,
+le changement de phrase et l'effacement en mémoire devront être mesurés et
+prouvés. Aucun de ces mécanismes n'appartient à la V1 ni à `v0.0.3`.
+
 WireGuard authentifie la possession de la clé du pair ; il ne prouve ni
 l'intégrité de l'appareil ni l'identité de l'humain. La Console possède donc une
 identité d'appareil distincte et le Controller exige une authentification humaine

@@ -102,7 +102,11 @@ appareil administrateur possède un pair distinct et révocable, avec un routage
 limité aux adresses d'administration et un refus serveur par défaut. La
 possession de la clé du pair ne prouve ni l'intégrité de l'appareil ni l'identité
 de l'humain. Une identité d'appareil et une authentification humaine forte
-restent obligatoires après l'accès réseau ; SSO/OIDC est facultatif. Une
+restent obligatoires après l'accès réseau ; SSO/OIDC est facultatif. La Console
+devra masquer la configuration WireGuard derrière une opération de connexion
+nommée, déverrouiller uniquement la clé de l'infrastructure choisie et fermer la
+liaison au timeout ou à la demande. Cette direction ne choisit pas encore le
+mécanisme système ou intégré et reste post-V1, donc hors de `v0.0.3`. Une
 passerelle Web publique et un frontend navigateur pourront être étudiés comme un
 mode futur distinct, sans autorité d'administration ni secret de machine. Les
 services publiés conservent leur propre accès HTTPS sans WireGuard.

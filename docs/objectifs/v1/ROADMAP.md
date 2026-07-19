@@ -219,7 +219,11 @@ La preuve s'exécute dans le LAB et les runners isolés, jamais sur le laptop de
 développement. WireGuard, téléphone, navigateur public, SSO obligatoire et
 passerelle Web restent hors de `v0.0.3`. La cible finale conserve l'API du
 Controller privée derrière WireGuard avec une clé de pair révocable par appareil
-administrateur ; les services publics gardent leur accès HTTPS normal.
+administrateur. Un futur palier post-V1 devra rendre cette liaison manipulable
+depuis la Console par une opération nommée, bornée au Controller, avec
+déverrouillage, timeout et déconnexion explicite sans exposer la clé au
+frontend ; son mécanisme reste ouvert. Les services publics gardent leur accès
+HTTPS normal.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 ### 3. Premier plan appliqué de manière contrôlée
