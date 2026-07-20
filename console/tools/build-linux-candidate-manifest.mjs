@@ -31,6 +31,14 @@ function command(commandName, args) {
   }).trim();
 }
 
+const actualGitHead = command("git", ["rev-parse", "HEAD"]);
+if (actualGitHead !== gitHead) {
+  throw new Error(`the declared Git head does not match the runner checkout: ${actualGitHead}`);
+}
+if (command("git", ["status", "--porcelain"]) !== "") {
+  throw new Error("the Linux candidate manifest requires a clean Git worktree");
+}
+
 async function digest(path) {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
@@ -94,14 +102,14 @@ const manifest = {
   schema_version: 1,
   kind: "your-cloud-console-linux-candidate",
   version: "0.0.3",
-  release_status: "candidate-uncommitted",
+  release_status: "candidate-exact-commit",
   generated_at: new Date().toISOString(),
   source: {
     git_head: gitHead,
     git_branch: "console-controller",
-    worktree_clean: false,
+    worktree_clean: true,
     provenance_limit:
-      "This candidate contains uncommitted v0.0.3 changes. It is suitable for LAB proof only and is not a release artifact tied to an exact Git commit.",
+      "This LAB candidate is tied to an exact clean Git commit. Its synthetic signer proves the signing mechanism, not a public release identity.",
     console_source_file_count: sourceFiles.length,
     console_source_tree_sha256: sourceTree.digest("hex"),
     package_lock_sha256: await digest(resolve(consoleRoot, "package-lock.json")),
@@ -144,7 +152,7 @@ const manifest = {
     dpkg_deb: command("dpkg-deb", ["--version"]).split("\n")[0],
   },
   deferred: {
-    windows_x86_64: "deferred by the user until the Linux gate is stable",
+    windows_x86_64: "requires its separate native build, signature and execution proof",
   },
 };
 
