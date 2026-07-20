@@ -1,11 +1,12 @@
 # Contrat `v0.0.3` — Console cliente et Controller de lecture
 
 > État au 20 juillet 2026 : **architecture produit et paramètres 1 à 8
-> validés ; porte Linux exécutée et réussie** sur un candidat de worktree non
-> commité. Le [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md)
-> conserve les preuves et limites. Lucas garde la porte Windows gelée jusqu'à
-> validation explicite de la stabilisation `v0.0.3` ; elle restera ensuite
-> obligatoire avant de déclarer le palier terminé et prouvé.
+> validés ; porte Linux exécutée et réussie** sur le commit exact `afb31e8`,
+> avec `.deb`, SBOM, manifeste et signature revérifiés. Le
+> [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md) conserve les
+> preuves et limites. Lucas a autorisé la porte Windows ; elle est maintenant
+> en préparation et reste obligatoire avant de déclarer le palier terminé et
+> prouvé.
 
 ## Résultat utilisateur
 
@@ -1770,10 +1771,9 @@ explicite ; un incident d'implémentation ne les élargit pas silencieusement.
 ## Point d'arrêt
 
 Les paramètres 1 à 8 sont validés et la porte Linux de la branche
-`console-controller` a réussi dans le LAB. Son artefact reste explicitement un
-candidat non commité : aucun commit ou push n'est autorisé implicitement. Le
-point d'arrêt est maintenant sa stabilisation et sa relecture ; Windows ne
-commence qu'après une nouvelle validation explicite de Lucas, sans rouvrir le
-périmètre ni préparer une abstraction réseau post-V1. Les preuves et limites
-réellement exécutées restent visibles, et le palier ne devient terminé qu'après
-les deux portes.
+`console-controller` a réussi dans le LAB. Le candidat Linux reconstruit est lié
+au commit exact `afb31e8`, avec un signataire LAB synthétique ; aucun push n'a
+été effectué ni autorisé implicitement. Lucas a autorisé l'ouverture de la porte
+Windows sans rouvrir le périmètre ni préparer une abstraction réseau post-V1.
+Les preuves et limites réellement exécutées restent visibles, et le palier ne
+devient terminé qu'après les deux portes.

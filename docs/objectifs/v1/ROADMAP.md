@@ -3,8 +3,8 @@
 > Statut : `v0.0.1` et `v0.0.2` sont décidées, implémentées et prouvées dans le
 > LAB. Les huit paramètres de `v0.0.3` sont validés, son implémentation Linux est
 > présente et sa [porte Linux](../../lab/v0.0.3-console-controller-linux.md) a
-> réussi le 20 juillet 2026 sur un candidat non commité. Windows reste non
-> exécuté, gelé jusqu'à validation explicite de la stabilisation, puis
+> réussi le 20 juillet 2026 sur le commit exact `afb31e8`. Windows reste non
+> exécuté, mais Lucas a autorisé sa préparation ; cette seconde porte demeure
 > obligatoire avant de fermer le palier.
 
 Une [édition HTML autonome et visuelle](../../html/roadmap-v1.html) accompagne cette source
@@ -264,8 +264,8 @@ fond et rendent les données Controller comme texte inerte.
 coffre, les deux Controllers, la lecture Relay, les reprises et les sept vues
 ont passé ; l'orchestration complète reste assistée. La seconde porte doit
 encore ajouter `lab-console-windows`, construire nativement le `.msi` et rejouer
-les preuves Windows, mais Lucas la garde gelée jusqu'à validation explicite de
-la stabilisation `v0.0.3`. Le palier ne ferme pas avant réussite des deux portes.
+les preuves Windows. Lucas a autorisé sa préparation après le rebuild exact du
+`.deb` Linux. Le palier ne ferme pas avant réussite des deux portes.
 
 **Précondition validée :** le chemin Daemon–Relay authentifié, le tampon borné
 et la représentation des données anciennes ou lacunaires ont franchi leur
@@ -457,8 +457,8 @@ la présente roadmap.
 
 `v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Les
 paramètres 1 à 8 de `v0.0.3` sont fermés et la porte Linux de la branche
-`console-controller` a réussi sur un candidat non commité. Le point d'arrêt est
-sa stabilisation et sa relecture ; Windows reste gelé jusqu'à une nouvelle
-validation explicite. Aucun commit ou push n'est implicite. Action distante,
+`console-controller` a réussi sur le commit exact `afb31e8`. La porte Windows
+est autorisée et en préparation, mais reste non exécutée. Aucun push n'est
+implicite. Action distante,
 Ansible métier, Auxiliaire, WireGuard, OCI, téléphone, navigateur public,
 Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors périmètre.
