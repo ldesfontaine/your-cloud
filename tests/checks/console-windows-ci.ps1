@@ -110,7 +110,9 @@ try {
     Push-Location $console
     try {
         Write-Host "CI Windows: building the signed MSI"
-        Invoke-Native npm run tauri -- build --bundles msi --config $overridePath
+        Invoke-Native `
+            -FilePath npm `
+            -Arguments @("run", "tauri", "--", "build", "--bundles", "msi", "--config", $overridePath)
     }
     finally {
         Pop-Location
