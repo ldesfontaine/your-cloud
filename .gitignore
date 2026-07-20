@@ -7,6 +7,7 @@ build/
 .ansible/
 /console/node_modules/
 /console/dist/
+/console/src-tauri/gen/
 /console/src-tauri/target/
 
 # Sorties de preuve locales ; seule leur convention est versionnée.
