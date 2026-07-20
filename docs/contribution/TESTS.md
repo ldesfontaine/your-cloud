@@ -12,8 +12,9 @@
 Ce registre conserve les contrôles réalisés, les difficultés rencontrées et le
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
 distingue la couverture automatisée de `v0.0.1`, la preuve assistée de
-`v0.0.2`, la porte Linux assistée de `v0.0.3` et son automatisation encore
-incomplète ; une ligne planifiée ne constitue jamais une preuve.
+`v0.0.2`, la porte Linux assistée de `v0.0.3` et la matrice CI Linux/Windows
+configurée mais pas encore exécutée ; une ligne planifiée ne constitue jamais
+une preuve.
 
 ## Vocabulaire de travail
 
@@ -54,8 +55,9 @@ remplace pas la précédente : elle répond à une question différente.
    déjà collectées, sans fabriquer une nouvelle conclusion ?
 
 Toute exécution du produit, des tests, du build ou d'un serveur reste dans
-`lab-console` ou une autre VM LAB isolée. Le laptop peut éditer, inspecter Git,
-contrôler l'inventaire et piloter `labctl`, conformément aux
+`lab-console`, une autre VM LAB isolée ou un runner CI jetable explicitement
+cadré. Le laptop peut éditer, inspecter Git, contrôler l'inventaire et piloter
+`labctl`, conformément aux
 [règles LAB](../lab/README.md).
 
 L'arborescence rend cette frontière visible :
@@ -67,6 +69,9 @@ L'arborescence rend cette frontière visible :
 - [`tests/lab/v0.0.2/`](../../tests/lab/v0.0.2/) contient seulement les
   auxiliaires synthétiques déjà utilisés par la preuve assistée, pas encore un
   orchestrateur multi-VM ;
+- [`tests/lab/v0.0.3/`](../../tests/lab/v0.0.3/) contient les pilotes bornés de
+  la preuve Linux assistée ; `tests/checks/console-linux-ci` et
+  `console-windows-ci.ps1` portent seulement les smokes natifs génériques ;
 - [`deploy/v0.0.1/`](../../deploy/v0.0.1/) et
   [`deploy/v0.0.2/`](../../deploy/v0.0.2/) ne contiennent que les cycles de vie
   et unités installables de leur contrat, jamais un scénario hostile.
@@ -86,7 +91,7 @@ assertion conserve son code de sortie ; le nettoyage s'exécute aussi après un
 échec. Aucun `|| true` global, agrégat de logs ou rapport visuel ne doit masquer
 le premier contrôle rouge.
 
-## Matrice de `v0.0.3` — porte Linux exécutée, automatisation incomplète
+## Matrice de `v0.0.3` — Linux prouvé, CI Windows configurée non exécutée
 
 Cette première matrice vient du
 [contrat `v0.0.3`](../objectifs/v1/CONTRAT-V0.0.3.md). Elle enregistre les
@@ -107,20 +112,22 @@ Controller B synthétique sous autorités séparées ; `lab-gateway` reste un
 routeur sans produit ; `lab-machine-1` colocalise Daemon et Relay séparés ;
 `lab-machine-2` porte le second Daemon et les tentatives lecteur hostiles. La
 porte Linux a réellement employé ces six VM et a réussi le 20 juillet 2026 sur
-un candidat non commité. La porte Windows native doit encore ajouter
-`lab-console-windows`, mais elle reste gelée jusqu'à validation explicite de la
-stabilisation par Lucas et demeure obligatoire pour fermer `v0.0.3`.
+le commit exact `afb31e8`. Lucas a autorisé la préparation Windows. La matrice
+CI native Windows est configurée mais ne possède aucun run tant qu'elle n'est
+pas committée puis poussée ; la porte visuelle Windows doit encore disposer
+d'un runner Windows ou de `lab-console-windows` et demeure obligatoire pour
+fermer `v0.0.3`.
 
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | Automatisation rejouable complète |
 |---|---|---|---|
-| sources et artefacts | même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | planifié, non exécuté |
-| enveloppe Tauri | frontend React, TypeScript et Vite embarqué ; opérations natives nommées ; aucun listener sur l'appareil Console ou chargement de code distant | navigation distante, ressource active externe, appel réseau frontend, accès fichier ou shell non autorisé | planifié, non exécuté |
+| sources et artefacts | même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | Linux exact prouvé ; build/signature synthétique Windows configurés, non exécutés |
+| enveloppe Tauri | frontend React, TypeScript et Vite embarqué ; opérations natives nommées ; aucun listener sur l'appareil Console ou chargement de code distant | navigation distante, ressource active externe, appel réseau frontend, accès fichier ou shell non autorisé | Linux prouvé ; install/lancement/absence de listener Windows configurés, non exécutés |
 | origine Console–Controller | TLS 1.3 sur l'origine exacte avec certificat serveur, identité d'appareil et session humaine attendus | HTTP, mauvais nom, CA, port, query, fragment, redirection, proxy, certificat inconnu, révoqué ou d'un autre Controller | planifié, non exécuté |
 | API métier | initialisation unique, lecture de l'infrastructure, lecture des machines et rattachement idempotent d'une machine enrôlée | méthode, route, type, `Accept`, schéma, doublon, casse, seconde valeur, taille, délai ou concurrence hors borne | planifié, non exécuté |
 | enveloppe d'erreur Console–Controller | combinaison statut/code issue de la liste fermée, `request_id` canonique et seul `429` portant `Retry-After` borné ; libellé local choisi depuis la route et le code | statut/code inconnu ou croisé, champ supplémentaire, identifiant invalide, cause interne, corps hostile ou `Retry-After` absent, non canonique ou hors borne ; réponse entière refusée | planifié, non exécuté |
 | séparation des infrastructures | Controller A ne rend et ne rattache que les machines confirmées par le Relay de A | certificat ou session de B contre A, identifiant de B dans A, `infrastructure_id` divergent et machine non enrôlée | planifié, non exécuté |
 | VM hostile sur le même réseau | l'API nominale reste disponible après chaque tentative et l'inventaire demeure identique | accès sans certificat, appel direct du Relay et croisements Controller, session, infrastructure et machine | planifié, non exécuté |
-| coffre Stronghold | même format et dérivation Argon2id sous Linux et Windows ; changement de phrase publié atomiquement après validation du nouveau coffre ; aucune permission ou API JS Stronghold ; clés Ed25519 utilisées dans le coffre et clé P-256 déchiffrée seulement dans un tampon Rust effaçable | coffre absent, déplacé, tronqué, altéré ou d'une version inconnue, sel recréé ou paramètres KDF divergents, helper par défaut, mauvaise phrase, crash à chaque étape du changement de phrase laissant l'ancien coffre utilisable, compartiment A substitué dans B, accès frontend ou clé/session recherchée en clair | planifié, non exécuté |
+| coffre Stronghold | même format et dérivation Argon2id sous Linux et Windows ; changement de phrase publié atomiquement après validation du nouveau coffre ; aucune permission ou API JS Stronghold ; clés Ed25519 utilisées dans le coffre et clé P-256 déchiffrée seulement dans un tampon Rust effaçable | coffre absent, déplacé, tronqué, altéré ou d'une version inconnue, sel recréé ou paramètres KDF divergents, helper par défaut, mauvaise phrase, DACL ouverte, héritée, lien dur ou point de réanalyse ; crash à chaque étape du changement de phrase laissant l'ancien coffre utilisable, compartiment A substitué dans B, accès frontend ou clé/session recherchée en clair | Linux prouvé ; module ACL Windows compilé isolément, tests natifs configurés mais non exécutés |
 | preuve humaine locale | phrase saisie puis effacée, challenge de 32 octets consommé une fois avant deux minutes et signé par la clé humaine du Controller choisi | rejeu, expiration, challenge d'un autre Controller, clé publique ou signature inconnue, phrase, clé dérivée, clé privée ou session rendue par IPC | planifié, non exécuté |
 | phrase et récupération hors ligne | six mots uniformes de la liste et du SHA-256 épinglés, code global canonique de 256 bits affiché et confirmé une fois, vecteurs HKDF identiques Linux/Windows et clés distinctes par Controller | entrée brute ou normalisée surdimensionnée, séparateur, remplissage ou bits Base32 non canoniques, liste, SPKI, sel, époque ou compartiment substitué ; secret retrouvé dans stockage Web, URL, journal, presse-papiers automatique ou capture produite par la Console/LAB | planifié, non exécuté |
 | listener temporaire `9444` | socket ouvert par l'autorité locale sur l'adresse privée exacte pour une seule fenêtre et fermé après le `PUT` qui livre le candidat, dix minutes, cinq preuves authentifiées ou redémarrage ; certificat serveur épinglé et aucune route métier | port ouvert hors fenêtre, faux nom, CA ou certificat, HTTP, proxy, route métier, `window_id`/code absent, faux, expiré ou croisé sans consommation de la transaction ; requête sans code tentant de consommer le budget ; deux VM avec le bon code dont une seule gagne ; code connu fermant la fenêtre après cinq preuves invalides, risque de déni de service rendu visible | planifié, non exécuté |
@@ -157,11 +164,29 @@ suivantes sauf le nettoyage. Le `.deb` est sorti du runner de build avec son
 empreinte avant le retour au snapshot runtime, puis réinjecté et vérifié.
 
 La porte Windows reprend la même empreinte de sources et le même verrou
-frontend. `lab-console-windows` construit nativement le `.msi` sous MSVC/WiX,
-l'exporte, revient à son snapshot runtime, vérifie signature et empreinte,
-installe puis pilote la Console réelle. Le rapport distingue tests partagés,
-preuves propres à WebKitGTK et preuves propres à WebView2 ; aucune réussite
-Linux ne remplit une case Windows.
+frontend. Le runner CI `windows-2025` construit nativement le `.msi` sous
+MSVC/WiX avec un certificat synthétique éphémère, vérifie les signatures
+horodatées, installe puis lance la Console réelle. Ce smoke ne remplace ni une
+identité publique de signature, ni les captures WebView2. Une future VM
+`lab-console-windows` pourra séparer build et runtime par snapshot. Le rapport
+distingue tests partagés, preuves propres à WebKitGTK et preuves propres à
+WebView2 ; aucune réussite Linux ne remplit une case Windows.
+
+La préparation du 20 juillet 2026 a compilé isolément le module ACL avec
+`windows-sys 0.61.2` pour la cible `x86_64-pc-windows-msvc` après correction de
+deux imports Win32. Deux tentatives de contrôle croisé de toute la Console ont
+d'abord été tuées par la limite de 2 Gio du runner, puis, après ajout d'un swap
+temporaire, se sont arrêtées dans le build tiers `libsodium-sys-stable` : son
+script Autotools croisé a choisi une branche Unix incompatible avec MSVC. Cet
+incident ne valide ni n'invalide le produit Windows ; le build complet et les
+tests ACL restent volontairement confiés au runner Windows natif.
+
+Le contrôle YAML de la matrice, les 23 tests du garde Plumber et
+`tools/check-docs` ont réussi statiquement. Une tentative de rejouer
+`prove-generic-ci` a été refusée par le contrôleur d'exécution parce que ce
+pilote historique rapatrie ses rapports du LAB vers `artifacts/` sur le laptop.
+Ce refus n'a pas été contourné : les métriques Plumber réelles à trois jobs et
+sept références d'action restent donc non exécutées jusqu'au runner autorisé.
 
 La VM hostile partage volontairement le réseau LAB de la cible afin de prouver
 que la connectivité seule ne vaut ni identité d'appareil, ni identité humaine,

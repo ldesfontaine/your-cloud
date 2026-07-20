@@ -251,7 +251,7 @@ bounded_labctl 30 ssh lab-console \
   /usr/bin/env -i HOME="$remote_home" PATH=/usr/bin:/bin LANG=C.UTF-8 \
   /usr/bin/python3 "$remote_source/tests/checks/plumber-report.py" \
   --report "$remote_hostile_report" --mode action-pinning-failure \
-  --expected-action-pinning-issues 2 \
+  --expected-action-pinning-issues 3 \
   --expected-source-identity "$source_identity" \
   --expected-project "$expected_project" \
   --expected-policy-hash "$plumber_policy_hash"

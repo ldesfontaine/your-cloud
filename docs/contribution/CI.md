@@ -1,7 +1,8 @@
-# Contrat de CI avant `v0.0.2`
+# Contrat de CI générique
 
-Cette CI stabilise les contrôles de `v0.0.1`. Elle ne déploie rien, ne pilote
-pas le LAB et ne prépare aucune capacité du palier suivant.
+Cette CI stabilise les contrôles de `v0.0.1` et ajoute les contrôles natifs de
+la Console `v0.0.3`. Elle ne déploie rien, ne pilote pas le LAB et ne publie
+aucun artefact produit.
 
 Une **CI générique** exécute des contrôles reproductibles dans une machine
 jetable fournie par GitHub. Un **runner LAB dédié** serait au contraire une
@@ -13,6 +14,7 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 | Élément | État | Autorité |
 |---|---|---|
 | contrôles génériques | implémentés ; dernière simulation LAB sous Go `1.24.4`, CI courante fixée à Go `1.26.5` sans nouveau rejeu LAB | codes de sortie de `tests/checks/source-v0.0.1 ci` |
+| matrice Console Linux/Windows | configurée sur `ubuntu-24.04` et `windows-2025`, deux exécutions parallèles indépendantes ; non exécutée sur GitHub tant que les sources ne sont pas poussées | codes de sortie des tests, builds, installations et lancements natifs |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub configurée mais non exécutée | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
 | exécution GitHub Actions réelle | non exécutée tant que le travail n'est ni committé ni poussé | aucune affirmation de CI verte avant un run GitHub |
@@ -61,6 +63,23 @@ formatage, syntaxe, schémas structurés, documentation, tests Go, `go vet` et
 build statique. Le binaire temporaire est vérifié puis supprimé ; il n'est ni
 déployé ni publié.
 
+Le job matriciel `Console` fixe Node.js `24.18.0` LTS et Rust `1.94.1`, désactive
+le cache automatique et lance au plus deux variantes en parallèle avec
+`fail-fast: false`. Les deux variantes exécutent le même verrou npm, l'audit
+des dépendances frontend, le contrat visuel, le build embarqué, le formatage
+Rust et les tests natifs. La variante Linux construit le `.deb`, l'installe,
+le lance sous affichage virtuel puis refuse tout listener TCP du processus. La
+variante Windows exécute en plus les tests d'ACL sur Windows, construit le
+`.msi` sous MSVC/WiX, signe l'exécutable et l'installateur, les vérifie,
+installe, lance et refuse tout listener du processus ou de ses descendants.
+
+Le certificat Authenticode de CI est synthétique, auto-signé, valable deux
+jours, créé dans le magasin de l'utilisateur jetable puis supprimé avec sa clé
+privée. Son horodatage RFC 3161 prouve le mécanisme de signature, pas l'identité
+publique de Your Cloud. Aucun `.deb`, `.msi`, exécutable ou certificat n'est
+archivé. La signature publique de distribution et la preuve visuelle WebView2
+restent des portes distinctes.
+
 Le job `Politique Plumber` exécute Plumber `v0.4.8`. L'action GitHub est fixée
 au commit `7970e5df1e7d217de41b2880832b63a6f2152b97`, vérifie le checksum et
 l'attestation du binaire — une déclaration signée de sa provenance —, n'envoie
@@ -80,10 +99,11 @@ réussi ou si sa sortie `passed` n'est pas exactement vraie. Il refuse aussi un
 rapport absent, symbolique, non régulier, supérieur à 8 Mio, non JSON, à clés
 dupliquées, partiel, averti ou dégradé. Il exige `ciValid=true`,
 `ciMissing=false`, `minPoints=100`, le score A à 100 points, aucun constat,
-aucun contrôle sélectionné sauté et exactement deux jobs de sécurité évalués.
+aucun contrôle sélectionné sauté et exactement trois définitions de jobs de
+sécurité évaluées.
 Le rapport doit aussi correspondre à l'identité source attendue, au dépôt
-`ldesfontaine/your-cloud`, au hash canonique de `.plumber.yaml`, à deux jobs,
-un workflow et cinq références d'action. Un rapport propre mais ancien ne peut
+`ldesfontaine/your-cloud`, au hash canonique de `.plumber.yaml`, à trois jobs,
+un workflow et sept références d'action. Un rapport propre mais ancien ne peut
 donc pas satisfaire ce garde.
 Les futures clés racine restent acceptées afin qu'une extension compatible du
 rapport ne devienne pas un faux échec.
@@ -107,8 +127,9 @@ les 23 tests de frontière ont prouvé les refus de rapport absent ou
 surdimensionné, lien symbolique, JSON
 ambigu, contrat obligatoire manquant, contrôle partiel ou sauté, avertissement,
 collecte dégradée, CI invalide, score incomplet et résultat d'action non réussi.
-Le test d'intégration LAB a aussi remplacé temporairement les deux SHA de
-`actions/checkout` par le tag `v7`. Plumber a produit deux `ISSUE-701`, abaissé
+Le prochain rejeu du test d'intégration LAB remplacera temporairement les trois
+SHA de `actions/checkout` par le tag `v7` et devra produire trois `ISSUE-701`.
+Le rejeu historique à deux jobs en avait produit deux, abaissé
 le score à 77,5, quitté en échec, puis le garde a vérifié la cause avant la
 restauration exacte du workflow.
 
@@ -182,7 +203,8 @@ Ces réglages vivent hors du dépôt et ne sont donc pas prouvés par le workflo
 
 - permissions par défaut de GitHub Actions en lecture seule ;
 - approbation préalable des workflows provenant de forks ;
-- règle de branche exigeant les deux jobs CI et une branche à jour ;
+- règle de branche exigeant les contrôles génériques, Plumber et les deux
+  variantes Console, avec une branche à jour ;
 - `CODEOWNERS` utilisé pour router toute revue vers Lucas, sans approbation
   obligatoire tant qu'un second mainteneur de confiance n'existe pas ;
 - interdiction de fusion lorsqu'une conversation de revue reste ouverte ;
@@ -197,8 +219,14 @@ n'est pas une condition pour ouvrir `v0.0.2` tant que la limite reste visible.
 - [OWASP CI/CD Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/CI_CD_Security_Cheat_Sheet.html) ;
 - [OWASP GitHub Actions Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/GitHub_Actions_Security_Cheat_Sheet.html) ;
 - [GitHub — Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use) ;
+- [GitHub — runners hébergés](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) ;
+- [GitHub — matrice de jobs](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax) ;
 - [GitHub — maintenir les actions avec Dependabot](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/auto-update-actions) ;
 - [Go — politique et historique des versions](https://go.dev/doc/devel/release) ;
+- [Node.js — versions](https://nodejs.org/en/about/previous-releases) ;
+- [Tauri — installateur Windows](https://v2.tauri.app/distribute/windows-installer/) ;
+- [Tauri — signature Windows](https://v2.tauri.app/distribute/sign/windows/) ;
+- [Microsoft — SignTool](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool) ;
 - [Plumber — GitHub Actions scanning](https://getplumber.io/docs/cli/github).
 
 Ces sources guident le moindre privilège, l'isolation, l'épinglage et la

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+console="$root/console"
+launcher_pid=
+package_name=
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "$launcher_pid" ]] && kill -0 "$launcher_pid" 2>/dev/null; then
+    kill "$launcher_pid" 2>/dev/null || true
+    wait "$launcher_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$package_name" ]] && dpkg-query -W "$package_name" >/dev/null 2>&1; then
+    sudo dpkg --remove "$package_name" >/dev/null
+  fi
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+cd "$console"
+npm run tauri -- build --bundles deb
+
+shopt -s nullglob
+packages=(src-tauri/target/release/bundle/deb/*.deb)
+[[ ${#packages[@]} -eq 1 ]] || {
+  echo "expected exactly one Linux package, found ${#packages[@]}" >&2
+  exit 1
+}
+package=${packages[0]}
+package_name=$(dpkg-deb --field "$package" Package)
+[[ "$package_name" == "your-cloud" ]] || {
+  echo "unexpected Linux package name" >&2
+  exit 1
+}
+
+sha256sum "$package"
+sudo dpkg --install "$package"
+[[ -x /usr/bin/your-cloud-console ]] || {
+  echo "installed Console executable is absent" >&2
+  exit 1
+}
+
+dbus-run-session -- xvfb-run -a /usr/bin/your-cloud-console &
+launcher_pid=$!
+sleep 8
+kill -0 "$launcher_pid" 2>/dev/null || {
+  wait "$launcher_pid" || true
+  echo "installed Console exited during the Linux smoke test" >&2
+  exit 1
+}
+
+app_pid=$(pgrep -f '^/usr/bin/your-cloud-console$' | head -n 1 || true)
+[[ "$app_pid" =~ ^[0-9]+$ ]] || {
+  echo "installed Console process was not found" >&2
+  exit 1
+}
+if sudo lsof -nP -a -p "$app_pid" -iTCP -sTCP:LISTEN | grep -q .; then
+  echo "installed Console opened a TCP listener" >&2
+  exit 1
+fi
+
+printf 'PASS: Linux .deb installed, launched and opened no TCP listener\n'
+

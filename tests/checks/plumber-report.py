@@ -253,14 +253,14 @@ def validate(
     security_metrics = _require_object(
         _require_object(report, "securityJobsWeakenedResult"), "metrics"
     )
-    _require_exact_integer(security_metrics, "securityJobsFound", 2)
+    _require_exact_integer(security_metrics, "securityJobsFound", 3)
     _require_exact_integer(security_metrics, "weakenedJobs", 0)
     pipeline_metrics = _require_object(report, "pipelineOriginMetrics")
-    _require_exact_integer(pipeline_metrics, "jobTotal", 2)
+    _require_exact_integer(pipeline_metrics, "jobTotal", 3)
     authorized_metrics = _require_object(
         _require_object(report, "authorizedActionSourcesResult"), "metrics"
     )
-    _require_exact_integer(authorized_metrics, "actionRefsTotal", 5)
+    _require_exact_integer(authorized_metrics, "actionRefsTotal", 7)
     permissions_metrics = _require_object(
         _require_object(report, "permissionsResult"), "metrics"
     )
@@ -275,10 +275,10 @@ def validate_action_pinning_failure(
     expected_policy_hash: str,
     max_bytes: int = MAX_REPORT_BYTES,
 ) -> None:
-    """Prouve qu'un tag mutable précis est refusé pour les deux jobs CI."""
+    """Prouve qu'un tag mutable précis est refusé pour les trois jobs CI."""
 
-    if expected_issues != 2:
-        raise ValidationError("le scénario hostile doit attendre exactement deux constats")
+    if expected_issues != 3:
+        raise ValidationError("le scénario hostile doit attendre exactement trois constats")
     report = _load_report(report_path, max_bytes=max_bytes)
     _require_common_report_contract(report)
     _require_report_identity(
@@ -304,7 +304,7 @@ def validate_action_pinning_failure(
     if not isinstance(issues, list) or len(issues) != expected_issues:
         raise ValidationError("le nombre de constats ISSUE-701 est inattendu")
 
-    expected_jobs = {"ci/source", "ci/plumber_policy"}
+    expected_jobs = {"ci/source", "ci/console_platforms", "ci/plumber_policy"}
     observed_jobs: set[str] = set()
     for issue in issues:
         if not isinstance(issue, dict) or issue.get("code") != "ISSUE-701":
@@ -316,7 +316,7 @@ def validate_action_pinning_failure(
             raise ValidationError("le constat ISSUE-701 ne nomme pas son job")
         observed_jobs.add(job_name)
     if observed_jobs != expected_jobs:
-        raise ValidationError("les constats ISSUE-701 ne couvrent pas les deux jobs CI")
+        raise ValidationError("les constats ISSUE-701 ne couvrent pas les trois jobs CI")
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -329,7 +329,7 @@ def _parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--action-outcome", default="")
     parser.add_argument("--action-passed", default="")
-    parser.add_argument("--expected-action-pinning-issues", type=int, default=2)
+    parser.add_argument("--expected-action-pinning-issues", type=int, default=3)
     parser.add_argument("--expected-source-identity", required=True)
     parser.add_argument("--expected-project", required=True)
     parser.add_argument("--expected-policy-hash", required=True)

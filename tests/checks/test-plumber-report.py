@@ -38,7 +38,7 @@ class PlumberReportTests(unittest.TestCase):
                 "source": ".plumber.yaml",
                 "hash": PLUMBER_REPORT.EXPECTED_POLICY_HASH,
             },
-            "pipelineOriginMetrics": {"jobTotal": 2},
+            "pipelineOriginMetrics": {"jobTotal": 3},
             "plumberScore": {
                 "finalPoints": 100,
                 "score": "A",
@@ -56,11 +56,11 @@ class PlumberReportTests(unittest.TestCase):
                 "metrics": {},
             }
         report["securityJobsWeakenedResult"]["metrics"] = {
-            "securityJobsFound": 2,
+            "securityJobsFound": 3,
             "weakenedJobs": 0,
         }
         report["authorizedActionSourcesResult"]["metrics"] = {
-            "actionRefsTotal": 5,
+            "actionRefsTotal": 7,
             "actionRefsUnauthorized": 0,
         }
         report["permissionsResult"]["metrics"] = {
@@ -74,14 +74,14 @@ class PlumberReportTests(unittest.TestCase):
         report["passed"] = False
         report["plumberScore"]["finalPoints"] = 77.5
         report["plumberScore"]["score"] = "B"
-        report["plumberScore"]["counts"]["high"] = 2
+        report["plumberScore"]["counts"]["high"] = 3
         report["actionPinningResult"]["issues"] = [
             {
                 "code": "ISSUE-701",
                 "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
                 "jobName": job,
             }
-            for job in ("ci/plumber_policy", "ci/source")
+            for job in ("ci/plumber_policy", "ci/console_platforms", "ci/source")
         ]
         return report
 
@@ -101,7 +101,7 @@ class PlumberReportTests(unittest.TestCase):
     def validate_hostile(self) -> None:
         PLUMBER_REPORT.validate_action_pinning_failure(
             self.report,
-            2,
+            3,
             TEST_SOURCE_IDENTITY,
             TEST_PROJECT,
             PLUMBER_REPORT.EXPECTED_POLICY_HASH,
@@ -308,7 +308,7 @@ class PlumberReportTests(unittest.TestCase):
         report["actionPinningResult"]["issues"][0]["jobName"] = "ci/other"
         self.write_json(report)
         with self.assertRaisesRegex(
-            PLUMBER_REPORT.ValidationError, "deux jobs CI"
+            PLUMBER_REPORT.ValidationError, "trois jobs CI"
         ):
             self.validate_hostile()
 
