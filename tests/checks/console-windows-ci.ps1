@@ -19,7 +19,7 @@ function Invoke-Native {
     )
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "native command failed with status $LASTEXITCODE: $FilePath"
+        throw "native command failed with status ${LASTEXITCODE}: $FilePath"
     }
 }
 
@@ -32,7 +32,7 @@ function Assert-AuthenticodeSignature {
     Invoke-Native $SignTool verify /pa /tw /v $Path
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     if ($signature.Status -ne "Valid") {
-        throw "invalid Authenticode status for $Path: $($signature.Status)"
+        throw "invalid Authenticode status for ${Path}: $($signature.Status)"
     }
     if ($signature.SignerCertificate.Thumbprint -ne $Thumbprint) {
         throw "unexpected Authenticode signer for $Path"
@@ -167,4 +167,3 @@ finally {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
     }
 }
-
