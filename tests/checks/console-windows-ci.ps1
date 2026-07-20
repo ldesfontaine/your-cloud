@@ -23,6 +23,39 @@ function Invoke-Native {
     }
 }
 
+function Invoke-BoundedNative {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+
+    $standardOutput = Join-Path $temporaryRoot ([Guid]::NewGuid().ToString("N") + ".stdout.log")
+    $standardError = Join-Path $temporaryRoot ([Guid]::NewGuid().ToString("N") + ".stderr.log")
+    $process = Start-Process `
+        -FilePath $FilePath `
+        -ArgumentList $Arguments `
+        -NoNewWindow `
+        -PassThru `
+        -RedirectStandardOutput $standardOutput `
+        -RedirectStandardError $standardError
+    try {
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            throw "$FilePath exceeded its ${TimeoutSeconds}-second limit"
+        }
+        $process.WaitForExit()
+        Get-Content -LiteralPath $standardOutput
+        Get-Content -LiteralPath $standardError
+        if ($process.ExitCode -ne 0) {
+            throw "$FilePath failed with status $($process.ExitCode)"
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $standardOutput, $standardError -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Assert-AuthenticodeSignature {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -44,6 +77,7 @@ function Assert-AuthenticodeSignature {
 
 try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+    Write-Host "CI Windows: creating the synthetic code-signing certificate"
     $certificate = New-SelfSignedCertificate `
         -Type CodeSigningCert `
         -Subject "CN=Your Cloud CI Synthetic" `
@@ -52,8 +86,14 @@ try {
         -KeyLength 3072 `
         -HashAlgorithm SHA256 `
         -NotAfter (Get-Date).AddDays(2)
+    Write-Host "CI Windows: exporting the public certificate"
     Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
-    Import-Certificate -FilePath $certificatePath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+    Write-Host "CI Windows: trusting the synthetic certificate for this runner"
+    Invoke-BoundedNative `
+        -FilePath certutil.exe `
+        -TimeoutSeconds 60 `
+        -Arguments @("-user", "-f", "-addstore", "Root", $certificatePath)
+    Write-Host "CI Windows: synthetic certificate ready"
 
     $override = @{
         bundle = @{
@@ -69,6 +109,7 @@ try {
 
     Push-Location $console
     try {
+        Write-Host "CI Windows: building the signed MSI"
         Invoke-Native npm run tauri -- build --bundles msi --config $overridePath
     }
     finally {
