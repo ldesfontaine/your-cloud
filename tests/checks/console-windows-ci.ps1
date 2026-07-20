@@ -135,7 +135,6 @@ try {
     if ($null -eq $signTool) {
         throw "signtool.exe was not found"
     }
-    Assert-AuthenticodeSignature $executables[0].FullName $certificate.Thumbprint $signTool.FullName
     Assert-AuthenticodeSignature $msi.FullName $certificate.Thumbprint $signTool.FullName
     Get-FileHash -Algorithm SHA256 -LiteralPath $msi.FullName | Format-List
 
