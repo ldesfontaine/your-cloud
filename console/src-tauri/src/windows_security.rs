@@ -28,7 +28,7 @@ use windows_sys::Win32::{
         CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
         FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        OPEN_EXISTING, READ_CONTROL, WRITE_DAC,
+        OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
     },
     System::{
         SystemServices::ACCESS_ALLOWED_ACE_TYPE,
@@ -117,7 +117,7 @@ fn open_security_handle(
         access |= GENERIC_READ;
     }
     if writable_acl {
-        access |= WRITE_DAC;
+        access |= WRITE_DAC | WRITE_OWNER;
     }
     let mut flags = FILE_FLAG_OPEN_REPARSE_POINT;
     if directory {
@@ -156,13 +156,14 @@ fn file_information(handle: HANDLE) -> io::Result<BY_HANDLE_FILE_INFORMATION> {
 }
 
 fn apply_private_acl(handle: HANDLE, directory: bool) -> io::Result<()> {
-    let user_sid = current_user_sid_string()?;
+    let user_sid = current_user_sid()?;
+    let user_sid_string = sid_to_string(user_sid.as_ptr())?;
     let ace_flags = if directory { "OICI" } else { "" };
-    let sddl = format!("D:P(A;{ace_flags};FA;;;{user_sid})(A;{ace_flags};FA;;;SY)");
-    apply_acl_sddl(handle, &sddl)
+    let sddl = format!("D:P(A;{ace_flags};FA;;;{user_sid_string})(A;{ace_flags};FA;;;SY)");
+    apply_acl_sddl(handle, &sddl, user_sid.as_ptr())
 }
 
-fn apply_acl_sddl(handle: HANDLE, sddl: &str) -> io::Result<()> {
+fn apply_acl_sddl(handle: HANDLE, sddl: &str, owner: PSID) -> io::Result<()> {
     let sddl = wide(OsStr::new(&sddl));
     let mut security_descriptor = null_mut();
     if unsafe {
@@ -191,8 +192,10 @@ fn apply_acl_sddl(handle: HANDLE, sddl: &str) -> io::Result<()> {
         SetSecurityInfo(
             handle,
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            null_mut(),
+            OWNER_SECURITY_INFORMATION
+                | DACL_SECURITY_INFORMATION
+                | PROTECTED_DACL_SECURITY_INFORMATION,
+            owner,
             null_mut(),
             dacl,
             null(),
@@ -358,10 +361,6 @@ fn current_user_sid() -> io::Result<SidBuffer> {
     Ok(SidBuffer(sid))
 }
 
-fn current_user_sid_string() -> io::Result<String> {
-    sid_to_string(current_user_sid()?.as_ptr())
-}
-
 fn sid_from_string(value: &str) -> io::Result<SidBuffer> {
     let value = wide(OsStr::new(value));
     let mut sid = null_mut();
@@ -433,7 +432,12 @@ mod tests {
         assert!(open_private_file(&secret, 64).is_ok());
 
         let handle = open_security_handle(&secret, false, true).unwrap();
-        apply_acl_sddl(handle.0, "D:P(A;;FA;;;WD)").unwrap();
+        apply_acl_sddl(
+            handle.0,
+            "D:P(A;;FA;;;WD)",
+            current_user_sid().unwrap().as_ptr(),
+        )
+        .unwrap();
         assert!(validate_private_acl(handle.0, false).is_err());
         drop(handle);
         protect_file(&secret).unwrap();
