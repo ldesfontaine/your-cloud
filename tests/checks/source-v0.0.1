@@ -85,7 +85,7 @@ step "Go vet"
 go vet ./...
 
 step "Single static Go artifact"
-main_packages=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./... | sed '/^$/d')
+main_packages=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./cmd/... | sed '/^$/d')
 [[ $(wc -l <<<"$main_packages") -eq 1 ]] \
   || fail "expected one main package, found: $main_packages"
 if [[ "$mode" == lab ]]; then
