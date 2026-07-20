@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ldesfontaine/your-cloud/internal/observation"
@@ -24,6 +25,7 @@ type ObservationHandler struct {
 	authorize ClientAuthorizer
 	now       func() time.Time
 	routes    *http.ServeMux
+	stateLock *sync.RWMutex
 }
 
 type observationAck struct {
@@ -35,10 +37,15 @@ type observationAck struct {
 
 // NewObservationHandler assembles the exact v0.0.2 write boundary.
 func NewObservationHandler(store *ObservationStore, authorize ClientAuthorizer) (*ObservationHandler, error) {
-	if store == nil || authorize == nil {
-		return nil, errors.New("observation store and client authorizer are required")
+	return NewObservationHandlerWithStateLock(store, authorize, &sync.RWMutex{})
+}
+
+// NewObservationHandlerWithStateLock coordinates ingestion with snapshots and reloads.
+func NewObservationHandlerWithStateLock(store *ObservationStore, authorize ClientAuthorizer, stateLock *sync.RWMutex) (*ObservationHandler, error) {
+	if store == nil || authorize == nil || stateLock == nil {
+		return nil, errors.New("observation store, client authorizer and state lock are required")
 	}
-	handler := &ObservationHandler{store: store, authorize: authorize, now: time.Now}
+	handler := &ObservationHandler{store: store, authorize: authorize, now: time.Now, stateLock: stateLock}
 	handler.routes = http.NewServeMux()
 	handler.routes.HandleFunc("POST /v0/observations", handler.receive)
 	return handler, nil
@@ -50,6 +57,8 @@ func (handler *ObservationHandler) ServeHTTP(response http.ResponseWriter, reque
 }
 
 func (handler *ObservationHandler) receive(response http.ResponseWriter, request *http.Request) {
+	handler.stateLock.Lock()
+	defer handler.stateLock.Unlock()
 	if hasURIQuery(request) {
 		writeProblem(response, http.StatusBadRequest, "URI query is not supported")
 		return

@@ -75,7 +75,7 @@ lacune, reprise et cycle de retrait-réinstallation.
        +--------------------------------------------------+
        | Environnement d'administration                   |
        | Console installée -- API privée --> Controller   |
-       | Controller -- lecture authentifiée --> Relay     |
+       | Controller -- GET mTLS :8444 -------> Relay     |
        | Controller -> plan -> approbation -> Ansible     |
        +--------------------------------------------------+
 ```
@@ -88,14 +88,85 @@ prouve une Console installée, un Controller et une infrastructure ; les
 associations futures à plusieurs Controllers isolent identités d'appareil et
 sessions.
 
-La Console est une application signée qui embarque son frontend et son client
-réseau. Elle n'ouvre aucun serveur local, n'utilise pas une page `localhost` et
-ne télécharge jamais son code depuis un Controller. Le premier palier vise Linux
-et Windows depuis le même frontend responsive ; le téléphone conserve ce design
-mais exige une preuve ultérieure de son empaquetage et de son stockage sécurisé.
-Le Controller reste un backend API privé sans frontend. Il initie sa lecture
-authentifiée du Relay ; la Console ne contacte jamais le Relay et les Daemons ne
-connaissent aucun Controller.
+La Console est une application Tauri 2 signée qui embarque un frontend React,
+TypeScript et Vite et son client réseau natif. Elle n'ouvre aucun serveur local,
+n'utilise pas une page `localhost`, ne donne aucun client réseau général au
+frontend et ne télécharge jamais son code depuis un Controller. Le premier
+palier vise un `.deb` Linux et un `.msi` Windows issus du même commit et du même
+frontend responsive ; le téléphone conserve ce design mais exige une preuve
+ultérieure de son empaquetage et de son stockage sécurisé. Le Controller reste
+un backend API privé sans frontend. La Console l'appelle sur une origine HTTPS
+exacte avec identité d'appareil mTLS et session humaine séparée. Le Controller
+initie sa lecture authentifiée du Relay ; la Console ne contacte jamais le Relay
+et les Daemons ne connaissent aucun Controller.
+
+L'interface est centrée sur l'infrastructure sélectionnée, avec `Synthèse`,
+`Parc` et `Observations`. Le Controller reste sa liaison privée contextuelle et
+les secrets, l'appareil et la session restent sous `Profil et sessions` ; aucun
+de ces concepts ne devient une rubrique d'infrastructure artificielle. Les
+tokens visuels communs pilotent thèmes, fontes, espacements et composants sous
+Linux et Windows. Le statut Relay décrit le transport : la Console ne fabrique
+ni machine Relay dédiée, ni badge de placement absent de l'API. Un hôte qui
+exécute Daemon et Relay reste une machine normale lorsqu'il appartient réellement
+à l'inventaire.
+
+L'autorité TLS serveur des Controllers, l'autorité qui émet les certificats
+d'appareil Console, l'autorité cliente des Daemons et l'autorité cliente de
+lecture Controller–Relay sont distinctes. Un certificat ou une chaîne d'une de
+ces classes ne donne aucun droit dans une autre et doit y être refusé.
+
+Le Relay garde l'ingestion Daemon sur `8443` et lie son unique lecture à
+`GET /v0/snapshot` sur l'adresse privée exacte et `8444`. Ce port n'est pas
+`localhost` : un pair routé pourrait le scanner. Le filtre `nftables` refuse
+donc par défaut et n'autorise que l'interface privée et l'IP source provisionnée
+du Controller ; les autres paquets sont supprimés par `drop`, et les nouveaux
+TCP autorisés restent bornés à quatre en rafale puis douze par minute. mTLS et
+un registre lecteur exact restent obligatoires derrière ce filtre. Les deux
+autorités Ed25519 du lecteur, serveur et cliente, sont propres à
+l'infrastructure et ne donnent aucun droit sur `8443`.
+
+Le cœur Rust protège les clés d'appareil et humaines de chaque association dans
+un coffre Tauri Stronghold commun à Linux et Windows, déverrouillé par une
+phrase secrète locale dérivée avec Argon2id. Le frontend voit brièvement cette
+saisie puis l'efface ; les clés dérivées, clés privées, contenus du coffre et
+sessions restent hors de son autorité. Windows Hello, passkeys, FIDO2 et
+SSO/OIDC restent post-V1.
+
+La phrase contient six mots français aléatoires. Un appairage ou une
+récupération n'ouvre `9444` sur l'adresse privée du Controller que pendant une
+fenêtre locale de dix minutes, avec certificat serveur épinglé, preuve à usage
+unique et aucune route métier. Le certificat d'appareil P-256 vaut 180 jours et
+se remplace manuellement en deux phases ; le candidat n'obtient aucun droit
+métier avant activation et l'ancien reste actif si l'activation n'aboutit pas.
+La session opaque est liée à l'appareil et à l'infrastructure, expire après 30
+minutes d'inactivité ou huit heures absolues et disparaît après logout,
+révocation, rotation, récupération ou redémarrage. Un code global de 256 bits
+conservé hors ligne dérive une clé de récupération différente par Controller.
+Ce profil possède un seul humain et un seul appareil actifs par Controller dans
+`v0.0.3`.
+
+Un Controller génère et conserve avant appairage des identifiants de Controller
+et d'infrastructure UUIDv4 immuables. Il refuse une machine tant qu'une lecture
+Relay réussie dans la même opération ne confirme pas son enrôlement actif dans
+cette même infrastructure. Registre Daemon schéma 2, manifeste lecteur,
+certificats, origine, Controller et réponse portent le même UUID
+d'infrastructure. Une association, un certificat, une IP ou une session d'un autre
+Controller ne donne donc aucune portée croisée. La preuve doit attaquer le
+filtre puis mTLS depuis une VM distincte placée sur le même réseau LAB. Après
+panne ou redémarrage, le dernier snapshot peut rester visible mais vaut
+`indisponible` jusqu'à une nouvelle lecture valide et n'autorise rien. Une
+lecture initiale suit l'entrée explicite dans une vue, puis l'actualisation reste
+manuelle afin qu'un polling d'arrière-plan ne prolonge pas la session humaine.
+
+Le Controller non-root sépare son autorité métier `inventory.json` du cache de
+transport `relay-cache.json`. Ces fichiers privés, bornés et atomiques ne
+partagent ni état P4 ni secret. Une insertion exige le snapshot P5 frais
+persisté avant l'inventaire ; un renommage déjà rattaché reste local. La
+projection Console contient seulement les zéro à 64 machines attendues sous
+128 Kio. Elle distingue transport, enrôlement, observation récente jusqu'à 90
+secondes incluses ou ancienne, et continuité. Les lacunes sont résumées sans
+troncature et les 2 Mio bruts restent côté Controller. Les libellés Unicode NFC
+sont bornés et non autoritaires : le `machine_id` reste visible à côté.
 
 À long terme, l'API du Controller reste privée derrière WireGuard. Chaque
 appareil administrateur possède un pair distinct et révocable, avec un routage
@@ -180,7 +251,12 @@ Le Daemon ne reçoit aucun ordre et ne connaît aucun Controller. Le Relay accus
 et conserve le dernier état d'observation validé sans porter l'inventaire métier
 ni calculer le statut affiché. Le Controller rapproche les machines attendues,
 les heures de réception, les séquences et les lacunes afin que la Console montre
-l'état obtenu après qu'un autre chemin a appliqué le plan.
+l'état obtenu après qu'un autre chemin a appliqué le plan. Les dates réseau sont
+normalisées en UTC `Z` : le fuseau n'affecte pas l'instant. L'âge part de
+`snapshot_at - received_at`, puis avance sur l'horloge monotone du Controller.
+`snapshot_at` doit rester dans `[fin - 30 s, départ + 30 s]` ; une dérive entre
+hôtes supérieure à 30 secondes ou une correction civile supérieure à une
+seconde ne produit jamais un état récent.
 
 À terme, une machine gérée pourra recevoir les plans sans ouvrir de port
 d'administration sur le LAN, au moyen de son Agent unique :

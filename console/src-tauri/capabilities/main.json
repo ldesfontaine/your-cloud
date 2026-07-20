@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Fenêtre principale sans capacité Stronghold ni accès réseau JavaScript.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

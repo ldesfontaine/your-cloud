@@ -19,6 +19,7 @@ func TestRolesRejectEachOthersArguments(t *testing.T) {
 	tests := [][]string{
 		{"daemon", "--listen=127.0.0.1:8443"},
 		{"relay", "--machine-id=lab-machine-1"},
+		{"controller", "--machine-id=lab-machine-1"},
 		{"diagnose", "observation", "--machine-id=lab-machine-1"},
 		{"daemon", "unexpected"},
 		{"relay", "unexpected"},
@@ -30,9 +31,32 @@ func TestRolesRejectEachOthersArguments(t *testing.T) {
 	}
 }
 
+func TestControllerServeArgumentsRequireExactPrivateEndpoints(t *testing.T) {
+	t.Parallel()
+	valid := []string{
+		"--state-dir=/var/lib/private/your-cloud-controller",
+		"--listen=192.168.242.103:9443",
+		"--allowed-source=192.168.242.182/32",
+		"--relay-endpoint=192.168.243.153:8444",
+	}
+	if _, err := parseControllerServeArguments(valid); err != nil {
+		t.Fatalf("valid Controller arguments refused: %v", err)
+	}
+	for _, bad := range [][]string{
+		{"--state-dir=relative", "--listen=192.168.242.103:9443", "--allowed-source=192.168.242.182/32", "--relay-endpoint=192.168.243.153:8444"},
+		{"--state-dir=/tmp/a", "--listen=0.0.0.0:9443", "--allowed-source=192.168.242.182/32", "--relay-endpoint=192.168.243.153:8444"},
+		{"--state-dir=/tmp/a", "--listen=192.168.242.103:9443", "--allowed-source=0.0.0.0/0", "--relay-endpoint=192.168.243.153:8444"},
+		{"--state-dir=/tmp/a", "--listen=192.168.242.103:9443", "--allowed-source=192.168.242.182/32", "--relay-endpoint=127.0.0.1:8444"},
+	} {
+		if _, err := parseControllerServeArguments(bad); err == nil {
+			t.Fatalf("unsafe Controller arguments accepted: %q", bad)
+		}
+	}
+}
+
 func TestRelayRefusesBeforeListeningWithoutCandidate(t *testing.T) {
 	t.Parallel()
-	err := runRelay([]string{"--listen=" + v002RelayListenAddress}, t.TempDir()+"/missing.json")
+	err := runRelay([]string{"--listen=" + v003RelayListenAddress}, t.TempDir()+"/missing.json")
 	if err == nil || !strings.Contains(err.Error(), "relay candidate") {
 		t.Fatalf("missing candidate was not the startup boundary: %v", err)
 	}
@@ -40,9 +64,9 @@ func TestRelayRefusesBeforeListeningWithoutCandidate(t *testing.T) {
 
 func TestRelayRejectsEveryOtherListenAddress(t *testing.T) {
 	t.Parallel()
-	for _, address := range []string{"127.0.0.1:8443", "192.168.242.103:8444", "0.0.0.0:8443"} {
+	for _, address := range []string{"127.0.0.1:8443", "192.168.243.153:8444", "0.0.0.0:8443"} {
 		err := runRelay([]string{"--listen=" + address}, t.TempDir()+"/candidate.json")
-		if err == nil || !strings.Contains(err.Error(), "must be "+v002RelayListenAddress) {
+		if err == nil || !strings.Contains(err.Error(), "must be "+v003RelayListenAddress) {
 			t.Fatalf("unsafe listen address %q was not refused: %v", address, err)
 		}
 	}
@@ -62,11 +86,11 @@ func TestRoleArgumentsAcceptV002Configuration(t *testing.T) {
 		t.Fatalf("unexpected Daemon configuration: %#v", daemonConfiguration)
 	}
 
-	relayConfiguration, err := parseRelayArguments([]string{"--listen=" + v002RelayListenAddress})
+	relayConfiguration, err := parseRelayArguments([]string{"--listen=" + v003RelayListenAddress})
 	if err != nil {
 		t.Fatalf("valid Relay arguments refused: %v", err)
 	}
-	if relayConfiguration.listenAddress != v002RelayListenAddress {
+	if relayConfiguration.listenAddress != v003RelayListenAddress {
 		t.Fatalf("unexpected Relay configuration: %#v", relayConfiguration)
 	}
 }

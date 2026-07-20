@@ -73,6 +73,53 @@ func TestRegistryRejectsAmbiguousOrFreeEntries(t *testing.T) {
 	}
 }
 
+func TestRegistrySchema2RequiresInfrastructureAndAllowsEmptyInventory(t *testing.T) {
+	t.Parallel()
+	registry, err := Decode([]byte(`{"schema":2,"infrastructure_id":"11111111-1111-4111-8111-111111111111","machines":[]}`))
+	if err != nil {
+		t.Fatalf("valid empty schema 2 registry rejected: %v", err)
+	}
+	if !registry.ReaderReady() {
+		t.Fatal("schema 2 registry did not enable reader readiness")
+	}
+	for _, document := range []string{
+		`{"schema":2,"machines":[]}`,
+		`{"schema":2,"infrastructure_id":"11111111-1111-1111-8111-111111111111","machines":[]}`,
+		`{"schema":1,"infrastructure_id":"11111111-1111-4111-8111-111111111111","machines":[]}`,
+	} {
+		if _, err := Decode([]byte(document)); err == nil {
+			t.Fatalf("hostile schema transition document accepted: %s", document)
+		}
+	}
+}
+
+func TestRegistryTransitionIsMonotone(t *testing.T) {
+	t.Parallel()
+	certificate := testCertificate(t, "lab-machine-1", 42, []byte("exact certificate"))
+	current := testRegistry(t, certificate, "active")
+	digest := sha256.Sum256(certificate.Raw)
+	schema2, err := Decode([]byte(fmt.Sprintf(
+		`{"schema":2,"infrastructure_id":"11111111-1111-4111-8111-111111111111","machines":[{"machine_id":"lab-machine-1","certificate_serial":"2a","certificate_sha256":"%s","status":"revoked"}]}`,
+		hex.EncodeToString(digest[:]),
+	)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.AllowsTransition(schema2); err != nil {
+		t.Fatalf("valid schema migration rejected: %v", err)
+	}
+	if err := schema2.AllowsTransition(current); err == nil {
+		t.Fatal("schema downgrade accepted")
+	}
+	reactivated := *schema2
+	reactivated.Machines = append([]Entry(nil), schema2.Machines...)
+	reactivated.Machines[0].Status = "active"
+	reactivated.entries = map[string]Entry{"lab-machine-1": reactivated.Machines[0]}
+	if err := schema2.AllowsTransition(&reactivated); err == nil {
+		t.Fatal("revoked machine reactivation accepted")
+	}
+}
+
 func TestStoreReloadAppliesRevocationAndKeepsPreviousPolicyOnFailure(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("root ownership checks require the isolated root LAB runner")

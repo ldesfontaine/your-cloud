@@ -14,6 +14,10 @@ une machine cible. Il ne contient plus les assertions ni les pilotes de preuve.
 [`v0.0.2/`](v0.0.2/) ajoute séparément le Daemon d'observation authentifiée et
 le Relay mTLS, toujours avec systemd uniquement et sans moteur de déploiement.
 
+[`v0.0.3/`](v0.0.3/) ajoute l'unité du Controller privé en lecture seule, sous
+utilisateur dynamique et sans capacité Linux. Elle ne déploie ni la Console ni
+un frontend sur le Controller.
+
 Ce dossier ne contient pas la logique métier du produit : elle vit dans
 [`internal/`](../internal/), puis l'exécutable est assemblé depuis
 [`cmd/`](../cmd/). Les scripts ne sont pas un second composant à maintenir sur

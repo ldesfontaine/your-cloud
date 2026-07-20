@@ -14,13 +14,16 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ldesfontaine/your-cloud/internal/identifier"
 	"github.com/ldesfontaine/your-cloud/internal/machineid"
 	"github.com/ldesfontaine/your-cloud/internal/strictjson"
 )
 
 const (
-	// SchemaVersion identifies the only registry format accepted by v0.0.2.
-	SchemaVersion = 1
+	// SchemaVersionV1 keeps ingestion available while an explicit migration is pending.
+	SchemaVersionV1 = 1
+	// SchemaVersion identifies the registry required before the v0.0.3 reader opens.
+	SchemaVersion = 2
 	// MaxRegistryBytes bounds the root-provisioned authorization document.
 	MaxRegistryBytes = 16 * 1024
 	identityPrefix   = "urn:your-cloud:daemon:"
@@ -33,9 +36,10 @@ var (
 
 // Registry is immutable after validation so one request sees one policy.
 type Registry struct {
-	Schema   int     `json:"schema"`
-	Machines []Entry `json:"machines"`
-	entries  map[string]Entry
+	Schema           int     `json:"schema"`
+	InfrastructureID string  `json:"infrastructure_id,omitempty"`
+	Machines         []Entry `json:"machines"`
+	entries          map[string]Entry
 }
 
 // Entry pins one machine to one exact client certificate.
@@ -62,11 +66,23 @@ func Decode(data []byte) (*Registry, error) {
 }
 
 func (registry *Registry) validate() error {
-	if registry.Schema != SchemaVersion {
+	if registry.Schema != SchemaVersionV1 && registry.Schema != SchemaVersion {
 		return errors.New("unsupported enrollment registry schema")
 	}
-	if len(registry.Machines) == 0 || len(registry.Machines) > 64 {
-		return errors.New("enrollment registry must contain 1..64 machines")
+	if registry.Schema == SchemaVersionV1 {
+		if registry.InfrastructureID != "" {
+			return errors.New("schema 1 enrollment registry cannot contain infrastructure_id")
+		}
+		if len(registry.Machines) == 0 || len(registry.Machines) > 64 {
+			return errors.New("schema 1 enrollment registry must contain 1..64 machines")
+		}
+	} else {
+		if err := identifier.ValidateUUIDv4(registry.InfrastructureID); err != nil {
+			return fmt.Errorf("infrastructure_id: %w", err)
+		}
+		if len(registry.Machines) > 64 {
+			return errors.New("schema 2 enrollment registry must contain 0..64 machines")
+		}
 	}
 	registry.entries = make(map[string]Entry, len(registry.Machines))
 	for _, entry := range registry.Machines {
@@ -81,6 +97,45 @@ func (registry *Registry) validate() error {
 	sort.Slice(registry.Machines, func(left, right int) bool {
 		return registry.Machines[left].MachineID < registry.Machines[right].MachineID
 	})
+	return nil
+}
+
+// ReaderReady reports whether the explicit v0.0.3 migration is complete.
+func (registry *Registry) ReaderReady() bool {
+	return registry != nil && registry.Schema == SchemaVersion
+}
+
+// EntrySnapshot returns a sorted copy so a reader cannot mutate policy state.
+func (registry *Registry) EntrySnapshot() []Entry {
+	if registry == nil {
+		return nil
+	}
+	return append([]Entry(nil), registry.Machines...)
+}
+
+// AllowsTransition rejects deletion, reuse and revoked-to-active regression.
+func (registry *Registry) AllowsTransition(candidate *Registry) error {
+	if registry == nil || candidate == nil {
+		return errors.New("current and candidate enrollment registries are required")
+	}
+	if registry.Schema == SchemaVersion && candidate.Schema != SchemaVersion {
+		return errors.New("enrollment registry cannot return to schema 1")
+	}
+	if registry.Schema == SchemaVersion && registry.InfrastructureID != candidate.InfrastructureID {
+		return errors.New("infrastructure_id is immutable")
+	}
+	for machineID, current := range registry.entries {
+		next, found := candidate.entries[machineID]
+		if !found {
+			return fmt.Errorf("machine %q cannot be removed", machineID)
+		}
+		if current.CertificateSerial != next.CertificateSerial || current.CertificateSHA256 != next.CertificateSHA256 {
+			return fmt.Errorf("machine %q certificate identity cannot be reused", machineID)
+		}
+		if current.Status == "revoked" && next.Status != "revoked" {
+			return fmt.Errorf("machine %q cannot be reactivated", machineID)
+		}
+	}
 	return nil
 }
 

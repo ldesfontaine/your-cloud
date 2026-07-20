@@ -44,6 +44,12 @@ func (store *Store) Reload() error {
 		return err
 	}
 	store.mu.Lock()
+	if store.registry != nil {
+		if err := store.registry.AllowsTransition(registry); err != nil {
+			store.mu.Unlock()
+			return err
+		}
+	}
 	store.registry = registry
 	store.mu.Unlock()
 	return nil
@@ -58,4 +64,20 @@ func (store *Store) Authorize(certificate *x509.Certificate) (string, error) {
 		return "", errors.New("enrollment policy is unavailable")
 	}
 	return registry.Authorize(certificate)
+}
+
+// Snapshot returns an immutable copy of the current enrollment authority.
+func (store *Store) Snapshot() (*Registry, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if store.registry == nil {
+		return nil, errors.New("enrollment policy is unavailable")
+	}
+	copy := *store.registry
+	copy.Machines = store.registry.EntrySnapshot()
+	copy.entries = make(map[string]Entry, len(store.registry.entries))
+	for machineID, entry := range store.registry.entries {
+		copy.entries[machineID] = entry
+	}
+	return &copy, nil
 }

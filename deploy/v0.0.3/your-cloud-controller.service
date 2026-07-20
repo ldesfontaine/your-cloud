@@ -1,0 +1,45 @@
+[Unit]
+Description=Your Cloud v0.0.3 read-only Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=your-cloud-controller
+StateDirectory=your-cloud-controller
+StateDirectoryMode=0700
+RuntimeDirectory=your-cloud-controller
+RuntimeDirectoryMode=0700
+UMask=0077
+EnvironmentFile=/etc/your-cloud/controller.env
+LoadCredential=controller-reader.crt:/etc/your-cloud/controller-reader.crt
+LoadCredential=controller-reader.key:/etc/your-cloud/controller-reader.key
+LoadCredential=relay-reader-ca.crt:/etc/your-cloud/relay-reader-ca.crt
+ExecStart=/usr/local/lib/your-cloud/your-cloud controller serve --state-dir=/var/lib/private/your-cloud-controller --listen=${CONTROLLER_LISTEN} --allowed-source=${CONTROLLER_ALLOWED_SOURCE} --relay-endpoint=${CONTROLLER_RELAY_ENDPOINT}
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+InaccessiblePaths=-/etc/your-cloud/daemon.env -/etc/your-cloud/daemon.key -/etc/your-cloud/relay.key
+
+[Install]
+WantedBy=multi-user.target

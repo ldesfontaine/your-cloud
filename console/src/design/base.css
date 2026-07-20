@@ -1,0 +1,91 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--color-canvas);
+  font-family: var(--font-body);
+  color: var(--color-text);
+}
+
+body {
+  margin: 0;
+  min-width: 0;
+  min-height: 100vh;
+  background: var(--color-canvas);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+button,
+input,
+select,
+textarea {
+  color: inherit;
+  font: inherit;
+}
+
+button,
+a,
+input,
+select,
+textarea,
+[tabindex]:not([tabindex="-1"]) {
+  scroll-margin: var(--space-4);
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--space-1);
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-block-start: 0;
+}
+
+h1 {
+  margin-block-end: var(--space-3);
+  font-size: var(--font-size-page);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-page);
+}
+
+h2 {
+  margin-block-end: var(--space-3);
+  font-size: var(--font-size-section);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-section);
+}
+
+h3 {
+  margin-block-end: var(--space-2);
+  font-size: var(--font-size-component);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-component);
+}
+
+code,
+.yc-mono {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-help);
+  line-height: var(--line-height-help);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

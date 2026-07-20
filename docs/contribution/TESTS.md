@@ -11,8 +11,9 @@
 
 Ce registre conserve les contrôles réalisés, les difficultés rencontrées et le
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
-distingue la couverture automatisée de `v0.0.1` de la preuve assistée de
-`v0.0.2` ; une ligne planifiée ne constitue jamais une preuve.
+distingue la couverture automatisée de `v0.0.1`, la preuve assistée de
+`v0.0.2`, la porte Linux assistée de `v0.0.3` et son automatisation encore
+incomplète ; une ligne planifiée ne constitue jamais une preuve.
 
 ## Vocabulaire de travail
 
@@ -84,6 +85,91 @@ possède une échéance ; chaque
 assertion conserve son code de sortie ; le nettoyage s'exécute aussi après un
 échec. Aucun `|| true` global, agrégat de logs ou rapport visuel ne doit masquer
 le premier contrôle rouge.
+
+## Matrice de `v0.0.3` — porte Linux exécutée, automatisation incomplète
+
+Cette première matrice vient du
+[contrat `v0.0.3`](../objectifs/v1/CONTRAT-V0.0.3.md). Elle enregistre les
+preuves attendues pour l'enveloppe, la distribution, les deux API, le cycle
+d'authentification Console–Controller, le stockage et la projection déjà
+décidés, ainsi que le système visuel, les sept vues et les deux portes de preuve.
+Le [rapport Linux exécuté](../lab/v0.0.3-console-controller-linux.md) distingue
+les tests automatiques, les scénarios vivants assistés, les incidents et les
+limites. Dans la colonne finale ci-dessous, `planifié, non exécuté` désigne
+encore l'orchestration rejouable de toute la ligne en une commande ; cela
+n'efface pas les sous-cas déjà prouvés et ne transforme pas les sous-cas
+restants en réussite implicite.
+
+La porte Linux emploie les six VM `v1-full` existantes : `lab-console` construit
+puis exécute après retour à un snapshot propre ; `lab-console-recovery` porte la
+seconde Console hostile ; `lab-coordinateur` exécute Controller A et un
+Controller B synthétique sous autorités séparées ; `lab-gateway` reste un
+routeur sans produit ; `lab-machine-1` colocalise Daemon et Relay séparés ;
+`lab-machine-2` porte le second Daemon et les tentatives lecteur hostiles. La
+porte Linux a réellement employé ces six VM et a réussi le 20 juillet 2026 sur
+un candidat non commité. La porte Windows native doit encore ajouter
+`lab-console-windows`, mais elle reste gelée jusqu'à validation explicite de la
+stabilisation par Lucas et demeure obligatoire pour fermer `v0.0.3`.
+
+| Frontière | Nominal à automatiser | Refus hostile à automatiser | Automatisation rejouable complète |
+|---|---|---|---|
+| sources et artefacts | même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | planifié, non exécuté |
+| enveloppe Tauri | frontend React, TypeScript et Vite embarqué ; opérations natives nommées ; aucun listener sur l'appareil Console ou chargement de code distant | navigation distante, ressource active externe, appel réseau frontend, accès fichier ou shell non autorisé | planifié, non exécuté |
+| origine Console–Controller | TLS 1.3 sur l'origine exacte avec certificat serveur, identité d'appareil et session humaine attendus | HTTP, mauvais nom, CA, port, query, fragment, redirection, proxy, certificat inconnu, révoqué ou d'un autre Controller | planifié, non exécuté |
+| API métier | initialisation unique, lecture de l'infrastructure, lecture des machines et rattachement idempotent d'une machine enrôlée | méthode, route, type, `Accept`, schéma, doublon, casse, seconde valeur, taille, délai ou concurrence hors borne | planifié, non exécuté |
+| enveloppe d'erreur Console–Controller | combinaison statut/code issue de la liste fermée, `request_id` canonique et seul `429` portant `Retry-After` borné ; libellé local choisi depuis la route et le code | statut/code inconnu ou croisé, champ supplémentaire, identifiant invalide, cause interne, corps hostile ou `Retry-After` absent, non canonique ou hors borne ; réponse entière refusée | planifié, non exécuté |
+| séparation des infrastructures | Controller A ne rend et ne rattache que les machines confirmées par le Relay de A | certificat ou session de B contre A, identifiant de B dans A, `infrastructure_id` divergent et machine non enrôlée | planifié, non exécuté |
+| VM hostile sur le même réseau | l'API nominale reste disponible après chaque tentative et l'inventaire demeure identique | accès sans certificat, appel direct du Relay et croisements Controller, session, infrastructure et machine | planifié, non exécuté |
+| coffre Stronghold | même format et dérivation Argon2id sous Linux et Windows ; changement de phrase publié atomiquement après validation du nouveau coffre ; aucune permission ou API JS Stronghold ; clés Ed25519 utilisées dans le coffre et clé P-256 déchiffrée seulement dans un tampon Rust effaçable | coffre absent, déplacé, tronqué, altéré ou d'une version inconnue, sel recréé ou paramètres KDF divergents, helper par défaut, mauvaise phrase, crash à chaque étape du changement de phrase laissant l'ancien coffre utilisable, compartiment A substitué dans B, accès frontend ou clé/session recherchée en clair | planifié, non exécuté |
+| preuve humaine locale | phrase saisie puis effacée, challenge de 32 octets consommé une fois avant deux minutes et signé par la clé humaine du Controller choisi | rejeu, expiration, challenge d'un autre Controller, clé publique ou signature inconnue, phrase, clé dérivée, clé privée ou session rendue par IPC | planifié, non exécuté |
+| phrase et récupération hors ligne | six mots uniformes de la liste et du SHA-256 épinglés, code global canonique de 256 bits affiché et confirmé une fois, vecteurs HKDF identiques Linux/Windows et clés distinctes par Controller | entrée brute ou normalisée surdimensionnée, séparateur, remplissage ou bits Base32 non canoniques, liste, SPKI, sel, époque ou compartiment substitué ; secret retrouvé dans stockage Web, URL, journal, presse-papiers automatique ou capture produite par la Console/LAB | planifié, non exécuté |
+| listener temporaire `9444` | socket ouvert par l'autorité locale sur l'adresse privée exacte pour une seule fenêtre et fermé après le `PUT` qui livre le candidat, dix minutes, cinq preuves authentifiées ou redémarrage ; certificat serveur épinglé et aucune route métier | port ouvert hors fenêtre, faux nom, CA ou certificat, HTTP, proxy, route métier, `window_id`/code absent, faux, expiré ou croisé sans consommation de la transaction ; requête sans code tentant de consommer le budget ; deux VM avec le bon code dont une seule gagne ; code connu fermant la fenêtre après cinq preuves invalides, risque de déni de service rendu visible | planifié, non exécuté |
+| appairage Console et récupération | identifiants attribués par la bonne autorité, CSR et possessions des nouvelles clés humaine et de récupération prouvés ; ancienne clé de récupération autorisant le remplacement ; candidat sans droit métier puis activation atomique | fenêtre croisée, transaction, `device_id`, CSR, clés, sel ou époque substitués, point P-256, usage X.509 ou signature invalide, candidat sur route métier, crash et perte de chaque réponse avant ou après commit | planifié, non exécuté |
+| certificat d'appareil | certificat P-256 `clientAuth` de 180 jours, SAN exact, état actif revérifié à chaque requête et avertissements J-30/J-7 | mauvaise CA, SAN, EKU, série, algorithme, certificat expiré, inconnu ou révoqué, y compris sur connexion TLS persistante | planifié, non exécuté |
+| rotation d'appareil et reçus | candidat idempotent puis activation avec le nouveau certificat ; ancien seul actif avant le commit, nouveau seul actif après ; reçu exact rejouable après réponse perdue et redémarrage | challenge déjà consommé avant recherche du candidat, activation répétée avec contenu changé, reçu au-delà de 24 h, candidat expiré, ancien certificat après activation ou deux certificats métier simultanés | planifié, non exécuté |
+| session humaine | jeton opaque de 32 octets lié à l'humain, l'appareil, le Controller et l'infrastructure ; 30 min d'inactivité, 8 h absolues, logout et redémarrage | jeton croisé, expiré ou rejoué ; réponse contenant le jeton perdue puis remplacée ; challenge concurrent différent ; refus prolongeant l'inactivité ; délais 1/2/4/8/16 s puis blocage de 5 min au cinquième échec | planifié, non exécuté |
+| incident de récupération | deux copies du nouveau code confirmées, ancienne et nouvelle conservées hors ligne, rotation et reprise après crash suivies séparément sur chaque Controller avec ancienne preuve, nouvelle possession, session et challenge humain frais | remplacement avec seule session, crash au milieu du parcours, ancien code après commit, contenu changé sous le même identifiant, reçu perdu ou succès global annoncé malgré un Controller en échec | planifié, non exécuté |
+| séparation des autorités d'authentification | autorité TLS serveur, émission d'appareil, Daemons et lecteur Controller–Relay distincts et limités à leur usage | certificat ou CA d'une classe présenté dans une autre, remplacement de la SPKI serveur sans réinitialisation locale et chaîne valide mais identité absente du registre | planifié, non exécuté |
+| filtre réseau du lecteur Relay | listener `8444` lié seulement à l'adresse privée exacte ; règle `nftables` autorisant l'interface et l'IP source provisionnées du Controller, `drop` silencieux ailleurs ; compteurs et journal local agrégé borné ; `8443` reste l'ingestion distincte | scan depuis une VM externe et une VM voisine, autre interface, sous-réseau ou IP source ; absence de réponse mais état `filtered` possible, compteurs bornés exacts ; tentative d'usurpation de l'IP autorisée ensuite arrêtée par mTLS | planifié, non exécuté |
+| identité et rotation du lecteur Relay | TLS 1.3 mTLS, CA Ed25519 serveur et cliente dédiées à l'infrastructure, nom et URI SAN exacts, feuille de 180 jours, manifeste de 1..4 Kio revérifié à chaque requête ; fermeture de `8444`, publication locale atomique des deux bundles puis recoupement avant réouverture | absence de certificat, certificat Daemon, CA, nom, URI, EKU, série, empreinte, période, état révoqué, Controller ou infrastructure croisés, y compris sur TLS persistant ; crash avant et après chaque publication locale, un seul hôte tourné, deux certificats actifs ou réouverture avant recoupement | planifié, non exécuté |
+| migration et liaison d'infrastructure Relay | `controller_id` et `infrastructure_id` UUIDv4 immuables générés par le Controller puis importés explicitement ; registre Daemon schéma 2 de 0..64 machines, tableau vide inclus, migré atomiquement sous 16 Kio ; ensemble des `machine_id` seulement croissant, sortie par révocation ; même `infrastructure_id` partout et même `controller_id` dans manifeste, certificat, Controller et réponse | schéma 1, suppression, réactivation, réutilisation ou 65e identité refusée, candidat partiel, registre copié d'une autre infrastructure, identifiant absent, régénéré au restart ou divergent ; au démarrage `8444` reste fermé, au reload l'ancienne politique reste active, et l'ingestion `8443` saine demeure disponible | planifié, non exécuté |
+| API lecteur `GET /v0/snapshot` | unique GET sans corps ni query, schéma et erreurs à liste positive, vue atomique triée du registre et du dernier état, tableau réellement vide distinct d'une machine avec `observation: null`, 8 192 lacunes acceptées, réponse pré-encodée sous 2 Mio | Host, méthode, route, query même vide, corps, `Content-Type`, `Accept`, champ, casse, doublon, type, UUID, séquence, 8 193 lacunes, collecteur, taille, en-têtes, délai, cinq sockets, treizième connexion ou lecture invalides ; `Content-Length` absent, mensonger ou trop grand ; aucune réponse partielle ni cache remplacé | planifié, non exécuté |
+| UTC et reprise du lecteur | dates RFC 3339 nanoseconde en `Z`, âge de transport `snapshot_at - received_at` puis durée monotone ; `snapshot_at` dans `[fin-30 s, départ+30 s]`, écart civil/monotone au plus 1 s ; dernier cache publié atomiquement et marqué indisponible après panne ou restart | fuseaux différents représentant le même instant, âge négatif, Relay à `-30 s`, `-30 s - 1 ns`, `+30 s`, `+30 s + 1 ns`, saut d'horloge inférieur, égal ou supérieur à 1 s, `observed_at` Daemon ancien restant non autoritaire, Relay arrêté, réponse perdue, réutilisation avant 5 s, délais `1/2/4/8/16/30 s` tirés dans `[80 %,100 %]`, succès remettant le compteur à zéro, cache ancien ou rattachement d'une machine révoquée tentant d'autoriser un PUT | planifié, non exécuté |
+| autorité des états Controller | compte dynamique non-root sans capacité, répertoire privé `0700`, `inventory.json` `0600` d'au plus 64 Kio et `relay-cache.json` `0600` d'au plus 2 Mio ; inventaire de 0..64 machines séparé du cache et des états P4 | lien symbolique ou dur, fichier non régulier, propriétaire ou mode incorrect, fichier absent, vide, tronqué, corrompu, surdimensionné, champ ou version inconnue ; aucun UUID régénéré, inventaire vide fabriqué ou donnée P4/cache promue en autorité métier | planifié, non exécuté |
+| publication et révision de l'inventaire | candidat complet validé et préencodé, temporaire dans le même répertoire, `fsync`, `rename`, `fsync` du répertoire puis publication mémoire ; initialisation, rattachement et renommage incrémentent une révision `uint64`, rejeu exact sans incrément | crash avant et après chaque étape, échec disque, temporaire hostile, deux mutations concurrentes et saturation de révision ; ancienne autorité cohérente, aucune réponse réussie avant durabilité et aucune correction silencieuse des métadonnées dangereuses | planifié, non exécuté |
+| ordre et non-régression du cache | nouveau rattachement persistant d'abord le snapshot P5 frais puis l'inventaire ; identifiants et machines conservés, `active` pouvant seulement devenir `revoked`, observation et séquence progressant, lacunes connues conservées | échec entre les deux publications, cache absent ou corrompu, machine omise ou réutilisée, réactivation, observation devenue `null`, séquence décroissante, même séquence au contenu différent, lacune supprimée ou cache d'une autre infrastructure ; inventaire inchangé et lecture `unavailable` | planifié, non exécuté |
+| projection et fraîcheur Console | uniquement les machines attendues triées ; `relay_status`, enrôlement, `observation_status` et continuité séparés ; `recent` jusqu'à 90 s incluses, `old` au-delà, écart déclaré supérieur à 30 s signalé ; résumé exact de toutes les lacunes et réponse complète sous 128 Kio | âges `89,999999999`, `90` et `90,000000001` s, écart `observed_at`/`received_at` à 30 s puis `30 s + 1 ns`, Relay indisponible, horloge non fiable, restart avec ou sans cache, observation absente, révocation et lacune combinés ; somme ou bornes incohérentes, overflow, 64 machines maximales, 128 Kio + 1 refusé avant premier octet, aucune troncature, pagination ou exposition des 2 Mio bruts | planifié, non exécuté |
+| libellés métier Unicode | UTF-8 strict jusqu'à 256 octets inclus avant et après NFC, 1 et 80 valeurs scalaires, lettres `L*`, marques `M*` après lettre ou marque, chiffres `Nd` et ponctuation ASCII décidée ; composé/décomposé idempotents, casse significative, doublons entre machines sans fusion, même corpus côté Controller et Console Linux/Windows | UTF-8 ou substitut invalide, 257 octets, 0 ou 81 scalaires, marque initiale, espace initial/final ou doublé, contrôle, format, bidi, invisible, séparateur de ligne, symbole, emoji, slash, antislash, chevron, privé ou non assigné ; bypass du frontend et réponse Controller hostile refusés sans mutation ni HTML actif | planifié, non exécuté |
+| tokens et ressources visuelles | palette sémantique claire et sombre, échelle `rem`, Inter et IBM Plex Mono embarquées avec licences et empreintes, seuls glyphes Lucide utilisés présents ; contrôle statique interdisant couleurs, fontes, rayons et espacements locaux hors exceptions contractées | ressource distante, fonte absente, token inconnu, couleur de statut directe, icône seule ou mélange de jeux détectés ; build et vue nominale restent inchangés après le refus | planifié, non exécuté |
+| vues et hiérarchie | exactement sept vues ; sélecteur d'infrastructure global puis `Synthèse`, `Parc`, `Observations` et `Profil et sessions` ; Controller seulement contextuel, Relay indisponible comme transport et aucune machine Relay synthétique | rubrique Controller ou Sécurité générique, badge de placement Relay non fourni par l'API, score de santé inventé, historique ou action machine apparaissant dans le frontend | planifié, non exécuté |
+| responsive Linux et Windows | mêmes composants à `1280 x 800` et `640 x 560`, fiche contextuelle refluée, navigation compactée et parc transformé en cartes ; captures comparables issues des deux artefacts | largeur ou hauteur inférieure refusée, zoom texte 200 %, libellé maximal, 64 machines, erreur longue bornée et états combinés sans chevauchement, texte coupé ni défilement horizontal obligatoire | planifié, non exécuté |
+| accessibilité et contenu hostile | clavier seul, ordre et retour du focus, contraste texte `4.5:1`, grand texte et composants `3:1`, cible de `2.75rem`, mouvement réduit, statuts par texte et icône ; données Controller injectées par nœuds texte | focus masqué ou perdu, piège clavier, couleur ou icône seule, HTML, style, URL, attribut, script ou chaîne bidi hostile tenté depuis les libellés et erreurs sans interprétation active | planifié, non exécuté |
+| session et changement de contexte | une lecture initiale à l'entrée d'une vue puis actualisation explicite ; changement d'infrastructure annulant les requêtes et purgeant les données précédentes | polling de fond prolongeant l'inactivité, réponse tardive de A rendue après passage à B, état, erreur, identifiant ou session de A restant visible dans B | planifié, non exécuté |
+| cardinalité `v0.0.3` | exactement un humain et un appareil Console actifs par Controller, plusieurs Controllers restant isolés dans la même Console | second appairage actif sans récupération, deux certificats métier actifs dans un Controller ou partage d'une clé/session entre Controllers | planifié, non exécuté |
+
+### Ordre des portes
+
+Le pilote Linux garde huit phases nommées : inventaire et verrou, snapshots et
+lot Git, contrôles puis build, installation et interface Linux, nominal
+multi-VM, hostile, réaffirmation et nettoyage, puis autorisation de préparer
+Windows. Chaque phase publie son statut et sa durée ; un échec bloque les
+suivantes sauf le nettoyage. Le `.deb` est sorti du runner de build avec son
+empreinte avant le retour au snapshot runtime, puis réinjecté et vérifié.
+
+La porte Windows reprend la même empreinte de sources et le même verrou
+frontend. `lab-console-windows` construit nativement le `.msi` sous MSVC/WiX,
+l'exporte, revient à son snapshot runtime, vérifie signature et empreinte,
+installe puis pilote la Console réelle. Le rapport distingue tests partagés,
+preuves propres à WebKitGTK et preuves propres à WebView2 ; aucune réussite
+Linux ne remplit une case Windows.
+
+La VM hostile partage volontairement le réseau LAB de la cible afin de prouver
+que la connectivité seule ne vaut ni identité d'appareil, ni identité humaine,
+ni appartenance à l'infrastructure. Pour `8444`, une première phase vérifie le
+refus réseau depuis `lab-machine-2` ; une seconde arrête le lecteur légitime et
+atteint la frontière applicative depuis l'IP exacte de `lab-coordinateur`, mais
+sans le bon certificat, afin de prouver que le filtre IP ne remplace pas mTLS.
+Chaque phase réaffirme ensuite l'état nominal et le nettoyage attendu.
 
 ## Matrice exécutée de `v0.0.2` — orchestration assistée
 

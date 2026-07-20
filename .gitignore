@@ -5,6 +5,9 @@ dist/
 build/
 *.egg-info/
 .ansible/
+/console/node_modules/
+/console/dist/
+/console/src-tauri/target/
 
 # Sorties de preuve locales ; seule leur convention est versionnée.
 /artifacts/*

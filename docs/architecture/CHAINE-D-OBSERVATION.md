@@ -214,11 +214,13 @@ valeurs de santé collectées.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-## Invariant Controller–Relay décidé — contrat `v0.0.3` en cadrage
+## Contrat Controller–Relay décidé pour `v0.0.3`
 
 La séparation des responsabilités et le sens de lecture ci-dessous sont des
-invariants validés. Le protocole, les identités, les bornes et la reprise restent
-à approuver dans le contrat du prochain palier avant toute implémentation.
+invariants validés. L'enveloppe, l'API Console–Controller et son cycle
+d'authentification sont décidés ; le protocole Controller–Relay, ses identités,
+ses bornes et sa reprise le sont désormais aussi. Aucun de ces éléments n'est
+encore implémenté ou prouvé dans `v0.0.3`.
 
 `v0.0.2` s'arrête volontairement au stockage Relay. Le processus actif expose
 uniquement `POST /v0/observations` aux Daemons : aucune route ne permet encore à
@@ -228,8 +230,8 @@ pas une invitation à laisser la Console appeler le Relay.
 Le listener TLS actuel est lui aussi réservé aux Daemons : il fait confiance à
 l'autorité cliente des Daemons et exige leur enrôlement dès la connexion. Ajouter
 simplement une route Controller sur ce listener mélangerait donc deux classes
-d'identité. Le prochain contrat doit créer une frontière de lecture distincte ou
-prouver une séparation équivalente.
+d'identité. `v0.0.3` ajoute donc un listener lecteur distinct sur l'adresse
+privée exacte du Relay et `8444`, sans modifier la route d'ingestion `8443`.
 
 Le prochain incrément de lecture doit respecter ce trajet :
 
@@ -237,19 +239,78 @@ Le prochain incrément de lecture doit respecter ce trajet :
 Daemon -- POST mTLS --> Relay
    `- aucune connaissance du Controller
 
-Controller -- requête privée authentifiée --> Relay
+Controller -- GET /v0/snapshot mTLS :8444 --> Relay
 Controller <-- dernier état validé, séquence et lacunes -- Relay
-Controller -- API privée authentifiée --> Console installée
+Console installée -- API privée authentifiée --> Controller
+Console installée <-- synthèse bornée -- Controller
 ```
 
-Le Controller initie la lecture. Le Relay n'a donc pas besoin de connaître son
-emplacement réseau. Il doit toutefois refuser toute identité de lecteur non
-autorisée et valider la méthode, la route, la portée infrastructure ou machine,
-le schéma, la cohérence et les tailles de la requête et de la réponse. Une
-Console installée contacte ses Controllers approuvés, jamais le Relay. Aucun
-Controller ne lui fournit son frontend ou son code exécutable. Un Controller
-porte l'autorité d'une seule infrastructure ; une Console peut conserver
-plusieurs associations indépendantes.
+La Console Tauri 2 appelle chaque Controller sur une origine HTTPS TLS 1.3
+exacte. Son frontend React, TypeScript et Vite embarqué n'obtient aucun client
+réseau général : l'enveloppe native ajoute l'identité d'appareil mTLS et la
+session humaine opaque. L'API REST JSON expose seulement l'initialisation et la
+lecture de l'unique infrastructure, la lecture de son instantané de machines et
+le rattachement idempotent d'une machine déjà enrôlée. Elle refuse route, query,
+méthode, schéma, taille, délai, concurrence, Controller et infrastructure hors
+contrat.
+
+Linux et Windows emploient le même coffre Tauri Stronghold, déverrouillé par une
+phrase secrète locale dérivée avec Argon2id. Il conserve des clés d'appareil et
+humaines distinctes par Controller. Le cœur natif signe la preuve humaine ; le
+Controller refuse les challenges rejoués, expirés ou liés à une autre origine.
+Le frontend ne reçoit aucune clé ni session. Windows Hello, passkeys, FIDO2 et
+SSO/OIDC restent post-V1.
+
+La phrase contient six mots français aléatoires. L'autorité locale du Controller
+ouvre `9444` dix minutes au plus pour un appairage ou une récupération épinglé,
+sans route métier permanente. Un seul humain et un appareil sont actifs par
+Controller dans ce palier. Le certificat d'appareil P-256 vaut 180 jours ; sa
+rotation manuelle prépare un candidat sans pouvoir métier puis ne révoque
+l'ancien qu'après activation prouvée. La session opaque expire après 30 minutes
+d'inactivité ou huit heures absolues et reste liée au certificat et à
+`infrastructure_id`. Le code global de récupération de 256 bits reste hors
+ligne et dérive une clé publique différente par Controller.
+
+Le Controller initie la lecture. Le Relay connaît néanmoins l'interface et l'IP
+source privées exactes provisionnées pour ce Controller : son filtre `nftables`
+refuse `8444` par défaut et n'accepte que cette source. Les autres paquets sont
+supprimés par `drop`, sans réponse, et même la source admise est limitée à une
+rafale de quatre nouveaux TCP puis douze par minute. Une IP privée n'est pas une
+identité ; TLS 1.3 mTLS reste obligatoire avec une CA serveur reader et une CA
+cliente Controller Ed25519 dédiées à l'infrastructure. Le serveur exige le
+nom exact
+`relay-reader.<infrastructure-id>.v0-0-3.your-cloud.test` et le certificat
+client l'URI
+`urn:your-cloud:controller-reader:<infrastructure-id>:<controller-id>`.
+
+Le Controller génère et persiste ses `controller_id` et `infrastructure_id`
+UUIDv4 immuables avant l'appairage. Le manifeste lecteur root-owned de 4 Kio au
+plus les importe, épingle URI, série, empreinte et état puis les revérifie à
+chaque requête. Le registre Daemon migre explicitement du schéma 1 vers un
+schéma 2 de zéro à 64 machines portant l'UUID d'infrastructure ; une migration
+candidate invalide laisse `8443` disponible mais maintient `8444` fermé.
+Registre Daemon, manifeste lecteur, certificats, origine, configuration
+Controller et réponse doivent tous porter le même `infrastructure_id`, sans
+inférence depuis le réseau.
+
+Seul `GET /v0/snapshot`, sans corps, query, filtre ou pagination, est accepté.
+La réponse JSON stricte, dont le schéma et les erreurs sont à liste positive,
+est pré-encodée avant son premier octet. Elle contient de zéro à 64 entrées
+issues du registre courant, chacune `active` ou `revoked`, avec le dernier état
+et les lacunes ou `observation: null`. Un verrou logique unique copie registre
+et observations et capture `snapshot_at` avant le tri. En-têtes de 8 Kio,
+réponse de 2 Mio, erreur de 1 Kio, délais de 3 et 6 secondes, quatre sockets, une
+requête simultanée et douze connexions et lectures par minute ferment la
+consommation. Une
+Console installée contacte ses Controllers approuvés, jamais le Relay. Un
+Controller porte une infrastructure ; une Console peut conserver plusieurs
+associations indépendantes.
+
+Une machine ne peut entrer dans l'inventaire que si cette lecture réussit dans
+la même opération et confirme son enrôlement `active`. Le dernier cache n'a pas
+ce pouvoir. Une VM hostile située sur le même réseau LAB doit prouver d'abord le
+refus IP, puis dans une phase isolée le refus mTLS et applicatif, avant de
+réaffirmer l'ingestion, la lecture saine et l'inventaire inchangé.
 
 La future liaison WireGuard post-V1 Console–Controller reste un chemin d'accès distinct
 de cette chaîne d'observation. La Console devra la présenter comme une opération
@@ -259,19 +320,23 @@ ou à `v0.0.3`.
 
 | Sujet | Relay | Controller |
 |---|---|---|
-| Enrôlement machine | applique le registre d'autorisation local provisionné par root et refuse immédiatement | porte à terme la décision métier et l'inventaire de référence |
+| Enrôlement machine | applique le registre d'autorisation local provisionné par root et refuse immédiatement | porte l'inventaire métier attendu sans pouvoir modifier le registre Relay |
 | Réception | authentifie le Daemon, valide le schéma et persiste avant accusé | relit sans faire confiance aveuglément à la donnée reçue |
 | Séquence et lacune | contrôle et conserve le dernier fait d'observation validé | interprète l'impact et fournit l'état métier à la Console |
-| Fraîcheur | fournit l'heure locale de réception de l'hôte Relay | traite la dérive d'horloge et décide des seuils `récent`, `ancien` ou `absent` |
+| Fraîcheur | fournit `received_at` et `snapshot_at` en UTC `Z` | calcule leur différence, poursuit sur son horloge monotone, refuse une dérive inter-hôtes supérieure à 30 s, rend `recent` jusqu'à 90 s incluses puis `old` |
 | Utilisateurs et rôles | aucun | authentifie l'humain et autorise la consultation ou l'action |
 | Plans et exécution | aucun | prépare le plan puis utilise un chemin d'action distinct |
 
 Pour le premier Controller en lecture seule, l'enrôlement reste provisionné
-manuellement comme dans `v0.0.2`. Le tableau fixe la future source d'autorité ;
-il ne décide ni d'une synchronisation du registre, ni d'une mutation pendant le
-prochain incrément. L'autorité qui émettra les certificats Controller, leur
-placement et leur révocation cryptographique restent à choisir ; ils ne se
-déduisent pas de l'inventaire métier.
+manuellement comme dans `v0.0.2`. La migration locale du registre ajoute
+seulement l'UUID d'infrastructure généré par le Controller ; elle ne synchronise
+pas l'inventaire métier et le Controller ne peut pas la déclencher. Les
+autorités privées reader restent hors du Relay et du Controller ; les feuilles
+de 180 jours tournent manuellement, listener fermé. Le bundle client sur le
+Controller et le manifeste sur le Relay sont chacun publiés atomiquement sur
+leur hôte, puis recoupés avant réouverture, sans deux lecteurs actifs. Leur
+révocation vient du manifeste cryptographique et ne se déduit pas de
+l'inventaire métier.
 
 L'accusé actuel signifie seulement « la séquence exacte est durable sur le
 Relay ». Il autorise le Daemon à retirer cette attente ; il ne prouve ni que le
@@ -286,17 +351,46 @@ uniquement un intervalle supprimé du tampon borné du Daemon. Une livraison
 exhaustive ou une série temporelle exigerait un stockage et un protocole
 différents.
 
-La fraîcheur ne peut pas reposer uniquement sur `observed_at`, déclaré par
-l'horloge de la machine observée. Le Controller doit partir de l'heure locale de
-réception du Relay et le prochain contrat doit fixer comment détecter ou borner
-la dérive entre les horloges Relay et Controller.
+La fraîcheur ne repose pas sur `observed_at`, déclaré par l'horloge de la
+machine observée. Fuseau local et dérive sont distincts : toutes les dates
+réseau sont rendues en RFC 3339 nanoseconde UTC `Z`. Le Controller calcule
+`snapshot_at - received_at`, refuse un résultat négatif, puis ajoute le temps
+monotone écoulé. Il exige aussi `snapshot_at` dans l'intervalle UTC
+`[fin - 30 s, départ + 30 s]` et compare durée civile et monotone : un écart
+supérieur à une seconde signale une correction d'horloge. Hors de ces bornes,
+aucune donnée n'est récente. L'écart `observed_at - received_at` reste visible
+mais n'est pas une autorité de fraîcheur ; sa valeur absolue supérieure à 30
+secondes produit seulement un avertissement. NTP reste une précondition mesurée,
+pas une autorité du produit. Panne, horloge non fiable, enrôlement, fraîcheur et
+lacune restent des dimensions séparées : une panne ne devient ni `old`, ni
+`absent`.
 
-Relay et Controller peuvent cohabiter sur une petite infrastructure, mais ils
-doivent rester des processus, comptes, identités, stockages et politiques
-d'accès séparés ; la frontière réseau exacte reste à contracter. Leur cohabitation
-partage malgré tout la zone de compromission root de l'hôte. Un placement plus
-exposé du Relay ne doit donc pas entraîner le Controller dans la même zone sans
-accepter explicitement ce risque.
+Le Controller non-root conserve deux fichiers privés et atomiques :
+`inventory.json` est l'autorité métier bornée à 64 machines et
+`relay-cache.json` est seulement le dernier snapshot P5 validé, borné à 2 Mio.
+Un nouveau rattachement persiste d'abord le cache frais puis l'inventaire ; un
+renommage déjà rattaché reste local. Après redémarrage ou échec, le cache peut
+rester visible mais vaut `unavailable`. Omission d'une machine, réactivation,
+observation disparue, séquence décroissante ou lacune supprimée refusent son
+remplacement sans toucher à l'inventaire.
+
+`GET /v0/machines` ne rend que les machines attendues sous 128 Kio. Les plages
+de lacunes complètes restent dans le cache ; la Console reçoit leur nombre, le
+total supprimé et leurs deux bornes de séquence, sans troncature silencieuse.
+Les libellés sont des textes Unicode NFC bornés et validés par liste positive ;
+ils restent non autoritaires et l'identifiant de machine demeure visible.
+La Console n'invente aucune machine dédiée au Relay : son indisponibilité est
+un état de transport de l'infrastructure. Un hôte qui exécute aussi le Daemon
+reste une machine normale de l'inventaire ; aucun badge de placement n'est rendu
+car cette API ne publie pas ce fait.
+
+Une architecture ultérieure peut faire cohabiter Relay et Controller, mais elle
+partagerait la zone de compromission root et son filtre IP ne distinguerait pas
+les processus locaux. `v0.0.3` choisit donc deux IPv4 privées distinctes et ne
+revendique aucun mode loopback : `lab-coordinateur` porte le Controller et
+`lab-machine-1` le Relay pendant la preuve.
+Un placement plus exposé du Relay ne doit pas entraîner ultérieurement le
+Controller dans la même zone sans accepter explicitement ce risque.
 
 La compromission root de l'hôte Relay permet de lire ou d'altérer son état après
 terminaison TLS. Une signature de bout en bout pourrait rendre une altération
@@ -304,15 +398,16 @@ détectable par le Controller, mais ne cacherait pas les données au Relay ;
 intégrité, authenticité et confidentialité de bout en bout restent donc trois
 questions distinctes, hors de `v0.0.2`.
 
-Avant le code de l'incrément Console–Controller, le contrat doit encore fixer le
-format et la chaîne de distribution signée de la Console, son stockage sécurisé,
-les identités d'appareil et humaines, les sessions, l'API Controller, puis le
-protocole de lecture Relay, sa frontière réseau, l'autorité de certificats,
-l'identité du Controller, les méthodes, routes et portées, les schémas et
-bornes, la stratégie d'horloge, la sémantique d'instantané et la reprise après
-indisponibilité. Le Controller initial reste en lecture seule : aucun SSH,
-Ansible, plan appliqué, SSO obligatoire, session utilisateur publique ou canal
-d'action n'est ajouté au Relay.
+Le système visuel, les sept vues et les deux portes de preuve de l'incrément
+Console–Controller sont décidés. Linux commence sur `v1-full` avec le Relay et
+un Daemon colocalisés sur `lab-machine-1` ; Windows attend la stabilité de cette
+porte mais reste nécessaire à la fermeture du palier. Le transport conserve
+atomiquement son dernier snapshot comme `indisponible`
+après panne ou restart, reprend à la demande avec un backoff
+`1/2/4/8/16/30 s` et ne transmet jamais ses 2 Mio bruts à l'API Console bornée
+à 128 Kio. Le Controller initial reste en lecture seule : aucun SSH, Ansible,
+plan appliqué, SSO obligatoire, session utilisateur publique ou canal d'action
+n'est ajouté au Relay.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: V1-OBSERVATION:start -->
@@ -422,8 +517,8 @@ pas que deux protocoles sont actifs simultanément. Leur retrait ou migration
 sera une décision de distribution explicite, pas un nettoyage opportuniste. En
 particulier, `QUERY /v0/machines` et le calcul `recent`/`old`/`absent` de
 `v0.0.1` ne définissent pas la lecture du prochain Controller : l'inventaire et
-la politique de fraîcheur appartiennent au Controller, tandis que le nouveau
-contrat Relay reste à borner.
+la politique de fraîcheur appartiennent au Controller, tandis que le contrat
+Relay `v0.0.3` reste distinct du protocole historique.
 
 ## Pourquoi deux dossiers dans `deploy/`
 
@@ -583,7 +678,7 @@ palier.
 | Niveau | Contenu |
 |---|---|
 | **Prouvé dans `v0.0.2`** | artefact commun ; processus isolés ; profil fixe ; mTLS ; enrôlement et révocation ; tampon et lacunes ; accusé durable ; diagnostic ; redémarrages et réinstallation |
-| **Décidé plus tard dans la V1** | lecture privée du Relay par l'identité propre d'un Controller, politique de fraîcheur dans ce Controller et rendu par la Console |
+| **Décidé pour `v0.0.3`, non implémenté** | listener reader privé `8444`, filtre source, mTLS et CA dédiées, registre schéma 2 lié à l'infrastructure, `GET /v0/snapshot` borné, UTC, contrôle de dérive et reprise du cache ; inventaire et cache JSON séparés, projection sous 128 Kio, fraîcheur à 90 s et libellés NFC ; système visuel par tokens et sept vues centrées sur l'infrastructure ; porte Linux `v1-full` puis porte Windows native obligatoire |
 | **Absent** | Console et Controller actuels ; API de lecture Relay ; Ansible métier ; canal d'action ; commande distante ; Auxiliaire ; WireGuard ; service OCI ; plugin libre ; scan LAN ; enrôlement en ligne ; renouvellement automatique ; failover ou élection Relay ; Proxmox ; OpenStack ; worker d'automatisation ; projet IaC |
 
 ## Limites de sécurité
@@ -592,6 +687,13 @@ palier.
 - une machine compromise peut mentir dans les champs qu'elle est autorisée à
   produire ;
 - le Relay voit les observations en clair après terminaison TLS ;
+- le filtre IP du lecteur réduit l'exposition mais une IP usurpée ne remplace
+  pas mTLS ; le vol de la clé Controller donne accès jusqu'à révocation ;
+- une dérive d'horloge dans la tolérance peut influencer l'âge et la rotation
+  manuelle d'un certificat lecteur peut provoquer une coupure ;
+- root sur le Controller peut restaurer ensemble un ancien inventaire et un
+  ancien cache ; les libellés Unicode peuvent encore présenter des homoglyphes,
+  mais ne donnent aucun droit et restent accompagnés de l'identifiant ;
 - les autorités synthétiques de preuve ne sont pas une PKI de production ;
 - le diagnostic local ne constitue pas une API de supervision ;
 - une lacune rend une perte visible mais ne récupère pas les données ;

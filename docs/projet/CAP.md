@@ -84,23 +84,33 @@ distinctes.
 Deux familles techniques restent à comparer avant ce palier post-V1 : piloter
 un tunnel fourni par le système, avec une autorité privilégiée minimale, ou
 intégrer une pile WireGuard en espace utilisateur qui ne transporte que le
-client du Controller. Un coffre portable protégé par phrase secrète reste
-également ouvert ; il devra utiliser une dérivation mémoire-dure et un
+client du Controller. Un coffre portable de liaison protégé par phrase secrète,
+distinct du coffre Stronghold de la V1, reste également ouvert ; il devra
+utiliser une dérivation mémoire-dure et un
 chiffrement authentifié, puis rendre visible le risque résiduel d'attaque hors
 ligne. Aucun
 choix n'autorise une route libre, un shell réseau ou une confiance implicite
 envers les autres machines.
 
-La Console conserve son identité d'appareil et ses sessions dans le stockage
-sécurisé du système lorsqu'il fournit les propriétés exigées ; le frontend ne
-reçoit aucun secret long terme. Pour un usage personnel, une passkey locale et
-du matériel de récupération conservé hors ligne constituent la cible du premier
-profil. Pour une organisation qui possède déjà un fournisseur d'identité
-maîtrisé, SSO/OIDC peut centraliser l'authentification et la révocation. Chaque
-Controller conserve son autorisation locale ; les effets d'une panne ou d'une
-compromission du fournisseur ainsi qu'un compte de récupération local utilisable
-seulement depuis le réseau d'administration restent à contracter. SSO n'est donc
-ni une dépendance obligatoire du produit, ni une autorisation implicite sur
+Pour toute la V1, la Console protège ses clés d'appareil et humaines dans un
+coffre Tauri Stronghold commun à Linux et Windows, déverrouillé par une phrase
+secrète locale dérivée avec Argon2id. Chaque Controller garde des clés et une
+autorisation distinctes. Le frontend voit brièvement la phrase saisie puis
+l'efface ; il ne reçoit jamais la clé dérivée, une clé privée, le contenu du
+coffre ou une session. Le matériel de récupération reste conservé hors ligne.
+Dans la V1, la phrase quotidienne contient six mots aléatoires et le code global
+de récupération contient 256 bits ; ce dernier dérive une clé différente par
+Controller et n'est jamais sauvegardé par la Console. L'appairage et la
+récupération passent par un listener TLS ouvert par l'autorité locale sur
+l'adresse privée exacte du Controller, puis réellement fermé. Un
+certificat d'appareil de 180 jours et une session de 30 minutes d'inactivité,
+huit heures au maximum, restent liés à un seul Controller ; leur rotation ou
+révocation ne donne jamais autorité sur une autre association.
+Dans `v0.0.3` seulement, chaque Controller possède exactement un humain et un
+appareil Console actifs ; cette cardinalité n'est pas étendue silencieusement
+au reste de la V1.
+Windows Hello, passkeys, clés FIDO2 et SSO/OIDC pourront être étudiés après la
+V1 ; aucun ne constitue une dépendance ou une autorisation implicite sur
 plusieurs infrastructures.
 
 Un futur accès par navigateur pourra ajouter un frontend distribué et une

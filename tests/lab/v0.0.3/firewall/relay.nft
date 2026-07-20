@@ -1,0 +1,24 @@
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet your_cloud_v003_relay {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+    ip protocol icmp accept
+    udp sport 67 udp dport 68 accept
+    ip saddr 192.168.243.1 tcp dport 22 accept
+    ip saddr { 192.168.243.153, 192.168.243.158 } tcp dport 8443 accept
+    ip saddr 192.168.242.103 tcp dport 8444 accept
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+  }
+}

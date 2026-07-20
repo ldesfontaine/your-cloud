@@ -90,11 +90,12 @@ redirection éventuelle depuis `80` et le refus des ports internes.
 L'**App** désigne le produit formé de deux rôles qui ne partagent pas la même
 autorité :
 
-- la **Console** est une application cliente installée et signée. Elle embarque
-  le frontend et le client réseau sans héberger de serveur local ni télécharger
-  son code depuis un Controller. Elle n'est pas la source de l'inventaire, ne
-  détient aucun secret de machine ou de runner et ne possède aucune identité lui
-  permettant d'exécuter seule une action d'infrastructure ;
+- la **Console** est une application cliente Tauri 2 installée et signée. Elle
+  embarque le frontend React, TypeScript et Vite et le client réseau natif sans
+  héberger de serveur local ni télécharger son code depuis un Controller. Elle
+  n'est pas la source de l'inventaire, ne détient aucun secret de machine ou de
+  runner et ne possède aucune identité lui permettant d'exécuter seule une
+  action d'infrastructure ;
 - le **Controller** est le backend d'une seule infrastructure. À terme, il porte
   son inventaire, ses utilisateurs et rôles, ses décisions d'enrôlement, ses
   plans, son état attendu et son audit. En V1, il coordonne Ansible par le chemin
@@ -116,15 +117,91 @@ Appareil administrateur
    |- frontend embarqué, aucun serveur local
    |- identité d'appareil dans le stockage sécurisé
    `- API privée authentifiée ----> Controller d'une infrastructure
-                                      `- lecture authentifiée du Relay
+                                      `- GET mTLS ----> Relay reader privé :8444
 ```
 
 La première Console est fonctionnelle sur Linux et Windows depuis le même
-frontend. Son interface peut employer HTML, CSS et TypeScript dans une enveloppe
-native légère, mais ces fichiers appartiennent à l'artefact signé : ce n'est ni
-un site hébergé, ni une page `localhost`. Le design responsive prépare le
-téléphone sans faire entrer dès `v0.0.3` la signature, le stockage sécurisé et
-la distribution Android ou iOS.
+frontend. Tauri 2 forme l'enveloppe native ; React, TypeScript et Vite forment le
+frontend commun. Ces fichiers appartiennent à l'artefact signé : ce n'est ni un
+site hébergé, ni une page `localhost`. Le client natif expose seulement des
+opérations nommées et le frontend n'obtient aucun réseau, fichier ou shell libre.
+Le `.deb` Linux et le `.msi` Windows viennent du même commit et du même verrou
+frontend, avec manifeste, empreintes, SBOM, provenance et signatures
+vérifiables. La mise à jour reste manuelle dans `v0.0.3`. Le design responsive
+prépare le téléphone sans faire entrer la signature, le stockage sécurisé et la
+distribution Android ou iOS dans ce palier.
+
+Le système visuel emploie des tokens sémantiques : les couleurs, fontes,
+espacements, rayons et états sont des variables communes plutôt que des valeurs
+répétées dans les écrans. La direction retenue est claire, sobre, indigo et vert
+canard, avec thème sombre système, Inter et IBM Plex Mono embarquées et icônes
+Lucide. La fenêtre standard vaut `1280 x 800`, son minimum `640 x 560`, et la
+mise en page relative reflue sans abstraction téléphone. L'infrastructure
+sélectionnée porte `Synthèse`, `Parc` et `Observations` ; le Controller apparaît
+seulement comme sa liaison privée contextuelle et la phrase, l'appareil et la
+session restent sous `Profil et sessions`. L'interface n'invente ni rubrique
+Controller ou Sécurité, ni machine Relay dédiée, ni score, historique ou donnée
+actuelle absent de l'API.
+
+La preuve avance en deux portes sans exécuter le produit sur le laptop. Linux
+réutilise d'abord les six VM Debian `v1-full` : build et runtime propres,
+seconde Console hostile, deux Controllers synthétiquement séparés, deux Daemons
+et un Relay colocalisé avec l'un d'eux. Une fois cette porte stable seulement,
+une VM `lab-console-windows` construit nativement puis installe le `.msi` depuis
+des snapshots distincts. La réussite Linux autorise cette seconde étape mais ne
+prouve pas Windows ; les deux restent obligatoires pour fermer `v0.0.3`.
+
+Chaque association approuve une origine HTTPS TLS 1.3 exacte. L'enveloppe
+présente une identité d'appareil mTLS puis une session humaine opaque, toutes
+deux propres au Controller et à son identifiant d'infrastructure immuable. Le
+Controller refuse une machine tant que son Relay authentifié ne confirme pas
+son enrôlement dans cette même infrastructure. Le cœur Rust protège chaque
+association dans un coffre Tauri Stronghold commun à Linux et Windows,
+déverrouillé par une phrase secrète locale dérivée avec Argon2id. Le frontend
+voit brièvement cette saisie puis l'efface ; il ne reçoit jamais la clé dérivée,
+une clé privée, le contenu du coffre ou une session. La phrase est formée de six
+mots français tirés aléatoirement. L'appairage ou la récupération exige un
+listener TLS `9444` ouvert par l'autorité locale sur l'adresse privée exacte du
+Controller pendant dix minutes au plus, le certificat serveur
+épinglé et une preuve à usage unique ; aucune route métier n'y existe.
+
+Dans ce palier, un Controller accepte un humain et un appareil actifs. Le
+certificat P-256 de 180 jours se remplace manuellement en deux phases, de sorte
+qu'une réponse perdue ne révoque jamais le seul accès valide. Une session opaque
+liée au certificat et à l'infrastructure expire après 30 minutes d'inactivité ou
+huit heures absolues, sans refresh token. Un code global de récupération de 256
+bits, affiché une fois et conservé hors ligne, dérive une clé publique distincte
+par Controller ; sa rotation après incident reste suivie association par
+association. Le Controller revérifie l'état actif ou révoqué à chaque requête,
+y compris sur une connexion TLS déjà établie.
+
+Le Relay garde l'ingestion Daemon sur `8443` et ouvre un listener lecteur
+distinct sur son adresse privée exacte et `8444`. Le filtre réseau refuse par
+défaut toute source autre que l'IP privée provisionnée du Controller, supprime
+ces paquets sans réponse et borne même les nouveaux TCP autorisés ; TLS 1.3
+mTLS avec deux autorités Ed25519 dédiées par infrastructure et un manifeste
+revérifié à chaque requête reste obligatoire derrière ce filtre. Seul
+`GET /v0/snapshot`, sans corps ni query, rend un instantané borné. Le registre
+Daemon porte l'`infrastructure_id` généré par le Controller après migration
+locale explicite. Les dates sont normalisées en UTC : le fuseau d'un hôte ne
+change pas l'instant, tandis que la double borne `[fin - 30 s, départ + 30 s]`
+refuse une dérive réelle supérieure à 30 secondes.
+Le dernier snapshot reste visible mais `indisponible` après panne ou redémarrage
+jusqu'à une lecture valide ; il ne peut jamais autoriser seul un rattachement.
+
+Le Controller conserve son inventaire métier et son dernier snapshot Relay dans
+deux fichiers JSON privés distincts, bornés et publiés atomiquement sous un
+compte non-root. Le cache n'acquiert jamais l'autorité d'ajouter une machine et
+une régression conserve l'ancien état sans autoriser de rattachement. L'API
+projette uniquement les zéro à 64 machines attendues sous 128 Kio : transport,
+enrôlement, observation et lacunes restent séparés. Une observation issue d'une
+lecture fiable est récente jusqu'à 90 secondes incluses, puis ancienne ; un
+écart absolu de plus de 30 secondes entre heure déclarée et heure reçue est un
+avertissement, jamais l'autorité de fraîcheur. Les plages de lacunes sont
+résumées exactement et le snapshot brut de 2 Mio n'atteint jamais la Console.
+Les libellés UTF-8 sont normalisés en NFC, bornés à 256 octets et 80 valeurs
+scalaires par une liste positive Unicode ; l'identifiant immuable, non le
+libellé, reste l'autorité visible.
 
 La preuve de cette application, ses builds et ses tests restent dans le LAB ou
 un runner isolé. Le laptop de développement continue de servir uniquement à
@@ -149,8 +226,9 @@ révocation et rotation restent des opérations distinctes et visibles.
 
 Le mécanisme exact reste à contracter dans un palier post-V1 : tunnel géré par le
 système ou pile WireGuard intégrée et limitée au seul client Controller. Un
-coffre portable déverrouillé par phrase secrète reste aussi une option, pas une
-décision. S'il est retenu, la phrase ne devient jamais directement une clé
+coffre portable de liaison, distinct du coffre Stronghold de la V1, reste aussi
+une option post-V1, pas une décision. S'il est retenu, la phrase ne devient
+jamais directement une clé
 WireGuard : une fonction de dérivation mémoire-dure produit une clé d'enveloppe
 pour un chiffrement authentifié. Le risque d'essais hors ligne, la récupération,
 le changement de phrase et l'effacement en mémoire devront être mesurés et
@@ -159,11 +237,12 @@ prouvés. Aucun de ces mécanismes n'appartient à la V1 ni à `v0.0.3`.
 WireGuard authentifie la possession de la clé du pair ; il ne prouve ni
 l'intégrité de l'appareil ni l'identité de l'humain. La Console possède donc une
 identité d'appareil distincte et le Controller exige une authentification humaine
-forte avant d'émettre une session courte liée à cet appareil. Le frontend ne
-reçoit aucun secret long terme. Une passkey locale constitue le premier profil
-visé ; une organisation pourra intégrer SSO/OIDC sans le rendre obligatoire.
-Les effets de sa panne ou compromission et la récupération locale privée restent
-à contracter.
+forte avant d'émettre une session courte liée à cet appareil. Pour toute la V1,
+une phrase secrète locale déverrouille le coffre Stronghold commun à Linux et
+Windows ; le Controller vérifie une signature humaine distincte de mTLS.
+Windows Hello, passkeys, FIDO2 et SSO/OIDC restent post-V1. Les effets d'une
+future identité externe et sa récupération locale privée seront contractés à ce
+moment.
 
 Un futur accès par navigateur constituerait un mode distinct avec son propre
 frontend distribué et, si nécessaire, une passerelle publique. Il reste hors V1,
@@ -276,8 +355,8 @@ mécanisme adapté au chemin :
 |---|---|
 | Paquets privés entre machines enrôlées | WireGuard, pairs nommés et routes bornées |
 | Daemon vers Relay | mTLS avec une identité propre à chaque Daemon, y compris au-dessus de WireGuard lorsque le Relay est distant |
-| Console installée vers Controller | API privée authentifiée ; identité d'appareil, authentification humaine, session, endpoint et stockage sécurisé à figer dans l'incrément Console–Controller |
-| Controller vers Relay | Canal privé authentifié par une identité de service distincte ; adresse d'écoute, CA et contrat de lecture à figer dans l'incrément Console–Controller |
+| Console installée vers Controller | origine HTTPS TLS 1.3 exacte ; identité d'appareil P-256 mTLS et signature humaine Ed25519 liées au Controller et à son infrastructure ; clés distinctes dans un coffre Tauri Stronghold commun Linux/Windows déverrouillé par six mots locaux Argon2id ; appairage et récupération sur listener temporaire épinglé, session bornée et rotations en deux phases |
+| Controller vers Relay | `GET /v0/snapshot` sur le listener privé exact `8444`, filtré sur l'IP source Controller puis protégé par TLS 1.3 mTLS, CA Ed25519 dédiées, manifeste et `infrastructure_id` commun ; UTC et reprise bornées |
 | Controller vers machine pour un plan approuvé | SSH avec identité d'administration distincte et clé d'hôte vérifiée |
 | Navigateur vers service publié | HTTPS jusqu'au point d'entrée public |
 | VPS vers service du LAN | WireGuard et autorisation limitée à la destination et au port du service |

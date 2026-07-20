@@ -47,6 +47,13 @@ type storedObservation struct {
 	Gaps       []observation.Gap    `json:"gaps"`
 }
 
+// ObservationSnapshot is an immutable copy used by the separate reader API.
+type ObservationSnapshot struct {
+	Envelope   observation.Envelope
+	ReceivedAt string
+	Gaps       []observation.Gap
+}
+
 // OpenObservationStore creates or validates one private Relay state file.
 func OpenObservationStore(directory string) (*ObservationStore, error) {
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
@@ -134,6 +141,21 @@ func (store *ObservationStore) Snapshot(machineID string) (observation.Envelope,
 	result := cloneObservationEnvelope(stored.Envelope)
 	result.Gaps = append([]observation.Gap(nil), stored.Gaps...)
 	return result, stored.ReceivedAt, found
+}
+
+// SnapshotAll copies every retained observation without exposing store state.
+func (store *ObservationStore) SnapshotAll() map[string]ObservationSnapshot {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	result := make(map[string]ObservationSnapshot, len(store.state.Machines))
+	for machineID, stored := range store.state.Machines {
+		result[machineID] = ObservationSnapshot{
+			Envelope:   cloneObservationEnvelope(stored.Envelope),
+			ReceivedAt: stored.ReceivedAt,
+			Gaps:       append([]observation.Gap(nil), stored.Gaps...),
+		}
+	}
+	return result
 }
 
 func mergeReceivedGaps(gaps []observation.Gap) []observation.Gap {

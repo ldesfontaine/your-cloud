@@ -1,0 +1,103 @@
+.yc-access {
+  width: min(100%, 34rem);
+  margin-inline: auto;
+  padding-block: var(--space-8);
+}
+
+.yc-secret {
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--color-warning);
+  border-radius: var(--radius-control);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.yc-infrastructure-card {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.yc-infrastructure-card__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.yc-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-4);
+}
+
+.yc-metric {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.yc-metric__value {
+  font-size: var(--font-size-section);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-section);
+}
+
+.yc-machine-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.yc-machine-button {
+  display: grid;
+  width: 100%;
+  min-height: var(--control-min-size);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  text-align: start;
+  cursor: pointer;
+}
+
+.yc-machine-button[aria-pressed="true"] {
+  border-color: var(--color-primary);
+}
+
+.yc-definition-list {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.yc-definition-list dt {
+  color: var(--color-muted);
+}
+
+.yc-definition-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.yc-textarea {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+@media (max-width: 40rem) {
+  .yc-access {
+    padding-block: var(--space-4);
+  }
+
+  .yc-definition-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+
+  .yc-definition-list dd {
+    margin-block-end: var(--space-3);
+  }
+}

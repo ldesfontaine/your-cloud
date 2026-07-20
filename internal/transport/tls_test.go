@@ -105,6 +105,27 @@ func TestTLSConfigurationRefusesMissingAuthoritiesAndAuthorization(t *testing.T)
 	}
 }
 
+func TestControllerReaderClientPinsPrivateIPv4AndOrigin(t *testing.T) {
+	t.Parallel()
+	authority := newTestAuthority(t, "Relay reader authority")
+	identity := authority.issue(t, "Controller reader", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil, nil)
+	host := "relay-reader.11111111-1111-4111-8111-111111111111.v0-0-3.your-cloud.test"
+	client, err := NewControllerReaderClient(authority.pem, identity, host, host+":8444", "192.0.2.10:8444")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil || transport.MaxConnsPerHost != 1 || transport.MaxResponseHeaderBytes != 8*1024 || transport.TLSClientConfig.ServerName != host {
+		t.Fatal("Controller reader transport is not strictly bounded")
+	}
+	if _, err := NewControllerReaderClient(authority.pem, identity, host, host+":9443", "192.0.2.10:8444"); err == nil {
+		t.Fatal("wrong reader origin port was accepted")
+	}
+	if _, err := NewControllerReaderClient(authority.pem, identity, host, host+":8444", "relay.example:8444"); err == nil {
+		t.Fatal("non-IP private endpoint was accepted")
+	}
+}
+
 func TestTLSConfigurationRefusesUnsafeAuthorityDocuments(t *testing.T) {
 	t.Parallel()
 	authority := newTestAuthority(t, "expected authority")

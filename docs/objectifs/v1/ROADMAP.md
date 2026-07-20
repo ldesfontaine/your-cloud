@@ -1,9 +1,11 @@
 # Roadmap V1
 
 > Statut : `v0.0.1` et `v0.0.2` sont décidées, implémentées et prouvées dans le
-> LAB. `v0.0.3` est ouverte uniquement en cadrage : Console cliente installée,
-> Controller backend sans frontend et lecture privée sont validés ; les
-> paramètres exécutables restants doivent être approuvés avant le code.
+> LAB. Les huit paramètres de `v0.0.3` sont validés, son implémentation Linux est
+> présente et sa [porte Linux](../../lab/v0.0.3-console-controller-linux.md) a
+> réussi le 20 juillet 2026 sur un candidat non commité. Windows reste non
+> exécuté, gelé jusqu'à validation explicite de la stabilisation, puis
+> obligatoire avant de fermer le palier.
 
 Une [édition HTML autonome et visuelle](../../html/roadmap-v1.html) accompagne cette source
 Markdown.
@@ -51,7 +53,7 @@ Le développement produit commence avec le prochain incrément décrit ci-dessou
 | Contrat V1 | oui | non | non |
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
-| `v0.0.3` | partiellement — architecture validée, paramètres exécutables ouverts | non | non |
+| `v0.0.3` | oui — architecture et paramètres 1 à 8 validés | partiellement — porte Linux | partiellement — porte Linux ; Windows absente |
 | Paliers postérieurs de la V1 | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
@@ -70,7 +72,7 @@ simplement la roadmap V1 d'oublier la direction déjà validée.
 | Auxiliaire local | Absent du contrat et de l'exécutable V1 | Futur mode ponctuel du même artefact, sans réseau, invoqué pour un plan exact mais validé indépendamment avant privilège ; aucun shell général | [Cap](../../projet/CAP.md) |
 | Chemin d'action | Console → Controller → plan lisible → approbation liée au contenu → Ansible → SSH borné → vérification | Garder le même plan approuvé mais choisir l'autorité adaptée : Auxiliaire pour Linux local, API OpenStack, runner IaC isolé ou API K3s | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
 | App | Console cliente installée et signée sur Linux et Windows, frontend embarqué sans serveur local ; Controller backend d'une infrastructure sans frontend | Controller privé derrière WireGuard, clé de pair et identité distinctes par appareil administrateur, authentification humaine et fournisseur central d'identité facultatif ; téléphone puis navigateur public seulement comme modes futurs séparés | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
-| Chiffrement et identités | mTLS pour Daemon–Relay, canal privé authentifié pour Controller–Relay, SSH pour l'administration, HTTPS pour le Web et WireGuard pour le passage privé ; chaque identité et chaque flux restent bornés | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif V1](README.md) |
+| Chiffrement et identités | mTLS séparés pour l'ingestion Daemon `8443` et le lecteur Controller `8444`, filtre source privé par défaut, autorités et registres propres, SSH pour l'administration et HTTPS pour le Web ; chaque identité et chaque flux restent bornés | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif V1](README.md) |
 | Exposition des services | Traefik sur le VPS, file provider sans socket de moteur, deux noms sur la même IP et `443` ; BentoPDF local au VPS et Vaultwarden atteint uniquement par WireGuard | Représenter plus tard une vraie DMZ seulement si des frontières réseau indépendantes sont appliquées et vérifiées | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
 | Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif V1](README.md) |
 | Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
@@ -189,17 +191,81 @@ schéma, à l'empreinte, aux séquences, à son heure locale de réception, aux
 lacunes cumulées, à la persistance du dernier état validé et à son accusé
 durable.
 
-**Cadrage obligatoire avant code :** choisir l'enveloppe cliente, le frontend et
-la chaîne de distribution signée ; définir le stockage sécurisé par plateforme,
-l'identité d'appareil, la passkey locale, les sessions courtes et la récupération ;
-figer l'API Console–Controller ; puis figer une frontière de lecture Relay
-distincte du listener Daemon actuel, ou une séparation équivalente explicitement
-prouvée, avec son sens d'échange, son autorité de certificats, son identité, ses
-méthodes, routes, portées, schémas et bornes. Le contrat traite aussi la dérive
-entre les horloges du Relay et du Controller, le modèle minimal de données et les
-seuils de fraîcheur. Enfin, le système visuel de la Console — palette,
-typographies, espacements, composants, états, responsive et accessibilité — est
-consigné avant les premiers écrans.
+**Cadrage validé :** la Console utilise Tauri 2 avec React, TypeScript et Vite.
+Son frontend est embarqué, sans serveur local, réseau libre ou code distant. La
+distribution initiale produit un `.deb` Linux et un `.msi` Windows natifs,
+signés et reliés au même commit, au même verrou frontend, à un manifeste, des
+empreintes, une SBOM et leur provenance ; la mise à jour reste manuelle.
+
+L'API Console–Controller est REST JSON sur une origine HTTPS TLS 1.3 exacte.
+L'enveloppe présente une identité d'appareil mTLS et une session humaine opaque,
+puis expose seulement l'initialisation unique de l'infrastructure, sa lecture,
+la lecture des machines et le rattachement idempotent d'une machine déjà
+enrôlée. Schémas, tailles, délais, concurrence et erreurs sont bornés. Un
+Controller porte un identifiant d'infrastructure immuable et refuse toute
+machine que le Relay authentifié ne rattache pas à cette même infrastructure.
+
+Linux et Windows utilisent le même coffre Tauri Stronghold, déverrouillé par
+une phrase secrète locale dérivée avec Argon2id. Les clés d'appareil et humaines
+restent distinctes par Controller. Le frontend voit brièvement la phrase saisie
+puis l'efface ; il ne reçoit aucune clé dérivée, clé privée, donnée du coffre ou
+session. La phrase contient six mots français aléatoires. Un listener TLS
+épinglé `9444`, réellement temporaire, permet l'appairage ou la récupération
+après ouverture par l'autorité locale du Controller ; il ferme après dix
+minutes, un succès ou cinq échecs et n'expose aucune route métier.
+
+Chaque Controller accepte un humain et un appareil actifs dans ce palier. Le
+certificat P-256 vaut 180 jours et se remplace manuellement en deux phases sans
+intervalle de double autorité ni verrouillage si une réponse se perd. Le
+Controller vérifie les révocations à chaque requête, y compris sur une connexion
+réutilisée. La preuve humaine Ed25519 ouvre une session opaque liée au
+certificat et à l'infrastructure, limitée à 30 minutes d'inactivité et huit
+heures absolues sans refresh token. Un code global de récupération de 256 bits,
+jamais sauvegardé, dérive une clé publique différente par Controller ; son
+incident se traite par rotation visible sur chaque association.
+
+Le Relay ouvre en plus de l'ingestion `8443` un lecteur `8444` lié à son adresse
+privée exacte. Le filtre d'entrée refuse par défaut et n'autorise que l'IP privée
+provisionnée du Controller, supprime les autres paquets et borne les nouveaux
+TCP autorisés ; TLS 1.3 mTLS, deux autorités Ed25519 dédiées par infrastructure
+et un manifeste revérifié à chaque requête restent nécessaires derrière ce
+filtre. Le Controller génère les UUID immuables importés par le manifeste et le
+registre Daemon schéma 2. Seul `GET /v0/snapshot`, sans corps ni query, rend de
+zéro à 64 derniers états dans une réponse de 2 Mio. Les dates sont normalisées
+en UTC ; le Controller calcule l'âge depuis l'heure de réception du Relay et
+exige `snapshot_at` dans `[fin - 30 s, départ + 30 s]`. Le dernier snapshot est
+conservé atomiquement comme `indisponible` après panne puis repris avec un
+backoff borné.
+
+Le Controller sépare désormais l'autorité métier `inventory.json` du cache de
+transport `relay-cache.json`. Les deux fichiers JSON privés sont bornés,
+validés et publiés atomiquement sous un compte non-root ; une régression du
+cache ne peut ni remplacer l'inventaire ni autoriser un rattachement. La
+projection rend uniquement les zéro à 64 machines attendues sous 128 Kio. Une
+observation fiable est `recent` jusqu'à 90 secondes incluses puis `old` ; panne,
+horloge non fiable, enrôlement et lacunes restent des dimensions séparées. Les
+plages de lacunes sont résumées exactement sans transmettre les 2 Mio bruts.
+Les libellés UTF-8 sont normalisés en NFC, bornés avant et après normalisation
+et limités à une liste positive Unicode ; ils ne servent jamais d'identité ou
+d'autorisation.
+
+**Système visuel Linux implémenté et éprouvé :** l'interface claire et sombre emploie
+des tokens sémantiques, Inter et IBM Plex Mono embarquées, les icônes Lucide et
+une mise en page relative. La fenêtre standard vaut `1280 x 800`, avec un
+minimum `640 x 560`. Le sélecteur d'infrastructure précède exactement
+`Synthèse`, `Parc` et `Observations` ; le Controller reste une liaison
+contextuelle, la sécurité locale reste sous `Profil et sessions` et aucun Relay
+n'est inventé comme machine dédiée. Les sept vues n'effectuent aucun polling de
+fond et rendent les données Controller comme texte inerte.
+
+**Porte Linux exécutée, porte Windows non exécutée :** les six VM Debian
+`v1-full` ont construit, installé, attaqué et piloté le candidat Linux selon le
+[rapport LAB](../../lab/v0.0.3-console-controller-linux.md). Le `.deb`, le
+coffre, les deux Controllers, la lecture Relay, les reprises et les sept vues
+ont passé ; l'orchestration complète reste assistée. La seconde porte doit
+encore ajouter `lab-console-windows`, construire nativement le `.msi` et rejouer
+les preuves Windows, mais Lucas la garde gelée jusqu'à validation explicite de
+la stabilisation `v0.0.3`. Le palier ne ferme pas avant réussite des deux portes.
 
 **Précondition validée :** le chemin Daemon–Relay authentifié, le tampon borné
 et la représentation des données anciennes ou lacunaires ont franchi leur
@@ -207,13 +273,29 @@ preuve de sortie.
 
 **Preuve de sortie :** les artefacts Linux et Windows proviennent des mêmes
 sources et vérifient leur signature ; la Console fonctionne sans frontend
-hébergé ni listener local ; un Controller ne peut pas lui substituer du code ;
+hébergé ni listener sur l'appareil administrateur ; un Controller ne peut pas lui substituer du code ;
 une identité d'appareil, une session, un Controller ou une infrastructure
 inconnus sont refusés. Une donnée non reçue n'est jamais présentée comme
 actuelle. Un certificat, une identité, un hôte ou un port Relay non approuvé est
 refusé. Le frontend ne reçoit aucune clé SSH, identité de runner, secret de
 machine ou secret long terme de session. Le Controller reste en lecture seule :
 aucun Ansible, SSH, plan appliqué ou canal d'action n'entre dans ce palier.
+
+Une VM hostile distincte, placée sur le même réseau LAB, doit vérifier que
+`8444` est filtré depuis sa source, puis tenter dans une phase isolée d'atteindre
+la frontière depuis l'IP autorisée mais sans le certificat lecteur. Elle croise
+ensuite certificats Daemon et Controller, CA, noms, infrastructures, registres,
+méthodes, routes, queries, corps, schémas, tailles, concurrence et horloges. Elle
+tente aussi l'accès Console–Controller sans certificat, avec une identité
+inconnue, révoquée ou issue de l'autre
+Controller, avec une session ou une infrastructure croisée et avec une machine
+de l'autre infrastructure. Elle attaque aussi les fichiers d'état, les
+publications interrompues, le cache régressif, la fraîcheur aux bornes, la
+projection surdimensionnée, les libellés Unicode hostiles, le port temporaire
+fermé, les codes faux, expirés, rejoués ou concurrents, les challenges croisés, les
+certificats candidats et les pertes de réponse pendant chaque activation.
+Chaque refus doit laisser l'API nominale disponible, l'autorité active unique et
+l'inventaire inchangé. Cette matrice est décidée mais pas encore exécutée.
 
 La preuve s'exécute dans le LAB et les runners isolés, jamais sur le laptop de
 développement. WireGuard, téléphone, navigateur public, SSO obligatoire et
@@ -362,12 +444,9 @@ la présente roadmap.
 - Les numéros et le découpage exacts des paliers postérieurs à `v0.0.3`.
 - L'enveloppe de distribution autour de l'exécutable unique — paquet Debian,
   archive signée ou autre format — sans rouvrir la séparation des processus.
-- Le choix de l'enveloppe cliente, du framework frontend et de la chaîne de
-  signature et de mise à jour des artefacts Linux et Windows.
-- Le stockage sécurisé par plateforme, le format de l'identité d'appareil, la
-  passkey locale, les durées et la révocation de session ainsi que la récupération.
-- Le protocole exact de lecture Controller–Relay, son listener, sa CA, ses bornes
-  et sa reprise ; ces paramètres appartiennent au prochain contrat.
+- Windows Hello, passkeys, FIDO2 et SSO/OIDC restent post-V1 ; la phrase, le
+  coffre, l'appairage, les certificats, sessions, rotations, révocations et la
+  récupération locale de la V1 sont décidés et ne sont plus des points ouverts.
 - Le placement et le protocole d'une éventuelle passerelle Web publique après la
   V1 ; le Controller privé derrière WireGuard et le SSO facultatif sont décidés.
 - Le fournisseur, le placement et la récupération du SSO `v1.0.1` de
@@ -376,9 +455,10 @@ la présente roadmap.
 
 ## Point d'arrêt
 
-`v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Le
-cadrage de `v0.0.3` est ouvert et ses décisions validées sont consignées dans
-son contrat. La prochaine décision complète ses paramètres exécutables ; aucune
-branche ni implémentation ne commence avant leur validation. Action distante,
+`v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Les
+paramètres 1 à 8 de `v0.0.3` sont fermés et la porte Linux de la branche
+`console-controller` a réussi sur un candidat non commité. Le point d'arrêt est
+sa stabilisation et sa relecture ; Windows reste gelé jusqu'à une nouvelle
+validation explicite. Aucun commit ou push n'est implicite. Action distante,
 Ansible métier, Auxiliaire, WireGuard, OCI, téléphone, navigateur public,
 Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors périmètre.

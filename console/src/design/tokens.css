@@ -1,0 +1,83 @@
+:root {
+  color-scheme: light dark;
+
+  --color-primary: #3730a3;
+  --color-primary-contrast: #ffffff;
+  --color-accent: #0f766e;
+  --color-accent-soft: #ccfbf1;
+  --color-warning: #b45309;
+  --color-warning-soft: #fef3c7;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fee2e2;
+  --color-success: #047857;
+  --color-success-soft: #d1fae5;
+  --color-text: #111827;
+  --color-muted: #4b5563;
+  --color-border: #d1d5db;
+  --color-canvas: #fafaf9;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-focus: #3730a3;
+  --color-overlay: #11182799;
+
+  --font-body: "Inter", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --font-size-page: 1.75rem;
+  --line-height-page: 2.25rem;
+  --font-size-section: 1.25rem;
+  --line-height-section: 1.75rem;
+  --font-size-component: 1rem;
+  --line-height-component: 1.5rem;
+  --font-size-body: 0.875rem;
+  --line-height-body: 1.375rem;
+  --font-size-help: 0.75rem;
+  --line-height-help: 1.125rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius-control: 0.5rem;
+  --radius-card: 0.875rem;
+  --border-width: 1px;
+  --control-min-size: 2.75rem;
+  --icon-size: 1.25rem;
+  --focus-width: 0.1875rem;
+  --content-max: 90rem;
+  --sidebar-width: 15rem;
+  --context-width: 20rem;
+  --shadow-raised: 0 0.5rem 1.5rem #11182714;
+  --motion-fast: 120ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #818cf8;
+    --color-primary-contrast: #0b1120;
+    --color-accent: #5eead4;
+    --color-accent-soft: #134e4a;
+    --color-warning: #fbbf24;
+    --color-warning-soft: #78350f;
+    --color-danger: #f87171;
+    --color-danger-soft: #7f1d1d;
+    --color-success: #34d399;
+    --color-success-soft: #064e3b;
+    --color-text: #f8fafc;
+    --color-muted: #cbd5e1;
+    --color-border: #334155;
+    --color-canvas: #0b1120;
+    --color-surface: #111827;
+    --color-surface-raised: #172033;
+    --color-focus: #a5b4fc;
+    --color-overlay: #020617cc;
+    --shadow-raised: 0 0.5rem 1.5rem #02061766;
+  }
+}

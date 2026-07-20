@@ -103,6 +103,12 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.0.3` — porte Linux Console–Controller](v0.0.3-console-controller-linux.md) :
+  `.deb` signé et installé, coffre et appairage, deux Controllers séparés,
+  matrice hostile depuis une seconde VM, frontière réseau privée, Relay
+  indisponible, donnée ancienne, lacune, reprise, redémarrages et sept vues
+  claires/sombres exécutés le 20 juillet 2026. Le candidat reste non commité et
+  Windows non exécuté ; le palier complet reste ouvert.
 - [`v0.0.2` — observation authentifiée et bornée](v0.0.2-observation.md) :
   mTLS, enrôlement et révocation, profil fixe, tampon saturé avec lacune,
   reprise, redémarrages et cycle retrait-réinstallation exécutés dans
@@ -114,3 +120,15 @@ documentée et reproductible dans le LAB approprié.
   automatisée propre le 17 juillet 2026, puis revalidation historique depuis
   les chemins réorganisés avec le run `20260717T100150Z-1543398`, antérieur aux
   derniers durcissements du banc et de la CI.
+
+## Point d'arrêt avant la prochaine preuve
+
+La première porte `v0.0.3` a employé les six VM Debian de `v1-full` et son
+résultat Linux est conservé dans le rapport ci-dessus. Le travail s'arrête sur
+la stabilisation et la relecture de ce candidat non commité. Lucas garde la
+porte Windows gelée jusqu'à une nouvelle validation explicite. Après ce futur
+accord seulement, `labctl` devra apprendre une VM `lab-console-windows` issue
+d'un média Windows 11 officiel et identifié, construire nativement le `.msi`,
+puis l'installer et l'exécuter depuis un snapshot runtime distinct. Tant que
+cette seconde porte n'est pas réellement verte, `v0.0.3` reste non prouvée sur
+Windows et donc non terminée.
