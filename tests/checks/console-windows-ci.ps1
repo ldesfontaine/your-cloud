@@ -92,7 +92,7 @@ try {
     Invoke-BoundedNative `
         -FilePath certutil.exe `
         -TimeoutSeconds 60 `
-        -Arguments @("-user", "-f", "-addstore", "Root", $certificatePath)
+        -Arguments @("-user", "-f", "-addstore", "TrustedPeople", $certificatePath)
     Write-Host "CI Windows: synthetic certificate ready"
 
     $override = @{
@@ -201,7 +201,7 @@ finally {
         }
     }
     if ($null -ne $certificate) {
-        Remove-Item -LiteralPath "Cert:\CurrentUser\Root\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "Cert:\CurrentUser\TrustedPeople\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $temporaryRoot) {
