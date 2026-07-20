@@ -1242,6 +1242,7 @@ fn write_metadata_atomic(directory: &Path, metadata: &VaultMetadata) -> Result<(
     let mut file = options
         .open(&temporary)
         .map_err(|_| VaultError::Unavailable)?;
+    set_private_file_mode(&temporary)?;
     file.write_all(&encoded)
         .map_err(|_| VaultError::Unavailable)?;
     file.sync_all().map_err(|_| VaultError::Unavailable)?;
@@ -1251,28 +1252,37 @@ fn write_metadata_atomic(directory: &Path, metadata: &VaultMetadata) -> Result<(
 }
 
 fn read_private_file(path: &Path, maximum: u64) -> Result<Vec<u8>, VaultError> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| VaultError::Unavailable)?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.len() == 0
-        || metadata.len() > maximum
-    {
-        return Err(VaultError::Unavailable);
-    }
-    validate_private_file_metadata(&metadata)?;
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = options.open(path).map_err(|_| VaultError::Unavailable)?;
+    #[cfg(windows)]
+    let file = crate::windows_security::open_private_file(path, maximum)
+        .map_err(|_| VaultError::Unavailable)?;
+
+    #[cfg(not(windows))]
+    let file = {
+        let metadata = fs::symlink_metadata(path).map_err(|_| VaultError::Unavailable)?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.len() == 0
+            || metadata.len() > maximum
+        {
+            return Err(VaultError::Unavailable);
+        }
+        validate_private_file_metadata(&metadata)?;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(path).map_err(|_| VaultError::Unavailable)?;
+        let opened = file.metadata().map_err(|_| VaultError::Unavailable)?;
+        validate_private_file_metadata(&opened)?;
+        if opened.len() != metadata.len() || opened.len() == 0 || opened.len() > maximum {
+            return Err(VaultError::Unavailable);
+        }
+        file
+    };
     let opened = file.metadata().map_err(|_| VaultError::Unavailable)?;
-    validate_private_file_metadata(&opened)?;
-    if opened.len() != metadata.len() || opened.len() == 0 || opened.len() > maximum {
-        return Err(VaultError::Unavailable);
-    }
     let mut bytes = Vec::with_capacity(opened.len() as usize);
     file.take(maximum + 1)
         .read_to_end(&mut bytes)
@@ -1295,6 +1305,8 @@ fn ensure_private_directory(path: &Path) -> Result<(), VaultError> {
         #[cfg(not(unix))]
         fs::create_dir_all(path).map_err(|_| VaultError::Unavailable)?;
     }
+    #[cfg(windows)]
+    crate::windows_security::protect_directory(path).map_err(|_| VaultError::Unavailable)?;
     validate_private_directory(path)
 }
 
@@ -1310,6 +1322,9 @@ fn validate_private_directory(path: &Path) -> Result<(), VaultError> {
             return Err(VaultError::Unavailable);
         }
     }
+    #[cfg(windows)]
+    crate::windows_security::validate_private_directory(path)
+        .map_err(|_| VaultError::Unavailable)?;
     Ok(())
 }
 
@@ -1320,6 +1335,8 @@ fn set_private_file_mode(path: &Path) -> Result<(), VaultError> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|_| VaultError::Unavailable)?;
     }
+    #[cfg(windows)]
+    crate::windows_security::protect_file(path).map_err(|_| VaultError::Unavailable)?;
     Ok(())
 }
 

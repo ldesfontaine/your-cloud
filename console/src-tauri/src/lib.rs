@@ -1,5 +1,7 @@
 mod network;
 mod vault;
+#[cfg(windows)]
+mod windows_security;
 
 use network::{InfrastructureView, MachineMutationView, MachinesView, NetworkState, PairingInput};
 use serde::Serialize;

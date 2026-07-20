@@ -174,6 +174,30 @@ défaut du helper Stronghold. Un changement de phrase écrit et valide un nouvea
 snapshot séparé, le publie par remplacement atomique, puis seulement retire
 l'ancien ; crash ou erreur avant la publication conservent l'ancien coffre.
 
+Sous Windows, une **DACL protégée** est la liste explicite des identités
+autorisées sur un fichier, sans reprendre les droits hérités du répertoire
+parent. Le répertoire du coffre et ses fichiers ont le compte humain courant
+comme propriétaire et exactement deux entrées d'autorisation : ce compte et
+`SYSTEM`, avec contrôle complet ; aucune identité locale non privilégiée n'est
+admise. Le cœur Rust applique puis relit cette DACL et son indicateur de
+protection sur le même handle natif.
+
+L'ouverture Windows demande à voir le point de réanalyse lui-même au lieu de le
+suivre, refuse un type autre que le fichier ou répertoire attendu et, pour un
+fichier, exige exactement un lien physique, une taille non nulle et la borne du
+format avant lecture. Propriétaire, DACL, type, attribut de réanalyse, nombre de
+liens et taille sont vérifiés depuis le handle ouvert afin de ne pas valider un
+chemin puis en lire un autre. Les tests hostiles natifs remplacent la DACL par
+un droit mondial, créent un lien physique et tentent un lien symbolique ; les
+trois cas doivent fermer l'accès au coffre.
+
+Un administrateur Windows peut encore prendre possession du fichier et
+`SYSTEM` doit pouvoir l'ouvrir : la compromission d'une de ces autorités reste
+un risque résiduel explicite. Ce contrôle protège contre les autres comptes
+locaux ordinaires et les substitutions de chemin visées ; il ne revendique ni
+enclave matérielle ni résistance à un processus déjà exécuté sous l'identité de
+l'utilisateur.
+
 Le frontend affiche le champ de phrase puis la transmet uniquement à l'opération
 Tauri nommée `unlock_console`. Il efface aussitôt son champ et ne reçoit jamais
 la clé dérivée, une clé privée, le contenu du coffre ou un jeton de session.
@@ -527,7 +551,13 @@ une phrase de la
 [fiche Cryptographic Storage OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html).
 Le [plugin Stronghold officiel de Tauri](https://v2.tauri.app/plugin/stronghold/)
 fournit le moteur de coffre commun à Linux et Windows ; le profil Argon2id exact
-reste appliqué et validé par le cœur Rust. Les sessions
+reste appliqué et validé par le cœur Rust.
+Les protections Windows s'appuient sur la
+[sécurité des fichiers Microsoft](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights),
+les [descripteurs SDDL](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format)
+et les API documentées de lecture et de remplacement des informations de
+sécurité ; ces sources guident la DACL minimale sans constituer une conformité
+Windows globale. Les sessions
 opaques, leurs expirations côté serveur et leur invalidation suivent la
 [fiche Session Management OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) ;
 les délais progressifs et la preuve fraîche des opérations sensibles suivent la
