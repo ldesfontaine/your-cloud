@@ -260,7 +260,7 @@ def validate(
     authorized_metrics = _require_object(
         _require_object(report, "authorizedActionSourcesResult"), "metrics"
     )
-    _require_exact_integer(authorized_metrics, "actionRefsTotal", 7)
+    _require_exact_integer(authorized_metrics, "actionRefsTotal", 8)
     permissions_metrics = _require_object(
         _require_object(report, "permissionsResult"), "metrics"
     )
