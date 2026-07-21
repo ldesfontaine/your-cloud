@@ -14,7 +14,13 @@ import urllib.error
 import urllib.request
 
 
-def request(base_url: str, method: str, path: str, payload: object | None = None) -> object:
+def request(
+    base_url: str,
+    method: str,
+    path: str,
+    payload: object | None = None,
+    timeout_seconds: int = 30,
+) -> object:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"{base_url}{path}",
@@ -23,7 +29,7 @@ def request(base_url: str, method: str, path: str, payload: object | None = None
         method=method,
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
             document = json.load(response)
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
@@ -39,6 +45,7 @@ class Driver:
             "POST",
             "/session",
             {"capabilities": {"alwaysMatch": {"tauri:options": {"application": application}}}},
+            timeout_seconds=120,
         )
         self.session_id = response["sessionId"]
         time.sleep(0.5)
