@@ -38,13 +38,22 @@ def request(
 
 
 class Driver:
-    def __init__(self, base_url: str, application: str):
+    def __init__(self, base_url: str, application: str, webview_user_data: str):
         self.base_url = base_url.rstrip("/")
         response = request(
             self.base_url,
             "POST",
             "/session",
-            {"capabilities": {"alwaysMatch": {"tauri:options": {"application": application}}}},
+            {
+                "capabilities": {
+                    "alwaysMatch": {
+                        "tauri:options": {
+                            "application": application,
+                            "webviewOptions": {"userDataFolder": webview_user_data},
+                        }
+                    }
+                }
+            },
             timeout_seconds=120,
         )
         self.session_id = response["sessionId"]
@@ -426,11 +435,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:4444")
     parser.add_argument("--application", required=True)
+    parser.add_argument("--webview-user-data", required=True)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
 
-    driver = Driver(args.base_url, args.application)
+    driver = Driver(args.base_url, args.application, args.webview_user_data)
     report: dict[str, object] = {
         "schema_version": 1,
         "application": args.application,

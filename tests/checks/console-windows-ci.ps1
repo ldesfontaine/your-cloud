@@ -13,6 +13,7 @@ $process = $null
 $driverProcess = $null
 $msi = $null
 $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
+$webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
 $applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
 
 function Invoke-Native {
@@ -279,6 +280,7 @@ try {
         -Arguments @(
             (Join-Path $root "tests\checks\console-windows-ui-proof.py"),
             "--application", $installedExecutable,
+            "--webview-user-data", $webViewUserData,
             "--output", $uiProofRoot
         )
     & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
