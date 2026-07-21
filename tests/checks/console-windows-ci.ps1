@@ -14,6 +14,7 @@ $driverProcess = $null
 $msi = $null
 $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
 $webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
+$sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
 
 function Invoke-Native {
@@ -275,14 +276,61 @@ try {
     if (-not $driverReady) {
         throw "tauri-driver did not become ready within 30 seconds"
     }
-    Invoke-Native `
-        -FilePath python `
-        -Arguments @(
-            (Join-Path $root "tests\checks\console-windows-ui-proof.py"),
-            "--application", $installedExecutable,
-            "--webview-user-data", $webViewUserData,
-            "--output", $uiProofRoot
-        )
+    try {
+        Invoke-Native `
+            -FilePath python `
+            -Arguments @(
+                (Join-Path $root "tests\checks\console-windows-ui-proof.py"),
+                "--application", $installedExecutable,
+                "--webview-user-data", $webViewUserData,
+                "--session-ready-marker", $sessionReadyMarker,
+                "--output", $uiProofRoot
+            )
+    }
+    catch {
+        if (-not (Test-Path -LiteralPath $sessionReadyMarker -PathType Leaf)) {
+            Write-Host "CI Windows: WebDriver session creation failed before test secrets existed"
+            Get-Content -LiteralPath $driverOutput, $driverError -Tail 200 -ErrorAction SilentlyContinue
+
+            $activePorts = @(Get-ChildItem `
+                -LiteralPath $webViewUserData `
+                -Filter "DevToolsActivePort" `
+                -Recurse `
+                -File `
+                -ErrorAction SilentlyContinue)
+            if ($activePorts.Count -eq 0) {
+                Write-Host "CI Windows: no DevToolsActivePort file exists under the bounded WebView2 directory"
+            }
+            else {
+                $webViewRoot = [IO.Path]::GetFullPath($webViewUserData + [IO.Path]::DirectorySeparatorChar)
+                foreach ($activePort in $activePorts) {
+                    $activePortPath = [IO.Path]::GetFullPath($activePort.FullName)
+                    if (-not $activePortPath.StartsWith($webViewRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                        throw "DevToolsActivePort escaped the bounded WebView2 directory"
+                    }
+                    $relativePath = [IO.Path]::GetRelativePath($webViewUserData, $activePortPath)
+                    Write-Host "CI Windows: DevToolsActivePort metadata path=$relativePath size=$($activePort.Length)"
+                }
+            }
+
+            foreach ($policyRoot in @(
+                "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
+                "HKCU:\SOFTWARE\Policies\Microsoft\Edge"
+            )) {
+                $policy = Get-ItemProperty `
+                    -LiteralPath $policyRoot `
+                    -Name "RemoteDebuggingAllowed" `
+                    -ErrorAction SilentlyContinue
+                if ($null -eq $policy) {
+                    Write-Host "CI Windows: RemoteDebuggingAllowed is not configured at $policyRoot"
+                }
+                else {
+                    Write-Host "CI Windows: RemoteDebuggingAllowed=$($policy.RemoteDebuggingAllowed) at $policyRoot"
+                }
+            }
+        }
+        throw
+    }
     & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
     $driverProcess.WaitForExit()
     $driverProcess = $null

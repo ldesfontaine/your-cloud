@@ -436,11 +436,13 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:4444")
     parser.add_argument("--application", required=True)
     parser.add_argument("--webview-user-data", required=True)
+    parser.add_argument("--session-ready-marker", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
 
     driver = Driver(args.base_url, args.application, args.webview_user_data)
+    args.session_ready_marker.touch(exist_ok=False)
     report: dict[str, object] = {
         "schema_version": 1,
         "application": args.application,
