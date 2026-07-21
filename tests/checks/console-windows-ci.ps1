@@ -248,13 +248,25 @@ try {
     $tauriDriver = Get-Command "tauri-driver.exe" -ErrorAction Stop
     $driverOutput = Join-Path $temporaryRoot "tauri-driver.stdout.log"
     $driverError = Join-Path $temporaryRoot "tauri-driver.stderr.log"
-    $driverProcess = Start-Process `
-        -FilePath $tauriDriver.Source `
-        -ArgumentList @("--native-driver", $edgeDriver.FullName) `
-        -NoNewWindow `
-        -PassThru `
-        -RedirectStandardOutput $driverOutput `
-        -RedirectStandardError $driverError
+    $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
+    try {
+        $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
+        $driverProcess = Start-Process `
+            -FilePath $tauriDriver.Source `
+            -ArgumentList @("--native-driver", $edgeDriver.FullName) `
+            -NoNewWindow `
+            -PassThru `
+            -RedirectStandardOutput $driverOutput `
+            -RedirectStandardError $driverError
+    }
+    finally {
+        if ($null -eq $previousWebViewUserData) {
+            Remove-Item Env:\WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
+        }
+    }
     $driverReady = $false
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
         if ($driverProcess.HasExited) {
