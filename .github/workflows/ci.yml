@@ -99,6 +99,10 @@ jobs:
         working-directory: console/src-tauri
         run: cargo +1.94.1 test --release --locked
 
+      - name: Installer le pilote Tauri Windows borné
+        if: runner.os == 'Windows'
+        run: cargo +1.94.1 install tauri-driver --version 2.0.6 --locked
+
       - name: Construire, installer et lancer le .deb
         if: runner.os == 'Linux'
         run: ./tests/checks/console-linux-ci
@@ -107,6 +111,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/checks/console-windows-ci.ps1
+
+      - name: Archiver la preuve WebView2 Windows
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: console-windows-webview2-proof
+          path: ${{ runner.temp }}/your-cloud-windows-ui-proof
+          if-no-files-found: error
+          retention-days: 7
 
   plumber_policy:
     name: Politique Plumber

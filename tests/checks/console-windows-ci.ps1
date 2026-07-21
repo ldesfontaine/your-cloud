@@ -10,7 +10,10 @@ $certificatePath = Join-Path $temporaryRoot "signer.cer"
 $certificate = $null
 $installed = $false
 $process = $null
+$driverProcess = $null
 $msi = $null
+$uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
+$applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
 
 function Invoke-Native {
     param(
@@ -77,6 +80,9 @@ function Assert-AuthenticodeSignature {
 
 try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+    if (Test-Path -LiteralPath $uiProofRoot) {
+        Remove-Item -LiteralPath $uiProofRoot -Recurse -Force
+    }
     Write-Host "CI Windows: creating the synthetic code-signing certificate"
     $certificate = New-SelfSignedCertificate `
         -Type CodeSigningCert `
@@ -187,9 +193,104 @@ try {
         throw "installed Console or one of its children opened a TCP listener"
     }
 
+    & taskkill.exe /PID $process.Id /T /F | Out-Null
+    $process.WaitForExit()
+    $process = $null
+
+    Write-Host "CI Windows: preparing the bounded WebView2 driver"
+    $edgePath = Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"
+    if (-not (Test-Path -LiteralPath $edgePath -PathType Leaf)) {
+        throw "Microsoft Edge executable was not found"
+    }
+    $edgeVersion = (Get-Item -LiteralPath $edgePath).VersionInfo.ProductVersion
+    if ($edgeVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        throw "Microsoft Edge version is not canonical"
+    }
+    $edgeDriverArchive = Join-Path $temporaryRoot "edgedriver_win64.zip"
+    $edgeDriverDirectory = Join-Path $temporaryRoot "edgedriver"
+    $edgeDriverUri = "https://msedgedriver.microsoft.com/$edgeVersion/edgedriver_win64.zip"
+    Invoke-WebRequest -Uri $edgeDriverUri -OutFile $edgeDriverArchive -TimeoutSec 60
+    $archiveLength = (Get-Item -LiteralPath $edgeDriverArchive).Length
+    if ($archiveLength -lt 1024 -or $archiveLength -gt 50MB) {
+        throw "Microsoft Edge Driver archive is outside its size bound"
+    }
+    $archive = [IO.Compression.ZipFile]::OpenRead($edgeDriverArchive)
+    try {
+        $uncompressedLength = ($archive.Entries | Measure-Object -Property Length -Sum).Sum
+        if ($archive.Entries.Count -gt 16 -or $uncompressedLength -gt 100MB) {
+            throw "Microsoft Edge Driver archive is outside its extraction bound"
+        }
+        foreach ($entry in $archive.Entries) {
+            if ($entry.FullName.Contains('..') -or [IO.Path]::IsPathRooted($entry.FullName)) {
+                throw "Microsoft Edge Driver archive contains an unsafe path"
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+    Expand-Archive -LiteralPath $edgeDriverArchive -DestinationPath $edgeDriverDirectory
+    $edgeDrivers = @(Get-ChildItem -LiteralPath $edgeDriverDirectory -Filter "msedgedriver.exe" -Recurse -File)
+    if ($edgeDrivers.Count -ne 1) {
+        throw "expected exactly one Microsoft Edge Driver executable"
+    }
+    $edgeDriver = $edgeDrivers[0]
+    $edgeDriverSignature = Get-AuthenticodeSignature -LiteralPath $edgeDriver.FullName
+    if ($edgeDriverSignature.Status -ne "Valid" -or
+        $edgeDriverSignature.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
+        throw "Microsoft Edge Driver signature is invalid or has an unexpected publisher"
+    }
+    if ($edgeDriver.VersionInfo.ProductVersion -ne $edgeVersion) {
+        throw "Microsoft Edge and Microsoft Edge Driver versions differ"
+    }
+    $tauriDriver = Get-Command "tauri-driver.exe" -ErrorAction Stop
+    $driverOutput = Join-Path $temporaryRoot "tauri-driver.stdout.log"
+    $driverError = Join-Path $temporaryRoot "tauri-driver.stderr.log"
+    $driverProcess = Start-Process `
+        -FilePath $tauriDriver.Source `
+        -ArgumentList @("--native-driver", $edgeDriver.FullName) `
+        -NoNewWindow `
+        -PassThru `
+        -RedirectStandardOutput $driverOutput `
+        -RedirectStandardError $driverError
+    $driverReady = $false
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        if ($driverProcess.HasExited) {
+            Get-Content -LiteralPath $driverOutput, $driverError -ErrorAction SilentlyContinue
+            throw "tauri-driver exited before accepting WebDriver sessions"
+        }
+        $client = [Net.Sockets.TcpClient]::new()
+        try {
+            $connection = $client.ConnectAsync("127.0.0.1", 4444)
+            if ($connection.Wait(250) -and $client.Connected) {
+                $driverReady = $true
+                break
+            }
+        }
+        finally {
+            $client.Dispose()
+        }
+    }
+    if (-not $driverReady) {
+        throw "tauri-driver did not become ready within 30 seconds"
+    }
+    Invoke-Native `
+        -FilePath python `
+        -Arguments @(
+            (Join-Path $root "tests\checks\console-windows-ui-proof.py"),
+            "--application", $installedExecutable,
+            "--output", $uiProofRoot
+        )
+    & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
+    $driverProcess.WaitForExit()
+    $driverProcess = $null
+
     Write-Host "PASS: Windows MSI signed, timestamped, installed, launched and opened no TCP listener"
 }
 finally {
+    if ($null -ne $driverProcess -and -not $driverProcess.HasExited) {
+        & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
+    }
     if ($null -ne $process -and -not $process.HasExited) {
         & taskkill.exe /PID $process.Id /T /F | Out-Null
     }
@@ -204,6 +305,14 @@ finally {
     if ($null -ne $certificate) {
         Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
+    }
+    $appDataRoot = [IO.Path]::GetFullPath($env:APPDATA + [IO.Path]::DirectorySeparatorChar)
+    $applicationDataPath = [IO.Path]::GetFullPath($applicationData)
+    if (-not $applicationDataPath.StartsWith($appDataRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Windows Console test data escaped APPDATA"
+    }
+    if (Test-Path -LiteralPath $applicationDataPath) {
+        Remove-Item -LiteralPath $applicationDataPath -Recurse -Force
     }
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
