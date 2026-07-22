@@ -11,7 +11,7 @@ $certificate = $null
 $installed = $false
 $process = $null
 $driverProcess = $null
-$uiProofProcess = $null
+$automationProcess = $null
 $msi = $null
 $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
 $webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
@@ -312,10 +312,8 @@ try {
             '@echo off',
             '"%YOUR_CLOUD_EDGE_DRIVER%" %* --verbose 1>&2'
         )
-    $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
     $previousNativeEdgeDriver = $env:YOUR_CLOUD_EDGE_DRIVER
     try {
-        $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
         $env:YOUR_CLOUD_EDGE_DRIVER = $edgeDriver.FullName
         $driverProcess = Start-Process `
             -FilePath $tauriDriver.Source `
@@ -326,12 +324,6 @@ try {
             -RedirectStandardError $driverError
     }
     finally {
-        if ($null -eq $previousWebViewUserData) {
-            Remove-Item Env:\WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
-        }
         if ($null -eq $previousNativeEdgeDriver) {
             Remove-Item Env:\YOUR_CLOUD_EDGE_DRIVER -ErrorAction SilentlyContinue
         }
@@ -360,115 +352,119 @@ try {
     if (-not $driverReady) {
         throw "tauri-driver did not become ready within 30 seconds"
     }
-    $uiProofOutput = Join-Path $temporaryRoot "windows-ui-proof.stdout.log"
-    $uiProofError = Join-Path $temporaryRoot "windows-ui-proof.stderr.log"
-    $automationHostSeen = $false
-    $webViewProcessSeen = $false
-    $webViewPipeArgumentSeen = $false
-    $webViewPipeHandlesSeen = $false
-    $webViewUserDataSeen = $false
-    $webViewRendererSeen = $false
+
+    $portReservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     try {
-        $uiProofScript = Join-Path $root "tests\checks\console-windows-ui-proof.py"
-        $uiProofProcess = Start-Process `
-            -FilePath python `
-            -ArgumentList @(
-                ('"{0}"' -f $uiProofScript),
-                "--application", ('"{0}"' -f $installedExecutable),
-                "--webview-user-data", ('"{0}"' -f $webViewUserData),
-                "--session-ready-marker", ('"{0}"' -f $sessionReadyMarker),
-                "--output", ('"{0}"' -f $uiProofRoot)
-            ) `
-            -NoNewWindow `
-            -PassThru `
-            -RedirectStandardOutput $uiProofOutput `
-            -RedirectStandardError $uiProofError
-        $uiProofDeadline = [DateTime]::UtcNow.AddSeconds(150)
-        while (-not $uiProofProcess.HasExited) {
-            if ([DateTime]::UtcNow -ge $uiProofDeadline) {
-                & taskkill.exe /PID $uiProofProcess.Id /T /F | Out-Null
-                throw "Windows UI proof exceeded its 150-second limit"
-            }
-            if (-not (Test-Path -LiteralPath $sessionReadyMarker -PathType Leaf)) {
-                $allProcesses = @(Get-CimInstance Win32_Process)
-                $automationHosts = @($allProcesses | Where-Object {
-                    [string]::Equals(
-                        $_.ExecutablePath,
-                        $installedExecutable,
-                        [StringComparison]::OrdinalIgnoreCase
-                    )
-                })
-                if ($automationHosts.Count -gt 0) {
-                    $automationHostSeen = $true
-                    $automationProcessIds = [Collections.Generic.HashSet[uint32]]::new()
-                    foreach ($automationHost in $automationHosts) {
-                        [void]$automationProcessIds.Add([uint32]$automationHost.ProcessId)
-                    }
-                    do {
-                        $added = $false
-                        foreach ($candidate in $allProcesses) {
-                            if ($automationProcessIds.Contains([uint32]$candidate.ParentProcessId) -and
-                                $automationProcessIds.Add([uint32]$candidate.ProcessId)) {
-                                $added = $true
-                            }
-                        }
-                    } while ($added)
-                    foreach ($webViewProcess in @($allProcesses | Where-Object {
-                        $automationProcessIds.Contains([uint32]$_.ProcessId) -and
-                        $_.Name -eq "msedgewebview2.exe"
-                    })) {
-                        $webViewProcessSeen = $true
-                        $commandLine = [string]$webViewProcess.CommandLine
-                        if ($commandLine.Contains("--remote-debugging-pipe")) {
-                            $webViewPipeArgumentSeen = $true
-                        }
-                        if ($commandLine -match '--remote-debugging-io-pipes=\d+,\d+') {
-                            $webViewPipeHandlesSeen = $true
-                        }
-                        if ($commandLine.IndexOf(
-                            $webViewUserData,
-                            [StringComparison]::OrdinalIgnoreCase
-                        ) -ge 0) {
-                            $webViewUserDataSeen = $true
-                        }
-                        if ($commandLine.Contains("--type=renderer")) {
-                            $webViewRendererSeen = $true
-                        }
-                    }
+        $portReservation.Start()
+        $remoteDebuggingPort = ([Net.IPEndPoint]$portReservation.LocalEndpoint).Port
+    }
+    finally {
+        $portReservation.Stop()
+    }
+    $debuggerAddress = "127.0.0.1:$remoteDebuggingPort"
+    $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
+    $previousBrowserArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+    $previousAutomation = $env:TAURI_WEBVIEW_AUTOMATION
+    try {
+        $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
+        $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `
+            "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$remoteDebuggingPort"
+        $env:TAURI_WEBVIEW_AUTOMATION = "true"
+        $automationProcess = Start-Process -FilePath $installedExecutable -PassThru
+    }
+    finally {
+        if ($null -eq $previousWebViewUserData) {
+            Remove-Item Env:\WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
+        }
+        if ($null -eq $previousBrowserArguments) {
+            Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousBrowserArguments
+        }
+        if ($null -eq $previousAutomation) {
+            Remove-Item Env:\TAURI_WEBVIEW_AUTOMATION -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:TAURI_WEBVIEW_AUTOMATION = $previousAutomation
+        }
+    }
+
+    $remoteDebuggerReady = $false
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        $automationProcess.Refresh()
+        if ($automationProcess.HasExited) {
+            throw "installed Console exited before exposing its bounded WebView2 debugger"
+        }
+        $allProcesses = @(Get-CimInstance Win32_Process)
+        $automationProcessIds = [Collections.Generic.HashSet[uint32]]::new()
+        [void]$automationProcessIds.Add([uint32]$automationProcess.Id)
+        do {
+            $added = $false
+            foreach ($candidate in $allProcesses) {
+                if ($automationProcessIds.Contains([uint32]$candidate.ParentProcessId) -and
+                    $automationProcessIds.Add([uint32]$candidate.ProcessId)) {
+                    $added = $true
                 }
             }
-            Start-Sleep -Milliseconds 500
-            $uiProofProcess.Refresh()
+        } while ($added)
+        $debuggerListeners = @(Get-NetTCPConnection `
+            -State Listen `
+            -LocalPort $remoteDebuggingPort `
+            -ErrorAction SilentlyContinue)
+        if ($debuggerListeners.Count -gt 0) {
+            foreach ($listener in $debuggerListeners) {
+                if ($listener.LocalAddress -notin @("127.0.0.1", "::1")) {
+                    throw "WebView2 debugger escaped the loopback interface"
+                }
+                if (-not $automationProcessIds.Contains([uint32]$listener.OwningProcess)) {
+                    throw "reserved WebView2 debugger port was claimed by another process"
+                }
+            }
+            try {
+                $debuggerVersion = Invoke-RestMethod `
+                    -Uri "http://$debuggerAddress/json/version" `
+                    -NoProxy `
+                    -TimeoutSec 1
+                $debuggerSocket = [Uri]$debuggerVersion.webSocketDebuggerUrl
+                if ($debuggerSocket.Scheme -eq "ws" -and
+                    $debuggerSocket.Host -eq "127.0.0.1" -and
+                    $debuggerSocket.Port -eq $remoteDebuggingPort -and
+                    $debuggerSocket.AbsolutePath.StartsWith("/devtools/browser/")) {
+                    $remoteDebuggerReady = $true
+                    break
+                }
+            }
+            catch {
+                # The listener can appear briefly before the CDP endpoint is ready.
+            }
         }
-        $uiProofProcess.WaitForExit()
-        Get-Content -LiteralPath $uiProofOutput, $uiProofError -ErrorAction SilentlyContinue
-        if ($uiProofProcess.ExitCode -ne 0) {
-            throw "Windows UI proof failed with status $($uiProofProcess.ExitCode)"
-        }
-        $uiProofProcess = $null
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $remoteDebuggerReady) {
+        throw "installed WebView2 debugger did not become ready on bounded loopback"
+    }
+    Write-Host "CI Windows: installed WebView2 debugger ready on bounded loopback"
+
+    try {
+        Invoke-Native `
+            -FilePath python `
+            -Arguments @(
+                (Join-Path $root "tests\checks\console-windows-ui-proof.py"),
+                "--application", $installedExecutable,
+                "--debugger-address", $debuggerAddress,
+                "--session-ready-marker", $sessionReadyMarker,
+                "--output", $uiProofRoot
+            )
     }
     catch {
         if (-not (Test-Path -LiteralPath $sessionReadyMarker -PathType Leaf)) {
             Write-Host "CI Windows: WebDriver session creation failed before test secrets existed"
-            Write-Host "CI Windows: automation host observed=$automationHostSeen"
-            Write-Host "CI Windows: descendant WebView2 observed=$webViewProcessSeen"
-            Write-Host "CI Windows: remote-debugging-pipe observed=$webViewPipeArgumentSeen"
-            Write-Host "CI Windows: remote-debugging I/O handles observed=$webViewPipeHandlesSeen"
-            Write-Host "CI Windows: bounded user-data folder observed=$webViewUserDataSeen"
-            Write-Host "CI Windows: renderer child observed=$webViewRendererSeen"
-            Get-ChildItem `
-                -LiteralPath $webViewUserData `
-                -Filter "chrome_debug.log" `
-                -Recurse `
-                -File `
-                -ErrorAction SilentlyContinue |
-                Select-Object -First 2 |
-                ForEach-Object {
-                    Write-Host "CI Windows: tail of bounded WebView2 diagnostic log"
-                    Get-Content -LiteralPath $_.FullName -Tail 100 -ErrorAction SilentlyContinue
-                }
             Get-Content -LiteralPath $driverOutput, $driverError -Tail 200 -ErrorAction SilentlyContinue
-            Write-Host "CI Windows: bounded remote-debugging-pipe session was not created"
+            Write-Host "CI Windows: EdgeDriver did not attach to the verified loopback debugger"
 
             foreach ($policyRoot in @(
                 "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
@@ -487,6 +483,28 @@ try {
             }
         }
         throw
+    }
+    $automationProcess.Refresh()
+    if (-not $automationProcess.HasExited) {
+        & taskkill.exe /PID $automationProcess.Id /T /F | Out-Null
+        $automationProcess.WaitForExit()
+    }
+    $automationProcess = $null
+
+    $debuggerClosed = $false
+    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        $remainingDebuggerListeners = @(Get-NetTCPConnection `
+            -State Listen `
+            -LocalPort $remoteDebuggingPort `
+            -ErrorAction SilentlyContinue)
+        if ($remainingDebuggerListeners.Count -eq 0) {
+            $debuggerClosed = $true
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $debuggerClosed) {
+        throw "bounded WebView2 debugger remained after automation cleanup"
     }
     & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
     $driverProcess.WaitForExit()
@@ -535,8 +553,8 @@ try {
     Write-Host "PASS: Windows MSI signed, timestamped, installed, launched and opened no TCP listener"
 }
 finally {
-    if ($null -ne $uiProofProcess -and -not $uiProofProcess.HasExited) {
-        & taskkill.exe /PID $uiProofProcess.Id /T /F | Out-Null
+    if ($null -ne $automationProcess -and -not $automationProcess.HasExited) {
+        & taskkill.exe /PID $automationProcess.Id /T /F | Out-Null
     }
     if ($null -ne $driverProcess -and -not $driverProcess.HasExited) {
         & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null

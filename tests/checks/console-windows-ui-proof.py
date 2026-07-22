@@ -38,7 +38,7 @@ def request(
 
 
 class Driver:
-    def __init__(self, base_url: str, application: str, webview_user_data: str):
+    def __init__(self, base_url: str, debugger_address: str):
         self.base_url = base_url.rstrip("/")
         response = request(
             self.base_url,
@@ -47,15 +47,9 @@ class Driver:
             {
                 "capabilities": {
                     "alwaysMatch": {
-                        "tauri:options": {
-                            "application": application,
-                            "webviewOptions": {
-                                "userDataFolder": webview_user_data,
-                                "additionalBrowserArguments": [
-                                    "remote-debugging-pipe"
-                                ],
-                            },
-                        }
+                        "browserName": "webview2",
+                        "ms:edgeChromium": True,
+                        "ms:edgeOptions": {"debuggerAddress": debugger_address},
                     }
                 }
             },
@@ -440,19 +434,23 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:4444")
     parser.add_argument("--application", required=True)
-    parser.add_argument("--webview-user-data", required=True)
+    parser.add_argument("--debugger-address", required=True)
     parser.add_argument("--session-ready-marker", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
 
-    driver = Driver(args.base_url, args.application, args.webview_user_data)
+    driver = Driver(args.base_url, args.debugger_address)
     args.session_ready_marker.touch(exist_ok=False)
     report: dict[str, object] = {
         "schema_version": 1,
         "application": args.application,
         "platform": "windows",
-        "instrumentation": "tauri-driver 2.0.6 with Microsoft Edge WebDriver and WebView2",
+        "instrumentation": (
+            "tauri-driver 2.0.6 proxying matching Microsoft Edge WebDriver "
+            "attached to the installed WebView2"
+        ),
+        "debugger_transport": "ephemeral loopback TCP, removed before normal launch",
         "fixture_scope": "renderer-only IPC responses after real Windows vault initialization",
         "views": {},
     }
