@@ -171,34 +171,6 @@ try {
     }
     Assert-AuthenticodeSignature $installedExecutable $certificate.Thumbprint $signTool.FullName
 
-    $process = Start-Process -FilePath $installedExecutable -PassThru
-    Start-Sleep -Seconds 10
-    $process.Refresh()
-    if ($process.HasExited) {
-        throw "installed Console exited during the Windows smoke test"
-    }
-
-    $productProcessIds = [Collections.Generic.HashSet[uint32]]::new()
-    [void]$productProcessIds.Add([uint32]$process.Id)
-    do {
-        $added = $false
-        foreach ($candidate in Get-CimInstance Win32_Process) {
-            if ($productProcessIds.Contains([uint32]$candidate.ParentProcessId) -and
-                $productProcessIds.Add([uint32]$candidate.ProcessId)) {
-                $added = $true
-            }
-        }
-    } while ($added)
-    $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-        Where-Object { $productProcessIds.Contains([uint32]$_.OwningProcess) })
-    if ($listeners.Count -ne 0) {
-        throw "installed Console or one of its children opened a TCP listener"
-    }
-
-    & taskkill.exe /PID $process.Id /T /F | Out-Null
-    $process.WaitForExit()
-    $process = $null
-
     Write-Host "CI Windows: preparing the bounded WebView2 driver"
     $edgePath = Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"
     if (-not (Test-Path -LiteralPath $edgePath -PathType Leaf)) {
@@ -346,6 +318,46 @@ try {
     & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
     $driverProcess.WaitForExit()
     $driverProcess = $null
+
+    $remainingAutomationProcesses = @(Get-CimInstance Win32_Process |
+        Where-Object {
+            [string]::Equals(
+                $_.ExecutablePath,
+                $installedExecutable,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        })
+    if ($remainingAutomationProcesses.Count -ne 0) {
+        throw "automated Console process remained after WebDriver cleanup"
+    }
+
+    $process = Start-Process -FilePath $installedExecutable -PassThru
+    Start-Sleep -Seconds 10
+    $process.Refresh()
+    if ($process.HasExited) {
+        throw "installed Console exited during the Windows smoke test"
+    }
+
+    $productProcessIds = [Collections.Generic.HashSet[uint32]]::new()
+    [void]$productProcessIds.Add([uint32]$process.Id)
+    do {
+        $added = $false
+        foreach ($candidate in Get-CimInstance Win32_Process) {
+            if ($productProcessIds.Contains([uint32]$candidate.ParentProcessId) -and
+                $productProcessIds.Add([uint32]$candidate.ProcessId)) {
+                $added = $true
+            }
+        }
+    } while ($added)
+    $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $productProcessIds.Contains([uint32]$_.OwningProcess) })
+    if ($listeners.Count -ne 0) {
+        throw "installed Console or one of its children opened a TCP listener"
+    }
+
+    & taskkill.exe /PID $process.Id /T /F | Out-Null
+    $process.WaitForExit()
+    $process = $null
 
     Write-Host "PASS: Windows MSI signed, timestamped, installed, launched and opened no TCP listener"
 }
