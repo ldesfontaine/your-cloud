@@ -16,11 +16,6 @@ $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
 $webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
-$webViewPolicyRegistryPath = "Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
-$webViewPolicyPath = "HKCU:\$webViewPolicyRegistryPath"
-$webViewPolicyNames = @()
-$webViewPolicyKeyExisted = $false
-$previousWebViewPolicyValues = @{}
 
 function Invoke-Native {
     param(
@@ -253,68 +248,6 @@ try {
     $tauriDriver = Get-Command "tauri-driver.exe" -ErrorAction Stop
     $driverOutput = Join-Path $temporaryRoot "tauri-driver.stdout.log"
     $driverError = Join-Path $temporaryRoot "tauri-driver.stderr.log"
-    $tauriConfiguration = Get-Content `
-        -LiteralPath (Join-Path $console "src-tauri\tauri.conf.json") `
-        -Raw | ConvertFrom-Json
-    $startApplicationIds = @()
-    if ($null -ne (Get-Command "Get-StartApps" -ErrorAction SilentlyContinue)) {
-        $startApplicationIds = @(
-            Get-StartApps |
-                Where-Object { $_.Name -eq $shortcut.BaseName } |
-                ForEach-Object { [string]$_.AppID }
-        )
-    }
-    $webViewPolicyNames = @(
-        @(
-            [string]$tauriConfiguration.identifier
-            [IO.Path]::GetFileName($installedExecutable)
-            $startApplicationIds
-        ) |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Select-Object -Unique
-    )
-    if ($webViewPolicyNames.Count -lt 2 -or $webViewPolicyNames.Count -gt 8) {
-        throw "WebView2 application identity set is outside its bound"
-    }
-    foreach ($webViewPolicyName in $webViewPolicyNames) {
-        if ($webViewPolicyName.Length -gt 255 -or $webViewPolicyName -match '[\x00-\x1f*]') {
-            throw "WebView2 application identity is invalid"
-        }
-    }
-    $webViewPolicyKeyExisted = Test-Path -LiteralPath $webViewPolicyPath
-    if ($webViewPolicyKeyExisted) {
-        $existingWebViewPolicy = Get-Item -LiteralPath $webViewPolicyPath
-        foreach ($webViewPolicyName in $webViewPolicyNames) {
-            if ($existingWebViewPolicy.GetValueNames() -contains $webViewPolicyName) {
-                $previousWebViewPolicyValues[$webViewPolicyName] = @{
-                    Value = $existingWebViewPolicy.GetValue(
-                        $webViewPolicyName,
-                        $null,
-                        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
-                    )
-                    Kind = $existingWebViewPolicy.GetValueKind($webViewPolicyName)
-                }
-            }
-        }
-    }
-    else {
-        $createdWebViewPolicy = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey(
-            $webViewPolicyRegistryPath
-        )
-        if ($null -eq $createdWebViewPolicy) {
-            throw "WebView2 additional browser arguments policy could not be created"
-        }
-        $createdWebViewPolicy.Dispose()
-    }
-    foreach ($webViewPolicyName in $webViewPolicyNames) {
-        New-ItemProperty `
-            -Path $webViewPolicyPath `
-            -Name $webViewPolicyName `
-            -Value "--remote-debugging-port=0" `
-            -PropertyType String `
-            -Force | Out-Null
-    }
-    Write-Host "CI Windows: WebView2 policy targets $($webViewPolicyNames -join ', ')"
     $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
     try {
         $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
@@ -392,16 +325,20 @@ try {
                 }
             }
 
-            $configuredWebViewPolicyNames = (Get-Item -LiteralPath $webViewPolicyPath).GetValueNames()
-            $missingWebViewPolicyNames = @(
-                $webViewPolicyNames |
-                    Where-Object { $configuredWebViewPolicyNames -notcontains $_ }
-            )
-            if ($missingWebViewPolicyNames.Count -ne 0) {
-                Write-Host "CI Windows: WebView2 policy is missing expected application identities"
-            }
-            else {
-                Write-Host "CI Windows: WebView2 policy is present for every bounded application identity"
+            foreach ($policyRoot in @(
+                "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
+                "HKCU:\SOFTWARE\Policies\Microsoft\Edge"
+            )) {
+                $policy = Get-ItemProperty `
+                    -LiteralPath $policyRoot `
+                    -Name "RemoteDebuggingAllowed" `
+                    -ErrorAction SilentlyContinue
+                if ($null -eq $policy) {
+                    Write-Host "CI Windows: RemoteDebuggingAllowed is not configured at $policyRoot"
+                }
+                else {
+                    Write-Host "CI Windows: RemoteDebuggingAllowed=$($policy.RemoteDebuggingAllowed) at $policyRoot"
+                }
             }
         }
         throw
@@ -415,29 +352,6 @@ try {
 finally {
     if ($null -ne $driverProcess -and -not $driverProcess.HasExited) {
         & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
-    }
-    if ($webViewPolicyNames.Count -ne 0 -and (Test-Path -LiteralPath $webViewPolicyPath)) {
-        foreach ($webViewPolicyName in $webViewPolicyNames) {
-            if ($previousWebViewPolicyValues.ContainsKey($webViewPolicyName)) {
-                $previousWebViewPolicy = $previousWebViewPolicyValues[$webViewPolicyName]
-                New-ItemProperty `
-                    -Path $webViewPolicyPath `
-                    -Name $webViewPolicyName `
-                    -Value $previousWebViewPolicy.Value `
-                    -PropertyType ($previousWebViewPolicy.Kind.ToString()) `
-                    -Force | Out-Null
-            }
-            else {
-                Remove-ItemProperty `
-                    -LiteralPath $webViewPolicyPath `
-                    -Name $webViewPolicyName `
-                    -ErrorAction SilentlyContinue
-            }
-        }
-        if (-not $webViewPolicyKeyExisted -and
-            (Get-Item -LiteralPath $webViewPolicyPath).GetValueNames().Count -eq 0) {
-            Remove-Item -LiteralPath $webViewPolicyPath -Force
-        }
     }
     if ($null -ne $process -and -not $process.HasExited) {
         & taskkill.exe /PID $process.Id /T /F | Out-Null
