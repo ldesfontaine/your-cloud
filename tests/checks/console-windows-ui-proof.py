@@ -52,7 +52,7 @@ class Driver:
                             "webviewOptions": {
                                 "userDataFolder": webview_user_data,
                                 "additionalBrowserArguments": [
-                                    "remote-debugging-port=0"
+                                    "remote-debugging-pipe"
                                 ],
                             },
                         }

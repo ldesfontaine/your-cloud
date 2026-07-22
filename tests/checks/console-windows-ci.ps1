@@ -374,27 +374,7 @@ try {
         if (-not (Test-Path -LiteralPath $sessionReadyMarker -PathType Leaf)) {
             Write-Host "CI Windows: WebDriver session creation failed before test secrets existed"
             Get-Content -LiteralPath $driverOutput, $driverError -Tail 200 -ErrorAction SilentlyContinue
-
-            $activePorts = @(Get-ChildItem `
-                -LiteralPath $webViewUserData `
-                -Filter "DevToolsActivePort" `
-                -Recurse `
-                -File `
-                -ErrorAction SilentlyContinue)
-            if ($activePorts.Count -eq 0) {
-                Write-Host "CI Windows: no DevToolsActivePort file exists under the bounded WebView2 directory"
-            }
-            else {
-                $webViewRoot = [IO.Path]::GetFullPath($webViewUserData + [IO.Path]::DirectorySeparatorChar)
-                foreach ($activePort in $activePorts) {
-                    $activePortPath = [IO.Path]::GetFullPath($activePort.FullName)
-                    if (-not $activePortPath.StartsWith($webViewRoot, [StringComparison]::OrdinalIgnoreCase)) {
-                        throw "DevToolsActivePort escaped the bounded WebView2 directory"
-                    }
-                    $relativePath = [IO.Path]::GetRelativePath($webViewUserData, $activePortPath)
-                    Write-Host "CI Windows: DevToolsActivePort metadata path=$relativePath size=$($activePort.Length)"
-                }
-            }
+            Write-Host "CI Windows: bounded remote-debugging-pipe session was not created"
 
             foreach ($policyRoot in @(
                 "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
