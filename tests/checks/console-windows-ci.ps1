@@ -249,8 +249,10 @@ try {
     $driverOutput = Join-Path $temporaryRoot "tauri-driver.stdout.log"
     $driverError = Join-Path $temporaryRoot "tauri-driver.stderr.log"
     $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
+    $previousAdditionalBrowserArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     try {
         $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
+        $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=0"
         $driverProcess = Start-Process `
             -FilePath $tauriDriver.Source `
             -ArgumentList @("--native-driver", $edgeDriver.FullName) `
@@ -265,6 +267,12 @@ try {
         }
         else {
             $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
+        }
+        if ($null -eq $previousAdditionalBrowserArguments) {
+            Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousAdditionalBrowserArguments
         }
     }
     $driverReady = $false
