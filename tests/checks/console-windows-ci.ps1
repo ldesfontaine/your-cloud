@@ -11,6 +11,7 @@ $certificate = $null
 $installed = $false
 $process = $null
 $driverProcess = $null
+$uiProofProcess = $null
 $msi = $null
 $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
 $webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
@@ -359,20 +360,113 @@ try {
     if (-not $driverReady) {
         throw "tauri-driver did not become ready within 30 seconds"
     }
+    $uiProofOutput = Join-Path $temporaryRoot "windows-ui-proof.stdout.log"
+    $uiProofError = Join-Path $temporaryRoot "windows-ui-proof.stderr.log"
+    $automationHostSeen = $false
+    $webViewProcessSeen = $false
+    $webViewPipeArgumentSeen = $false
+    $webViewPipeHandlesSeen = $false
+    $webViewUserDataSeen = $false
+    $webViewRendererSeen = $false
     try {
-        Invoke-Native `
+        $uiProofScript = Join-Path $root "tests\checks\console-windows-ui-proof.py"
+        $uiProofProcess = Start-Process `
             -FilePath python `
-            -Arguments @(
-                (Join-Path $root "tests\checks\console-windows-ui-proof.py"),
-                "--application", $installedExecutable,
-                "--webview-user-data", $webViewUserData,
-                "--session-ready-marker", $sessionReadyMarker,
-                "--output", $uiProofRoot
-            )
+            -ArgumentList @(
+                ('"{0}"' -f $uiProofScript),
+                "--application", ('"{0}"' -f $installedExecutable),
+                "--webview-user-data", ('"{0}"' -f $webViewUserData),
+                "--session-ready-marker", ('"{0}"' -f $sessionReadyMarker),
+                "--output", ('"{0}"' -f $uiProofRoot)
+            ) `
+            -NoNewWindow `
+            -PassThru `
+            -RedirectStandardOutput $uiProofOutput `
+            -RedirectStandardError $uiProofError
+        $uiProofDeadline = [DateTime]::UtcNow.AddSeconds(150)
+        while (-not $uiProofProcess.HasExited) {
+            if ([DateTime]::UtcNow -ge $uiProofDeadline) {
+                & taskkill.exe /PID $uiProofProcess.Id /T /F | Out-Null
+                throw "Windows UI proof exceeded its 150-second limit"
+            }
+            if (-not (Test-Path -LiteralPath $sessionReadyMarker -PathType Leaf)) {
+                $allProcesses = @(Get-CimInstance Win32_Process)
+                $automationHosts = @($allProcesses | Where-Object {
+                    [string]::Equals(
+                        $_.ExecutablePath,
+                        $installedExecutable,
+                        [StringComparison]::OrdinalIgnoreCase
+                    )
+                })
+                if ($automationHosts.Count -gt 0) {
+                    $automationHostSeen = $true
+                    $automationProcessIds = [Collections.Generic.HashSet[uint32]]::new()
+                    foreach ($automationHost in $automationHosts) {
+                        [void]$automationProcessIds.Add([uint32]$automationHost.ProcessId)
+                    }
+                    do {
+                        $added = $false
+                        foreach ($candidate in $allProcesses) {
+                            if ($automationProcessIds.Contains([uint32]$candidate.ParentProcessId) -and
+                                $automationProcessIds.Add([uint32]$candidate.ProcessId)) {
+                                $added = $true
+                            }
+                        }
+                    } while ($added)
+                    foreach ($webViewProcess in @($allProcesses | Where-Object {
+                        $automationProcessIds.Contains([uint32]$_.ProcessId) -and
+                        $_.Name -eq "msedgewebview2.exe"
+                    })) {
+                        $webViewProcessSeen = $true
+                        $commandLine = [string]$webViewProcess.CommandLine
+                        if ($commandLine.Contains("--remote-debugging-pipe")) {
+                            $webViewPipeArgumentSeen = $true
+                        }
+                        if ($commandLine -match '--remote-debugging-io-pipes=\d+,\d+') {
+                            $webViewPipeHandlesSeen = $true
+                        }
+                        if ($commandLine.IndexOf(
+                            $webViewUserData,
+                            [StringComparison]::OrdinalIgnoreCase
+                        ) -ge 0) {
+                            $webViewUserDataSeen = $true
+                        }
+                        if ($commandLine.Contains("--type=renderer")) {
+                            $webViewRendererSeen = $true
+                        }
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds 500
+            $uiProofProcess.Refresh()
+        }
+        $uiProofProcess.WaitForExit()
+        Get-Content -LiteralPath $uiProofOutput, $uiProofError -ErrorAction SilentlyContinue
+        if ($uiProofProcess.ExitCode -ne 0) {
+            throw "Windows UI proof failed with status $($uiProofProcess.ExitCode)"
+        }
+        $uiProofProcess = $null
     }
     catch {
         if (-not (Test-Path -LiteralPath $sessionReadyMarker -PathType Leaf)) {
             Write-Host "CI Windows: WebDriver session creation failed before test secrets existed"
+            Write-Host "CI Windows: automation host observed=$automationHostSeen"
+            Write-Host "CI Windows: descendant WebView2 observed=$webViewProcessSeen"
+            Write-Host "CI Windows: remote-debugging-pipe observed=$webViewPipeArgumentSeen"
+            Write-Host "CI Windows: remote-debugging I/O handles observed=$webViewPipeHandlesSeen"
+            Write-Host "CI Windows: bounded user-data folder observed=$webViewUserDataSeen"
+            Write-Host "CI Windows: renderer child observed=$webViewRendererSeen"
+            Get-ChildItem `
+                -LiteralPath $webViewUserData `
+                -Filter "chrome_debug.log" `
+                -Recurse `
+                -File `
+                -ErrorAction SilentlyContinue |
+                Select-Object -First 2 |
+                ForEach-Object {
+                    Write-Host "CI Windows: tail of bounded WebView2 diagnostic log"
+                    Get-Content -LiteralPath $_.FullName -Tail 100 -ErrorAction SilentlyContinue
+                }
             Get-Content -LiteralPath $driverOutput, $driverError -Tail 200 -ErrorAction SilentlyContinue
             Write-Host "CI Windows: bounded remote-debugging-pipe session was not created"
 
@@ -441,6 +535,9 @@ try {
     Write-Host "PASS: Windows MSI signed, timestamped, installed, launched and opened no TCP listener"
 }
 finally {
+    if ($null -ne $uiProofProcess -and -not $uiProofProcess.HasExited) {
+        & taskkill.exe /PID $uiProofProcess.Id /T /F | Out-Null
+    }
     if ($null -ne $driverProcess -and -not $driverProcess.HasExited) {
         & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
     }
