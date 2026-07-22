@@ -198,7 +198,11 @@ return {
   remote_resources: performance.getEntriesByType('resource')
     .map((entry) => entry.name)
     .filter((name) => {
-      try { return new URL(name).origin !== location.origin; }
+      try {
+        const resource = new URL(name);
+        if (!['http:', 'https:'].includes(resource.protocol)) return false;
+        return !new Set([location.origin, 'http://ipc.localhost']).has(resource.origin);
+      }
       catch { return true; }
     }),
 };
@@ -211,7 +215,7 @@ def assert_metrics(metrics: dict[str, object], heading: str) -> None:
     assert metrics["href"] == "http://tauri.localhost/"
     assert metrics["heading"] == heading
     assert metrics["horizontal_overflow"] is False
-    assert metrics["remote_resources"] == []
+    assert metrics["remote_resources"] == [], metrics["remote_resources"]
     assert "Inter" in str(metrics["body_font"])
     assert metrics["minimum_control_height"] is not None
     assert float(metrics["minimum_control_height"]) >= 44

@@ -643,7 +643,7 @@ finally {
             Write-Warning "ephemeral Windows UI proof profile remained loaded during cleanup"
         }
         elseif ($null -ne $profile) {
-            Invoke-CimMethod -InputObject $profile -MethodName Delete | Out-Null
+            Remove-CimInstance -InputObject $profile
         }
         Remove-LocalUser -SID $automationUser.SID
         $automationUserCreated = $false
