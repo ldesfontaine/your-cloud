@@ -7,8 +7,10 @@ import argparse
 import base64
 import http.client
 import json
+import os
 import pathlib
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -37,26 +39,101 @@ def request(
     return document.get("value")
 
 
+def valid_devtools_active_port(document: bytes) -> bool:
+    if len(document) > 512:
+        return False
+    try:
+        lines = document.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return False
+    if len(lines) != 2 or not lines[0].isdigit():
+        return False
+    port = int(lines[0])
+    target_prefix = "/devtools/browser/"
+    target = lines[1]
+    return (
+        0 < port <= 65535
+        and target.startswith(target_prefix)
+        and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", target[len(target_prefix) :])
+        is not None
+    )
+
+
+class DevToolsActivePortBridge:
+    """Bridge the WebView2 EBWebView location to the path EdgeDriver polls."""
+
+    def __init__(self, webview_user_data: str):
+        self.root = pathlib.Path(webview_user_data).resolve()
+        self.source = self.root / "EBWebView" / "DevToolsActivePort"
+        self.destination = self.root / "DevToolsActivePort"
+        self.temporary = self.root / ".DevToolsActivePort.bridge"
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.bridged = False
+        self.error: BaseException | None = None
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.thread.join(timeout=5)
+        if self.thread.is_alive():
+            raise RuntimeError("DevToolsActivePort bridge did not stop")
+        if self.error is not None:
+            raise RuntimeError("DevToolsActivePort bridge failed") from self.error
+
+    def run(self) -> None:
+        try:
+            while not self.stop_event.wait(0.025):
+                if self.destination.is_file():
+                    return
+                try:
+                    document = self.source.read_bytes()
+                except FileNotFoundError:
+                    continue
+                if not valid_devtools_active_port(document):
+                    continue
+                self.temporary.write_bytes(document)
+                os.replace(self.temporary, self.destination)
+                self.bridged = True
+                print(
+                    "CI Windows: bridged bounded WebView2 DevToolsActivePort metadata",
+                    flush=True,
+                )
+                return
+        except BaseException as error:
+            self.error = error
+        finally:
+            self.temporary.unlink(missing_ok=True)
+
+
 class Driver:
     def __init__(self, base_url: str, application: str, webview_user_data: str):
         self.base_url = base_url.rstrip("/")
-        response = request(
-            self.base_url,
-            "POST",
-            "/session",
-            {
-                "capabilities": {
-                    "alwaysMatch": {
-                        "tauri:options": {
-                            "application": application,
-                            "webviewOptions": {"userDataFolder": webview_user_data},
+        bridge = DevToolsActivePortBridge(webview_user_data)
+        bridge.start()
+        try:
+            response = request(
+                self.base_url,
+                "POST",
+                "/session",
+                {
+                    "capabilities": {
+                        "alwaysMatch": {
+                            "tauri:options": {
+                                "application": application,
+                                "webviewOptions": {"userDataFolder": webview_user_data},
+                            }
                         }
                     }
-                }
-            },
-            timeout_seconds=120,
-        )
+                },
+                timeout_seconds=120,
+            )
+        finally:
+            bridge.stop()
         self.session_id = response["sessionId"]
+        self.devtools_active_port_bridged = bridge.bridged
         time.sleep(0.5)
 
     def safe_request(self, method: str, path: str, payload: object) -> object:
@@ -448,6 +525,7 @@ def main() -> int:
         "application": args.application,
         "platform": "windows",
         "instrumentation": "tauri-driver 2.0.6 with Microsoft Edge WebDriver and WebView2",
+        "devtools_active_port_bridge": driver.devtools_active_port_bridged,
         "fixture_scope": "renderer-only IPC responses after real Windows vault initialization",
         "views": {},
     }
