@@ -16,6 +16,13 @@ $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
 $webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
+$webViewPolicyRegistryPath = "Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
+$webViewPolicyPath = "HKCU:\$webViewPolicyRegistryPath"
+$webViewPolicyName = $null
+$webViewPolicyKeyExisted = $false
+$webViewPolicyValueExisted = $false
+$previousWebViewPolicyValue = $null
+$previousWebViewPolicyKind = $null
 
 function Invoke-Native {
     param(
@@ -248,11 +255,38 @@ try {
     $tauriDriver = Get-Command "tauri-driver.exe" -ErrorAction Stop
     $driverOutput = Join-Path $temporaryRoot "tauri-driver.stdout.log"
     $driverError = Join-Path $temporaryRoot "tauri-driver.stderr.log"
+    $webViewPolicyName = [IO.Path]::GetFileName($installedExecutable)
+    $webViewPolicyKeyExisted = Test-Path -LiteralPath $webViewPolicyPath
+    if ($webViewPolicyKeyExisted) {
+        $existingWebViewPolicy = Get-Item -LiteralPath $webViewPolicyPath
+        if ($existingWebViewPolicy.GetValueNames() -contains $webViewPolicyName) {
+            $webViewPolicyValueExisted = $true
+            $previousWebViewPolicyValue = $existingWebViewPolicy.GetValue(
+                $webViewPolicyName,
+                $null,
+                [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+            )
+            $previousWebViewPolicyKind = $existingWebViewPolicy.GetValueKind($webViewPolicyName)
+        }
+    }
+    else {
+        $createdWebViewPolicy = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey(
+            $webViewPolicyRegistryPath
+        )
+        if ($null -eq $createdWebViewPolicy) {
+            throw "WebView2 additional browser arguments policy could not be created"
+        }
+        $createdWebViewPolicy.Dispose()
+    }
+    New-ItemProperty `
+        -Path $webViewPolicyPath `
+        -Name $webViewPolicyName `
+        -Value "--remote-debugging-port=0" `
+        -PropertyType String `
+        -Force | Out-Null
     $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
-    $previousAdditionalBrowserArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     try {
         $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
-        $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=0"
         $driverProcess = Start-Process `
             -FilePath $tauriDriver.Source `
             -ArgumentList @("--native-driver", $edgeDriver.FullName) `
@@ -267,12 +301,6 @@ try {
         }
         else {
             $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
-        }
-        if ($null -eq $previousAdditionalBrowserArguments) {
-            Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousAdditionalBrowserArguments
         }
     }
     $driverReady = $false
@@ -333,20 +361,15 @@ try {
                 }
             }
 
-            foreach ($policyRoot in @(
-                "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
-                "HKCU:\SOFTWARE\Policies\Microsoft\Edge"
-            )) {
-                $policy = Get-ItemProperty `
-                    -LiteralPath $policyRoot `
-                    -Name "RemoteDebuggingAllowed" `
-                    -ErrorAction SilentlyContinue
-                if ($null -eq $policy) {
-                    Write-Host "CI Windows: RemoteDebuggingAllowed is not configured at $policyRoot"
-                }
-                else {
-                    Write-Host "CI Windows: RemoteDebuggingAllowed=$($policy.RemoteDebuggingAllowed) at $policyRoot"
-                }
+            $policy = Get-ItemProperty `
+                -LiteralPath $webViewPolicyPath `
+                -Name $webViewPolicyName `
+                -ErrorAction SilentlyContinue
+            if ($null -eq $policy) {
+                Write-Host "CI Windows: WebView2 additional browser arguments policy is missing"
+            }
+            else {
+                Write-Host "CI Windows: WebView2 additional browser arguments policy is present for $webViewPolicyName"
             }
         }
         throw
@@ -360,6 +383,26 @@ try {
 finally {
     if ($null -ne $driverProcess -and -not $driverProcess.HasExited) {
         & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
+    }
+    if ($null -ne $webViewPolicyName -and (Test-Path -LiteralPath $webViewPolicyPath)) {
+        if ($webViewPolicyValueExisted) {
+            New-ItemProperty `
+                -Path $webViewPolicyPath `
+                -Name $webViewPolicyName `
+                -Value $previousWebViewPolicyValue `
+                -PropertyType ($previousWebViewPolicyKind.ToString()) `
+                -Force | Out-Null
+        }
+        else {
+            Remove-ItemProperty `
+                -LiteralPath $webViewPolicyPath `
+                -Name $webViewPolicyName `
+                -ErrorAction SilentlyContinue
+        }
+        if (-not $webViewPolicyKeyExisted -and
+            (Get-Item -LiteralPath $webViewPolicyPath).GetValueNames().Count -eq 0) {
+            Remove-Item -LiteralPath $webViewPolicyPath -Force
+        }
     }
     if ($null -ne $process -and -not $process.HasExited) {
         & taskkill.exe /PID $process.Id /T /F | Out-Null
