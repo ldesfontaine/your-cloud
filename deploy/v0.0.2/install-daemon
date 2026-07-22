@@ -28,7 +28,7 @@ relay_authority=/etc/your-cloud/relay-ca.crt
 daemon_unit_path=/etc/systemd/system/your-cloud-daemon.service
 daemon_unit=your-cloud-daemon.service
 relay_unit=your-cloud-relay.service
-hosts_line='192.168.242.103 relay.v0-0-2.your-cloud.test # your-cloud-v0.0.2'
+hosts_line='192.168.242.103 relay.observation.your-cloud.test # your-cloud-observation'
 
 for directory in /usr/local/lib/your-cloud /etc/your-cloud; do
   [[ ! -L "$directory" ]] || fail "managed directory must not be a symbolic link: $directory"

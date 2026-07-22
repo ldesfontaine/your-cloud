@@ -1,5 +1,5 @@
 [Unit]
-Description=Your Cloud v0.0.2 observation Daemon
+Description=Your Cloud observation Daemon
 After=network-online.target
 Wants=network-online.target
 
@@ -13,7 +13,7 @@ EnvironmentFile=/etc/your-cloud/daemon.env
 LoadCredential=daemon.crt:/etc/your-cloud/daemon.crt
 LoadCredential=daemon.key:/etc/your-cloud/daemon.key
 LoadCredential=relay-ca.crt:/etc/your-cloud/relay-ca.crt
-ExecStart=/usr/local/lib/your-cloud/your-cloud daemon --machine-id=${MACHINE_ID} --relay-url=https://relay.v0-0-2.your-cloud.test:8443
+ExecStart=/usr/local/lib/your-cloud/your-cloud daemon --machine-id=${MACHINE_ID} --relay-url=https://relay.observation.your-cloud.test:8443
 Restart=on-failure
 RestartSec=1s
 NoNewPrivileges=yes

@@ -1,5 +1,5 @@
 [Unit]
-Description=Your Cloud v0.0.3 observation Relay and private reader
+Description=Your Cloud observation Relay and private reader
 After=network-online.target
 Wants=network-online.target
 

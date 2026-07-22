@@ -2,7 +2,7 @@
 
 flush ruleset
 
-table inet your_cloud_v003_controller {
+table inet your_cloud_controller {
   chain input {
     type filter hook input priority filter; policy drop;
     iifname "lo" accept

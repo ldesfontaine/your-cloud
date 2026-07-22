@@ -98,8 +98,8 @@ export const nativeConsole = {
     namedOperation<MachinesView>("read_machines", { infrastructureId }),
   putInfrastructure: (infrastructureId: string, label: string) =>
     namedOperation<InfrastructureView>("put_infrastructure", { infrastructureId, label }),
-	putMachine: (infrastructureId: string, machineId: string, label: string) =>
-		namedOperation<MachineMutationView>("put_machine", { infrastructureId, machineId, label }),
+  putMachine: (infrastructureId: string, machineId: string, label: string) =>
+    namedOperation<MachineMutationView>("put_machine", { infrastructureId, machineId, label }),
   rotateDevice: (infrastructureId: string) =>
     namedOperation<AssociationSummary>("rotate_device", { infrastructureId }),
   prepareRecoveryKeyRotation: () =>
@@ -121,7 +121,7 @@ export const nativeConsole = {
     }),
   completeRecoveryKeyRotation: () =>
     namedOperation<void>("complete_recovery_key_rotation"),
-	logout: (infrastructureId: string) =>
+  logout: (infrastructureId: string) =>
     namedOperation<void>("logout_session", { infrastructureId }),
 };
 

@@ -21,7 +21,7 @@ func TestMutualTLSAcceptsOnlyTheExpectedPeers(t *testing.T) {
 	t.Parallel()
 	relayCA := newTestAuthority(t, "relay authority")
 	daemonCA := newTestAuthority(t, "daemon authority")
-	relayIdentity := relayCA.issue(t, "relay", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{"relay.v0-0-2.your-cloud.test"}, nil)
+	relayIdentity := relayCA.issue(t, "relay", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{"relay.observation.your-cloud.test"}, nil)
 	daemonURI, err := url.Parse("urn:your-cloud:daemon:lab-machine-1")
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestMutualTLSAcceptsOnlyTheExpectedPeers(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	client, err := NewDaemonClient(relayCA.pem, daemonIdentity, "relay.v0-0-2.your-cloud.test")
+	client, err := NewDaemonClient(relayCA.pem, daemonIdentity, "relay.observation.your-cloud.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestMutualTLSAcceptsOnlyTheExpectedPeers(t *testing.T) {
 
 	otherCA := newTestAuthority(t, "other daemon authority")
 	unknownIdentity := otherCA.issue(t, "unknown", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil, []*url.URL{daemonURI})
-	unknownClient, err := NewDaemonClient(relayCA.pem, unknownIdentity, "relay.v0-0-2.your-cloud.test")
+	unknownClient, err := NewDaemonClient(relayCA.pem, unknownIdentity, "relay.observation.your-cloud.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestMutualTLSAcceptsOnlyTheExpectedPeers(t *testing.T) {
 
 func TestTLSConfigurationRefusesMissingAuthoritiesAndAuthorization(t *testing.T) {
 	t.Parallel()
-	if _, err := NewDaemonClient(nil, tls.Certificate{}, "relay.v0-0-2.your-cloud.test"); err == nil {
+	if _, err := NewDaemonClient(nil, tls.Certificate{}, "relay.observation.your-cloud.test"); err == nil {
 		t.Fatal("empty Relay authority accepted")
 	}
 	if _, err := NewRelayConfig(nil, tls.Certificate{}, func(*x509.Certificate) error { return nil }); err == nil {
@@ -109,7 +109,7 @@ func TestControllerReaderClientPinsPrivateIPv4AndOrigin(t *testing.T) {
 	t.Parallel()
 	authority := newTestAuthority(t, "Relay reader authority")
 	identity := authority.issue(t, "Controller reader", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil, nil)
-	host := "relay-reader.11111111-1111-4111-8111-111111111111.v0-0-3.your-cloud.test"
+	host := "relay-reader.11111111-1111-4111-8111-111111111111.your-cloud.test"
 	client, err := NewControllerReaderClient(authority.pem, identity, host, host+":8444", "192.0.2.10:8444")
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestTLSConfigurationRefusesUnsafeAuthorityDocuments(t *testing.T) {
 	t.Parallel()
 	authority := newTestAuthority(t, "expected authority")
 	otherAuthority := newTestAuthority(t, "unexpected authority")
-	leaf := authority.issue(t, "leaf", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{"relay.v0-0-2.your-cloud.test"}, nil)
+	leaf := authority.issue(t, "leaf", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{"relay.observation.your-cloud.test"}, nil)
 	expandedBundle := append(append([]byte{}, authority.pem...), otherAuthority.pem...)
 	trailingData := append(append([]byte{}, authority.pem...), []byte("unexpected")...)
 	leafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Certificate[0]})
@@ -142,7 +142,7 @@ func TestTLSConfigurationRefusesUnsafeAuthorityDocuments(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := NewDaemonClient(document, tls.Certificate{}, "relay.v0-0-2.your-cloud.test"); err == nil {
+			if _, err := NewDaemonClient(document, tls.Certificate{}, "relay.observation.your-cloud.test"); err == nil {
 				t.Fatal("Daemon accepted an unsafe Relay authority document")
 			}
 			if _, err := NewRelayConfig(document, tls.Certificate{}, func(*x509.Certificate) error { return nil }); err == nil {

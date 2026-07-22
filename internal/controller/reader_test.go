@@ -45,13 +45,13 @@ func TestRelayReaderSendsExactRequestReusesAndForcesFreshRead(t *testing.T) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		if request.Method != http.MethodGet || request.URL.String() != "https://relay-reader."+testInfrastructureID+".v0-0-3.your-cloud.test:8444/v0/snapshot" ||
-			request.Host != "relay-reader."+testInfrastructureID+".v0-0-3.your-cloud.test:8444" || request.Header.Get("Accept") != "application/json" || request.Header.Get("User-Agent") != "" {
+		if request.Method != http.MethodGet || request.URL.String() != "https://relay-reader."+testInfrastructureID+".your-cloud.test:8444/v0/snapshot" ||
+			request.Host != "relay-reader."+testInfrastructureID+".your-cloud.test:8444" || request.Header.Get("Accept") != "application/json" || request.Header.Get("User-Agent") != "" {
 			t.Fatalf("unexpected reader request: %#v", request)
 		}
 		return snapshotResponse(t, testSnapshot()), nil
 	})}
-	host := "relay-reader." + testInfrastructureID + ".v0-0-3.your-cloud.test:8444"
+	host := "relay-reader." + testInfrastructureID + ".your-cloud.test:8444"
 	reader, err := NewRelayReader(client, host, testControllerID, testInfrastructureID, cache)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestRelayReaderRejectsHostileResponseWithoutReplacingCache(t *testing.T) {
 			Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)),
 		}, nil
 	})}
-	host := "relay-reader." + testInfrastructureID + ".v0-0-3.your-cloud.test:8444"
+	host := "relay-reader." + testInfrastructureID + ".your-cloud.test:8444"
 	reader, _ := NewRelayReader(client, host, testControllerID, testInfrastructureID, cache)
 	base := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	reader.sample = func() clockSample { return clockSample{civil: base, monotonic: base} }

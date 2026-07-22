@@ -20,16 +20,17 @@ import (
 
 	"github.com/ldesfontaine/your-cloud/internal/credentials"
 	"github.com/ldesfontaine/your-cloud/internal/enrollment"
+	"github.com/ldesfontaine/your-cloud/internal/protocol"
 	"github.com/ldesfontaine/your-cloud/internal/readeridentity"
 	"github.com/ldesfontaine/your-cloud/internal/relay"
 	"github.com/ldesfontaine/your-cloud/internal/transport"
 )
 
 const (
-	v003RelayListenAddress   = "192.168.243.153:8443"
-	v003ReaderListenAddress  = "192.168.243.153:8444"
-	v003ControllerReaderIPv4 = "192.168.242.103"
-	relayStateDirectory      = "/var/lib/private/your-cloud-relay"
+	relayIngestionListenAddress = "192.168.243.153:8443"
+	relayReaderListenAddress    = "192.168.243.153:8444"
+	controllerReaderIPv4        = "192.168.242.103"
+	relayStateDirectory         = "/var/lib/private/your-cloud-relay"
 )
 
 type relayArguments struct {
@@ -137,13 +138,13 @@ func assembleRelayReader(
 	if err != nil {
 		return nil, nil, err
 	}
-	host := "relay-reader." + registry.InfrastructureID + ".v0-0-3.your-cloud.test:8444"
+	host := protocol.RelayReaderServerName(registry.InfrastructureID) + ":8444"
 	handler, err := relay.NewSnapshotHandler(enrollments, observations, readers, host, stateLock)
 	if err != nil {
 		return nil, nil, err
 	}
 	server := &http.Server{
-		Addr:              v003ReaderListenAddress,
+		Addr:              relayReaderListenAddress,
 		Handler:           handler,
 		TLSConfig:         tlsConfiguration,
 		ReadHeaderTimeout: 3 * time.Second,
@@ -184,8 +185,8 @@ func validateRelayListenAddress(listenAddress string) error {
 	if address.Port() == 0 {
 		return errors.New("relay listen address: port must be non-zero")
 	}
-	if address.String() != v003RelayListenAddress {
-		return fmt.Errorf("relay listen address must be %s in v0.0.3", v003RelayListenAddress)
+	if address.String() != relayIngestionListenAddress {
+		return fmt.Errorf("relay listen address must be %s", relayIngestionListenAddress)
 	}
 	return nil
 }
@@ -255,7 +256,7 @@ func serveReaderServer(server *http.Server) error {
 	if err != nil {
 		return err
 	}
-	bounded, err := relay.NewReaderListener(base, v003ControllerReaderIPv4)
+	bounded, err := relay.NewReaderListener(base, controllerReaderIPv4)
 	if err != nil {
 		_ = base.Close()
 		return err

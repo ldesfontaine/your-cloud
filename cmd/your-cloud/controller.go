@@ -19,6 +19,7 @@ import (
 
 	"github.com/ldesfontaine/your-cloud/internal/controller"
 	"github.com/ldesfontaine/your-cloud/internal/credentials"
+	"github.com/ldesfontaine/your-cloud/internal/protocol"
 	"github.com/ldesfontaine/your-cloud/internal/transport"
 )
 
@@ -121,7 +122,7 @@ func runControllerServe(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("Controller reader credentials: %w", err)
 	}
-	relayName := "relay-reader." + state.InfrastructureID + ".v0-0-3.your-cloud.test"
+	relayName := protocol.RelayReaderServerName(state.InfrastructureID)
 	relayHost := relayName + ":8444"
 	client, err := transport.NewControllerReaderClient(relayCA, readerIdentity, relayName, relayHost, configuration.relayEndpoint)
 	if err != nil {
@@ -139,7 +140,7 @@ func runControllerServe(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("Controller sessions: %w", err)
 	}
-	host := "controller." + state.InfrastructureID + ".v0-0-3.your-cloud.test:9443"
+	host := protocol.ControllerServerName(state.InfrastructureID) + ":9443"
 	handler, err := controller.NewControllerHandler(authority, pairing, sessions, inventory, reader, host)
 	if err != nil {
 		return fmt.Errorf("Controller HTTP: %w", err)
@@ -259,7 +260,7 @@ func assembleTemporaryController(
 	if err := writeWindowSheet(configuration.windowSheet, sheet); err != nil {
 		return nil, nil, err
 	}
-	host := "controller." + infrastructureID + ".v0-0-3.your-cloud.test:9444"
+	host := protocol.ControllerServerName(infrastructureID) + ":9444"
 	var server *http.Server
 	closeWindow := func() {
 		_ = os.Remove(configuration.windowSheet)

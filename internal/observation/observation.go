@@ -1,4 +1,4 @@
-// Package observation defines the bounded v0.0.2 host-health message.
+// Package observation defines the bounded host-health wire message.
 package observation
 
 import (
@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	// SchemaVersion identifies the only wire schema accepted by v0.0.2.
+	// SchemaVersion identifies the only accepted host-health wire schema.
 	SchemaVersion = 1
 	// DaemonVersion is the exact producer version accepted by the Relay.
-	DaemonVersion = "v0.0.2"
-	// Profile identifies the fixed collector set decided for this increment.
+	DaemonVersion = "v0.0.3"
+	// Profile identifies the fixed collector set.
 	Profile = "host-health.v1"
 	// CollectionInterval is the candidate cadence measured by the LAB proof.
 	CollectionInterval = 30 * time.Second
@@ -52,7 +52,7 @@ type Gap struct {
 	LastObservedAt  string `json:"last_observed_at"`
 }
 
-// HostHealth contains exactly the three collectors approved for v0.0.2.
+// HostHealth contains exactly the three approved collectors.
 type HostHealth struct {
 	Uptime UptimeResult `json:"uptime"`
 	Memory MemoryResult `json:"memory"`

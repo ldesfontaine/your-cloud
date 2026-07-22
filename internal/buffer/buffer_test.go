@@ -16,7 +16,7 @@ func TestDefaultLimitsMatchMeasuredV002Contract(t *testing.T) {
 	t.Parallel()
 	limits := DefaultLimits()
 	if limits.MaxBytes != 64*1024 || limits.MaxRecords != 120 || limits.MaxAge != time.Hour {
-		t.Fatalf("unexpected v0.0.2 defaults: %#v", limits)
+		t.Fatalf("unexpected default limits: %#v", limits)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 flush ruleset
 
-table inet your_cloud_v003_relay {
+table inet your_cloud_relay {
   chain input {
     type filter hook input priority filter; policy drop;
     iifname "lo" accept

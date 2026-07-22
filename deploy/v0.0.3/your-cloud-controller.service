@@ -1,5 +1,5 @@
 [Unit]
-Description=Your Cloud v0.0.3 read-only Controller
+Description=Your Cloud read-only Controller
 After=network-online.target
 Wants=network-online.target
 

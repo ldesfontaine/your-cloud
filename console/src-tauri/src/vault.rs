@@ -15,7 +15,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 const METADATA_FILE: &str = "vault.json";
 const SNAPSHOT_FILE: &str = "console.stronghold";
-const CLIENT_PATH: &[u8] = b"your-cloud-console/v0.0.3";
+const CLIENT_PATH: &[u8] = b"your-cloud-console/v1";
 const DOCUMENT_KEY: &[u8] = b"console-document/v1";
 const METADATA_MAX_BYTES: u64 = 2_048;
 const SNAPSHOT_MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -23,8 +23,8 @@ const RAW_PHRASE_MAX_BYTES: usize = 192;
 const CANONICAL_PHRASE_MAX_BYTES: usize = 96;
 const RAW_RECOVERY_MAX_BYTES: usize = 80;
 const WORDLIST_SHA256: &str = "ebc3959ab7801a1df6bac4fa7d970652f1df76b683cd2f4003c941c63d517e59";
-const RECOVERY_DOMAIN: &[u8] = b"your-cloud/v0.0.3/recovery-check";
-const RECOVERY_ROTATION_DIGEST_DOMAIN: &[u8] = b"your-cloud/v0.0.3/recovery-code-rotation\0";
+const RECOVERY_DOMAIN: &[u8] = b"your-cloud/recovery-check.v1";
+const RECOVERY_ROTATION_DIGEST_DOMAIN: &[u8] = b"your-cloud/recovery-code-rotation.v1\0";
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
@@ -1434,7 +1434,9 @@ mod tests {
                 controller_id: "123e4567-e89b-42d3-a456-426614174001".to_owned(),
                 infrastructure_id: "123e4567-e89b-42d3-a456-426614174000".to_owned(),
                 infrastructure_label: None,
-                origin: "https://controller.123e4567-e89b-42d3-a456-426614174000.v0-0-3.your-cloud.test:9443".to_owned(),
+                origin:
+                    "https://controller.123e4567-e89b-42d3-a456-426614174000.your-cloud.test:9443"
+                        .to_owned(),
                 device_status: "active".to_owned(),
                 certificate_expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
             },
@@ -1447,12 +1449,12 @@ mod tests {
             identity_revision: 1,
             recovery_salt: URL_SAFE_NO_PAD.encode([2_u8; 32]),
             recovery_epoch: 1,
-			pending_mode: None,
-			pending_transaction_id: None,
-			pending_device_private_key_pem: None,
-			pending_device_certificate_pem: None,
-			pending_certificate_expires_at: None,
-		};
+            pending_mode: None,
+            pending_transaction_id: None,
+            pending_device_private_key_pem: None,
+            pending_device_certificate_pem: None,
+            pending_certificate_expires_at: None,
+        };
         core.store_association(association.clone(), false).unwrap();
         assert_eq!(core.status().unwrap().associations.len(), 1);
         let prepared = core.prepare_recovery_rotation().unwrap();

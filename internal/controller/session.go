@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ldesfontaine/your-cloud/internal/protocol"
 )
 
 const (
@@ -476,7 +478,7 @@ const (
 
 func sessionTranscript(state AuthorityState, challenge *sessionChallenge) []byte {
 	buffer := bytes.NewBuffer(nil)
-	buffer.WriteString("your-cloud/v0.0.3/human-session\x00")
+	buffer.WriteString(protocol.HumanSessionDomain)
 	appendTranscriptField(buffer, []byte(challenge.request.Purpose))
 	appendTranscriptField(buffer, []byte(challenge.request.TargetMethod))
 	appendTranscriptField(buffer, []byte(challenge.request.TargetRoute))

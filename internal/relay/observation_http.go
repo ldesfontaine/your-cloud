@@ -35,7 +35,7 @@ type observationAck struct {
 	AlreadyPresent bool   `json:"already_present"`
 }
 
-// NewObservationHandler assembles the exact v0.0.2 write boundary.
+// NewObservationHandler assembles the exact authenticated observation boundary.
 func NewObservationHandler(store *ObservationStore, authorize ClientAuthorizer) (*ObservationHandler, error) {
 	return NewObservationHandlerWithStateLock(store, authorize, &sync.RWMutex{})
 }
@@ -108,4 +108,14 @@ func (handler *ObservationHandler) writeAck(response http.ResponseWriter, ack ob
 	response.Header().Set("Cache-Control", "no-store")
 	response.WriteHeader(http.StatusOK)
 	_, _ = response.Write(encoded)
+}
+
+func hasURIQuery(request *http.Request) bool {
+	return request.URL.RawQuery != "" || request.URL.ForceQuery
+}
+
+func writeProblem(response http.ResponseWriter, status int, message string) {
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(map[string]string{"error": message})
 }

@@ -22,7 +22,7 @@ import (
 const (
 	// SchemaVersionV1 keeps ingestion available while an explicit migration is pending.
 	SchemaVersionV1 = 1
-	// SchemaVersion identifies the registry required before the v0.0.3 reader opens.
+	// SchemaVersion identifies the registry required before the private reader opens.
 	SchemaVersion = 2
 	// MaxRegistryBytes bounds the root-provisioned authorization document.
 	MaxRegistryBytes = 16 * 1024
@@ -100,7 +100,7 @@ func (registry *Registry) validate() error {
 	return nil
 }
 
-// ReaderReady reports whether the explicit v0.0.3 migration is complete.
+// ReaderReady reports whether the explicit infrastructure-binding migration is complete.
 func (registry *Registry) ReaderReady() bool {
 	return registry != nil && registry.Schema == SchemaVersion
 }

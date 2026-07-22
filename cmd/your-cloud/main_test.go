@@ -56,7 +56,7 @@ func TestControllerServeArgumentsRequireExactPrivateEndpoints(t *testing.T) {
 
 func TestRelayRefusesBeforeListeningWithoutCandidate(t *testing.T) {
 	t.Parallel()
-	err := runRelay([]string{"--listen=" + v003RelayListenAddress}, t.TempDir()+"/missing.json")
+	err := runRelay([]string{"--listen=" + relayIngestionListenAddress}, t.TempDir()+"/missing.json")
 	if err == nil || !strings.Contains(err.Error(), "relay candidate") {
 		t.Fatalf("missing candidate was not the startup boundary: %v", err)
 	}
@@ -66,31 +66,31 @@ func TestRelayRejectsEveryOtherListenAddress(t *testing.T) {
 	t.Parallel()
 	for _, address := range []string{"127.0.0.1:8443", "192.168.243.153:8444", "0.0.0.0:8443"} {
 		err := runRelay([]string{"--listen=" + address}, t.TempDir()+"/candidate.json")
-		if err == nil || !strings.Contains(err.Error(), "must be "+v003RelayListenAddress) {
+		if err == nil || !strings.Contains(err.Error(), "must be "+relayIngestionListenAddress) {
 			t.Fatalf("unsafe listen address %q was not refused: %v", address, err)
 		}
 	}
 }
 
-func TestRoleArgumentsAcceptV002Configuration(t *testing.T) {
+func TestRoleArgumentsAcceptCurrentConfiguration(t *testing.T) {
 	t.Parallel()
 
 	daemonConfiguration, err := parseDaemonArguments([]string{
 		"--machine-id=lab-machine-1",
-		"--relay-url=" + v002RelayOrigin,
+		"--relay-url=" + approvedRelayOrigin,
 	})
 	if err != nil {
 		t.Fatalf("valid Daemon arguments refused: %v", err)
 	}
-	if daemonConfiguration.machineID != "lab-machine-1" || daemonConfiguration.relayURL != v002RelayOrigin {
+	if daemonConfiguration.machineID != "lab-machine-1" || daemonConfiguration.relayURL != approvedRelayOrigin {
 		t.Fatalf("unexpected Daemon configuration: %#v", daemonConfiguration)
 	}
 
-	relayConfiguration, err := parseRelayArguments([]string{"--listen=" + v003RelayListenAddress})
+	relayConfiguration, err := parseRelayArguments([]string{"--listen=" + relayIngestionListenAddress})
 	if err != nil {
 		t.Fatalf("valid Relay arguments refused: %v", err)
 	}
-	if relayConfiguration.listenAddress != v003RelayListenAddress {
+	if relayConfiguration.listenAddress != relayIngestionListenAddress {
 		t.Fatalf("unexpected Relay configuration: %#v", relayConfiguration)
 	}
 }
@@ -100,12 +100,12 @@ func TestDaemonRejectsEveryOtherRelayOrigin(t *testing.T) {
 	for _, relayURL := range []string{
 		"",
 		"http://127.0.0.1:8443",
-		v002RelayOrigin + "/",
-		v002RelayOrigin + "?target=other",
+		approvedRelayOrigin + "/",
+		approvedRelayOrigin + "?target=other",
 		"http://admin@192.168.242.103:8443",
 	} {
 		err := runDaemon([]string{"--machine-id=lab-machine-1", "--relay-url=" + relayURL})
-		if err == nil || !strings.Contains(err.Error(), "must be "+v002RelayOrigin) {
+		if err == nil || !strings.Contains(err.Error(), "must be "+approvedRelayOrigin) {
 			t.Fatalf("unsafe Relay origin %q was not refused: %v", relayURL, err)
 		}
 	}
@@ -116,7 +116,7 @@ func TestDaemonRejectsMalformedMachineIDBeforeStartup(t *testing.T) {
 	for _, machineID := range []string{"", "UPPERCASE", "ab", "lab_machine_1", "-lab-machine-1"} {
 		if configuration, err := parseDaemonArguments([]string{
 			"--machine-id=" + machineID,
-			"--relay-url=" + v002RelayOrigin,
+			"--relay-url=" + approvedRelayOrigin,
 		}); err == nil {
 			t.Fatalf("malformed machine ID accepted: %q as %#v", machineID, configuration)
 		}

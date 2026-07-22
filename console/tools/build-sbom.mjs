@@ -10,6 +10,10 @@ if (!output) {
   throw new Error("usage: node tools/build-sbom.mjs OUTPUT.json");
 }
 
+const packageDocument = JSON.parse(
+  await readFile(resolve(consoleRoot, "package.json"), "utf8"),
+);
+
 const cargo = JSON.parse(
   execFileSync(
     "cargo",
@@ -72,15 +76,15 @@ const document = {
         {
           type: "application",
           name: "your-cloud-sbom-builder",
-          version: "0.0.3",
+          version: packageDocument.version,
         },
       ],
     },
     component: {
       type: "application",
-      "bom-ref": "pkg:generic/your-cloud-console@0.0.3?os=linux&arch=x86_64",
+      "bom-ref": `pkg:generic/your-cloud-console@${encodeURIComponent(packageDocument.version)}?os=linux&arch=x86_64`,
       name: "your-cloud-console",
-      version: "0.0.3",
+      version: packageDocument.version,
     },
   },
   components,

@@ -1,4 +1,4 @@
-// Package transport assembles the exact TLS 1.3 policies of v0.0.2.
+// Package transport assembles the exact TLS 1.3 policies between product roles.
 package transport
 
 import (

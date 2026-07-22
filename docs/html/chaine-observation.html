@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Carte technique de la chaîne d'observation v0.0.2 de Your Cloud.">
-  <title>Chaîne d'observation v0.0.2 — Your Cloud</title>
+  <meta name="description" content="Carte technique de la chaîne d'observation de Your Cloud.">
+  <title>Chaîne d'observation — Your Cloud</title>
   <style>
-    :root{color-scheme:dark;--bg:#07111e;--panel:#0e1d31;--panel2:#12243a;--text:#f3f7fb;--muted:#aab9ca;--line:#29445f;--cyan:#62d9e8;--green:#72dda8;--amber:#ffca70;--pink:#f594bc;--blue:#8aaeff}*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 8% 0,#12354b,transparent 32rem),radial-gradient(circle at 100% 35%,#211d44,transparent 30rem),var(--bg);font:16px/1.6 Inter,system-ui,sans-serif}main{width:min(1120px,calc(100% - 36px));margin:auto;padding:58px 0 90px}h1,h2,h3{line-height:1.15}h1{margin:.15em 0;font-size:clamp(2.7rem,7vw,5.5rem);letter-spacing:-.045em}h2{margin-top:62px;font-size:clamp(1.65rem,4vw,2.55rem)}h3{margin:.15em 0 .45em}.eyebrow{color:var(--cyan);font:750 .78rem ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}.lead{max-width:850px;color:var(--muted);font-size:1.16rem}.status{display:inline-block;padding:7px 11px;border:1px solid var(--green);border-radius:999px;color:var(--green)}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card,.machine{grid-column:span 4;padding:19px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(18,36,58,.96),rgba(8,20,34,.96))}.wide{grid-column:span 6}.full{grid-column:1/-1}.card p,.card li,.machine p{color:var(--muted)}.tag{color:var(--cyan);font:700 .76rem ui-monospace,monospace;text-transform:uppercase}.placement{display:grid;grid-template-columns:1fr 90px 1fr;gap:16px;align-items:center}.machine{grid-column:auto}.process{margin-top:12px;padding:12px;border-left:3px solid var(--green);background:rgba(114,221,168,.07)}.process.relay{border-color:var(--blue)}.arrow{text-align:center;color:var(--cyan);font-weight:800}.flow{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}.dispatch{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.fork{text-align:center;color:var(--amber);font-weight:750}.role-branches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.step{position:relative;padding:13px 10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);text-align:center}.step:not(:last-child)::after{content:"→";position:absolute;right:-14px;top:50%;z-index:2;color:var(--cyan);font-weight:900;transform:translateY(-50%)}.lanes{display:grid;gap:12px}.lane{display:grid;grid-template-columns:150px repeat(5,1fr);gap:8px;align-items:stretch}.lane-label{padding:12px;color:var(--amber);font-weight:750}.node{padding:12px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}.node.active{border-color:var(--green)}.note{margin-top:20px;padding:17px;border-left:4px solid var(--pink);border-radius:8px;background:rgba(245,148,188,.07);color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--cyan)}code{color:var(--green)}pre{overflow:auto;padding:15px;border:1px solid var(--line);border-radius:12px;background:#07101b;color:var(--text)}a{color:var(--cyan)}footer{margin-top:68px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted)}@media(max-width:850px){.card,.wide{grid-column:span 6}.placement,.dispatch,.role-branches{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.flow{grid-template-columns:1fr}.step:not(:last-child)::after{content:"↓";right:50%;top:auto;bottom:-20px;transform:translateX(50%)}.lane{grid-template-columns:1fr}.lane-label{padding-bottom:0}}@media(max-width:560px){.card,.wide{grid-column:1/-1}}
+    :root{color-scheme:dark;--bg:#07111e;--panel:#0e1d31;--panel2:#12243a;--text:#f3f7fb;--muted:#aab9ca;--line:#29445f;--cyan:#62d9e8;--green:#72dda8;--amber:#ffca70;--pink:#f594bc;--blue:#8aaeff}*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 8% 0,#12354b,transparent 32rem),radial-gradient(circle at 100% 35%,#211d44,transparent 30rem),var(--bg);font:16px/1.6 Inter,system-ui,sans-serif}main{width:min(1120px,calc(100% - 36px));margin:auto;padding:58px 0 90px}h1,h2,h3{line-height:1.15}h1{margin:.15em 0;font-size:clamp(2.7rem,7vw,5.5rem);letter-spacing:-.045em}h2{margin-top:62px;font-size:clamp(1.65rem,4vw,2.55rem)}h3{margin:.15em 0 .45em}.eyebrow{color:var(--cyan);font:750 .78rem ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}.lead{max-width:850px;color:var(--muted);font-size:1.16rem}.status{display:inline-block;padding:7px 11px;border:1px solid var(--green);border-radius:999px;color:var(--green)}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card,.machine{grid-column:span 4;padding:19px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(18,36,58,.96),rgba(8,20,34,.96))}.wide{grid-column:span 6}.full{grid-column:1/-1}.card p,.card li,.machine p{color:var(--muted)}.tag{color:var(--cyan);font:700 .76rem ui-monospace,monospace;text-transform:uppercase}.placement{display:grid;grid-template-columns:1fr 90px 1fr;gap:16px;align-items:center}.machine{grid-column:auto}.process{margin-top:12px;padding:12px;border-left:3px solid var(--green);background:rgba(114,221,168,.07)}.process.relay{border-color:var(--blue)}.arrow{text-align:center;color:var(--cyan);font-weight:800}.flow{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}.dispatch{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.fork{text-align:center;color:var(--amber);font-weight:750}.role-branches{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.step{position:relative;padding:13px 10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);text-align:center}.step:not(:last-child)::after{content:"→";position:absolute;right:-14px;top:50%;z-index:2;color:var(--cyan);font-weight:900;transform:translateY(-50%)}.lanes{display:grid;gap:12px}.lane{display:grid;grid-template-columns:150px repeat(5,1fr);gap:8px;align-items:stretch}.lane-label{padding:12px;color:var(--amber);font-weight:750}.node{padding:12px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}.node.active{border-color:var(--green)}.note{margin-top:20px;padding:17px;border-left:4px solid var(--pink);border-radius:8px;background:rgba(245,148,188,.07);color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--cyan)}code{color:var(--green)}pre{overflow:auto;padding:15px;border:1px solid var(--line);border-radius:12px;background:#07101b;color:var(--text)}a{color:var(--cyan)}footer{margin-top:68px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted)}@media(max-width:850px){.card,.wide{grid-column:span 6}.placement,.dispatch,.role-branches{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.flow{grid-template-columns:1fr}.step:not(:last-child)::after{content:"↓";right:50%;top:auto;bottom:-20px;transform:translateX(50%)}.lane{grid-template-columns:1fr}.lane-label{padding-bottom:0}}@media(max-width:560px){.card,.wide{grid-column:1/-1}}
   </style>
 </head>
 <body>
@@ -14,15 +14,16 @@
     <header>
       <p class="eyebrow">Your Cloud · architecture vivante</p>
       <h1>La carte technique de l'observation.</h1>
-      <p class="lead">Du lancement systemd jusqu'au fichier durable : processus, appels Go, données, crypto, pannes et preuves de <code>v0.0.2</code>.</p>
-      <p class="status">● implémentée et prouvée dans le LAB</p>
+      <p class="lead">Du lancement systemd jusqu'à la Console installée : processus, appels, données, crypto, pannes et limites de capacité.</p>
+      <p class="status">● carte des capacités et frontières</p>
     </header>
 
     <section>
-      <h2>Les trois rôles du même exécutable</h2>
+      <h2>Les quatre rôles du même exécutable</h2>
       <div class="grid">
         <article class="card"><span class="tag">processus permanent</span><h3>Daemon</h3><p>Collecte localement, persiste puis livre. Il n'écoute aucun port.</p></article>
         <article class="card"><span class="tag">processus permanent</span><h3>Relay</h3><p>Authentifie, refuse ou persiste. Il ne renvoie aucun ordre.</p></article>
+        <article class="card"><span class="tag">processus permanent</span><h3>Controller</h3><p>Lit le Relay, porte l'inventaire métier et sert l'API privée de la Console.</p></article>
         <article class="card"><span class="tag">commande administrative ponctuelle</span><h3>Diagnose</h3><p>Lancé localement par root, lit l'état protégé, écrit sur stdout puis termine sans réseau.</p></article>
       </div>
     </section>
@@ -31,19 +32,19 @@
     <section>
       <h2>Où ils vivent</h2>
       <div class="placement">
-        <article class="machine"><p class="eyebrow">LAN · lab-machine-1</p><h3>Un processus</h3><div class="process"><strong>Daemon</strong><br>identité client · tampon privé</div><p>Aucune candidature Relay, aucune écoute produit.</p></article>
+        <article class="machine"><p class="eyebrow">machine administrée</p><h3>Daemon</h3><div class="process"><strong>Collecte locale</strong><br>identité client · tampon privé</div><p>Aucune écoute produit.</p></article>
         <div class="arrow">mTLS<br>→ :8443</div>
-        <article class="machine"><p class="eyebrow">VPS simulé · lab-coordinateur</p><h3>Deux processus</h3><div class="process"><strong>Daemon</strong><br>identité et état propres · mTLS local vers le Relay</div><div class="process relay"><strong>Relay</strong><br>identité serveur · registre · état propre</div></article>
+        <article class="machine"><p class="eyebrow">machine d'observation</p><h3>Daemon + Relay</h3><div class="process"><strong>Daemon</strong><br>identité et état propres</div><div class="process relay"><strong>Relay</strong><br>ingestion :8443 · lecture :8444</div></article>
       </div>
-      <p class="note">Même artefact, mais comptes dynamiques, credentials, états et unités systemd séparés. Partager les octets ne partage pas l'autorité.</p>
+      <p class="note">Le Controller vit sur une machine de contrôle séparée et la Console sur le poste humain. Même artefact Go, mais processus, comptes, credentials et états distincts : partager les octets ne partage pas l'autorité.</p>
     </section>
 
     <section>
       <h2>Qui appelle quoi</h2>
       <div class="dispatch" aria-label="Entrée commune avant sélection du rôle"><div class="step">systemd ou shell</div><div class="step"><code>main()</code></div><div class="step"><code>run(args)</code></div></div>
       <p class="fork"><code>run(args)</code> choisit exactement une branche ↓</p>
-      <div class="role-branches" aria-label="Branches exclusives daemon, relay et diagnose"><div class="node active"><code>daemon</code><br><code>runDaemon</code><br>processus permanent</div><div class="node active"><code>relay</code><br><code>runRelay</code><br>processus permanent</div><div class="node active"><code>diagnose observation</code><br><code>runDiagnose</code><br>commande puis fin</div></div>
-      <p class="note">Une seule branche est appelée par invocation. <code>runDaemon</code>, <code>runRelay</code> et <code>runDiagnose</code> ne s'appellent jamais entre elles.</p>
+      <div class="role-branches" aria-label="Branches exclusives daemon, relay, controller et diagnose"><div class="node active"><code>daemon</code><br><code>runDaemon</code><br>processus permanent</div><div class="node active"><code>relay</code><br><code>runRelay</code><br>processus permanent</div><div class="node active"><code>controller</code><br><code>runController</code><br>processus permanent</div><div class="node active"><code>diagnose observation</code><br><code>runDiagnose</code><br>commande puis fin</div></div>
+      <p class="note">Une seule branche est appelée par invocation. Les rôles ne s'appellent jamais entre eux dans le même processus.</p>
 
       <div class="lanes">
         <div class="lane"><div class="lane-label">Daemon</div><div class="node">arguments + credentials</div><div class="node">client TLS + tampon</div><div class="node active">Collector goroutine</div><div class="node active">Publisher goroutine</div><div class="node">WaitGroup + arrêt</div></div>
@@ -65,10 +66,9 @@
 
     <!-- coherence: V1-APP-ACCESS:start -->
     <section>
-      <h2>Contrat Controller–Relay décidé pour <code>v0.0.3</code></h2>
-      <p class="note">La séparation des responsabilités, le sens de lecture, l'enveloppe Tauri 2, les deux API et leurs identités sont décidés. Ils ne sont pas encore implémentés ou prouvés dans <code>v0.0.3</code>.</p>
-      <p class="note"><code>v0.0.2</code> expose seulement <code>POST /v0/observations</code> aux Daemons. Il n'existe encore aucune route de lecture pour un Controller ; la Console ne doit donc jamais appeler directement le Relay.</p>
-      <p class="note">Le listener TLS actuel <code>8443</code> reste réservé à l'autorité cliente et à l'enrôlement des Daemons. Le lecteur Controller utilise un second listener sur l'adresse privée exacte et <code>8444</code>.</p>
+      <h2>Chemin Controller–Relay–Console</h2>
+      <p class="note">Le Relay reçoit les observations des Daemons sur une frontière et rend un instantané au Controller sur une autre. La Console appelle le Controller ; elle n'appelle jamais directement le Relay.</p>
+      <p class="note">Le listener TLS <code>8443</code> reste réservé à l'autorité cliente et à l'enrôlement des Daemons. Le lecteur Controller utilise un second listener sur l'adresse privée exacte et <code>8444</code>.</p>
       <div class="flow"><div class="step">Daemon</div><div class="step">POST mTLS</div><div class="step">Relay</div><div class="step">validation</div><div class="step">dernier état</div><div class="step">accusé durable</div></div>
       <div class="flow"><div class="step">Controller</div><div class="step">GET mTLS :8444</div><div class="step">Relay</div><div class="step">instantané validé</div><div class="step">Controller</div><div class="step">API privée</div><div class="step">Console installée</div></div>
       <p class="note"><code>8444</code> n'est pas localhost : le filtre <code>nftables</code> refuse par défaut et n'autorise que l'interface et l'IP privée provisionnées du Controller. Les autres paquets sont supprimés par <code>drop</code> sans réponse ; même la source admise est limitée à quatre nouveaux TCP en rafale puis douze par minute. Deux CA Ed25519 reader distinctes de l'ingestion, le nom et l'URI SAN exacts et un manifeste revérifié par requête restent obligatoires derrière ce filtre.</p>
@@ -82,16 +82,16 @@
       </tbody></table>
       <p class="note">Le premier Controller reste en lecture seule : l'enrôlement machine demeure provisionné manuellement. Les certificats reader de 180 jours tournent manuellement, listener fermé ; chaque bundle local est publié atomiquement puis les deux hôtes sont recoupés avant réouverture, sans deux lecteurs actifs. Leur manifeste cryptographique ne se déduit pas de l'inventaire métier.</p>
       <p class="note">L'accusé actuel signifie seulement que la séquence exacte est durable sur le Relay ; il ne prouve pas la lecture du Controller. Le Relay garde le dernier état, pas un historique complet. Si 10, 11 et 12 arrivent entre deux lectures, le Controller peut ne voir que 12 : ce remplacement n'est pas une <code>Lacune d'observation</code> du tampon Daemon.</p>
-      <p class="note">Une architecture ultérieure peut faire cohabiter Relay et Controller, mais leur root et le filtre IP seraient alors communs. <code>v0.0.3</code> exige deux IPv4 privées distinctes et ne revendique pas de mode loopback : <code>lab-coordinateur</code> porte le Controller et <code>lab-machine-1</code> le Relay pendant la preuve.</p>
+      <p class="note">Une architecture ultérieure peut faire cohabiter Relay et Controller, mais leur root et le filtre IP seraient alors communs. La frontière actuelle conserve deux IPv4 privées distinctes et ne revendique pas de mode loopback.</p>
       <p class="note">Le Controller reste un backend sans frontend. La Console embarque son interface signée, n'ouvre aucun serveur local et ne télécharge jamais de code depuis un Controller.</p>
       <p class="note">La navigation est centrée sur l'infrastructure choisie : « Synthèse », « Parc » et « Observations ». Le Controller reste une liaison contextuelle, l'identité locale reste sous « Profil et sessions » et la Console n'invente aucune machine Relay dédiée. « Relay indisponible » décrit le transport ; un hôte qui exécute aussi le Daemon reste une machine normale et aucun badge de placement absent de l'API n'est fabriqué.</p>
-      <p class="note">La preuve commence sur les six VM Debian <code>v1-full</code>, avec Daemon et Relay réellement colocalisés sur <code>lab-machine-1</code> sous autorités séparées. Après stabilité Linux seulement, une VM <code>lab-console-windows</code> construira et exécutera nativement le <code>.msi</code>. Linux ne sera jamais présenté comme une preuve Windows ; les deux portes restent nécessaires pour fermer <code>v0.0.3</code>.</p>
+      <p class="note">Les rapports LAB conservent les placements, commits et résultats exacts. Une réussite Linux ne constitue jamais une preuve Windows.</p>
       <p class="note">Chaque Controller garde des identifiants de Controller et d'infrastructure immuables. Seul un <code>GET /v0/snapshot</code> réussi dans la même opération et un enrôlement actif autorisent un rattachement ; le cache ne suffit jamais. Une VM hostile teste d'abord le refus IP puis, dans une phase isolée, mTLS, certificats et identifiants croisés.</p>
-      <p class="note">La future liaison WireGuard post-V1 Console–Controller reste distincte de la chaîne d'observation. La Console devra la présenter comme une connexion bornée à l'infrastructure choisie, avec déverrouillage et fermeture explicites, sans transporter la clé par le Relay ni ajouter ce mécanisme à la V1 ou à <code>v0.0.3</code>.</p>
+      <p class="note">Une liaison WireGuard Console–Controller reste distincte de la chaîne d'observation. Elle devra être bornée à l'infrastructure choisie, avec déverrouillage et fermeture explicites, sans transporter la clé par le Relay.</p>
       <p class="note">Seul <code>GET /v0/snapshot</code> sans corps ni query rend une copie atomique triée de zéro à 64 machines. En-têtes 8 Kio, réponse 2 Mio, erreur 1 Kio, délais 3/6 s, quatre sockets, une requête concurrente et douze connexions et lectures par minute sont fermés. Le cache reste <code>indisponible</code> après panne ou restart et reprend avec un backoff borné. Une signature de bout en bout pourrait détecter une altération, mais ne cacherait pas les données à un Relay root compromis.</p>
       <p class="note">Le Controller non-root sépare <code>inventory.json</code>, autorité métier sous 64 Kio, de <code>relay-cache.json</code>, snapshot P5 sous 2 Mio. Un nouveau rattachement persiste le cache frais avant l'inventaire ; un renommage reste local. Omission, réactivation, observation disparue, séquence décroissante ou lacune supprimée refusent le remplacement du cache sans effacer l'inventaire.</p>
       <p class="note">La projection Console rend seulement les machines attendues sous 128 Kio. Transport, enrôlement, fraîcheur et continuité restent séparés : une panne ne devient ni ancienne ni absente. Une observation fiable est récente jusqu'à 90 secondes incluses ; un écart absolu déclaré/reçu supérieur à 30 secondes est seulement signalé. Toutes les lacunes contribuent à un résumé exact et aucune plage n'est tronquée silencieusement.</p>
-      <p class="note">Le code historique <code>QUERY /v0/machines</code> de <code>v0.0.1</code> et son calcul <code>recent</code>/<code>old</code>/<code>absent</code> ne définissent pas le contrat <code>v0.0.3</code> : son inventaire, sa projection et sa fraîcheur appartiennent au Controller.</p>
+      <p class="note">Le cœur courant contient un seul chemin Daemon–Relay. Les anciennes preuves de présence restent consultables sans maintenir leur sender ou leur serveur dans <code>internal/</code>. L’inventaire, la projection et la fraîcheur appartiennent au Controller.</p>
     </section>
     <!-- coherence: V1-APP-ACCESS:end -->
 
@@ -150,7 +150,7 @@
         <tr><td><code>v0.0.1</code></td><td>présence HTTP de LAB</td><td>aucun certificat, état Relay mémoire</td></tr>
         <tr><td><code>v0.0.2</code></td><td>observation mTLS bornée</td><td>credentials séparés et états durables</td></tr>
       </tbody></table>
-      <p class="note">Les dossiers sont des recettes reproductibles, pas deux versions actives. Les fusionner aurait créé des conditions entre deux modèles de secrets, de données et de retrait. Une future distribution commune sera cadrée séparément.</p>
+      <p class="note">Ces dossiers figent les entrées de preuves passées, pas deux versions actives du produit. Un ancien lot permet de relire sa preuve mais ne doit pas être appliqué au binaire courant ; le code métier reste unique dans <code>cmd/</code> et <code>internal/</code>.</p>
     </section>
 
     <section>
@@ -181,14 +181,14 @@
         <article class="card"><h3>Machine compromise</h3><p>Elle peut mentir dans les champs autorisés.</p></article>
         <article class="card"><h3>Relay compromis</h3><p>Root voit et peut altérer l'état après TLS ; une intégrité de bout en bout reste ouverte.</p></article>
         <article class="card"><h3>PKI de preuve</h3><p>Pas de renouvellement ou réponse à incident de production.</p></article>
-        <article class="card"><h3>Hors palier</h3><p>Console, Controller, Ansible métier, action distante, Auxiliaire, WireGuard, OCI, scan, failover Relay, Proxmox, OpenStack, worker d'automatisation et IaC.</p></article>
+        <article class="card"><h3>Hors capacité</h3><p>Action distante, déploiement métier, découverte LAN, renouvellement automatique, failover Relay et exécution IaC.</p></article>
         <article class="card"><h3>Lacune</h3><p>Elle révèle une perte mais ne recrée pas les données.</p></article>
         <article class="card"><h3>Conformité</h3><p>Les contrôles aident OWASP/NIS2 sans suffire à une déclaration.</p></article>
       </div>
     </section>
     <!-- coherence: V1-OBSERVATION:end -->
 
-    <footer><p>Source canonique : <a href="../architecture/CHAINE-D-OBSERVATION.md">CHAINE-D-OBSERVATION.md</a> · Contrat : <a href="../objectifs/v1/CONTRAT-V0.0.2.md">v0.0.2</a> · Preuve : <a href="../lab/v0.0.2-observation.md">rapport LAB</a> · Automatisation : <a href="../contribution/TESTS.md">registre des tests</a>.</p><p><a href="index.html">← Documentation visuelle</a></p></footer>
+    <footer><p>Source canonique : <a href="../architecture/CHAINE-D-OBSERVATION.md">CHAINE-D-OBSERVATION.md</a> · Preuves : <a href="../lab/v0.0.2-observation.md">Daemon–Relay</a> et <a href="../lab/v0.0.3-console-controller-linux.md">Console–Controller Linux</a> · Automatisation : <a href="../contribution/TESTS.md">registre des tests</a>.</p><p><a href="index.html">← Documentation visuelle</a></p></footer>
   </main>
 </body>
 </html>

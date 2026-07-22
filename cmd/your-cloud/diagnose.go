@@ -105,7 +105,7 @@ func buildObservationDiagnostic(inspection buffer.Inspection, certificate *x509.
 	}
 	current := inspection.Current
 	if current.Profile != observation.Profile || current.DaemonVersion != observation.DaemonVersion {
-		return observationDiagnostic{}, errors.New("local observation does not match v0.0.2")
+		return observationDiagnostic{}, errors.New("local observation does not match the supported schema")
 	}
 	return observationDiagnostic{
 		MachineID:          current.MachineID,

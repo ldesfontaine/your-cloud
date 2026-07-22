@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ldesfontaine/your-cloud/internal/identifier"
+	"github.com/ldesfontaine/your-cloud/internal/protocol"
 	"github.com/ldesfontaine/your-cloud/internal/strictjson"
 )
 
@@ -169,10 +170,6 @@ func (store *AuthorityStore) ServerIdentity() (tls.Certificate, error) {
 
 func (store *AuthorityStore) ServerCAPEM() []byte {
 	return []byte(store.Snapshot().ServerCACertificate)
-}
-
-func (store *AuthorityStore) DeviceCAPEM() []byte {
-	return []byte(store.Snapshot().DeviceCACertificate)
 }
 
 func (store *AuthorityStore) DeviceTLSConfig() (*tls.Config, error) {
@@ -596,11 +593,11 @@ func cloneAuthorityState(state AuthorityState) AuthorityState {
 }
 
 func controllerServerName(infrastructureID string) string {
-	return "controller." + infrastructureID + ".v0-0-3.your-cloud.test"
+	return protocol.ControllerServerName(infrastructureID)
 }
 
 func deviceURI(infrastructureID, deviceID string) string {
-	return "urn:your-cloud:v0.0.3:infrastructure:" + infrastructureID + ":device:" + deviceID
+	return protocol.DeviceURI(infrastructureID, deviceID)
 }
 
 func validatePresentedDevice(certificate *x509.Certificate, infrastructureID string, expected *DeviceRecord, now time.Time) error {

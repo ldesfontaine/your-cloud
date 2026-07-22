@@ -1,13 +1,8 @@
 # Stratégie et registre d'automatisation des tests
 
-> Statut : stratégie active et registre des régressions. Les P0, P1 et P2 du
-> pilote sont automatisés ; ce document n'est toujours ni un journal d'exécution
-> ni une preuve. La référence post-réorganisation conservée dans la
-> documentation est le run LAB `20260717T100150Z-1543398`, décrit dans le
-> [rapport `v0.0.1`](../lab/v0.0.1-presence.md). Il a réussi depuis les chemins
-> réorganisés avant le durcissement final de la CI et du banc de preuve ;
-> `20260717T093905Z-1478107` reste sa référence pré-réorganisation. L'identité
-> exacte d'un rejeu courant appartient à son dossier d'artefacts non versionné.
+> Statut : stratégie active et registre des régressions. Ce document n'est ni
+> un journal d'exécution ni une preuve. Les identités, commits et résultats des
+> exécutions appartiennent aux rapports sous [`docs/lab/`](../lab/).
 
 Ce registre conserve les contrôles réalisés, les difficultés rencontrées et le
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
@@ -120,7 +115,7 @@ fermer `v0.0.3`.
 
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | Automatisation rejouable complète |
 |---|---|---|---|
-| sources et artefacts | même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | Linux exact prouvé ; build/signature synthétique Windows configurés, non exécutés |
+| sources et artefacts | `package.json` fournit la version Console à Tauri, au SBOM et au manifeste candidat ; Cargo et le verrou npm doivent rester alignés ; même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | version divergente, identifiant d'exécution couplé à une version de livraison, artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | garde source et Linux exact prouvés ; build/signature synthétique Windows configurés, non exécutés |
 | enveloppe Tauri | frontend React, TypeScript et Vite embarqué ; opérations natives nommées ; aucun listener sur l'appareil Console ou chargement de code distant | navigation distante, ressource active externe, appel réseau frontend, accès fichier ou shell non autorisé | Linux prouvé ; install/lancement/absence de listener Windows configurés, non exécutés |
 | origine Console–Controller | TLS 1.3 sur l'origine exacte avec certificat serveur, identité d'appareil et session humaine attendus | HTTP, mauvais nom, CA, port, query, fragment, redirection, proxy, certificat inconnu, révoqué ou d'un autre Controller | planifié, non exécuté |
 | API métier | initialisation unique, lecture de l'infrastructure, lecture des machines et rattachement idempotent d'une machine enrôlée | méthode, route, type, `Accept`, schéma, doublon, casse, seconde valeur, taille, délai ou concurrence hors borne | planifié, non exécuté |
@@ -222,7 +217,13 @@ La matrice ne s'étend pas à l'App, Ansible métier, un canal d'action,
 l'Auxiliaire, WireGuard, OCI, Proxmox, OpenStack, un worker d'automatisation ou
 un projet IaC.
 
-## Couverture actuelle de `v0.0.1`
+## Archive de couverture du premier contrat
+
+Cette section décrit la preuve historique de présence et les incidents qui ont
+fait progresser le banc LAB. Son sender, son serveur HTTP et leurs tests
+unitaires ont été retirés du cœur courant afin de ne pas maintenir deux chemins
+Daemon–Relay. Les scripts et lots numérotés restent consultables pour relire la
+preuve, mais ne constituent plus une suite exécutable contre le binaire actuel.
 
 ### Contrôles statiques, tests Go et build
 
@@ -239,7 +240,7 @@ un projet IaC.
 | build `CGO_ENABLED=0` de l'unique exécutable | automatique | automatique | automatique | automatique | le lot doit être initialement dépourvu de `dist/` ; le mode CI construit dans un temporaire |
 | SHA-256 identique dans le build, sur le VPS et sur la machine LAN | automatique | automatique | automatique | automatique | le résultat structuré conserve l'empreinte exacte du lot exécuté |
 
-Les tests Go portent déjà les assertions suivantes :
+Au moment de cette preuve, les tests Go portaient les assertions suivantes :
 
 - `cmd/your-cloud` refuse un rôle absent ou inconnu, les arguments d'un autre
   rôle, un Relay sans candidature et toute adresse d'écoute différente de
@@ -417,9 +418,9 @@ La [RFC 10008](https://www.rfc-editor.org/rfc/rfc10008.html) est la source du
 contrat HTTP `QUERY` : méthode sûre et idempotente, contenu typé obligatoire,
 réponse cacheable et partie query de l'URI intégrée à la ressource ciblée.
 
-## Backlog priorisé d'automatisation
+## Automatisation historique du premier contrat
 
-### P0 réalisé — résultat reproductible et fiable
+### P0 historique — résultat reproductible et fiable
 
 1. `labctl list` possède un code de sortie fiable et une sortie TSV
    stable contenant origine, gabarit, topologie et adresses ; le pilote doit
@@ -446,7 +447,7 @@ réponse cacheable et partie query de l'URI intégrée à la ressource ciblée.
    propre tant qu'un PID, une unité, un listener ou un fichier qui devrait être
    absent subsiste.
 
-### P1 réalisé — régressions historiques automatisées
+### P1 historique — régressions automatisées
 
 1. Le manifeste invalide atteint la limite de démarrage ; le manifeste réparé
    reste refusé avant `reset-failed`, puis le Relay récupère.
@@ -467,7 +468,7 @@ réponse cacheable et partie query de l'URI intégrée à la ressource ciblée.
    identifiant, sa catégorie, son titre et son statut. Cette liste fixe exclut
    logs bruts et données sensibles.
 
-### P2 réalisé — restitution automatisée sans autorité indue
+### P2 historique — restitution automatisée sans autorité indue
 
 1. Le rapport Markdown et la page HTML sont générés depuis `result.json`, sans
    recopier manuellement PID, empreintes ou états.

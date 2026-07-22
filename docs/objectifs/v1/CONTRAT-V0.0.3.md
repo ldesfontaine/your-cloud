@@ -244,7 +244,7 @@ Le **code de récupération global** est un second secret, réservé aux inciden
 et distinct de cette phrase. La Console génère 256 bits aléatoires, les encode
 en 52 caractères Base32 RFC 4648 majuscules sans remplissage, puis ajoute deux
 caractères de contrôle issus des dix premiers bits de
-`SHA-256("your-cloud/v0.0.3/recovery-check" || code_brut)`. L'utilisateur doit
+`SHA-256("your-cloud/recovery-check.v1" || code_brut)`. L'utilisateur doit
 voir neuf groupes de six caractères séparés par `-`, le ressaisir et en
 conserver deux copies hors ligne ; ni la Console, ni
 Stronghold, ni un Controller ne le sauvegardent. Le frontend voit
@@ -261,7 +261,7 @@ rend les anciennes preuves définitivement caduques. Le sel public aléatoire de
 32 octets sert au `HKDF-Extract` avec `IKM=code_brut[32]`. Le `HKDF-Expand`
 produit exactement 32 octets passés comme graine, jamais comme scalaire,
 à Ed25519. Son champ `info` est, dans cet ordre : les octets ASCII
-`your-cloud/v0.0.3/recovery-signing`, `0x00`, l'époque en entier non signé de
+`your-cloud/recovery-signing.v1`, `0x00`, l'époque en entier non signé de
 64 bits big-endian, les 16 octets bruts de l'UUID `infrastructure_id`, puis
 l'empreinte SPKI de 32 octets — le SHA-256 de la clé publique de l'autorité TLS
 serveur épinglée. Des vecteurs de dérivation figés prouvent l'interopérabilité
@@ -381,7 +381,7 @@ seulement au tampon Rust borné décrit plus haut. Son certificat client emploie
 ECDSA avec SHA-256, un numéro de série aléatoire de 128 bits,
 `basicConstraints=CA:false`, `keyUsage=digitalSignature` et
 `extendedKeyUsage=clientAuth` critiques. Son SAN URI est exactement
-`urn:your-cloud:v0.0.3:infrastructure:<infrastructure_id>:device:<device_id>`, où
+`urn:your-cloud:device:v1:<infrastructure_id>:<device_id>`, où
 `device_id` est un UUIDv4 aléatoire. Le certificat vaut 180 jours ; la Console
 avertit à J-30 puis J-7, mais aucun renouvellement automatique n'entre dans ce
 palier.
@@ -577,7 +577,7 @@ surface de routes restent des choix de risque propres à `v0.0.3`.
 
 Une **origine HTTPS** est le triplet exact protocole, nom et port. Chaque
 association de la Console approuve une origine distincte de la forme
-`https://controller.<infrastructure-id>.v0-0-3.your-cloud.test:9443` dans le
+`https://controller.<infrastructure-id>.your-cloud.test:9443` dans le
 LAB. L'enveloppe Tauri, jamais le frontend, émet les requêtes REST JSON sur TLS
 1.3. Elle refuse HTTP, utilisateur dans l'URL, autre hôte ou port, query,
 fragment, redirection, proxy implicite et repli vers une autre origine.
@@ -697,7 +697,7 @@ contient ni journal exhaustif, ni série temporelle.
 Le Relay conserve son listener d'ingestion Daemon sur `8443` et ouvre un second
 listener strictement lecteur sur son adresse privée exacte et `8444`. Son
 origine approuvée est
-`https://relay-reader.<infrastructure-id>.v0-0-3.your-cloud.test:8444`, avec
+`https://relay-reader.<infrastructure-id>.your-cloud.test:8444`, avec
 l'UUID canonique minuscule de l'infrastructure comme label DNS. Aucun bind
 public, wildcard, IPv6 implicite, HTTP, port implicite, autre nom, DNS dynamique,
 proxy, redirection, CORS ou repli n'est admis. Le Controller ouvre TCP vers
@@ -826,7 +826,7 @@ lacunes :
       "observation": {
         "schema_version": 1,
         "machine_id": "lab-machine-1",
-        "daemon_version": "v0.0.2",
+        "daemon_version": "v0.0.3",
         "profile": "host-health.v1",
         "sequence": 31,
         "observed_at": "2026-07-19T11:59:58Z",

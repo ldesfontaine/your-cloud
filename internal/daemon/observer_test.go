@@ -103,13 +103,13 @@ func TestPublisherRejectsEveryOtherEndpoint(t *testing.T) {
 	t.Parallel()
 	localBuffer := daemonTestBuffer(t)
 	for _, endpoint := range []string{
-		"http://relay.v0-0-2.your-cloud.test:8443",
-		"https://relay.v0-0-2.your-cloud.test",
-		"https://relay.v0-0-2.your-cloud.test:9443",
-		"https://admin@relay.v0-0-2.your-cloud.test:8443",
-		"https://relay.v0-0-2.your-cloud.test:8443/path",
-		"https://relay.v0-0-2.your-cloud.test:8443?query=x",
-		"https://relay.v0-0-2.your-cloud.test:8443#fragment",
+		"http://relay.observation.your-cloud.test:8443",
+		"https://relay.observation.your-cloud.test",
+		"https://relay.observation.your-cloud.test:9443",
+		"https://admin@relay.observation.your-cloud.test:8443",
+		"https://relay.observation.your-cloud.test:8443/path",
+		"https://relay.observation.your-cloud.test:8443?query=x",
+		"https://relay.observation.your-cloud.test:8443#fragment",
 	} {
 		if publisher, err := NewPublisher("lab-machine-1", endpoint, localBuffer, &http.Client{}, log.New(io.Discard, "", 0)); err == nil {
 			t.Fatalf("unsafe endpoint accepted: %q as %#v", endpoint, publisher)

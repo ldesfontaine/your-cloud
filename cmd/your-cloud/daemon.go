@@ -20,8 +20,8 @@ import (
 
 const (
 	daemonStateDirectory = "/var/lib/private/your-cloud-daemon"
-	relayServerName      = "relay.v0-0-2.your-cloud.test"
-	v002RelayOrigin      = daemon.ApprovedRelayOrigin
+	relayServerName      = "relay.observation.your-cloud.test"
+	approvedRelayOrigin  = daemon.ApprovedRelayOrigin
 )
 
 type daemonArguments struct {
@@ -92,7 +92,7 @@ func parseDaemonArguments(arguments []string) (daemonArguments, error) {
 		&configuration.relayURL,
 		"relay-url",
 		"",
-		"approved HTTPS origin of the v0.0.2 LAB Relay",
+		"approved HTTPS origin of the observation Relay",
 	)
 	if err := flags.Parse(arguments); err != nil {
 		return daemonArguments{}, fmt.Errorf("daemon arguments: %w", err)
@@ -104,7 +104,7 @@ func parseDaemonArguments(arguments []string) (daemonArguments, error) {
 		return daemonArguments{}, fmt.Errorf("daemon machine ID: %w", err)
 	}
 	if configuration.relayURL != daemon.ApprovedRelayOrigin {
-		return daemonArguments{}, fmt.Errorf("daemon relay URL must be %s in v0.0.2", daemon.ApprovedRelayOrigin)
+		return daemonArguments{}, fmt.Errorf("daemon relay URL must be %s", daemon.ApprovedRelayOrigin)
 	}
 	return configuration, nil
 }

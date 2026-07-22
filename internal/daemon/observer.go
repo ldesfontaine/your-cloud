@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	// ApprovedRelayOrigin is the complete v0.0.2 LAB transport destination.
-	ApprovedRelayOrigin = "https://relay.v0-0-2.your-cloud.test:8443"
+	// ApprovedRelayOrigin is the complete authenticated observation destination.
+	ApprovedRelayOrigin = "https://relay.observation.your-cloud.test:8443"
 	observationPath     = "/v0/observations"
 	maxAckBytes         = 256
 )
@@ -121,7 +121,7 @@ func NewPublisher(machineID, relayOrigin string, localBuffer *buffer.Buffer, cli
 }
 
 func isApprovedHTTPSOrigin(parsed *url.URL) bool {
-	return parsed.Scheme == "https" && parsed.Hostname() == "relay.v0-0-2.your-cloud.test" && parsed.Port() == "8443" &&
+	return parsed.Scheme == "https" && parsed.Hostname() == "relay.observation.your-cloud.test" && parsed.Port() == "8443" &&
 		parsed.User == nil && parsed.Path == "" && parsed.RawPath == "" && parsed.RawQuery == "" &&
 		!parsed.ForceQuery && parsed.Fragment == "" && parsed.Opaque == ""
 }

@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"testing"
+
+	"github.com/ldesfontaine/your-cloud/internal/protocol"
 )
 
 func TestRecoveryDerivationVectorMatchesConsoleContract(t *testing.T) {
@@ -22,15 +24,16 @@ func TestRecoveryDerivationVectorMatchesConsoleContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := append([]byte("your-cloud/v0.0.3/recovery-signing\x00"), make([]byte, 8)...)
-	binary.BigEndian.PutUint64(info[len("your-cloud/v0.0.3/recovery-signing\x00"):], 7)
+	domain := protocol.RecoverySigningDomain + "\x00"
+	info := append([]byte(domain), make([]byte, 8)...)
+	binary.BigEndian.PutUint64(info[len(domain):], 7)
 	info = append(info, infrastructure...)
 	info = append(info, spki...)
 	seed, err := hkdf.Key(sha256.New, code, salt, string(info), 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := base64.RawURLEncoding.EncodeToString(seed), "LN7zfvU2WCR4AE5HECZPTIzyQWZcesuKelfj6D8aQLg"; got != want {
+	if got, want := base64.RawURLEncoding.EncodeToString(seed), "3zCrQciXcAUbEKNsqhm4fsKoDeUbbqOAuiyKWATbFTs"; got != want {
 		t.Fatalf("recovery seed differs from the shared vector: got %q want %q", got, want)
 	}
 }

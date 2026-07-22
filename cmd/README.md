@@ -1,12 +1,14 @@
-# Exécutable du produit
+# Points d’entrée du produit
 
-`your-cloud/` est le point de démarrage du seul artefact Go de `v0.0.1` :
+`your-cloud/` assemble l’unique exécutable Go installé sur les machines :
 
-- `your-cloud daemon` valide sa configuration puis envoie les présences ;
-- `your-cloud relay` vérifie d'abord le manifeste candidat local, puis assemble
-  le stockage mémoire et les routes HTTP.
+- `your-cloud daemon` collecte l’état local autorisé et le publie vers le Relay ;
+- `your-cloud relay` reçoit les observations et sert le lecteur privé ;
+- `your-cloud controller` porte l’inventaire, les sessions et l’API de lecture ;
+- `your-cloud diagnose` rend un diagnostic local borné sans ouvrir de réseau.
 
-Ces modes partagent des octets, pas un processus, un compte ou une
-configuration. Les fichiers de `cmd/` restent courts : le comportement métier
-vit dans [`internal/`](../internal/). `cmd/` ne contient pas des commandes de
-test LAB.
+Ces rôles partagent un fichier exécutable, pas un processus, un compte, des
+secrets ou une configuration. `cmd/` valide les arguments, assemble les
+packages métier et gère le cycle de vie du processus. La logique métier reste
+dans [`internal/`](../internal/) et les commandes de preuve restent dans
+[`tests/`](../tests/).

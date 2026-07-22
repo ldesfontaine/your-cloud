@@ -95,7 +95,7 @@ func postObservation(handler http.Handler, certificate *x509.Certificate, body [
 }
 
 func postObservationWithType(handler http.Handler, certificate *x509.Certificate, body []byte, query, contentType string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "https://relay.v0-0-2.your-cloud.test/v0/observations"+query, bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "https://relay.observation.your-cloud.test/v0/observations"+query, bytes.NewReader(body))
 	request.Header.Set("Content-Type", contentType)
 	if certificate != nil {
 		request.TLS.PeerCertificates = []*x509.Certificate{certificate}

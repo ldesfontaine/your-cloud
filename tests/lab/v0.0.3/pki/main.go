@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Command pki creates only synthetic, run-local v0.0.3 proof identities.
+// Command pki creates only synthetic, run-local proof identities.
 package main
 
 import (
@@ -83,19 +83,19 @@ func run(directory, controllerID, infrastructureID string, now time.Time) error 
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		return fmt.Errorf("create fresh PKI directory: %w", err)
 	}
-	relayCA, err := newAuthority("your-cloud-v0.0.3-relay-server-ca", 1, now)
+	relayCA, err := newAuthority("your-cloud-relay-server-ca", 1, now)
 	if err != nil {
 		return err
 	}
-	daemonCA, err := newAuthority("your-cloud-v0.0.3-daemon-client-ca", 2, now)
+	daemonCA, err := newAuthority("your-cloud-daemon-client-ca", 2, now)
 	if err != nil {
 		return err
 	}
-	relayReaderCA, err := newAuthority("your-cloud-v0.0.3-relay-reader-server-ca", 3, now)
+	relayReaderCA, err := newAuthority("your-cloud-relay-reader-server-ca", 3, now)
 	if err != nil {
 		return err
 	}
-	controllerReaderCA, err := newAuthority("your-cloud-v0.0.3-controller-reader-client-ca", 4, now)
+	controllerReaderCA, err := newAuthority("your-cloud-controller-reader-client-ca", 4, now)
 	if err != nil {
 		return err
 	}
@@ -111,11 +111,11 @@ func run(directory, controllerID, infrastructureID string, now time.Time) error 
 		}
 	}
 	if _, err := issue(directory, relayCA, leafRequest{
-		name: "relay", dnsName: "relay.v0-0-2.your-cloud.test", serial: 10, usage: x509.ExtKeyUsageServerAuth,
+		name: "relay", dnsName: "relay.observation.your-cloud.test", serial: 10, usage: x509.ExtKeyUsageServerAuth,
 	}, now); err != nil {
 		return err
 	}
-	relayReaderName := "relay-reader." + infrastructureID + ".v0-0-3.your-cloud.test"
+	relayReaderName := "relay-reader." + infrastructureID + ".your-cloud.test"
 	if _, err := issue(directory, relayReaderCA, leafRequest{
 		name: "relay-reader", dnsName: relayReaderName, serial: 11, usage: x509.ExtKeyUsageServerAuth,
 	}, now); err != nil {

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ldesfontaine/your-cloud/internal/identifier"
+	"github.com/ldesfontaine/your-cloud/internal/protocol"
 )
 
 const (
@@ -366,19 +367,6 @@ func (manager *PairingManager) activate(mode, transactionID string, certificate 
 	return activationResponse(manager.authority.Snapshot(), certificate.NotAfter), nil
 }
 
-func (manager *PairingManager) CandidateAuthorized(certificate *x509.Certificate, transactionID string) error {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	if err := manager.pruneCandidateLocked(manager.now()); err != nil {
-		return err
-	}
-	if manager.candidate == nil || manager.candidate.transactionID != transactionID || manager.now().After(manager.candidate.expires) {
-		return errors.New("candidate is unavailable")
-	}
-	state := manager.authority.Snapshot()
-	return validatePresentedDevice(certificate, state.InfrastructureID, &manager.candidate.certificate.Record, manager.now())
-}
-
 func (manager *PairingManager) PrepareDeviceRotation(rotationID, encodedCSR string, requestDigest [32]byte) (IdentityCompletionResponse, error) {
 	if !canonicalRawURLBytes(rotationID, 16) {
 		return IdentityCompletionResponse{}, errors.New("device rotation identifier is invalid")
@@ -551,7 +539,7 @@ func (manager *PairingManager) identityTranscript(transaction *identityTransacti
 		methodRoute = "PUT /v0/recovery"
 	}
 	buffer := bytes.NewBuffer(nil)
-	buffer.WriteString("your-cloud/v0.0.3/identity-transcript\x00")
+	buffer.WriteString(protocol.IdentityTranscriptDomain)
 	appendTranscriptField(buffer, []byte(transaction.mode))
 	appendTranscriptField(buffer, []byte("https://"+controllerServerName(state.InfrastructureID)+":9444"))
 	appendTranscriptField(buffer, []byte(methodRoute))

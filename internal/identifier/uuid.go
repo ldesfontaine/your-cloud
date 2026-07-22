@@ -1,4 +1,4 @@
-// Package identifier validates the fixed identifiers exchanged by v0.0.3.
+// Package identifier validates canonical identifiers shared by product roles.
 package identifier
 
 import (

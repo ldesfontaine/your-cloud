@@ -80,7 +80,7 @@ type relaySnapshotReader interface {
 	Read(context.Context, time.Time) (*RelaySnapshot, RelayStatus, error)
 }
 
-// ControllerHandler exposes the closed v0.0.3 API. TLS authenticates the
+// ControllerHandler exposes the closed private API. TLS authenticates the
 // device transport; this handler rechecks the live device authority on every
 // request and independently authenticates the human session where required.
 type ControllerHandler struct {

@@ -2,7 +2,6 @@ import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
-  SelectHTMLAttributes,
 } from "react";
 import type { LucideIcon } from "lucide-react";
 
@@ -124,12 +123,6 @@ type TextInputProps = InputHTMLAttributes<HTMLInputElement> & {
 export function TextInput({ invalid = false, ...props }: TextInputProps) {
   const className = props.className ? `yc-input ${props.className}` : "yc-input";
   return <input {...props} className={className} aria-invalid={invalid} />;
-}
-
-type SelectProps = SelectHTMLAttributes<HTMLSelectElement>;
-
-export function Select(props: SelectProps) {
-  return <select {...props} className="yc-select" />;
 }
 
 export function LoadingBlock({ label }: { label: string }) {

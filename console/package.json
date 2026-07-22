@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
+    "check:source": "node tests/check-source-contract.mjs",
     "check:visual": "node tests/check-visual-contract.mjs",
-    "test": "npm run check:visual",
+    "dev": "vite",
+    "test": "npm run check:source && npm run check:visual",
     "tauri": "tauri"
   },
   "dependencies": {

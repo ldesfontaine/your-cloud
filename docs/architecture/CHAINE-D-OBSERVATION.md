@@ -1,8 +1,9 @@
-# Chaîne d'observation — carte technique de `v0.0.2`
+# Chaîne d'observation — carte technique
 
-> Statut : guide d'architecture vivant. `v0.0.2` est implémentée et prouvée
-> dans le LAB. Ce document explique où le code s'exécute, qui appelle quoi,
-> quelles données circulent et quelles limites restent ouvertes.
+> Ce guide explique les capacités du produit : où le code s'exécute, qui
+> appelle quoi, quelles données circulent et quelles limites de sécurité
+> demeurent. Les rapports sous [`docs/lab/`](../lab/) portent seuls les dates,
+> commits et résultats d'exécution.
 
 Une [édition HTML autonome et visuelle](../html/chaine-observation.html)
 accompagne cette source canonique.
@@ -18,8 +19,8 @@ de vie :
 - quels packages portent la logique métier ;
 - où vivent les certificats, les états et les limites ;
 - quels algorithmes sont utilisés et pourquoi ;
-- quelles parties appartiennent encore à `v0.0.1` sans être appelées par le
-  chemin courant.
+- quels chemins historiques restent couverts par leurs tests sans être
+  assemblés dans les processus courants.
 
 ## Les notions avant les appels
 
@@ -41,33 +42,34 @@ de vie :
   une unité systemd et elle n'ouvre aucun port.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
-## Placement réellement exécuté
+## Placement des capacités
 
 ```text
-lab-console
-|- go test / go vet / go build
-|- génération des deux CA synthétiques pendant la preuve
-`- aucun processus produit permanent
+machine administrée                  machine d'observation
+`- processus daemon                 |- processus daemon
+    `- aucune écoute entrante        |- processus relay
+                                     |   |- ingestion mTLS :8443
+                                     |   `- lecture mTLS :8444
+                                     `- états et autorités séparés
 
-lab-machine-1                         lab-coordinateur
-/usr/local/lib/your-cloud/your-cloud  /usr/local/lib/your-cloud/your-cloud
-`- processus daemon                  |- processus daemon
-    `- aucune écoute entrante        |   `- mTLS local vers le Relay
-                                     `- processus relay
-                                           `- écoute mTLS :8443
+machine de contrôle                  poste humain
+`- processus controller             `- Console Tauri installée
+    `- API privée HTTPS :9443            `- aucun serveur local
 ```
 
-Les mêmes octets sont installés sur les deux machines. Sur
-`lab-coordinateur`, systemd lance deux unités, donc deux processus, comptes
-dynamiques, jeux de credentials et répertoires d'état distincts. Le rôle Relay
-reste refusé sans manifeste candidat root-owned.
+Le même exécutable Go fournit Daemon, Relay et Controller. Chaque rôle possède
+son processus, son compte, ses credentials et son répertoire d'état. Une
+colocalisation ne fusionne pas ces autorités, même si un même administrateur
+`root` peut alors compromettre les deux. Le rôle Relay reste refusé sans
+manifeste candidat root-owned.
 
-Le Daemon et le Relay partagent l'artefact, pas leur autorité :
+Les rôles partagent l'artefact, pas leur autorité :
 
 | Rôle | Peut lire | Peut modifier | Réseau |
 |---|---|---|---|
 | Daemon | son certificat, sa clé, la CA Relay et les trois sources système fixes | son tampon sous `/var/lib/private/your-cloud-daemon` | HTTPS sortant vers l'origine Relay exacte |
-| Relay | son certificat, sa clé, la CA Daemon, le registre et le manifeste candidat | son état sous `/var/lib/private/your-cloud-relay` | écoute TLS exacte sur `192.168.242.103:8443` |
+| Relay | ses certificats, ses CA, le registre et les manifestes root-owned | son état sous `/var/lib/private/your-cloud-relay` | ingestion `:8443` et lecteur privé `:8444` séparés |
+| Controller | ses identités, l'inventaire métier et le cache Relay | ses états privés Controller | lecture mTLS sortante vers le Relay et API privée `:9443` |
 | Diagnose | lancé ponctuellement par `root`, certificat public Daemon et état local déjà produit | rien | aucun accès réseau |
 
 ## Du système à la fonction Go
@@ -79,15 +81,17 @@ flowchart TD
     MAIN --> RUN[run arguments]
     RUN -->|daemon| RD[runDaemon]
     RUN -->|relay| RR[runRelay]
+    RUN -->|controller| RC[runController]
     RUN -->|diagnose observation| RG[runDiagnose]
     RD --> DP[processus Daemon permanent]
     RR --> RP[processus Relay permanent]
+    RC --> CP[processus Controller permanent]
     RG --> OUT[sortie texte ou JSON puis fin]
 ```
 
 [`cmd/your-cloud/main.go`](../../cmd/your-cloud/main.go) est le seul sélecteur
 de rôle. `main()` transmet `os.Args[1:]` à `run()`. `run()` refuse un rôle
-inconnu, puis appelle exactement l'une des trois fonctions d'assemblage.
+inconnu, puis appelle exactement l'une des quatre fonctions d'assemblage.
 
 Le dossier `cmd/` est donc la **couture** du programme : il relie arguments,
 credentials, stockage, réseau et arrêt propre. La logique détaillée reste dans
@@ -101,7 +105,7 @@ lance :
 ```text
 your-cloud daemon
   --machine-id=<identité fixée par l'installation>
-  --relay-url=https://relay.v0-0-2.your-cloud.test:8443
+  --relay-url=https://relay.observation.your-cloud.test:8443
 ```
 
 `runDaemon` ne récupère pas toute sa configuration dans l'environnement :
@@ -214,26 +218,20 @@ valeurs de santé collectées.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-## Contrat Controller–Relay décidé pour `v0.0.3`
+## Chemin Controller–Relay–Console
 
 La séparation des responsabilités et le sens de lecture ci-dessous sont des
-invariants validés. L'enveloppe, l'API Console–Controller et son cycle
-d'authentification sont décidés ; le protocole Controller–Relay, ses identités,
-ses bornes et sa reprise le sont désormais aussi. Aucun de ces éléments n'est
-encore implémenté ou prouvé dans `v0.0.3`.
+invariants du produit. Le Relay reçoit les observations des Daemons sur une
+frontière et rend un instantané au Controller sur une autre. La Console appelle
+le Controller ; elle n'appelle jamais directement le Relay.
 
-`v0.0.2` s'arrête volontairement au stockage Relay. Le processus actif expose
-uniquement `POST /v0/observations` aux Daemons : aucune route ne permet encore à
-un Controller de lire cet état. Cette absence est une limite réelle du palier,
-pas une invitation à laisser la Console appeler le Relay.
-
-Le listener TLS actuel est lui aussi réservé aux Daemons : il fait confiance à
+Le listener TLS `8443` est réservé aux Daemons : il fait confiance à
 l'autorité cliente des Daemons et exige leur enrôlement dès la connexion. Ajouter
 simplement une route Controller sur ce listener mélangerait donc deux classes
-d'identité. `v0.0.3` ajoute donc un listener lecteur distinct sur l'adresse
+d'identité. Le lecteur Controller emploie un listener distinct sur l'adresse
 privée exacte du Relay et `8444`, sans modifier la route d'ingestion `8443`.
 
-Le prochain incrément de lecture doit respecter ce trajet :
+Le trajet de lecture respecte ce sens :
 
 ```text
 Daemon -- POST mTLS --> Relay
@@ -279,7 +277,7 @@ rafale de quatre nouveaux TCP puis douze par minute. Une IP privée n'est pas un
 identité ; TLS 1.3 mTLS reste obligatoire avec une CA serveur reader et une CA
 cliente Controller Ed25519 dédiées à l'infrastructure. Le serveur exige le
 nom exact
-`relay-reader.<infrastructure-id>.v0-0-3.your-cloud.test` et le certificat
+`relay-reader.<infrastructure-id>.your-cloud.test` et le certificat
 client l'URI
 `urn:your-cloud:controller-reader:<infrastructure-id>:<controller-id>`.
 
@@ -505,36 +503,30 @@ restent auprès de leur appelant dans le fichier concerné.
 | `strictjson.Decode` | frontières réseau et fichiers d'état | à chaque décodage concerné | refuse doublons, noms non canoniques, champs inconnus et seconde valeur |
 | `securefile.ReadRootOwned` | candidature, enrôlement, diagnostic | avant de faire confiance à un fichier root | refuse chemin non canonique, lien, propriétaire ou mode dangereux et taille excessive |
 
-### Code historique `v0.0.1`
+### Un seul chemin produit
 
-`internal/presence`, `internal/daemon/daemon.go`, `internal/relay/http.go` et
-`internal/relay/store.go` conservent le contrat et les tests de présence
-`v0.0.1`. Le chemin `cmd/your-cloud` de `v0.0.2` ne les assemble plus : il
-utilise `observer.go`, `observation_http.go` et `observation_store.go`.
-
-Cette coexistence rend encore la preuve historique relisible. Elle ne signifie
-pas que deux protocoles sont actifs simultanément. Leur retrait ou migration
-sera une décision de distribution explicite, pas un nettoyage opportuniste. En
-particulier, `QUERY /v0/machines` et le calcul `recent`/`old`/`absent` de
-`v0.0.1` ne définissent pas la lecture du prochain Controller : l'inventaire et
-la politique de fraîcheur appartiennent au Controller, tandis que le contrat
-Relay `v0.0.3` reste distinct du protocole historique.
+Le cœur `internal/` ne conserve qu’une implémentation Daemon–Relay :
+`observer.go`, `observation_http.go` et `observation_store.go`. Les anciennes
+preuves de présence restent consultables sous `docs/lab/`, `tests/lab/` et
+`deploy/`, mais leur serveur et leur sender ne sont plus du code produit. La
+lecture `GET /v0/machines` et sa politique de fraîcheur appartiennent au
+Controller actuel.
 
 ## Pourquoi deux dossiers dans `deploy/`
 
-`deploy/v0.0.1` et `deploy/v0.0.2` sont des recettes reproductibles de deux
-contrats différents, pas deux installations actives en parallèle :
+`deploy/v0.0.1` et `deploy/v0.0.2` figent les entrées de preuve de deux contrats
+différents ; ce ne sont ni deux installations actives, ni deux implémentations
+produit maintenues en parallèle :
 
 | Palier | Transport et données | Credentials | État |
 |---|---|---|---|
 | `v0.0.1` | présence HTTP LAB | aucun certificat | présence Relay en mémoire |
 | `v0.0.2` | observations HTTPS mTLS | identité Daemon, identité Relay et CA séparées | tampon Daemon et stockage Relay durables |
 
-Réutiliser les scripts `v0.0.1` aurait imposé des branches conditionnelles
-entre deux formats, deux modèles de secrets et deux preuves de retrait. Les
-dossiers versionnés permettent de rejouer exactement un palier et d'expliquer
-sa migration. Une future enveloppe de distribution pourra factoriser le cycle
-commun lorsqu'elle possédera son propre contrat ; `v0.0.2` ne l'anticipe pas.
+Un ancien lot permet de relire la preuve correspondante, mais ne doit pas être
+appliqué au binaire courant. L’installation courante utilise le lot qui porte
+le contrat actuel du rôle ; le code métier reste unique dans `cmd/` et
+`internal/`.
 
 ## Cryptographie et algorithmes
 
@@ -658,28 +650,23 @@ n'est pas une panne du Relay. Le code le distingue donc des erreurs réseau.
 | même séquence, autres octets | collision refusée |
 | signal d'arrêt | arrêt coordonné des goroutines ou shutdown HTTP borné |
 
-## Preuve et automatisation
+## Preuves et automatisation
 
-La [preuve LAB `v0.0.2`](../lab/v0.0.2-observation.md) a réellement exécuté le
-nominal, les certificats hostiles, la révocation, l'indisponibilité, la
-saturation, la lacune, la reprise, les redémarrages, le retrait et la
-réinstallation.
+Les rapports LAB conservent les preuves exactes sans transformer cette carte en
+journal de développement : [chaîne Daemon–Relay](../lab/v0.0.2-observation.md)
+et [Console–Controller sous Linux](../lab/v0.0.3-console-controller-linux.md).
+Le [registre d'automatisation](../contribution/TESTS.md) distingue les contrôles
+rejouables des preuves encore manuelles. Une CI standard sans les VM du LAB ne
+remplace pas les scénarios multi-machines.
 
-Le scénario multi-VM a été piloté étape par étape. Le prochain travail
-d'automatisation éventuel consiste à encapsuler ces mêmes étapes dans une
-commande reproductible avec verrou, échéances, nettoyage d'échec et résultat
-structuré. Cela aiderait les revalidations locales et, plus tard, une CI munie
-d'un runner libvirt dédié. Une CI GitHub standard sans ces VM ne peut pas
-remplacer la preuve. Ce sujet reste noté ; il n'est pas implémenté dans ce
-palier.
+## Frontière de capacité
 
-## Ce qui est prouvé et ce qui reste absent
-
-| Niveau | Contenu |
-|---|---|
-| **Prouvé dans `v0.0.2`** | artefact commun ; processus isolés ; profil fixe ; mTLS ; enrôlement et révocation ; tampon et lacunes ; accusé durable ; diagnostic ; redémarrages et réinstallation |
-| **Décidé pour `v0.0.3`, non implémenté** | listener reader privé `8444`, filtre source, mTLS et CA dédiées, registre schéma 2 lié à l'infrastructure, `GET /v0/snapshot` borné, UTC, contrôle de dérive et reprise du cache ; inventaire et cache JSON séparés, projection sous 128 Kio, fraîcheur à 90 s et libellés NFC ; système visuel par tokens et sept vues centrées sur l'infrastructure ; porte Linux `v1-full` puis porte Windows native obligatoire |
-| **Absent** | Console et Controller actuels ; API de lecture Relay ; Ansible métier ; canal d'action ; commande distante ; Auxiliaire ; WireGuard ; service OCI ; plugin libre ; scan LAN ; enrôlement en ligne ; renouvellement automatique ; failover ou élection Relay ; Proxmox ; OpenStack ; worker d'automatisation ; projet IaC |
+La chaîne couvre la collecte locale, le tampon durable, l'ingestion mTLS, le
+lecteur Relay privé, l'inventaire et la projection Controller ainsi que la
+Console installée. Elle n'accorde aucune capacité d'action, de déploiement
+métier, de commande distante, de découverte LAN, de renouvellement automatique,
+de failover Relay ou d'exécution IaC. Ces absences sont des réservations de
+sécurité, pas des implémentations cachées derrière l'interface.
 
 ## Limites de sécurité
 

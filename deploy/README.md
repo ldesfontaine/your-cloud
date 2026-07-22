@@ -1,32 +1,26 @@
-# Déploiement minimal
+# Installation des rôles
 
-Ce dossier contient uniquement ce qui installe, active ou retire le palier sur
-une machine cible. Il ne contient plus les assertions ni les pilotes de preuve.
+`deploy/` contient les fichiers minimaux qui installent, activent ou retirent
+un rôle sur une machine cible : unités systemd, comptes, répertoires et garde de
+configuration. Il ne contient ni logique métier, ni scénario de test.
 
-[`v0.0.1/`](v0.0.1/) regroupe :
+Ce n’est pas un faux déploiement réservé au développement. Ce sont les
+primitives d’installation réellement exercées dans le LAB. Elles restent
+volontairement simples et bornées ; l’interface ou un futur moteur d’action
+pourra les piloter seulement après avoir produit et fait approuver un plan
+exact. Elles ne deviennent pas pour autant une seconde implémentation du
+Daemon, du Relay ou du Controller.
 
-- `install-agent`, qui installe l'unique exécutable et active le Daemon ;
-- `enable-relay` et `disable-relay`, qui gèrent séparément la candidature
-  Relay ;
-- `remove-agent`, qui retire tous les rôles et l'artefact commun ;
-- les deux modèles d'unité systemd.
+Les répertoires numérotés identifient le contrat sous lequel un lot
+d’installation a été prouvé. Ils ne sont pas le numéro d’une API à remplacer
+globalement : leur nom reste stable afin qu’une preuve passée désigne toujours
+les mêmes entrées. Le code produit courant évolue dans `cmd/` et `internal/` ;
+une capacité n’y est pas recopiée à chaque palier.
 
-[`v0.0.2/`](v0.0.2/) ajoute séparément le Daemon d'observation authentifiée et
-le Relay mTLS, toujours avec systemd uniquement et sans moteur de déploiement.
+- `v0.0.1/` conserve le lot de présence synthétique et son retrait ;
+- `v0.0.2/` installe le Daemon d’observation et le Relay authentifié ;
+- `v0.0.3/` ajoute le Controller et le lecteur privé du Relay.
 
-[`v0.0.3/`](v0.0.3/) ajoute l'unité du Controller privé en lecture seule, sous
-utilisateur dynamique et sans capacité Linux. Elle ne déploie ni la Console ni
-un frontend sur le Controller.
-
-Ce dossier ne contient pas la logique métier du produit : elle vit dans
-[`internal/`](../internal/), puis l'exécutable est assemblé depuis
-[`cmd/`](../cmd/). Les scripts ne sont pas un second composant à maintenir sur
-une machine : ils servent à installer ou retirer les unités, puis peuvent
-disparaître de la cible.
-
-Les contrôles génériques sont sous [`tests/checks/`](../tests/checks/).
-[`tests/lab/v0.0.1/`](../tests/lab/v0.0.1/) porte son orchestrateur multi-VM ;
-[`tests/lab/v0.0.2/`](../tests/lab/v0.0.2/) contient seulement les auxiliaires
-de sa preuve encore assistée. Le binaire compilé n'est pas versionné dans
-`deploy/` : il est produit temporairement dans `dist/` à l'intérieur du runner
-LAB.
+Les assertions et pilotes vivent sous [`tests/`](../tests/). Les exécutables et
+paquets compilés restent temporaires sous `dist/` ou dans le stockage du runner ;
+ils ne sont pas versionnés dans `deploy/`.

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const consoleRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const [artifactInput, sbomInput, outputInput, signerFingerprint, gitHead] = process.argv.slice(2);
+const packageDocument = JSON.parse(await readFile(resolve(consoleRoot, "package.json"), "utf8"));
 
 if (!artifactInput || !sbomInput || !outputInput || !signerFingerprint || !gitHead) {
   throw new Error(
@@ -101,12 +102,11 @@ if (sbomDocument.bomFormat !== "CycloneDX" || sbomDocument.specVersion !== "1.6"
 const manifest = {
   schema_version: 1,
   kind: "your-cloud-console-linux-candidate",
-  version: "0.0.3",
+  version: packageDocument.version,
   release_status: "candidate-exact-commit",
   generated_at: new Date().toISOString(),
   source: {
     git_head: gitHead,
-    git_branch: "console-controller",
     worktree_clean: true,
     provenance_limit:
       "This LAB candidate is tied to an exact clean Git commit. Its synthetic signer proves the signing mechanism, not a public release identity.",

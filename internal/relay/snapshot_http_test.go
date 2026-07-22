@@ -26,7 +26,7 @@ import (
 const (
 	snapshotInfrastructureID = "11111111-1111-4111-8111-111111111111"
 	snapshotControllerID     = "22222222-2222-4222-8222-222222222222"
-	snapshotHost             = "relay-reader.11111111-1111-4111-8111-111111111111.v0-0-3.your-cloud.test:8444"
+	snapshotHost             = "relay-reader.11111111-1111-4111-8111-111111111111.your-cloud.test:8444"
 )
 
 func TestSnapshotHandlerRendersEmptyAndObservedMachines(t *testing.T) {

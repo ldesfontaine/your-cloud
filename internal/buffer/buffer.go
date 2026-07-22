@@ -29,7 +29,7 @@ const (
 	defaultMaxAge   = time.Hour
 )
 
-// Limits can reduce, never enlarge, the safety ceilings decided for v0.0.2.
+// Limits can reduce, never enlarge, the measured safety ceilings.
 type Limits struct {
 	MaxBytes   int64
 	MaxRecords int

@@ -40,8 +40,11 @@ const TEMPORARY_RESPONSE_MAX_BYTES: usize = 8 * 1024;
 const ERROR_MAX_BYTES: usize = 1024;
 const CSR_MAX_BYTES: usize = 2 * 1024;
 const CA_MAX_BYTES: usize = 16 * 1024;
-const RECOVERY_DOMAIN: &[u8] = b"your-cloud/v0.0.3/recovery-signing";
-const RECOVERY_ROTATION_SALT_DOMAIN: &[u8] = b"your-cloud/v0.0.3/recovery-rotation-salt\0";
+const RECOVERY_DOMAIN: &[u8] = b"your-cloud/recovery-signing.v1";
+const RECOVERY_ROTATION_SALT_DOMAIN: &[u8] = b"your-cloud/recovery-rotation-salt.v1\0";
+const RECOVERY_KEY_TRANSCRIPT_DOMAIN: &[u8] = b"your-cloud/recovery-key-rotation.v1\0";
+const IDENTITY_TRANSCRIPT_DOMAIN: &[u8] = b"your-cloud/identity-transcript.v1\0";
+const HUMAN_SESSION_DOMAIN: &[u8] = b"your-cloud/human-session.v1\0";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum NetworkError {
@@ -148,10 +151,7 @@ impl NetworkState {
             .map_err(|_| NetworkError::ControllerUnavailable)?;
         let mut parameters = CertificateParams::default();
         parameters.distinguished_name = DistinguishedName::new();
-        let device_uri = format!(
-            "urn:your-cloud:v0.0.3:infrastructure:{}:device:{}",
-            input.infrastructure_id, challenge.device_id
-        );
+        let device_uri = device_uri(&input.infrastructure_id, &challenge.device_id);
         parameters.subject_alt_names = vec![SanType::URI(
             Ia5String::try_from(device_uri).map_err(|_| NetworkError::ResponseRefused)?,
         )];
@@ -502,9 +502,9 @@ impl NetworkState {
             .map_err(|_| NetworkError::ControllerUnavailable)?;
         let mut parameters = CertificateParams::default();
         parameters.distinguished_name = DistinguishedName::new();
-        let uri = format!(
-            "urn:your-cloud:v0.0.3:infrastructure:{}:device:{}",
-            association.summary.infrastructure_id, association.device_id
+        let uri = device_uri(
+            &association.summary.infrastructure_id,
+            &association.device_id,
         );
         parameters.subject_alt_names = vec![SanType::URI(
             Ia5String::try_from(uri).map_err(|_| NetworkError::ResponseRefused)?,
@@ -880,10 +880,7 @@ impl ValidatedPairing {
         {
             return Err(NetworkError::InvalidInput);
         }
-        let host = format!(
-            "controller.{}.v0-0-3.your-cloud.test",
-            input.infrastructure_id
-        );
+        let host = controller_server_name(&input.infrastructure_id);
         validate_origin(&input.origin, &host, 9443)?;
         validate_origin(&input.temporary_origin, &host, 9444)?;
         if !canonical_raw_url(&input.window_id, 16)
@@ -1530,10 +1527,7 @@ fn validate_persisted_association(association: &AssociationRecord) -> Result<(),
     {
         return Err(NetworkError::ResponseRefused);
     }
-    let host = format!(
-        "controller.{}.v0-0-3.your-cloud.test",
-        association.summary.infrastructure_id
-    );
+    let host = controller_server_name(&association.summary.infrastructure_id);
     validate_origin(&association.summary.origin, &host, 9443)
         .map_err(|_| NetworkError::ResponseRefused)?;
     let certificate_device = device_id_from_certificate(
@@ -1713,7 +1707,7 @@ fn recovery_key_transcript(
     let certificate = pem_certificate_der(&association.device_certificate_pem)?;
     let fingerprint = hex::encode(Sha256::digest(&certificate));
     let mut transcript = Zeroizing::new(Vec::with_capacity(768));
-    transcript.extend_from_slice(b"your-cloud/v0.0.3/recovery-key-rotation\0");
+    transcript.extend_from_slice(RECOVERY_KEY_TRANSCRIPT_DOMAIN);
     append_field(&mut transcript, mutation.operation_id.as_bytes())?;
     append_field(
         &mut transcript,
@@ -1758,7 +1752,7 @@ fn identity_transcript(
     };
     let next_salt = decode_raw_url_32(&challenge.next_recovery_salt)?;
     let mut transcript = Zeroizing::new(Vec::with_capacity(1024));
-    transcript.extend_from_slice(b"your-cloud/v0.0.3/identity-transcript\0");
+    transcript.extend_from_slice(IDENTITY_TRANSCRIPT_DOMAIN);
     append_field(&mut transcript, input.mode.as_bytes())?;
     append_field(&mut transcript, input.temporary_origin.as_bytes())?;
     append_field(
@@ -1799,7 +1793,7 @@ fn session_transcript(
     let human = human_signing_key(association)?;
     let human_public = URL_SAFE_NO_PAD.encode(human.verifying_key().as_bytes());
     let mut transcript = Zeroizing::new(Vec::with_capacity(768));
-    transcript.extend_from_slice(b"your-cloud/v0.0.3/human-session\0");
+    transcript.extend_from_slice(HUMAN_SESSION_DOMAIN);
     append_field(&mut transcript, purpose.as_bytes())?;
     append_field(&mut transcript, target_method.as_bytes())?;
     append_field(&mut transcript, target_route.as_bytes())?;
@@ -1896,7 +1890,7 @@ fn device_id_from_certificate(pem: &str, infrastructure_id: &str) -> Result<Stri
     let GeneralName::URI(rendered) = &san.value.general_names[0] else {
         return Err(NetworkError::ResponseRefused);
     };
-    let prefix = format!("urn:your-cloud:v0.0.3:infrastructure:{infrastructure_id}:device:");
+    let prefix = format!("urn:your-cloud:device:v1:{infrastructure_id}:");
     let device = rendered
         .strip_prefix(&prefix)
         .ok_or(NetworkError::ResponseRefused)?;
@@ -1922,6 +1916,14 @@ fn validate_origin(raw: &str, expected_host: &str, expected_port: u16) -> Result
         return Err(NetworkError::InvalidInput);
     }
     Ok(())
+}
+
+fn controller_server_name(infrastructure_id: &str) -> String {
+    format!("controller.{infrastructure_id}.your-cloud.test")
+}
+
+fn device_uri(infrastructure_id: &str, device_id: &str) -> String {
+    format!("urn:your-cloud:device:v1:{infrastructure_id}:{device_id}")
 }
 
 fn canonical_timestamp(value: &str) -> bool {
@@ -2118,7 +2120,7 @@ mod tests {
     #[test]
     fn origins_and_identifiers_are_exact() {
         let infrastructure = "123e4567-e89b-42d3-a456-426614174000";
-        let host = format!("controller.{infrastructure}.v0-0-3.your-cloud.test");
+        let host = controller_server_name(infrastructure);
         assert!(validate_origin(&format!("https://{host}:9443"), &host, 9443).is_ok());
         assert!(validate_origin(&format!("https://{host}:9443/"), &host, 9443).is_err());
         assert!(validate_origin(&format!("http://{host}:9443"), &host, 9443).is_err());
@@ -2136,7 +2138,7 @@ mod tests {
         let second = recovery_signing_key(&code, &salt, 8, &infrastructure, &spki).unwrap();
         assert_eq!(
             URL_SAFE_NO_PAD.encode(first.to_bytes()),
-            "LN7zfvU2WCR4AE5HECZPTIzyQWZcesuKelfj6D8aQLg"
+            "3zCrQciXcAUbEKNsqhm4fsKoDeUbbqOAuiyKWATbFTs"
         );
         assert_ne!(first.to_bytes(), second.to_bytes());
     }
@@ -2158,7 +2160,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the isolated v0.0.3 LAB Controller and one live enrollment window"]
+    #[ignore = "requires the isolated LAB Controller and one live enrollment window"]
     fn lab_console_enrollment_session_and_inventory() {
         let path = std::env::var("YOUR_CLOUD_V003_WINDOW_SHEET")
             .expect("the LAB window sheet path must be explicit");
@@ -2371,7 +2373,7 @@ mod tests {
                 &format!("{origin}/v0/infrastructure"),
                 &token,
                 None,
-                Some("controller.invalid.v0-0-3.your-cloud.test:9443"),
+                Some("controller.invalid.your-cloud.test:9443"),
             ),
             StatusCode::FORBIDDEN
         );

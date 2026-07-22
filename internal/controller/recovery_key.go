@@ -9,6 +9,8 @@ import (
 	"errors"
 	"math"
 	"time"
+
+	"github.com/ldesfontaine/your-cloud/internal/protocol"
 )
 
 type RecoveryKeyMutation struct {
@@ -132,7 +134,7 @@ func (store *AuthorityStore) RotateRecoveryKey(
 
 func recoveryKeyTranscript(state AuthorityState, mutation RecoveryKeyMutation) []byte {
 	buffer := bytes.NewBuffer(nil)
-	buffer.WriteString("your-cloud/v0.0.3/recovery-key-rotation\x00")
+	buffer.WriteString(protocol.RecoveryKeyDomain)
 	appendTranscriptField(buffer, []byte(mutation.OperationID))
 	appendTranscriptField(buffer, []byte(state.ControllerID))
 	appendTranscriptField(buffer, []byte(state.InfrastructureID))

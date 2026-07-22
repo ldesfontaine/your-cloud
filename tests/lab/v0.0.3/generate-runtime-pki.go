@@ -87,14 +87,14 @@ func main() {
 
 	relayServer := newLeaf(relayServerCA, "Relay ingestion", 0x11, now,
 		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		[]string{"relay.v0-0-2.your-cloud.test"}, nil)
+		[]string{"relay.observation.your-cloud.test"}, nil)
 	daemonOne := newLeaf(daemonClientCA, "Daemon lab-machine-1", 0x12, now,
 		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil,
 		[]string{"urn:your-cloud:daemon:lab-machine-1"})
 	daemonTwo := newLeaf(daemonClientCA, "Daemon lab-machine-2", 0x13, now,
 		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil,
 		[]string{"urn:your-cloud:daemon:lab-machine-2"})
-	readerServerName := "relay-reader." + *infrastructureID + ".v0-0-3.your-cloud.test"
+	readerServerName := "relay-reader." + *infrastructureID + ".your-cloud.test"
 	readerServer := newLeaf(readerServerCA, "Relay reader", 0x21, now,
 		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{readerServerName}, nil)
 	readerURI := "urn:your-cloud:controller-reader:" + *infrastructureID + ":" + *controllerID
