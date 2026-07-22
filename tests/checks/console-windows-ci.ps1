@@ -12,17 +12,17 @@ $installed = $false
 $process = $null
 $driverProcess = $null
 $automationProcess = $null
+$automationUser = $null
+$automationCredential = $null
+$automationPassword = $null
+$automationUserCreated = $false
+$automationUserProfile = $null
+$automationAccount = $null
 $msi = $null
 $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
-$webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
+$webViewUserData = $null
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
-$remoteDebuggingPolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
-$remoteDebuggingPolicySnapshotTaken = $false
-$remoteDebuggingPolicyKeyExisted = $false
-$remoteDebuggingPolicyValueExisted = $false
-$previousRemoteDebuggingPolicyValue = $null
-$previousRemoteDebuggingPolicyKind = $null
 
 function Invoke-Native {
     param(
@@ -85,6 +85,20 @@ function Assert-AuthenticodeSignature {
     if ($null -eq $signature.TimeStamperCertificate) {
         throw "missing RFC 3161 timestamp for $Path"
     }
+}
+
+function Get-ProcessOwnerIdentity {
+    param([Parameter(Mandatory = $true)][uint32]$ProcessId)
+
+    $processInstance = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId"
+    if ($null -eq $processInstance) {
+        throw "process $ProcessId disappeared before its owner was verified"
+    }
+    $owner = Invoke-CimMethod -InputObject $processInstance -MethodName GetOwner
+    if ($owner.ReturnValue -ne 0 -or [string]::IsNullOrWhiteSpace($owner.User)) {
+        throw "owner of process $ProcessId could not be resolved"
+    }
+    return "$($owner.Domain)\$($owner.User)"
 }
 
 try {
@@ -268,39 +282,6 @@ try {
         throw "WebView2 Runtime and Microsoft Edge Driver versions differ"
     }
 
-    $remoteDebuggingPolicyKeyExisted = Test-Path -LiteralPath $remoteDebuggingPolicyPath
-    if ($remoteDebuggingPolicyKeyExisted) {
-        $remoteDebuggingPolicy = Get-Item -LiteralPath $remoteDebuggingPolicyPath
-        if ($remoteDebuggingPolicy.GetValueNames() -contains "RemoteDebuggingAllowed") {
-            $remoteDebuggingPolicyValueExisted = $true
-            $previousRemoteDebuggingPolicyValue = $remoteDebuggingPolicy.GetValue(
-                "RemoteDebuggingAllowed",
-                $null,
-                [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
-            )
-            $previousRemoteDebuggingPolicyKind = $remoteDebuggingPolicy.GetValueKind(
-                "RemoteDebuggingAllowed"
-            )
-        }
-    }
-    else {
-        New-Item -Path $remoteDebuggingPolicyPath -Force | Out-Null
-    }
-    $remoteDebuggingPolicySnapshotTaken = $true
-    New-ItemProperty `
-        -Path $remoteDebuggingPolicyPath `
-        -Name "RemoteDebuggingAllowed" `
-        -Value 1 `
-        -PropertyType DWord `
-        -Force | Out-Null
-    $effectiveRemoteDebuggingPolicy = Get-ItemPropertyValue `
-        -LiteralPath $remoteDebuggingPolicyPath `
-        -Name "RemoteDebuggingAllowed"
-    if ($effectiveRemoteDebuggingPolicy -ne 1) {
-        throw "RemoteDebuggingAllowed was not enabled for the Windows proof"
-    }
-    Write-Host "CI Windows: RemoteDebuggingAllowed=1 before the first WebView2 process"
-
     $tauriDriver = Get-Command "tauri-driver.exe" -ErrorAction Stop
     $driverOutput = Join-Path $temporaryRoot "tauri-driver.stdout.log"
     $driverError = Join-Path $temporaryRoot "tauri-driver.stderr.log"
@@ -362,35 +343,96 @@ try {
         $portReservation.Stop()
     }
     $debuggerAddress = "127.0.0.1:$remoteDebuggingPort"
-    $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
-    $previousBrowserArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-    $previousAutomation = $env:TAURI_WEBVIEW_AUTOMATION
+
+    # GitHub-hosted Windows runners are administrators with UAC disabled. WebView2 150 can
+    # suppress its DevTools endpoint from an elevated host, so exercise the installed app
+    # under the standard-user context in which the product is meant to run.
+    $automationUserName = "yc-ci-" + [Guid]::NewGuid().ToString("N").Substring(0, 8)
+    $passwordText = "Yc!" + [Guid]::NewGuid().ToString("N") + "9z"
     try {
-        $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
-        $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `
-            "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$remoteDebuggingPort"
-        $env:TAURI_WEBVIEW_AUTOMATION = "true"
-        $automationProcess = Start-Process -FilePath $installedExecutable -PassThru
+        $automationPassword = ConvertTo-SecureString $passwordText -AsPlainText -Force
     }
     finally {
-        if ($null -eq $previousWebViewUserData) {
-            Remove-Item Env:\WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
-        }
-        if ($null -eq $previousBrowserArguments) {
-            Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousBrowserArguments
-        }
-        if ($null -eq $previousAutomation) {
-            Remove-Item Env:\TAURI_WEBVIEW_AUTOMATION -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:TAURI_WEBVIEW_AUTOMATION = $previousAutomation
-        }
+        $passwordText = $null
+    }
+    $automationUser = New-LocalUser `
+        -Name $automationUserName `
+        -Password $automationPassword `
+        -AccountExpires (Get-Date).AddHours(2) `
+        -UserMayNotChangePassword `
+        -Description "Your Cloud ephemeral Windows UI proof"
+    $automationUserCreated = $true
+    $automationAccount = "$env:COMPUTERNAME\$automationUserName"
+    $automationCredential = [PSCredential]::new($automationAccount, $automationPassword)
+
+    $usersGroup = Get-LocalGroup -SID "S-1-5-32-545"
+    $usersGroupMemberSids = @(
+        Get-LocalGroupMember -Group $usersGroup.Name |
+            ForEach-Object { $_.SID.Value }
+    )
+    if ($usersGroupMemberSids -notcontains $automationUser.SID.Value) {
+        Add-LocalGroupMember -Group $usersGroup.Name -Member $automationUser
+    }
+    $administratorsGroup = Get-LocalGroup -SID "S-1-5-32-544"
+    $administratorSids = @(
+        Get-LocalGroupMember -Group $administratorsGroup.Name |
+            ForEach-Object { $_.SID.Value }
+    )
+    if ($administratorSids -contains $automationUser.SID.Value) {
+        throw "ephemeral Windows UI proof account unexpectedly belongs to Administrators"
+    }
+
+    $profileBootstrap = Start-Process `
+        -FilePath $env:ComSpec `
+        -ArgumentList @("/d", "/c", "exit", "/b", "0") `
+        -Credential $automationCredential `
+        -LoadUserProfile `
+        -Wait `
+        -PassThru
+    if ($profileBootstrap.ExitCode -ne 0) {
+        throw "ephemeral Windows UI proof profile bootstrap failed"
+    }
+    $automationUserProfile = Get-CimInstance Win32_UserProfile |
+        Where-Object { $_.SID -eq $automationUser.SID.Value } |
+        Select-Object -First 1
+    if ($null -eq $automationUserProfile -or
+        [string]::IsNullOrWhiteSpace($automationUserProfile.LocalPath)) {
+        throw "ephemeral Windows UI proof profile was not created"
+    }
+    $automationLocalData = Join-Path $automationUserProfile.LocalPath "AppData\Local"
+    $automationRoamingData = Join-Path $automationUserProfile.LocalPath "AppData\Roaming"
+    $automationTemp = Join-Path $automationLocalData "Temp"
+    $webViewUserData = Join-Path $automationLocalData "your-cloud-windows-ui-proof\webview2"
+    New-Item -ItemType Directory -Path $automationTemp, $webViewUserData -Force | Out-Null
+    Write-Host "CI Windows: installed Console will run as a bounded standard user"
+
+    $automationHomeDrive = [IO.Path]::GetPathRoot(
+        $automationUserProfile.LocalPath
+    ).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $automationEnvironment = @{
+        USERPROFILE = $automationUserProfile.LocalPath
+        HOMEDRIVE = $automationHomeDrive
+        HOMEPATH = $automationUserProfile.LocalPath.Substring($automationHomeDrive.Length)
+        APPDATA = $automationRoamingData
+        LOCALAPPDATA = $automationLocalData
+        TEMP = $automationTemp
+        TMP = $automationTemp
+        WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$remoteDebuggingPort"
+    }
+    $automationProcess = Start-Process `
+        -FilePath $installedExecutable `
+        -Credential $automationCredential `
+        -LoadUserProfile `
+        -Environment $automationEnvironment `
+        -PassThru
+    $automationOwner = Get-ProcessOwnerIdentity -ProcessId $automationProcess.Id
+    if (-not [string]::Equals(
+        $automationOwner,
+        $automationAccount,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "installed Console did not start under the bounded standard-user account"
     }
 
     $remoteDebuggerReady = $false
@@ -466,21 +508,6 @@ try {
             Get-Content -LiteralPath $driverOutput, $driverError -Tail 200 -ErrorAction SilentlyContinue
             Write-Host "CI Windows: EdgeDriver did not attach to the verified loopback debugger"
 
-            foreach ($policyRoot in @(
-                "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
-                "HKCU:\SOFTWARE\Policies\Microsoft\Edge"
-            )) {
-                $policy = Get-ItemProperty `
-                    -LiteralPath $policyRoot `
-                    -Name "RemoteDebuggingAllowed" `
-                    -ErrorAction SilentlyContinue
-                if ($null -eq $policy) {
-                    Write-Host "CI Windows: RemoteDebuggingAllowed is not configured at $policyRoot"
-                }
-                else {
-                    Write-Host "CI Windows: RemoteDebuggingAllowed=$($policy.RemoteDebuggingAllowed) at $policyRoot"
-                }
-            }
         }
         throw
     }
@@ -522,7 +549,23 @@ try {
         throw "automated Console process remained after WebDriver cleanup"
     }
 
-    $process = Start-Process -FilePath $installedExecutable -PassThru
+    $normalEnvironment = $automationEnvironment.Clone()
+    $normalEnvironment.WEBVIEW2_USER_DATA_FOLDER = $null
+    $normalEnvironment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $null
+    $process = Start-Process `
+        -FilePath $installedExecutable `
+        -Credential $automationCredential `
+        -LoadUserProfile `
+        -Environment $normalEnvironment `
+        -PassThru
+    $normalOwner = Get-ProcessOwnerIdentity -ProcessId $process.Id
+    if (-not [string]::Equals(
+        $normalOwner,
+        $automationAccount,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "normal Console smoke test escaped the bounded standard-user account"
+    }
     Start-Sleep -Seconds 10
     $process.Refresh()
     if ($process.HasExited) {
@@ -555,34 +598,15 @@ try {
 finally {
     if ($null -ne $automationProcess -and -not $automationProcess.HasExited) {
         & taskkill.exe /PID $automationProcess.Id /T /F | Out-Null
+        [void]$automationProcess.WaitForExit(10000)
     }
     if ($null -ne $driverProcess -and -not $driverProcess.HasExited) {
         & taskkill.exe /PID $driverProcess.Id /T /F | Out-Null
+        [void]$driverProcess.WaitForExit(10000)
     }
     if ($null -ne $process -and -not $process.HasExited) {
         & taskkill.exe /PID $process.Id /T /F | Out-Null
-    }
-    if ($remoteDebuggingPolicySnapshotTaken -and
-        (Test-Path -LiteralPath $remoteDebuggingPolicyPath)) {
-        if ($remoteDebuggingPolicyValueExisted) {
-            New-ItemProperty `
-                -Path $remoteDebuggingPolicyPath `
-                -Name "RemoteDebuggingAllowed" `
-                -Value $previousRemoteDebuggingPolicyValue `
-                -PropertyType ($previousRemoteDebuggingPolicyKind.ToString()) `
-                -Force | Out-Null
-        }
-        else {
-            Remove-ItemProperty `
-                -LiteralPath $remoteDebuggingPolicyPath `
-                -Name "RemoteDebuggingAllowed" `
-                -ErrorAction SilentlyContinue
-        }
-        if (-not $remoteDebuggingPolicyKeyExisted -and
-            (Get-Item -LiteralPath $remoteDebuggingPolicyPath).GetValueNames().Count -eq 0 -and
-            @(Get-ChildItem -LiteralPath $remoteDebuggingPolicyPath).Count -eq 0) {
-            Remove-Item -LiteralPath $remoteDebuggingPolicyPath -Force
-        }
+        [void]$process.WaitForExit(10000)
     }
     if ($installed -and $null -ne $msi) {
         $uninstall = Start-Process -FilePath "msiexec.exe" `
@@ -603,6 +627,29 @@ finally {
     }
     if (Test-Path -LiteralPath $applicationDataPath) {
         Remove-Item -LiteralPath $applicationDataPath -Recurse -Force
+    }
+    if ($automationUserCreated -and $null -ne $automationUser) {
+        $profile = $null
+        for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            $profile = Get-CimInstance Win32_UserProfile |
+                Where-Object { $_.SID -eq $automationUser.SID.Value } |
+                Select-Object -First 1
+            if ($null -eq $profile -or -not $profile.Loaded) {
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        if ($null -ne $profile -and $profile.Loaded) {
+            Write-Warning "ephemeral Windows UI proof profile remained loaded during cleanup"
+        }
+        elseif ($null -ne $profile) {
+            Invoke-CimMethod -InputObject $profile -MethodName Delete | Out-Null
+        }
+        Remove-LocalUser -SID $automationUser.SID
+        $automationUserCreated = $false
+    }
+    if ($null -ne $automationPassword) {
+        $automationPassword.Dispose()
     }
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
