@@ -16,6 +16,12 @@ $uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
 $webViewUserData = Join-Path $temporaryRoot "webview2-user-data"
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
+$remoteDebuggingPolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+$remoteDebuggingPolicySnapshotTaken = $false
+$remoteDebuggingPolicyKeyExisted = $false
+$remoteDebuggingPolicyValueExisted = $false
+$previousRemoteDebuggingPolicyValue = $null
+$previousRemoteDebuggingPolicyKind = $null
 
 function Invoke-Native {
     param(
@@ -217,15 +223,59 @@ try {
     if ($edgeDriver.VersionInfo.ProductVersion -ne $edgeVersion) {
         throw "Microsoft Edge and Microsoft Edge Driver versions differ"
     }
+
+    $remoteDebuggingPolicyKeyExisted = Test-Path -LiteralPath $remoteDebuggingPolicyPath
+    if ($remoteDebuggingPolicyKeyExisted) {
+        $remoteDebuggingPolicy = Get-Item -LiteralPath $remoteDebuggingPolicyPath
+        if ($remoteDebuggingPolicy.GetValueNames() -contains "RemoteDebuggingAllowed") {
+            $remoteDebuggingPolicyValueExisted = $true
+            $previousRemoteDebuggingPolicyValue = $remoteDebuggingPolicy.GetValue(
+                "RemoteDebuggingAllowed",
+                $null,
+                [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+            )
+            $previousRemoteDebuggingPolicyKind = $remoteDebuggingPolicy.GetValueKind(
+                "RemoteDebuggingAllowed"
+            )
+        }
+    }
+    else {
+        New-Item -Path $remoteDebuggingPolicyPath -Force | Out-Null
+    }
+    $remoteDebuggingPolicySnapshotTaken = $true
+    New-ItemProperty `
+        -Path $remoteDebuggingPolicyPath `
+        -Name "RemoteDebuggingAllowed" `
+        -Value 1 `
+        -PropertyType DWord `
+        -Force | Out-Null
+    $effectiveRemoteDebuggingPolicy = Get-ItemPropertyValue `
+        -LiteralPath $remoteDebuggingPolicyPath `
+        -Name "RemoteDebuggingAllowed"
+    if ($effectiveRemoteDebuggingPolicy -ne 1) {
+        throw "RemoteDebuggingAllowed was not enabled for the Windows proof"
+    }
+    Write-Host "CI Windows: RemoteDebuggingAllowed=1 before the first WebView2 process"
+
     $tauriDriver = Get-Command "tauri-driver.exe" -ErrorAction Stop
     $driverOutput = Join-Path $temporaryRoot "tauri-driver.stdout.log"
     $driverError = Join-Path $temporaryRoot "tauri-driver.stderr.log"
+    $edgeDriverWrapper = Join-Path $temporaryRoot "msedgedriver-verbose.cmd"
+    Set-Content `
+        -LiteralPath $edgeDriverWrapper `
+        -Encoding ascii `
+        -Value @(
+            '@echo off',
+            '"%YOUR_CLOUD_EDGE_DRIVER%" %* --verbose 1>&2'
+        )
     $previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
+    $previousNativeEdgeDriver = $env:YOUR_CLOUD_EDGE_DRIVER
     try {
         $env:WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
+        $env:YOUR_CLOUD_EDGE_DRIVER = $edgeDriver.FullName
         $driverProcess = Start-Process `
             -FilePath $tauriDriver.Source `
-            -ArgumentList @("--native-driver", $edgeDriver.FullName) `
+            -ArgumentList @("--native-driver", $edgeDriverWrapper) `
             -NoNewWindow `
             -PassThru `
             -RedirectStandardOutput $driverOutput `
@@ -237,6 +287,12 @@ try {
         }
         else {
             $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
+        }
+        if ($null -eq $previousNativeEdgeDriver) {
+            Remove-Item Env:\YOUR_CLOUD_EDGE_DRIVER -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:YOUR_CLOUD_EDGE_DRIVER = $previousNativeEdgeDriver
         }
     }
     $driverReady = $false
@@ -367,6 +423,28 @@ finally {
     }
     if ($null -ne $process -and -not $process.HasExited) {
         & taskkill.exe /PID $process.Id /T /F | Out-Null
+    }
+    if ($remoteDebuggingPolicySnapshotTaken -and
+        (Test-Path -LiteralPath $remoteDebuggingPolicyPath)) {
+        if ($remoteDebuggingPolicyValueExisted) {
+            New-ItemProperty `
+                -Path $remoteDebuggingPolicyPath `
+                -Name "RemoteDebuggingAllowed" `
+                -Value $previousRemoteDebuggingPolicyValue `
+                -PropertyType ($previousRemoteDebuggingPolicyKind.ToString()) `
+                -Force | Out-Null
+        }
+        else {
+            Remove-ItemProperty `
+                -LiteralPath $remoteDebuggingPolicyPath `
+                -Name "RemoteDebuggingAllowed" `
+                -ErrorAction SilentlyContinue
+        }
+        if (-not $remoteDebuggingPolicyKeyExisted -and
+            (Get-Item -LiteralPath $remoteDebuggingPolicyPath).GetValueNames().Count -eq 0 -and
+            @(Get-ChildItem -LiteralPath $remoteDebuggingPolicyPath).Count -eq 0) {
+            Remove-Item -LiteralPath $remoteDebuggingPolicyPath -Force
+        }
     }
     if ($installed -and $null -ne $msi) {
         $uninstall = Start-Process -FilePath "msiexec.exe" `
