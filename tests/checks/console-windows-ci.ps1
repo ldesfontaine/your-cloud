@@ -178,17 +178,60 @@ try {
     Assert-AuthenticodeSignature $installedExecutable $certificate.Thumbprint $signTool.FullName
 
     Write-Host "CI Windows: preparing the bounded WebView2 driver"
-    $edgePath = Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"
-    if (-not (Test-Path -LiteralPath $edgePath -PathType Leaf)) {
-        throw "Microsoft Edge executable was not found"
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        throw "the Windows proof requires the x64 WebView2 Runtime"
     }
-    $edgeVersion = (Get-Item -LiteralPath $edgePath).VersionInfo.ProductVersion
-    if ($edgeVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
-        throw "Microsoft Edge version is not canonical"
+    $webViewRuntimeClient = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    $webViewRuntimeCandidates = @(
+        @{
+            RegistryPath = "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$webViewRuntimeClient"
+            InstallRoot = Join-Path $env:LOCALAPPDATA "Microsoft\EdgeWebView\Application"
+        },
+        @{
+            RegistryPath = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$webViewRuntimeClient"
+            InstallRoot = Join-Path ${env:ProgramFiles(x86)} "Microsoft\EdgeWebView\Application"
+        }
+    )
+    $webViewRuntimes = @()
+    foreach ($candidate in $webViewRuntimeCandidates) {
+        $version = Get-ItemPropertyValue `
+            -LiteralPath $candidate.RegistryPath `
+            -Name "pv" `
+            -ErrorAction SilentlyContinue
+        if ($null -eq $version) {
+            continue
+        }
+        if ($version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+            throw "WebView2 Runtime registry version is not canonical"
+        }
+        $executable = Join-Path $candidate.InstallRoot "$version\msedgewebview2.exe"
+        if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+            throw "registered WebView2 Runtime executable was not found"
+        }
+        $runtimeItem = Get-Item -LiteralPath $executable
+        if ($runtimeItem.VersionInfo.ProductVersion -ne $version) {
+            throw "WebView2 Runtime registry and executable versions differ"
+        }
+        $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $executable
+        if ($runtimeSignature.Status -ne "Valid" -or
+            $runtimeSignature.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
+            throw "WebView2 Runtime signature is invalid or has an unexpected publisher"
+        }
+        $webViewRuntimes += @{
+            Version = $version
+            Executable = $executable
+            RegistryPath = $candidate.RegistryPath
+        }
     }
+    if ($webViewRuntimes.Count -ne 1) {
+        throw "expected exactly one registered WebView2 Runtime on the Windows runner"
+    }
+    $webViewRuntime = $webViewRuntimes[0]
+    Write-Host "CI Windows: WebView2 Runtime $($webViewRuntime.Version) from $($webViewRuntime.RegistryPath)"
+
     $edgeDriverArchive = Join-Path $temporaryRoot "edgedriver_win64.zip"
     $edgeDriverDirectory = Join-Path $temporaryRoot "edgedriver"
-    $edgeDriverUri = "https://msedgedriver.microsoft.com/$edgeVersion/edgedriver_win64.zip"
+    $edgeDriverUri = "https://msedgedriver.microsoft.com/$($webViewRuntime.Version)/edgedriver_win64.zip"
     Invoke-WebRequest -Uri $edgeDriverUri -OutFile $edgeDriverArchive -TimeoutSec 60
     $archiveLength = (Get-Item -LiteralPath $edgeDriverArchive).Length
     if ($archiveLength -lt 1024 -or $archiveLength -gt 50MB) {
@@ -220,8 +263,8 @@ try {
         $edgeDriverSignature.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
         throw "Microsoft Edge Driver signature is invalid or has an unexpected publisher"
     }
-    if ($edgeDriver.VersionInfo.ProductVersion -ne $edgeVersion) {
-        throw "Microsoft Edge and Microsoft Edge Driver versions differ"
+    if ($edgeDriver.VersionInfo.ProductVersion -ne $webViewRuntime.Version) {
+        throw "WebView2 Runtime and Microsoft Edge Driver versions differ"
     }
 
     $remoteDebuggingPolicyKeyExisted = Test-Path -LiteralPath $remoteDebuggingPolicyPath
