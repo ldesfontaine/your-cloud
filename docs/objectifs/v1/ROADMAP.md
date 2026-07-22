@@ -1,11 +1,11 @@
 # Roadmap V1
 
 > Statut : `v0.0.1` et `v0.0.2` sont décidées, implémentées et prouvées dans le
-> LAB. Les huit paramètres de `v0.0.3` sont validés, son implémentation Linux est
-> présente et sa [porte Linux](../../lab/v0.0.3-console-controller-linux.md) a
-> réussi le 20 juillet 2026 sur le commit exact `afb31e8`. Windows reste non
-> exécuté, mais Lucas a autorisé sa préparation ; cette seconde porte demeure
-> obligatoire avant de fermer le palier.
+> LAB. Les huit paramètres de `v0.0.3` sont validés. Sa
+> [porte Linux](../../lab/v0.0.3-console-controller-linux.md), réussie une
+> première fois sur `afb31e8`, a été revalidée après review le 22 juillet 2026
+> sur le commit produit exact `02fe4f5`. Windows reste non exécuté ; cette
+> seconde porte demeure obligatoire avant de fermer le palier.
 
 Une [édition HTML autonome et visuelle](../../html/roadmap-v1.html) accompagne cette source
 Markdown.
@@ -258,14 +258,14 @@ contextuelle, la sécurité locale reste sous `Profil et sessions` et aucun Rela
 n'est inventé comme machine dédiée. Les sept vues n'effectuent aucun polling de
 fond et rendent les données Controller comme texte inerte.
 
-**Porte Linux exécutée, porte Windows non exécutée :** les six VM Debian
-`v1-full` ont construit, installé, attaqué et piloté le candidat Linux selon le
-[rapport LAB](../../lab/v0.0.3-console-controller-linux.md). Le `.deb`, le
-coffre, les deux Controllers, la lecture Relay, les reprises et les sept vues
-ont passé ; l'orchestration complète reste assistée. La seconde porte doit
-encore ajouter `lab-console-windows`, construire nativement le `.msi` et rejouer
-les preuves Windows. Lucas a autorisé sa préparation après le rebuild exact du
-`.deb` Linux. Le palier ne ferme pas avant réussite des deux portes.
+**Porte Linux exécutée et revalidée, porte Windows non exécutée :** les six VM
+Debian `v1-full` ont construit, installé, attaqué et piloté le candidat Linux
+selon le [rapport LAB](../../lab/v0.0.3-console-controller-linux.md). Après la
+preuve complète initiale, le commit produit `02fe4f5` issu de la review a
+repassé les gates, le `.deb`, le coffre, l'appairage, les deux machines, la
+panne/reprise Relay et les sept vues. L'orchestration complète reste assistée.
+La seconde porte doit encore construire nativement le `.msi` et rejouer les
+preuves Windows. Le palier ne ferme pas avant réussite des deux portes.
 
 **Précondition validée :** le chemin Daemon–Relay authentifié, le tampon borné
 et la représentation des données anciennes ou lacunaires ont franchi leur
@@ -457,8 +457,8 @@ la présente roadmap.
 
 `v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Les
 paramètres 1 à 8 de `v0.0.3` sont fermés et la porte Linux de la branche
-`console-controller` a réussi sur le commit exact `afb31e8`. La porte Windows
-est autorisée et en préparation, mais reste non exécutée. Aucun push n'est
-implicite. Action distante,
+`console-controller` a été revalidée après review sur le commit produit exact
+`02fe4f5`. La porte Windows est autorisée et en préparation, mais reste non
+exécutée. Aucun merge n'est permis avant son résultat vert. Action distante,
 Ansible métier, Auxiliaire, WireGuard, OCI, téléphone, navigateur public,
 Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors périmètre.

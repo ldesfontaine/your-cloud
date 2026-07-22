@@ -7,9 +7,9 @@
 Ce registre conserve les contrôles réalisés, les difficultés rencontrées et le
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
 distingue la couverture automatisée de `v0.0.1`, la preuve assistée de
-`v0.0.2`, la porte Linux assistée de `v0.0.3` et la matrice CI Linux/Windows
-configurée mais pas encore exécutée ; une ligne planifiée ne constitue jamais
-une preuve.
+`v0.0.2`, la porte Linux assistée puis revalidée de `v0.0.3` et la matrice CI
+Linux/Windows dont le run natif reste à exécuter ; une ligne planifiée ne
+constitue jamais une preuve.
 
 ## Vocabulaire de travail
 
@@ -107,11 +107,13 @@ Controller B synthétique sous autorités séparées ; `lab-gateway` reste un
 routeur sans produit ; `lab-machine-1` colocalise Daemon et Relay séparés ;
 `lab-machine-2` porte le second Daemon et les tentatives lecteur hostiles. La
 porte Linux a réellement employé ces six VM et a réussi le 20 juillet 2026 sur
-le commit exact `afb31e8`. Lucas a autorisé la préparation Windows. La matrice
-CI native Windows est configurée mais ne possède aucun run tant qu'elle n'est
-pas committée puis poussée ; la porte visuelle Windows doit encore disposer
-d'un runner Windows ou de `lab-console-windows` et demeure obligatoire pour
-fermer `v0.0.3`.
+`afb31e8`. Le run `linux-review-02fe4f5-20260722` a ensuite reconstruit
+`02fe4f5` depuis un checkout propre et rejoué le parcours critique installé,
+la panne/reprise Relay et les vues claires/sombres. Il n'a pas rejoué toute la
+matrice hostile initiale. La matrice CI native Windows est configurée mais ne
+possède encore aucun run du candidat de review ; la porte visuelle Windows doit
+encore disposer d'un runner Windows ou de `lab-console-windows` et demeure
+obligatoire pour fermer `v0.0.3`.
 
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | Automatisation rejouable complète |
 |---|---|---|---|

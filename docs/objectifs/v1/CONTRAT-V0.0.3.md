@@ -1,8 +1,9 @@
 # Contrat `v0.0.3` — Console cliente et Controller de lecture
 
-> État au 20 juillet 2026 : **architecture produit et paramètres 1 à 8
-> validés ; porte Linux exécutée et réussie** sur le commit exact `afb31e8`,
-> avec `.deb`, SBOM, manifeste et signature revérifiés. Le
+> État au 22 juillet 2026 : **architecture produit et paramètres 1 à 8
+> validés ; porte Linux exécutée, réussie puis revalidée après review** sur le
+> commit produit exact `02fe4f5`, avec `.deb`, SBOM, manifeste, signature,
+> parcours installé et vues revérifiés. Le
 > [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md) conserve les
 > preuves et limites. Lucas a autorisé la porte Windows ; elle est maintenant
 > en préparation et reste obligatoire avant de déclarer le palier terminé et
@@ -1801,9 +1802,9 @@ explicite ; un incident d'implémentation ne les élargit pas silencieusement.
 ## Point d'arrêt
 
 Les paramètres 1 à 8 sont validés et la porte Linux de la branche
-`console-controller` a réussi dans le LAB. Le candidat Linux reconstruit est lié
-au commit exact `afb31e8`, avec un signataire LAB synthétique ; aucun push n'a
-été effectué ni autorisé implicitement. Lucas a autorisé l'ouverture de la porte
-Windows sans rouvrir le périmètre ni préparer une abstraction réseau post-V1.
-Les preuves et limites réellement exécutées restent visibles, et le palier ne
-devient terminé qu'après les deux portes.
+`console-controller` a réussi dans le LAB, puis le candidat issu de la review a
+été revalidé sur le commit produit exact `02fe4f5` avec un signataire LAB
+synthétique. La porte Windows est ouverte sans élargir le périmètre ni préparer
+une abstraction réseau post-V1. Les preuves et limites réellement exécutées
+restent visibles, et le palier ne devient terminé et fusionnable qu'après les
+deux portes.
