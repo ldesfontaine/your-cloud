@@ -317,7 +317,7 @@ function Resolve-ProofProcessAttribution {
     if ($ownerRequired -and $null -ne $ownerFailure) {
         $current = Get-CurrentProcessInstance -Candidate $Candidate
         if ($null -eq $current) {
-            return $null
+            return
         }
         throw "owner SID of process $($Candidate.ProcessId) could not be resolved"
     }
@@ -327,7 +327,7 @@ function Resolve-ProofProcessAttribution {
         -AutomationSid $AutomationSid `
         -TrackedExecutablePaths @())
     if (-not $attributed) {
-        return $null
+        return
     }
     if ($null -eq $Candidate.CreationDate) {
         throw "attributed process $($Candidate.ProcessId) has no creation time"
@@ -347,13 +347,21 @@ function Get-AttributedProofProcesses {
         [AllowEmptyCollection()][string[]]$OwnerRequiredPaths = @()
     )
 
-    return @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
-        Resolve-ProofProcessAttribution `
-            -Candidate $_ `
+    $attributedProcesses = [Collections.Generic.List[object]]::new()
+    foreach ($candidate in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
+        if ($null -eq $candidate) {
+            throw "process inventory returned an unverifiable entry"
+        }
+        $attribution = Resolve-ProofProcessAttribution `
+            -Candidate $candidate `
             -AutomationSid $AutomationSid `
             -TrackedExecutablePaths $TrackedExecutablePaths `
             -OwnerRequiredPaths $OwnerRequiredPaths
-    })
+        if ($null -ne $attribution) {
+            [void]$attributedProcesses.Add($attribution)
+        }
+    }
+    return $attributedProcesses.ToArray()
 }
 
 function Get-RevalidatedProofProcessHandle {

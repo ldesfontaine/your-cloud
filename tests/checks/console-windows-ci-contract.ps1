@@ -18,7 +18,8 @@ $requiredFunctions = @(
     "Test-ProofProcessAttribution",
     "Test-ProcessInstanceIdentity",
     "Get-BoundedWaitMilliseconds",
-    "Resolve-BoundedChildPath"
+    "Resolve-BoundedChildPath",
+    "Get-AttributedProofProcesses"
 )
 $functionDefinitions = @($ast.FindAll(
     {
@@ -83,6 +84,48 @@ if (Test-ProofProcessAttribution `
     -AutomationSid $automationSid `
     -TrackedExecutablePaths $trackedPaths) {
     throw "an unrelated process with no image path must not be attributed"
+}
+
+$script:contractProcessCandidates = @(
+    [pscustomobject]@{ ProcessId = 1 }
+)
+function Get-CimInstance {
+    [CmdletBinding()]
+    param([Parameter(Position = 0)][string]$ClassName)
+
+    if ($ClassName -ne "Win32_Process") {
+        throw "unexpected contract CIM class"
+    }
+    return $script:contractProcessCandidates
+}
+function Resolve-ProofProcessAttribution {
+    param(
+        [Parameter(Mandatory = $true)]$Candidate,
+        [AllowNull()][string]$AutomationSid,
+        [AllowEmptyCollection()][string[]]$TrackedExecutablePaths = @(),
+        [AllowEmptyCollection()][string[]]$OwnerRequiredPaths = @()
+    )
+
+    if ($Candidate.ProcessId -eq 1) {
+        return $null
+    }
+    return [pscustomobject]@{
+        ProcessId = $Candidate.ProcessId
+        CreationDate = [DateTime]::UtcNow
+    }
+}
+
+$foreignOnlyProcesses = @(Get-AttributedProofProcesses)
+if ($foreignOnlyProcesses.Count -ne 0) {
+    throw "a non-attributed process must produce an empty process collection"
+}
+$script:contractProcessCandidates = @(
+    [pscustomobject]@{ ProcessId = 1 },
+    [pscustomobject]@{ ProcessId = 2 }
+)
+$mixedProcesses = @(Get-AttributedProofProcesses)
+if ($mixedProcesses.Count -ne 1 -or $mixedProcesses[0].ProcessId -ne 2) {
+    throw "null attribution results must not become process candidates"
 }
 
 $creationDate = [DateTime]::UtcNow.AddSeconds(-5)
@@ -226,6 +269,13 @@ if ($currentInstanceFunctions.Count -ne 1 -or
     $currentInstanceFunctions[0].Extent.Text -notmatch 'creation time .* could not be verified' -or
     $currentInstanceFunctions[0].Extent.Text -notmatch '\bTest-ProcessInstanceIdentity\b') {
     throw "a present process with no creation time must fail closed"
+}
+$attributionResolutionFunctions = @($functionDefinitions | Where-Object {
+    $_.Name -eq "Resolve-ProofProcessAttribution"
+})
+if ($attributionResolutionFunctions.Count -ne 1 -or
+    $attributionResolutionFunctions[0].Extent.Text -match '\breturn\s+\$null\b') {
+    throw "a non-attributed process must emit no pipeline object"
 }
 
 Write-Host "PASS: Windows proof cleanup is attributable, bounded and DACL-compatible"

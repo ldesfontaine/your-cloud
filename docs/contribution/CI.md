@@ -188,6 +188,17 @@ protégé contre la réutilisation d'un PID, puis la suppression du profil par l
 service Windows corrigent ces deux défauts sans affaiblir la
 DACL. Ce run reste diagnostique et ne ferme pas `v0.0.3`.
 
+La troisième tentative finale, le run `30708995783` sur `c302a39`, a validé
+les deux gardes, Linux et toutes les assertions produit Windows : MSI et
+exécutable signés et horodatés, installation, égalité des exécutables, coffre
+réel et smoke WebView2. Le nettoyage a ensuite compté comme processus restant
+le résultat nul produit pour chaque processus volontairement non attribué.
+Cette valeur nulle a interrompu le drain avant les processus réellement
+attribués ; aucun artefact Windows n'a été publié. La collecte construit
+désormais explicitement une liste sans résultat nul, tandis que le contrat
+rapide couvre une collection entièrement étrangère puis un mélange étranger et
+attribué. Ce run reste diagnostique et ne ferme pas `v0.0.3`.
+
 Le job `Politique Plumber` exécute Plumber `v0.4.8`. L'action GitHub est fixée
 au commit `7970e5df1e7d217de41b2880832b63a6f2152b97`, vérifie le checksum et
 l'attestation du binaire — une déclaration signée de sa provenance —, n'envoie

@@ -176,6 +176,15 @@ chemin frère du profil, borne l'attente globale, verrouille l'ordre du nettoyag
 et interdit la suppression directe du coffre.
 Une nouvelle preuve native entièrement verte reste nécessaire avant fermeture.
 
+Le run `30708995783` sur `c302a39` a ensuite réussi les gardes, Linux et toute
+la preuve produit Windows, jusqu'au succès du smoke WebView2. Le nettoyage a
+échoué avant son drain parce que les résultats nuls des processus non attribués
+étaient conservés comme candidats. Aucun artefact Windows n'a été publié. Le
+contrat rapide exige désormais zéro candidat pour une collection étrangère, un
+seul candidat pour un mélange étranger et attribué, et interdit qu'un refus
+d'attribution émette une valeur nulle dans le pipeline. Une preuve native
+entièrement verte reste nécessaire avant fermeture.
+
 Le contrôle statique `tests/checks/ci-workflow-policy.py`, appelé par la porte
 générique, ferme les déclencheurs et permissions du workflow, sa concurrence,
 ses trois jobs et le caractère exclusivement manuel de la matrice native. Il
