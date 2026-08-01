@@ -42,6 +42,32 @@ cadrées lorsqu'elles deviendront le prochain objectif réel.
   si elle change la ligne d'arrivée, le contrat V1 doit être rediscuté et
   revalidé d'abord.
 
+## Suivi d'exécution par issues
+
+Chaque palier ou étape décidé possède désormais une issue GitHub. La présente
+roadmap reste l'autorité de l'ordre et du contrat ; l'issue suit l'exécution,
+les dépendances et les preuves. L'[issue V1 #20](https://github.com/ldesfontaine/your-cloud/issues/20)
+relie l'ensemble. Avant d'implémenter un palier macroscopique, son issue est
+découpée en sous-issues exécutables.
+
+| Travail | Issue |
+|---|---|
+| Fermer la porte Windows de `v0.0.3` | [`#9`](https://github.com/ldesfontaine/your-cloud/issues/9) |
+| Amorcer et remplacer un Controller | [`#13`](https://github.com/ldesfontaine/your-cloud/issues/13) |
+| Appliquer un premier plan OCI contrôlé | [`#14`](https://github.com/ldesfontaine/your-cloud/issues/14) |
+| Publier BentoPDF derrière Traefik | [`#15`](https://github.com/ldesfontaine/your-cloud/issues/15) |
+| Limiter le passage privé au service approuvé | [`#16`](https://github.com/ldesfontaine/your-cloud/issues/16) |
+| Publier Vaultwarden via le VPS | [`#17`](https://github.com/ldesfontaine/your-cloud/issues/17) |
+| Rendre la responsabilité externe visible | [`#18`](https://github.com/ldesfontaine/your-cloud/issues/18) |
+| Prouver le scénario complet et les artefacts V1 | [`#19`](https://github.com/ldesfontaine/your-cloud/issues/19) |
+
+La licence du dépôt public ([`#11`](https://github.com/ldesfontaine/your-cloud/issues/11))
+et la signature Windows publique gratuite
+([`#12`](https://github.com/ldesfontaine/your-cloud/issues/12)) peuvent avancer
+en parallèle, mais doivent être fermées avant la release V1. Le routage CI par
+domaines ([`#10`](https://github.com/ldesfontaine/your-cloud/issues/10)) reste
+un chantier transverse non bloquant pour le contrat produit.
+
 ## État de départ
 
 Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessous.

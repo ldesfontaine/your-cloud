@@ -36,6 +36,23 @@ dans leurs sources documentaires dédiées.
 - Créer un ADR seulement si la décision est difficile à renverser, surprenante
   sans contexte et issue d'un véritable compromis.
 
+## Compréhension et organisation du travail
+
+- Suivre la [méthode de lecture du projet](COMPRENDRE-LE-PROJET.md) pour rendre
+  visibles les sources consultées, les hypothèses et les vérifications, sans
+  charger indistinctement toute la documentation.
+- Garder la roadmap comme source de l'ordre des preuves et utiliser les
+  [issues GitHub](ISSUES.md) comme suivi concret de leur exécution.
+- Représenter chaque palier ou étape décidé de la roadmap par une issue de
+  suivi. Avant de coder le prochain palier, le découper en sous-issues dont le
+  résultat, le périmètre et la preuve sont exécutables.
+- Par défaut, une issue bornée donne une branche, une pull request et un
+  résultat vérifiable. Les regroupements plus larges restent des issues parentes
+  et ne sont pas fermés par une preuve partielle.
+- Ne pas inventer d'avance les sous-issues techniques d'un palier encore
+  lointain : son issue de suivi conserve le résultat et les dépendances, puis le
+  découpage détaillé est validé lorsqu'il devient le prochain chantier.
+
 ## Poste de développement et LAB
 
 - Le poste de développement sert à l'édition, à l'inspection Git, aux

@@ -18,6 +18,8 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Comprendre les appels, données, états et protections de la chaîne d'observation | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |
 | Contribuer ou travailler avec un agent | [`contribution/README.md`](contribution/README.md) |
+| Comprendre comment le dépôt est lu avant d'agir | [`contribution/COMPRENDRE-LE-PROJET.md`](contribution/COMPRENDRE-LE-PROJET.md) |
+| Organiser la roadmap en issues exécutables | [`contribution/ISSUES.md`](contribution/ISSUES.md) |
 | Lire les exigences de qualité | [`contribution/QUALITE.md`](contribution/QUALITE.md) |
 | Consulter la stratégie et le registre d'automatisation | [`contribution/TESTS.md`](contribution/TESTS.md) |
 | Comprendre la CI, ses permissions et ses limites | [`contribution/CI.md`](contribution/CI.md) |
