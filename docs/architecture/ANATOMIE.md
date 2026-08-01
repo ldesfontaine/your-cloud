@@ -21,10 +21,12 @@ Trois états ne doivent jamais être confondus :
   refus hostiles.
 
 À ce jour, `v0.0.1` et la chaîne d'observation authentifiée et bornée de
-`v0.0.2` sont implémentées et prouvées dans le LAB. La porte Linux de l'App
-`v0.0.3` est également implémentée et prouvée ; sa porte Windows reste non
-exécutée. L'amorçage, le chemin d'action et les services du reste de la V1 sont
-décidés mais pas implémentés.
+`v0.0.2` sont implémentées et prouvées dans le LAB. Le fonctionnel Linux de
+l'App `v0.0.3` est également implémenté et prouvé dans le LAB ; ses variantes
+natives Linux et Windows ont été exécutées dans le run hébergé `30700406219`
+sur `9c6f14f`. Le palier reste partiellement prouvé jusqu'au run manuel du
+candidat final et à la clôture de ses autres critères. L'amorçage, le chemin
+d'action et les services du reste de la V1 sont décidés mais pas implémentés.
 
 ## Distribution réellement prouvée pour `v0.0.2`
 

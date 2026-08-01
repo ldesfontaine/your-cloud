@@ -23,6 +23,7 @@ sources.
 | `docs/objectifs/v1/README.md` | Ce qui doit être vrai pour déclarer la V1 atteinte |
 | `docs/objectifs/v1/ROADMAP.md` | L'ordre des preuves jusqu'à la V1 et le prochain incrément détaillé |
 | `docs/contribution/QUALITE.md` | Les règles de conception, développement et validation |
+| `docs/contribution/CI.md` | Les déclenchements, permissions, placements et limites des contrôles GitHub Actions |
 | `docs/contribution/TESTS.md` | Le registre des contrôles, incidents et écarts à automatiser, jamais une preuve par lui-même |
 | `docs/architecture/ANATOMIE.md` | La projection visuelle des placements, flux, autorités et états |
 | `docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md` | Le contrat de l'autorité SSH initiale, de son transfert et du remplacement explicite du Controller |
@@ -71,6 +72,7 @@ humaine ou par l'agent reste obligatoire.
 | Condition de réussite d'un objectif | `docs/objectifs/<objectif>/README.md` | Roadmap et anatomie concernées |
 | Ordre ou périmètre du prochain palier | `docs/objectifs/<objectif>/ROADMAP.md` | Carte documentaire et rapport LAB concerné |
 | Technologie ou règle de développement | Objectif concerné ou qualité selon sa portée | Roadmap, anatomie et HTML concernés |
+| Déclenchement ou placement d'une preuve CI | `docs/contribution/CI.md` | Registre de tests, contrat du palier concerné et routeur `tests/README.md` |
 | Résultat réellement exécuté | Rapport sous `docs/lab/` | Anatomie et état décidé/implémenté/prouvé |
 
 ## Registre des décisions transverses actives

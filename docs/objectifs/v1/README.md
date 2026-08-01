@@ -144,13 +144,15 @@ session restent sous `Profil et sessions`. L'interface n'invente ni rubrique
 Controller ou Sécurité, ni machine Relay dédiée, ni score, historique ou donnée
 actuelle absent de l'API.
 
-La preuve avance en deux portes sans exécuter le produit sur le laptop. Linux
-réutilise d'abord les six VM Debian `v1-full` : build et runtime propres,
-seconde Console hostile, deux Controllers synthétiquement séparés, deux Daemons
-et un Relay colocalisé avec l'un d'eux. Une fois cette porte stable seulement,
-une VM `lab-console-windows` construit nativement puis installe le `.msi` depuis
-des snapshots distincts. La réussite Linux autorise cette seconde étape mais ne
-prouve pas Windows ; les deux restent obligatoires pour fermer `v0.0.3`.
+La preuve sépare deux couches sans exécuter le produit sur le laptop. Le
+fonctionnel multi-VM réutilise les six VM Debian `v1-full` : build et runtime
+propres, seconde Console hostile, deux Controllers synthétiquement séparés,
+deux Daemons et un Relay colocalisé avec l'un d'eux. Une matrice native manuelle
+construit, installe et lance ensuite le même candidat exact sur des runners
+Linux et Windows jetables ; elle n'y crée ni Controller, ni Relay, ni Daemon ou
+topologie simulée. Ces couches restent complémentaires. `v0.0.3` ne ferme
+qu'après un run natif manuel vert sur le candidat final et la clôture explicite
+des autres critères inventoriés.
 
 Chaque association approuve une origine HTTPS TLS 1.3 exacte. L'enveloppe
 présente une identité d'appareil mTLS puis une session humaine opaque, toutes

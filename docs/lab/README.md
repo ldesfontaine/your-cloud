@@ -127,8 +127,11 @@ documentée et reproductible dans le LAB approprié.
   `.deb` signé et installé, coffre et appairage, deux Controllers séparés,
   matrice hostile depuis une seconde VM, frontière réseau privée, Relay
   indisponible, donnée ancienne, lacune, reprise, redémarrages et sept vues
-  claires/sombres exécutés le 20 juillet 2026. Le candidat reste non commité et
-  Windows non exécuté ; le palier complet reste ouvert.
+  claires/sombres exécutés le 20 juillet 2026 puis parcours critique revalidé le
+  22 juillet. La matrice native Linux/Windows a depuis réussi dans GitHub
+  Actions sur `9c6f14f` ; elle reste une preuve hébergée distincte et ne modifie
+  pas les faits du rapport LAB Linux. Le palier complet reste ouvert jusqu'au
+  run manuel du candidat final et à la clôture de ses autres critères.
 - [`v0.0.2` — observation authentifiée et bornée](v0.0.2-observation.md) :
   mTLS, enrôlement et révocation, profil fixe, tampon saturé avec lacune,
   reprise, redémarrages et cycle retrait-réinstallation exécutés dans
@@ -143,12 +146,12 @@ documentée et reproductible dans le LAB approprié.
 
 ## Point d'arrêt avant la prochaine preuve
 
-La première porte `v0.0.3` a employé les six VM Debian de `v1-full` et son
-résultat Linux est conservé dans le rapport ci-dessus. Le travail s'arrête sur
-la stabilisation et la relecture de ce candidat non commité. Lucas garde la
-porte Windows gelée jusqu'à une nouvelle validation explicite. Après ce futur
-accord seulement, `labctl` devra apprendre une VM `lab-console-windows` issue
-d'un média Windows 11 officiel et identifié, construire nativement le `.msi`,
-puis l'installer et l'exécuter depuis un snapshot runtime distinct. Tant que
-cette seconde porte n'est pas réellement verte, `v0.0.3` reste non prouvée sur
-Windows et donc non terminée.
+La preuve fonctionnelle `v0.0.3` a employé les six VM Debian de `v1-full` et son
+résultat Linux reste conservé dans le rapport ci-dessus. Le runner Windows
+hébergé porte uniquement la différence native : tests propres à la plateforme,
+build et signature synthétique du `.msi`, installation, lancement, absence de
+listener et smoke WebView2. Il ne reçoit aucune VM, route ou doublure de
+Controller, Relay ou Daemon. Les flux, identités distribuées, pannes, reprises
+et scénarios multi-VM restent sous l'autorité du LAB Linux. Un nouveau LAB
+Windows ne serait ouvert que pour un défaut fonctionnel réellement propre à
+Windows, jamais pour simuler la topologie dans la CI générique.

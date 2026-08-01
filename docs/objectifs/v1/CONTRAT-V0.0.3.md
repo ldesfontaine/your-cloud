@@ -1,12 +1,14 @@
 # Contrat `v0.0.3` — Console cliente et Controller de lecture
 
-> État au 22 juillet 2026 : **architecture produit et paramètres 1 à 8
-> validés ; porte Linux exécutée, réussie puis revalidée après review** sur le
-> commit produit exact `02fe4f5`, avec `.deb`, SBOM, manifeste, signature,
-> parcours installé et vues revérifiés. Le
-> [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md) conserve les
-> preuves et limites. La porte Windows est autorisée, en préparation et reste
-> obligatoire avant de déclarer le palier terminé et prouvé.
+> État au 1er août 2026 : **architecture produit et paramètres 1 à 8 validés ;
+> preuve fonctionnelle LAB Linux exécutée, réussie puis revalidée après review**
+> sur le commit produit exact `02fe4f5`. Le
+> [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md) conserve ses
+> preuves et limites. La matrice native Linux/Windows a également réussi dans
+> le [run hébergé `30700406219`](https://github.com/ldesfontaine/your-cloud/actions/runs/30700406219)
+> sur `9c6f14f`. Cette exécution antérieure au déclenchement manuel final prouve
+> le contenu des jobs à cette révision ; `v0.0.3` reste ouverte jusqu'au run
+> manuel du candidat final et à la clôture explicite de ses autres critères.
 
 ## Résultat utilisateur
 
@@ -1502,20 +1504,21 @@ versionnés forment le contrat visuel ; chaque écran les applique sans style
 local opportuniste. Les trois images exploratoires ne sont ni des artefacts de
 preuve, ni des spécifications à intégrer au produit.
 
-## Runners et phases LAB décidés
+## Runners et couches de preuve décidés
 
 Un **runner** est une machine isolée qui reçoit le lot de sources identifié,
 exécute un build ou des tests et rend des artefacts et résultats bornés. Une
-**porte** est un ensemble de contrôles qui doivent tous réussir avant de passer
-à la plateforme suivante. Fermer la porte Linux autorise donc le travail
-Windows ; cela ne prouve pas encore Windows.
+**porte** est un ensemble de contrôles qui doivent tous réussir avant de fermer
+le candidat. Les preuves sont complémentaires, pas deux reproductions de la
+même infrastructure : le LAB Linux porte le fonctionnel multi-VM et les runners
+hébergés portent les différences natives Linux et Windows.
 
 L'inventaire lu par `tools/labctl list` le 19 juillet 2026 contient la topologie
-Debian `v1-full`, entièrement arrêtée, mais aucune VM Windows. Le contrat ne
-transforme pas cette absence en support implicite. Le travail suit deux portes
-séquentielles.
+Debian `v1-full`, entièrement arrêtée, mais aucune VM Windows. Cette absence ne
+vaut pas support implicite ; la différence Windows est exécutée sur un runner
+Windows natif isolé et ne reçoit aucune fausse topologie multi-VM.
 
-### Porte Linux immédiate
+### Preuve fonctionnelle LAB Linux
 
 La topologie `v1-full` existante reçoit exactement ces rôles :
 
@@ -1552,34 +1555,35 @@ snapshot runtime propre, vérifie l'artefact puis l'installe. Le pilote externe
 de test ou capacité supplémentaire n'entre dans l'artefact livré. Les processus
 et ports du pilote restent inventoriés comme instrumentation LAB.
 
-### Porte Windows différée, obligatoire
+### Porte native Linux/Windows manuelle, obligatoire
 
-Après réussite stable de toute la porte Linux, `labctl` reçoit une seule machine
-supplémentaire `lab-console-windows`, Windows 11 x86_64 installé depuis un média
-officiel sous licence et identifié par empreinte. Deux snapshots séparent le
-runner natif MSVC/WiX du runtime propre. La même archive de sources et le même
-verrou frontend produisent nativement le `.msi`, qui est exporté, signé avec les
-clés synthétiques LAB, réinjecté après retour au snapshot runtime, vérifié,
-installé puis piloté par le WebDriver externe Windows.
+Un déclenchement manuel sur la révision candidate exacte lance deux runners
+jetables en parallèle. La même archive de sources et le même verrou frontend
+produisent nativement le `.deb` sous Linux et le `.msi` sous Windows
+MSVC/WiX. Chaque runner vérifie ses tests natifs, construit, installe puis lance
+la Console réelle et refuse tout listener inattendu. Sous Windows, le mécanisme
+Authenticode synthétique, les ACL du coffre, l'IPC natif et le rendu installé
+sous WebView2 sont exécutés ; la signature synthétique ne vaut jamais identité
+publique de distribution.
 
-La Console Windows rejoint le même segment d'administration et rejoue contre
-Controller A et B les parcours utilisateur, tailles, thèmes, clavier, contenu
-hostile, mauvaises identités et séparation des associations. Les attaques
-réseau profondes déjà indépendantes de la WebView ne sont pas dupliquées sans
-raison, mais TLS, coffre, IPC natif, installation, lancement, absence de
-listener, rendu et cycle de session sont réellement exécutés sous Windows. Un
-échec Windows laisse la preuve Linux visible mais bloque la fermeture de
+Le smoke WebView2 utilise des données bornées uniquement pour éprouver
+l'enveloppe et les vues installées. Il ne démarre ni Controller, ni Relay, ni
+Daemon, ne rejoint aucun segment d'administration et ne simule pas les preuves
+réseau ou multi-VM. Les comportements partagés Console–Controller, mTLS,
+multi-Controller, panne, reprise et contenu hostile restent sous l'autorité de
+la preuve fonctionnelle LAB Linux et des tests partagés. Un échec d'une variante
+native laisse les autres preuves visibles mais bloque la fermeture de
 `v0.0.3`.
 
 ### Ordre, artefacts et nettoyage
 
-Le pilote exécute exactement :
+La fermeture du candidat assemble exactement :
 
 1. `tools/labctl list`, validation des origines, gabarits, réseaux et adresses,
    puis verrou exclusif du run ;
 2. retour aux snapshots propres et export Git non sensible du commit annoncé,
    avec empreinte vérifiée après chaque transfert ;
-3. contrôles statiques, unitaires et hostiles puis build Linux natif ;
+3. contrôles statiques, unitaires et hostiles puis build Linux LAB natif ;
 4. installation propre et parcours Console Linux à `1280 x 800` et
    `640 x 560`, thèmes clair et sombre, clavier et zoom 200 % ;
 5. cycle nominal Daemon–Relay–Controller–Console, deux machines, Controller B,
@@ -1589,8 +1593,8 @@ Le pilote exécute exactement :
 7. réaffirmation nominale, inventaire inchangé, collecte des empreintes, SBOM,
    captures et journaux expurgés, retrait des secrets synthétiques et retour
    vérifié à l'état final annoncé ;
-8. seulement après stabilité Linux, préparation puis rejeu de la porte Windows
-   native décrite ci-dessus.
+8. déclenchement manuel de la matrice native Linux/Windows sur la révision
+   finale exacte, sans infrastructure produit dans ses runners.
 
 Chaque étape possède une échéance, une assertion et un nettoyage d'échec. Les
 résultats vont dans un dossier de run non versionné puis un rapport Markdown
@@ -1617,6 +1621,13 @@ remplacement n'est pas une lacune du tampon Daemon et l'interface ne doit jamais
 inventer les séquences intermédiaires.
 
 ## Preuve de sortie à rendre exécutable
+
+Les artefacts, protections de fichier, IPC, lancement, absence de listener et
+rendu propres à un système sont attribués à la matrice native. Les API, flux,
+identités distribuées, pannes et reprises sont attribués au LAB Linux
+multi-VM. Les tests partagés ferment les formats et refus qui ne dépendent pas
+d'un placement vivant ; aucune couche ne récupère implicitement le résultat
+d'une autre.
 
 La preuve finale devra au minimum démontrer :
 
@@ -1788,10 +1799,10 @@ exclusion.
    sombre, fenêtre `1280 x 800` minimale `640 x 560`, mise en page relative et
    sept vues centrées sur l'infrastructure sans rubrique Controller ou
    Sécurité ;
-8. preuve : porte Linux immédiate sur les six VM `v1-full`, Relay et Daemon
+8. preuve : fonctionnel multi-VM sur les six VM Linux `v1-full`, Relay et Daemon
    colocalisés sur `lab-machine-1`, seconde Console hostile et deux Controllers
-   logiquement séparés ; puis seulement après stabilité, porte Windows native
-   obligatoire sur `lab-console-windows` avant fermeture du palier.
+   logiquement séparés ; matrice native Linux/Windows manuelle sur le candidat
+   final exact, sans infrastructure simulée dans les runners hébergés.
 
 ## Paramètres encore ouverts avant le code
 
@@ -1800,10 +1811,11 @@ explicite ; un incident d'implémentation ne les élargit pas silencieusement.
 
 ## Point d'arrêt
 
-Les paramètres 1 à 8 sont validés et la porte Linux de la branche
+Les paramètres 1 à 8 sont validés et la preuve fonctionnelle Linux de la branche
 `console-controller` a réussi dans le LAB, puis le candidat issu de la review a
 été revalidé sur le commit produit exact `02fe4f5` avec un signataire LAB
-synthétique. La porte Windows est ouverte sans élargir le périmètre ni préparer
-une abstraction réseau post-V1. Les preuves et limites réellement exécutées
-restent visibles, et le palier ne devient terminé et fusionnable qu'après les
-deux portes.
+synthétique. La matrice native Linux/Windows a réussi sur `9c6f14f` dans le run
+hébergé `30700406219`, sans infrastructure distribuée. Les preuves et limites
+réellement exécutées restent visibles, et le palier ne devient terminé et
+fusionnable qu'après un run manuel vert sur le candidat final exact et la
+clôture explicite des critères restants.

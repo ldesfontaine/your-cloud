@@ -2,15 +2,14 @@ name: CI
 
 on:
   pull_request:
-  push:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   source:
@@ -23,6 +22,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Vérifier la syntaxe PowerShell Windows
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./tests/checks/console-windows-ci.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            throw ($errors.Message -join [Environment]::NewLine)
+          }
+
       - name: Installer Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -34,6 +47,8 @@ jobs:
 
   console_platforms:
     name: Console ${{ matrix.label }}
+    needs: [source, plumber_policy]
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:

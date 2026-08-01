@@ -62,9 +62,14 @@ grep -Fq 'prove_bounded_unresponsive_destination' "$hostile_http" \
 step "Python renderer syntax"
 PYTHONPYCACHEPREFIX="$workdir/pycache" python3 -m py_compile \
   tests/lab/v0.0.1/report/renderer.py \
+  tests/checks/ci-workflow-policy.py \
+  tests/checks/console-windows-ui-proof.py \
   tests/checks/render-v0.0.1-schema.py \
   tests/checks/plumber-report.py \
   tests/checks/test-plumber-report.py
+
+step "CI trigger policy"
+python3 -B tests/checks/ci-workflow-policy.py
 
 step "Hostile structured-result boundary"
 python3 -B tests/checks/render-v0.0.1-schema.py

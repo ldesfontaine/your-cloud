@@ -2,10 +2,12 @@
 
 > Statut : `v0.0.1` et `v0.0.2` sont décidées, implémentées et prouvées dans le
 > LAB. Les huit paramètres de `v0.0.3` sont validés. Sa
-> [porte Linux](../../lab/v0.0.3-console-controller-linux.md), réussie une
+> [preuve fonctionnelle Linux](../../lab/v0.0.3-console-controller-linux.md), réussie une
 > première fois sur `afb31e8`, a été revalidée après review le 22 juillet 2026
-> sur le commit produit exact `02fe4f5`. Windows reste non exécuté ; cette
-> seconde porte demeure obligatoire avant de fermer le palier.
+> sur le commit produit exact `02fe4f5`. La matrice native Linux/Windows a
+> réussi dans le run hébergé `30700406219` sur `9c6f14f`. Le palier reste ouvert
+> jusqu'au run manuel du candidat final et à la clôture explicite des preuves
+> encore inventoriées.
 
 Une [édition HTML autonome et visuelle](../../html/roadmap-v1.html) accompagne cette source
 Markdown.
@@ -52,7 +54,7 @@ découpée en sous-issues exécutables.
 
 | Travail | Issue |
 |---|---|
-| Fermer la porte Windows de `v0.0.3` | [`#9`](https://github.com/ldesfontaine/your-cloud/issues/9) |
+| Fermer les preuves finales de `v0.0.3` | [`#9`](https://github.com/ldesfontaine/your-cloud/issues/9) |
 | Amorcer et remplacer un Controller | [`#13`](https://github.com/ldesfontaine/your-cloud/issues/13) |
 | Appliquer un premier plan OCI contrôlé | [`#14`](https://github.com/ldesfontaine/your-cloud/issues/14) |
 | Publier BentoPDF derrière Traefik | [`#15`](https://github.com/ldesfontaine/your-cloud/issues/15) |
@@ -79,7 +81,7 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | Contrat V1 | oui | non | non |
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
-| `v0.0.3` | oui — architecture et paramètres 1 à 8 validés | partiellement — porte Linux | partiellement — porte Linux ; Windows absente |
+| `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat Linux/Windows présent | partiellement — fonctionnel LAB Linux et matrice native hébergée exécutés ; run manuel final attendu |
 | Amorçage et remplacement du Controller | oui — prochain contrat V1 après fermeture de `v0.0.3` | non | non |
 | Autres paliers postérieurs de la V1 | proposés, à relire | non | non |
 
@@ -286,14 +288,16 @@ contextuelle, la sécurité locale reste sous `Profil et sessions` et aucun Rela
 n'est inventé comme machine dédiée. Les sept vues n'effectuent aucun polling de
 fond et rendent les données Controller comme texte inerte.
 
-**Porte Linux exécutée et revalidée, porte Windows non exécutée :** les six VM
+**Preuve fonctionnelle LAB et matrice native exécutées :** les six VM
 Debian `v1-full` ont construit, installé, attaqué et piloté le candidat Linux
 selon le [rapport LAB](../../lab/v0.0.3-console-controller-linux.md). Après la
 preuve complète initiale, le commit produit `02fe4f5` issu de la review a
 repassé les gates, le `.deb`, le coffre, l'appairage, les deux machines, la
 panne/reprise Relay et les sept vues. L'orchestration complète reste assistée.
-La seconde porte doit encore construire nativement le `.msi` et rejouer les
-preuves Windows. Le palier ne ferme pas avant réussite des deux portes.
+Le run hébergé `30700406219` a ensuite exécuté sur `9c6f14f` les builds,
+installations et smokes natifs Linux et Windows. Il ne rejoue ni ne simule la
+topologie `v1-full`. Le palier ne ferme pas avant un nouveau run manuel sur le
+candidat final exact et la clôture explicite des critères encore ouverts.
 
 **Précondition validée :** le chemin Daemon–Relay authentifié, le tampon borné
 et la représentation des données anciennes ou lacunaires ont franchi leur
@@ -340,9 +344,10 @@ HTTPS normal.
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ### Prochain palier décidé — amorçage réutilisable
 
-Ce palier ne reçoit pas encore de numéro : `v0.0.3` reste ouverte tant que sa
-porte Windows n'est pas exécutée. Son contrat est néanmoins décidé afin que le
-développement suivant ne réinvente pas l'autorité initiale.
+Ce palier ne reçoit pas encore de numéro : `v0.0.3` reste ouverte tant que son
+candidat final et ses preuves restantes ne sont pas explicitement fermés. Son
+contrat est néanmoins décidé afin que le développement suivant ne réinvente pas
+l'autorité initiale.
 
 **Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
@@ -573,12 +578,13 @@ la présente roadmap.
 ## Point d'arrêt
 
 `v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Les
-paramètres 1 à 8 de `v0.0.3` sont fermés et la porte Linux de la branche
-`console-controller` a été revalidée après review sur le commit produit exact
-`02fe4f5`. La porte Windows reste non exécutée. Au 29 juillet 2026, le quota
-GitHub Actions épuisé bloque son run hébergé ; le budget du projet reste nul et
-aucun merge n'est permis avant un résultat vert obtenu dans un runner Windows
-isolé. L'amorçage, le remplacement du Controller et l'Auxiliaire appartiennent
+paramètres 1 à 8 de `v0.0.3` sont fermés et la preuve fonctionnelle Linux de la
+branche `console-controller` a été revalidée après review sur le commit produit
+exact `02fe4f5`. La matrice native Linux/Windows a réussi sur `9c6f14f` dans le
+run `30700406219`, sans prétendre rejouer la topologie multi-VM. Le budget du
+projet reste nul et aucun merge de fermeture n'est permis avant un run manuel
+vert du candidat final exact. L'amorçage, le remplacement du Controller et
+l'Auxiliaire appartiennent
 désormais au contrat V1 et au prochain ordre de preuve, mais ne sont encore ni
 implémentés ni prouvés. Ansible intégré, WireGuard, OCI, téléphone, navigateur
 public, Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors

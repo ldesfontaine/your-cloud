@@ -1,8 +1,8 @@
 # Contrat de CI générique
 
-Cette CI stabilise les contrôles de `v0.0.1` et ajoute les contrôles natifs de
-la Console `v0.0.3`. Elle ne déploie rien, ne pilote pas le LAB et ne publie
-aucun artefact produit.
+Cette CI sépare la validation rapide de chaque pull request de la matrice native
+Linux/Windows réservée à un candidat final explicitement déclenché. Elle ne
+déploie rien, ne pilote pas le LAB et ne publie aucun artefact produit.
 
 Une **CI générique** exécute des contrôles reproductibles dans une machine
 jetable fournie par GitHub. Un **runner LAB dédié** serait au contraire une
@@ -13,12 +13,12 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 
 | Élément | État | Autorité |
 |---|---|---|
-| contrôles génériques | implémentés ; run GitHub de référence réussi sous Go `1.26.5` ; dernière simulation LAB sous Go `1.24.4` sans nouveau rejeu LAB | codes de sortie de `tests/checks/source-v0.0.1 ci` |
-| matrice Console Linux/Windows | exécutée avec succès sur `ubuntu-24.04` et `windows-2025` dans le run de référence ; les deux variantes parallèles restent limitées au contrat hébergé | codes de sortie des tests, builds, installations et lancements natifs |
-| analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès dans le run de référence | sortie de Plumber puis garde indépendant |
+| porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; son rejeu sur la révision qui introduit ce découpage reste attendu | états des jobs `Contrôles génériques` et `Politique Plumber` |
+| matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; un run antérieur au découpage a déjà exécuté les deux variantes avec succès, mais le run manuel final reste attendu | codes de sortie des tests, builds, installations et lancements natifs |
+| analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
-| exécution GitHub Actions réelle | [run `30697643868`](https://github.com/ldesfontaine/your-cloud/actions/runs/30697643868) entièrement vert sur `f1d2f31` ; ce résultat ne couvre ni la preuve multi-VM ni la porte Windows LAB complète | états des jobs, journaux et artefact de smoke du run |
-| preuve multi-VM | volontairement hors de cette CI | `result.json` et assertions de `tests/lab/v0.0.1/prove` |
+| exécution GitHub Actions réelle | [run `30700406219`](https://github.com/ldesfontaine/your-cloud/actions/runs/30700406219) entièrement vert sur `9c6f14f`, avec les deux variantes natives ; il prouve leur contenu à cette révision, pas encore le nouveau déclenchement manuel | états des jobs, journaux et artefact de smoke du run |
+| preuve fonctionnelle multi-VM | exécutée dans le LAB Linux et volontairement hors de cette CI | rapport LAB, résultats structurés et assertions machine |
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation
@@ -36,15 +36,18 @@ La première couche applique donc les choix suivants :
 - seulement des runners GitHub hébergés et jetables pour une pull request ;
 - aucun secret du projet, aucune clé LAB et aucun accès libvirt ;
 - jeton `GITHUB_TOKEN` limité à `contents: read` ;
-- déclencheurs `pull_request`, `push` et `workflow_dispatch`, jamais
-  `pull_request_target` ;
+- déclencheur automatique `pull_request` et déclencheur manuel
+  `workflow_dispatch`, jamais `push` général ni `pull_request_target` ;
 - actions tierces épinglées à un SHA de commit, dépôt extrait sans conserver
   les identifiants Git ;
 - aucun cache restauré depuis une branche non fiable ;
-- délais maximaux et annulation d'un run devenu obsolète ;
+- délais maximaux et annulation du run de pull request devenu obsolète ; un run
+  manuel final n'est pas annulé par un nouveau déclenchement ;
 - aucun binaire produit archivé par la CI générique ; le build de contrôle vit
   dans un répertoire temporaire supprimé en sortie ;
-- seul le rapport Plumber déjà validé est conservé, pendant sept jours.
+- la porte rapide conserve seulement le rapport Plumber validé ; le run manuel
+  Windows conserve en plus son rapport et ses captures expurgées, pendant sept
+  jours, sans paquet ni matériel de signature.
 
 Ces mesures limitent l'impact d'un contenu hostile, mais ne peuvent pas rendre
 un workflow auto-modifiable digne de confiance par lui-même. `CODEOWNERS` nomme
@@ -59,12 +62,20 @@ Les checks CI peuvent en revanche rester obligatoires avant fusion.
 
 ### Découpage, déclenchement et relance
 
-Le graphe GitHub Actions doit montrer des responsabilités et des dépendances
-réelles, pas seulement fragmenter un long fichier. Le workflow actuel possède
-déjà trois familles indépendantes : les contrôles génériques, la matrice Console
-Linux/Windows et la politique Plumber. Les deux plateformes de la Console sont
-des variantes parallèles du même contrat ; elles ne forment pas deux chaînes de
-déploiement différentes.
+Le même workflow expose deux modes explicites. Une pull request exécute
+automatiquement les contrôles génériques et la politique Plumber. Un
+`workflow_dispatch` sur la référence candidate lance d'abord ces deux gardes en
+parallèle ; la matrice Console Linux/Windows ne démarre qu'après leur réussite.
+Une erreur rapide bloque ainsi les runners natifs avant qu'ils consomment du
+temps. Les deux plateformes sont ensuite des variantes parallèles du même
+contrat natif ; elles ne forment pas deux chaînes de déploiement.
+
+La concurrence groupe les pull requests par numéro afin qu'un nouveau commit
+annule leur run devenu obsolète. Chaque déclenchement manuel est au contraire
+isolé par `github.run_id` et n'est pas annulé. Le garde versionné
+`tests/checks/ci-workflow-policy.py` vérifie les deux déclencheurs, les
+permissions en lecture, cette concurrence, les trois jobs attendus et la
+matrice native manuelle dans le même workflow.
 
 Le découpage suit ces règles :
 
@@ -72,7 +83,8 @@ Le découpage suit ces règles :
   sans parcourir les logs d'un autre domaine ;
 - `needs` exprime uniquement une dépendance de données ou une porte réelle ;
   des jobs sans dépendance s'exécutent en parallèle ;
-- une matrice couvre plusieurs plateformes soumises au même contrat ;
+- une matrice couvre plusieurs plateformes soumises au même contrat et reste
+  réservée au candidat final ;
 - un nouveau fichier de workflow est justifié par un déclencheur, un niveau de
   permission, un environnement ou un cycle d'artefact différent ;
 - un workflow réutilisable sert à supprimer une duplication réelle entre
@@ -80,41 +92,52 @@ Le découpage suit ces règles :
 - la relance normale cible les jobs en échec ou le job précis à diagnostiquer,
   sans relancer volontairement les jobs déjà réussis.
 
-Éviter un job dès le déclenchement demande un **routage par chemins** : la CI
-détermine quels domaines ont changé, puis conditionne les jobs concernés. Ce
-routage doit conserver un contrôle requis qui rend toujours un état GitHub. Un
-filtre `paths` placé sur l'ensemble d'un workflow requis est interdit ici : si
-GitHub ne déclenche pas le workflow, son check peut rester en attente et bloquer
-la pull request sans avoir évalué le changement.
+La porte rapide ne porte aucun filtre `paths` au niveau du workflow : chaque
+pull request rend donc toujours les deux checks attendus et aucun check requis
+ne reste en attente faute de déclenchement. Un futur routage interne plus fin
+devra conserver ce résultat stable, traiter tout chemin inconnu comme
+transverse et couvrir sa table chemins-vers-jobs par des cas nominaux et
+hostiles avant activation.
 
-Ajouter ce routage constitue un chantier CI autonome. Il doit définir la table
-chemins-vers-jobs, couvrir les changements transverses et hostiles, mettre à
-jour les assertions Plumber qui attendent actuellement trois jobs dans un seul
-workflow, puis être exécuté dans un runner isolé avant de devenir obligatoire.
-Le seul gain de présentation du graphe ne suffit pas à justifier ce changement.
+Le job `Contrôles génériques` fait d'abord analyser le script Windows par le
+parseur PowerShell de l'image Linux, sans l'exécuter, puis installe Go `1.26.5`
+et appelle `tests/checks/source-v0.0.1 ci` sous une identité non root. Cette
+entrée vérifie formatage, syntaxe, schémas structurés, documentation, tests Go,
+`go vet` et build statique, ainsi que le garde de politique du workflow. Le
+binaire temporaire est vérifié puis supprimé ; il n'est ni déployé ni publié.
 
-Le job `Contrôles génériques` installe Go `1.26.5`, puis appelle
-`tests/checks/source-v0.0.1 ci` sous une identité non root. Cette entrée vérifie
-formatage, syntaxe, schémas structurés, documentation, tests Go, `go vet` et
-build statique. Le binaire temporaire est vérifié puis supprimé ; il n'est ni
-déployé ni publié.
+Le job matriciel `Console`, exécuté seulement sur déclenchement manuel, fixe
+Node.js `24.18.0` LTS et Rust `1.94.1`, désactive le cache automatique et lance
+au plus deux variantes en parallèle avec `fail-fast: false`. Les deux variantes
+exécutent le même verrou npm, l'audit des dépendances frontend, le contrat
+visuel, le build embarqué, le formatage Rust et les tests natifs. La variante
+Linux construit le `.deb`, l'installe, le lance sous affichage virtuel puis
+refuse tout listener TCP du processus. La variante Windows exécute en plus les
+tests d'ACL sur Windows, construit le `.msi` sous MSVC/WiX, signe l'exécutable
+et l'installateur, les vérifie, installe, lance et refuse tout listener du
+processus ou de ses descendants.
 
-Le job matriciel `Console` fixe Node.js `24.18.0` LTS et Rust `1.94.1`, désactive
-le cache automatique et lance au plus deux variantes en parallèle avec
-`fail-fast: false`. Les deux variantes exécutent le même verrou npm, l'audit
-des dépendances frontend, le contrat visuel, le build embarqué, le formatage
-Rust et les tests natifs. La variante Linux construit le `.deb`, l'installe,
-le lance sous affichage virtuel puis refuse tout listener TCP du processus. La
-variante Windows exécute en plus les tests d'ACL sur Windows, construit le
-`.msi` sous MSVC/WiX, signe l'exécutable et l'installateur, les vérifie,
-installe, lance et refuse tout listener du processus ou de ses descendants.
+Cette matrice prouve les différences natives des deux plateformes. Elle ne
+démarre aucun Controller, Relay ou Daemon, ne crée aucune fausse topologie et
+ne simule pas la preuve fonctionnelle multi-VM. Les API, le réseau, mTLS, les
+pannes, reprises et scénarios hostiles restent prouvés dans le LAB Linux.
 
 Le certificat Authenticode de CI est synthétique, auto-signé, valable deux
 jours, créé dans le magasin de l'utilisateur jetable puis supprimé avec sa clé
 privée. Son horodatage RFC 3161 prouve le mécanisme de signature, pas l'identité
 publique de Your Cloud. Aucun `.deb`, `.msi`, exécutable ou certificat n'est
-archivé. La signature publique de distribution et la preuve visuelle WebView2
-restent des portes distinctes.
+archivé. L'archive Windows bornée contient seulement un rapport JSON et des
+captures PNG. Le rapport lie `github.sha`, `github.run_id`, le checkout et la
+propreté initiale du worktree ; `source_locks` conserve les SHA-256 des verrous
+npm et Cargo. `verified_artifacts` relie le `.msi`, l'exécutable construit et
+l'exécutable installé, dont l'égalité est vérifiée. Enfin, `cleanup` rend
+bloquante l'absence de l'installation, du certificat et de sa clé privée, du
+compte et profil éphémères, des fichiers temporaires, des processus, du port de
+debugger WebView2 et des données applicatives. La signature publique de
+distribution et la preuve visuelle WebView2 restent des portes distinctes.
+Ce schéma enrichi appartient au candidat courant : le run historique
+`30700406219` prouve le smoke antérieur, pas encore ces nouveaux champs. Le run
+manuel final doit les produire sur sa révision exacte.
 
 Le job `Politique Plumber` exécute Plumber `v0.4.8`. L'action GitHub est fixée
 au commit `7970e5df1e7d217de41b2880832b63a6f2152b97`, vérifie le checksum et
@@ -139,7 +162,7 @@ aucun contrôle sélectionné sauté et exactement trois définitions de jobs de
 sécurité évaluées.
 Le rapport doit aussi correspondre à l'identité source attendue, au dépôt
 `ldesfontaine/your-cloud`, au hash canonique de `.plumber.yaml`, à trois jobs,
-un workflow et sept références d'action. Un rapport propre mais ancien ne peut
+un workflow et huit références d'action. Un rapport propre mais ancien ne peut
 donc pas satisfaire ce garde.
 Les futures clés racine restent acceptées afin qu'une extension compatible du
 rapport ne devienne pas un faux échec.
@@ -233,22 +256,28 @@ porte `trustedOwners: []`. Cette métrique n'est pas utilisée par le garde. Le
 rapport hostile conservé, qui montre deux `ISSUE-701` après remplacement des
 deux SHA officiels par `v7`, reste l'autorité de cette non-exemption.
 
-## Réglages GitHub à vérifier par le mainteneur
+## Réglages GitHub externes à appliquer ou vérifier
 
-Ces réglages vivent hors du dépôt et ne sont donc pas prouvés par le workflow :
+Ces réglages vivent hors du dépôt et ne sont donc pas prouvés par le workflow.
+Dans le contexte d'accès actuel du dépôt privé, les endpoints de rulesets et de
+protection de branche répondent `403` : leur état effectif n'est pas observable
+ici. Le mainteneur doit donc les appliquer ou les vérifier lors du passage
+public :
 
 - permissions par défaut de GitHub Actions en lecture seule ;
 - approbation préalable des workflows provenant de forks ;
-- règle de branche exigeant les contrôles génériques, Plumber et les deux
-  variantes Console, avec une branche à jour ;
+- règle de branche à appliquer ou vérifier : exiger les contrôles génériques et
+  Plumber avec une branche à jour ; la revue du candidat final doit en plus
+  lier le run manuel natif de sa révision exacte ;
 - `CODEOWNERS` utilisé pour router toute revue vers Lucas, sans approbation
   obligatoire tant qu'un second mainteneur de confiance n'existe pas ;
 - interdiction de fusion lorsqu'une conversation de revue reste ouverte ;
 - politique de conservation et visibilité des logs adaptée au dépôt.
 
 Une étape ultérieure, avec un contexte de lecture dédié, pourra observer les
-rulesets et métadonnées amont sans donner de droits d'écriture au scanner. Ce
-n'est pas une condition pour ouvrir `v0.0.2` tant que la limite reste visible.
+rulesets et métadonnées amont sans donner de droits d'écriture au scanner. Cette
+observation externe ne remplace ni les contrôles versionnés, ni la preuve native
+manuelle ; sa limite reste visible.
 
 ## Références de conception
 

@@ -1,25 +1,30 @@
 # Tests et preuves
 
-Ce dossier sépare deux notions qui répondent à des questions différentes.
+Ce dossier sépare trois notions qui répondent à des questions différentes.
 
 Un **contrôle générique** vérifie une propriété des sources ou d'un outil sans
-dépendre de la topologie métier complète. Une **preuve LAB** exécute le produit
-sur les VM identifiées, observe ses frontières réelles et conserve un résultat
-relié au lot exact qui a été exécuté.
+dépendre de la topologie métier complète. Un **contrôle natif** construit,
+installe et lance l'application sur le système ciblé sans inventer son
+infrastructure. Une **preuve LAB** exécute le produit sur les VM identifiées,
+observe ses frontières réelles et conserve un résultat relié au lot exact qui
+a été exécuté.
 
 | Couche | Contenu | Runner attendu | Autorité |
 |---|---|---|---|
-| [`checks/`](checks/) | format, syntaxe, documentation, tests Go, build, contrats `labctl list`/`assert-clean` et schéma de restitution | runner isolé, actuellement `lab-console` pour le palier complet | codes de sortie et assertions |
+| porte rapide sous [`checks/`](checks/) | format, syntaxe, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
+| matrice native sous [`checks/`](checks/) | tests frontend et Rust, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, journaux et smoke borné |
 | [`lab/v0.0.1/`](lab/v0.0.1/) | préparation, déploiement, scénarios hostiles multi-VM, nettoyage et restitution P2 | topologie KVM/libvirt `v1-full` pilotée par `labctl` | `result.json` et assertions machine |
 
 Cette séparation prépare une CI propre sans prétendre qu'un conteneur standard
 équivaut au LAB :
 
-1. une CI courante peut exécuter les contrôles génériques dans une image
-   isolée qui possède les dépendances attendues ;
-2. la preuve multi-VM demande un runner dédié, sans charge de production, avec
+1. une pull request exécute automatiquement les contrôles génériques et la
+   politique CI dans une image isolée ;
+2. le candidat final exécute manuellement les différences natives Linux et
+   Windows sans Controller, Relay, Daemon ou topologie simulée ;
+3. la preuve multi-VM demande un runner dédié, sans charge de production, avec
    libvirt et les gabarits `labctl` ;
-3. ce runner doit commencer par l'inventaire en lecture seule, borner ses
+4. ce runner doit commencer par l'inventaire en lecture seule, borner ses
    délais, publier les résultats puis vérifier le nettoyage même en cas
    d'échec.
 

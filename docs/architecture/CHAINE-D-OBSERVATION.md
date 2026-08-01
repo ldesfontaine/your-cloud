@@ -416,11 +416,13 @@ détectable par le Controller, mais ne cacherait pas les données au Relay ;
 intégrité, authenticité et confidentialité de bout en bout restent donc trois
 questions distinctes, hors de `v0.0.2`.
 
-Le système visuel, les sept vues et les deux portes de preuve de l'incrément
-Console–Controller sont décidés. La porte Linux a été implémentée et prouvée
-sur `v1-full`, avec le Relay et un Daemon colocalisés sur `lab-machine-1`.
-Windows reste non exécuté et nécessaire à la fermeture du palier. Le transport
-conserve atomiquement son dernier snapshot comme `indisponible`
+Le système visuel, les sept vues et les couches de preuve de l'incrément
+Console–Controller sont décidés. Le fonctionnel Linux a été implémenté et
+prouvé sur `v1-full`, avec le Relay et un Daemon colocalisés sur
+`lab-machine-1`. Les variantes natives Linux et Windows ont été exécutées dans
+le run hébergé `30700406219` sur `9c6f14f`, sans topologie multi-VM simulée ; un
+run manuel sur le candidat final reste nécessaire à la fermeture du palier. Le
+transport conserve atomiquement son dernier snapshot comme `indisponible`
 après panne ou restart, reprend à la demande avec un backoff
 `1/2/4/8/16/30 s` et ne transmet jamais ses 2 Mio bruts à l'API Console bornée
 à 128 Kio. Le Controller initial reste en lecture seule : aucun SSH, Ansible,
