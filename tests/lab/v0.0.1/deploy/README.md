@@ -18,6 +18,6 @@ aux noms d'hôte, identifiants et adresses de `v0.0.1`. Ils ne constituent pas
 une procédure de production générale.
 
 Les scénarios qui tentent de les mettre en défaut vivent sous
-[`tests/lab/v0.0.1/remote/`](../../tests/lab/v0.0.1/remote/). Garder les deux
+[`remote/`](../remote/). Garder les deux
 dossiers distincts évite de livrer un pilote hostile comme s'il faisait partie
 du déploiement.

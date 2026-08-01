@@ -29,7 +29,7 @@ Il ne prépare aucune capacité de `v0.0.2`.
   `lab-console` vers les cibles avec une identité synthétique temporaire et des
   bornes fixes.
 - [`remote/`](remote/) contient les assertions et scénarios hostiles copiés
-  avec les fichiers de [`deploy/`](../../../deploy/) sur les VM cibles. Les
+  avec les fichiers du lot [`deploy/`](deploy/) sur les VM cibles. Les
   états Relay y sont parsés selon un schéma JSON exact, le listener est lié au
   PID de l'unité et une destination muette strictement locale éprouve les
   bornes réseau du pilote.
@@ -45,7 +45,7 @@ nettoyage restaure l'horloge contrôlée et retire les identités, processus et
 fichiers temporaires ; un échec de nettoyage reste un échec visible.
 
 Les sorties sont écrites sous
-[`artifacts/proofs/v0.0.1/`](../../../artifacts/README.md). `result.json` et les
+[`tests/artifacts/proofs/v0.0.1/`](../../artifacts/README.md). `result.json` et les
 codes de sortie des assertions sont l'autorité ; le rapport, le résultat P2 et
 la capture prouvent seulement leur restitution.
 
@@ -63,7 +63,7 @@ l'artefact produit
 `4d58798e7c0f1440af22f631b24f6b99c34491765bb41d1c6fc1f46c365f0d41`.
 Le run `20260717T093905Z-1478107` reste l'historique propre qui précède le
 déplacement. Un rejeu courant doit être identifié par son propre dossier sous
-`artifacts/proofs/` ; ce README ne transforme pas une ancienne empreinte en
+`tests/artifacts/proofs/` ; ce README ne transforme pas une ancienne empreinte en
 preuve des sources actuelles.
 
 Cette preuve peut être appelée par une CI seulement depuis un runner dédié qui

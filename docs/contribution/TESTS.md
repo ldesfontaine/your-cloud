@@ -74,9 +74,12 @@ L'arborescence rend cette frontière visible :
 - [`tests/lab/v0.0.3/`](../../tests/lab/v0.0.3/) contient les pilotes bornés de
   la preuve Linux assistée ; `tests/checks/console-linux-ci` et
   `console-windows-ci.ps1` portent seulement les smokes natifs génériques ;
-- [`deploy/v0.0.1/`](../../deploy/v0.0.1/) et
-  [`deploy/v0.0.2/`](../../deploy/v0.0.2/) ne contiennent que les cycles de vie
-  et unités installables de leur contrat, jamais un scénario hostile.
+- les sous-dossiers `deploy/` de
+  [`tests/lab/v0.0.1/`](../../tests/lab/v0.0.1/) à
+  [`tests/lab/v0.0.3/`](../../tests/lab/v0.0.3/) figent les cycles de vie et
+  unités exercés par chaque preuve, jamais un installateur de production ;
+- [`tests/artifacts/`](../../tests/artifacts/) reçoit les résultats locaux
+  rapatriés des preuves ; ses sorties générées ne sont pas versionnées.
 
 Une image CI ordinaire peut fournir la première couche, mais elle ne remplace
 pas automatiquement KVM/libvirt, les réseaux et les six VM de `v1-full`.
@@ -332,7 +335,7 @@ preuve, mais ne constituent plus une suite exécutable contre le binaire actuel.
 | Contrôle | Assertion | Préparation | Orchestration | Nettoyage | Limite actuelle |
 |---|---|---|---|---|---|
 | `gofmt -l` vide | automatique | automatique | automatique | sans objet | couvre les sources Go de `cmd/` et `internal/` |
-| `bash -n` sur les scripts Bash du lot | automatique | automatique | automatique | sans objet | sélection par shebang dans `deploy/`, `tools/` et `tests/` |
+| `bash -n` sur les scripts Bash du lot | automatique | automatique | automatique | sans objet | sélection par shebang dans `tools/` et `tests/`, lots de déploiement LAB compris |
 | syntaxe du générateur Python de restitution | automatique | automatique | automatique | automatique | compilation seule de `tests/lab/v0.0.1/report/renderer.py` ; le rendu réel reste vérifié dans `lab-console` |
 | résultat structuré Plumber absent, ambigu, incomplet, sauté ou dégradé | automatique | automatique | automatique | automatique | 23 cas de frontière (20 refus, 3 acceptations), liaison au lot et refus intégré d'un tag mutable exécutés dans `lab-console` ; le workflow historique est prouvé sur `9c6f14f` et la fermeture suit la condition `#9` du SHA fusionné |
 | contrat `labctl list` humain et TSV | automatique | automatique | automatique | automatique | double `virsh` isolé ; le vrai inventaire reste contrôlé avant mutation |
@@ -480,7 +483,7 @@ automatisée.
 | les premiers diagrammes montraient un sens de flux incorrect | confusion visuelle entre placement et destination HTTP | flèches corrigées du Daemon vers le Relay | comparer une source unique de flux aux éditions Markdown et HTML pendant le contrôle documentaire |
 | le run `20260717T091821Z-1389363` a échoué pendant la dérive d'horloge et son nettoyage | la synchronisation NTP externe n'est pas revenue dans la fenêtre bornée | l'échec est resté classé `cleanup_failure`, les trois cibles ont été rendues absentes et `clock_restored=false` est resté visible | conserver la dépendance NTP comme incident d'infrastructure ; ne jamais transformer son absence en réussite |
 | le retrait de l'identité de transfert pouvait croiser un processus SSH tué mais encore visible dans `/proc` | course entre terminaison, récolte du processus par son parent et `userdel` | contrôle des UID réel et effectif, attente bornée de disparition puis suppression de l'identité ; le run `20260717T093905Z-1478107` a ensuite nettoyé proprement | le nettoyage final doit refuser tant qu'un processus du compte temporaire reste observable |
-| le premier run post-réorganisation `20260717T100017Z-1539228` a refusé le lot avant mutation produit | le répertoire `deploy/` copié avait conservé le mode `0775`, hors contrat root-owned `0755` | échec classé `infrastructure_failure`, état `not-mutated`, nettoyage et horloge verts ; modes distants normalisés avant les gardes | conserver le refus de permissions trop larges et vérifier le mode du lot avant toute installation |
+| le premier run post-réorganisation `20260717T100017Z-1539228` a refusé le lot avant mutation produit | le répertoire de déploiement LAB copié avait conservé le mode `0775`, hors contrat root-owned `0755` | échec classé `infrastructure_failure`, état `not-mutated`, nettoyage et horloge verts ; modes distants normalisés avant les gardes | conserver le refus de permissions trop larges et vérifier le mode du lot avant toute installation |
 | les deux premières analyses Plumber n'ont pas trouvé de dépôt Git dans `lab-console` | l'image LAB ne contient pas `git`, alors que Plumber lit trois métadonnées avant les workflows | doublure bornée à l'origin public, la racine temporaire et l'identifiant dérivé du lot ; toute autre commande sort avec `2` | le runner GitHub utilisera le vrai checkout ; la doublure reste limitée à la simulation LAB |
 | le run générique `20260717T102446Z-1570931` s'est arrêté sur la mutation hostile | un délimiteur `sed` a été réinterprété pendant le transit SSH | délimiteur sans échappement ambigu puis vérification du rapport `ISSUE-701` ; chemins distants et locaux vérifiés absents après l'échec | la preuve doit attribuer le refus au rapport structuré, jamais au seul code de sortie |
 | le premier rejeu de la liste positive finale s'est arrêté avant copie LAB | GNU `tar` traite `--no-recursion` comme une option positionnelle lorsqu'elle suit `--files-from` | toutes les options d'archive précèdent désormais la liste NUL de fichiers | conserver le même constructeur de lot dans les preuves générique et multi-VM ; aucun résultat vert n'est publié après un échec d'empaquetage |
@@ -577,7 +580,7 @@ réponse cacheable et partie query de l'URI intégrée à la ressource ciblée.
 2. La page est servie seulement dans `lab-console` sous `nobody` sur loopback ;
    contenu, identité, listener et arrêt sont affirmés après échec injecté puis
    après capture nominale.
-3. Chaque exécution archive sous `artifacts/proofs/v0.0.1/<horodatage>/` son
+3. Chaque exécution archive sous `tests/artifacts/proofs/v0.0.1/<horodatage>/` son
    `result.json`. Une exécution P1 réussie archive en plus le résultat P2, le
    rapport, la page et la capture. `result.json` reste l'autorité ;
    `render-result.json` et l'image prouvent seulement la restitution.

@@ -23,10 +23,10 @@ plumber_url=https://github.com/getplumber/plumber/releases/download/v0.4.8/plumb
 plumber_sha=1c1379e4e6fce3a6b2cf0fede2fbfd89bd9cebbb8aadae3be95bc3d365a9c8a0
 plumber_policy_hash=sha256:3891f8bcecc443b540a388f08144496d86d613c4721cc4ca8edccb1dcf53707f
 expected_project=ldesfontaine/your-cloud
-result_dir="$root/artifacts/proofs/ci/$run_id"
+result_dir="$root/tests/artifacts/proofs/ci/$run_id"
 local_plumber_report="$result_dir/plumber-report.json"
 local_hostile_report="$result_dir/plumber-hostile-report.json"
-staging_dir="$root/artifacts/proofs/ci/.staging-$run_id"
+staging_dir="$root/tests/artifacts/proofs/ci/.staging-$run_id"
 staged_plumber_report="$staging_dir/plumber-report.json"
 staged_hostile_report="$staging_dir/plumber-hostile-report.json"
 guard_passed=0
@@ -113,7 +113,7 @@ while IFS= read -r -d '' path; do
     .git|.git/*|.agents|.agents/*|.codex|.codex/*|.claude|.claude/*|.cursor|.cursor/*)
       continue
       ;;
-    dist|dist/*|build|build/*|artifacts/proofs|artifacts/proofs/*)
+    dist|dist/*|build|build/*|tests/artifacts/proofs|tests/artifacts/proofs/*)
       continue
       ;;
   esac

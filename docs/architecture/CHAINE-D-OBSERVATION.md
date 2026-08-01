@@ -105,7 +105,7 @@ credentials, stockage, réseau et arrêt propre. La logique détaillée reste da
 
 ## Chemin `daemon`
 
-L'unité [`your-cloud-daemon.service`](../../deploy/v0.0.2/your-cloud-daemon.service)
+L'unité [`your-cloud-daemon.service`](../../tests/lab/v0.0.2/deploy/your-cloud-daemon.service)
 lance :
 
 ```text
@@ -156,7 +156,7 @@ qu'elles aient réellement terminé avant que `runDaemon` retourne.
 ## Chemin `relay`
 
 L'unité
-[`your-cloud-relay.service` de `v0.0.3`](../../deploy/v0.0.3/your-cloud-relay.service)
+[`your-cloud-relay.service` de `v0.0.3`](../../tests/lab/v0.0.3/deploy/your-cloud-relay.service)
 prolonge l'unité d'observation `v0.0.2` avec le lecteur privé du Controller et
 lance le rôle uniquement sur la candidate :
 
@@ -541,16 +541,17 @@ restent auprès de leur appelant dans le fichier concerné.
 
 Le cœur `internal/` ne conserve qu’une implémentation Daemon–Relay :
 `observer.go`, `observation_http.go` et `observation_store.go`. Les anciennes
-preuves de présence restent consultables sous `docs/lab/`, `tests/lab/` et
-`deploy/`, mais leur serveur et leur sender ne sont plus du code produit. La
+preuves de présence restent consultables sous `docs/lab/` et `tests/lab/`, mais
+leur serveur et leur sender ne sont plus du code produit. La
 lecture `GET /v0/machines` et sa politique de fraîcheur appartiennent au
 Controller actuel.
 
-## Pourquoi trois dossiers dans `deploy/`
+## Pourquoi trois lots `deploy/` sous `tests/lab/`
 
-`deploy/v0.0.1`, `deploy/v0.0.2` et `deploy/v0.0.3` figent les entrées de preuve
-de trois contrats différents ; ce ne sont ni trois installations actives, ni
-trois implémentations produit maintenues en parallèle :
+Les lots `tests/lab/v0.0.1/deploy`, `tests/lab/v0.0.2/deploy` et
+`tests/lab/v0.0.3/deploy` figent les entrées de preuve de trois contrats
+différents ; ce ne sont ni trois installations actives, ni trois
+implémentations produit maintenues en parallèle :
 
 | Palier | Transport et données | Credentials | État |
 |---|---|---|---|
@@ -558,10 +559,10 @@ trois implémentations produit maintenues en parallèle :
 | `v0.0.2` | observations HTTPS mTLS | identité Daemon, identité Relay et CA séparées | tampon Daemon et stockage Relay durables |
 | `v0.0.3` | reader Relay et API Controller privés | identités reader, appareil et humaine séparées | inventaire Controller et cache Relay atomiques |
 
-Un ancien lot permet de relire la preuve correspondante, mais ne doit pas être
-appliqué au binaire courant. L’installation courante utilise le lot qui porte
-le contrat actuel du rôle ; le code métier reste unique dans `cmd/` et
-`internal/`.
+Un ancien lot permet de relire ou rejouer la preuve correspondante, mais ne doit
+pas être appliqué au binaire courant ni présenté comme packaging de production.
+Un futur installateur produit fournira ses propres définitions sous un contrat
+dédié ; le code métier reste unique dans `cmd/` et `internal/`.
 
 ## Cryptographie et algorithmes
 

@@ -7,10 +7,10 @@ rapport, journal expurgé ou capture.
 | Chemin | Contenu | Durée de vie | Versionné |
 |---|---|---|---|
 | `dist/` | exécutables et paquets construits dans un runner | transitoire | non |
-| `artifacts/proofs/<preuve>/<run>/` | résultats, rapports et captures d’un run identifié | audit local ou publication CI sélectionnée | non |
-| `artifacts/README.md` | cette convention | durable | oui |
+| `tests/artifacts/proofs/<preuve>/<run>/` | résultats, rapports et captures d’un run identifié | audit local ou publication CI sélectionnée | non |
+| `tests/artifacts/README.md` | cette convention | durable | oui |
 
-Les vraies sorties CI peuvent être publiées par GitHub, mais le dossier local
+Les vraies sorties CI peuvent être publiées par GitHub, mais ce dossier local
 reste utile aux preuves LAB qui doivent rapatrier un résultat structuré. Dans
 les deux cas, la sortie n’est jamais une dépendance du produit en exécution.
 
