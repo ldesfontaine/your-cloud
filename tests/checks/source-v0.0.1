@@ -75,6 +75,9 @@ python3 -B tests/checks/test-plumber-report.py
 step "labctl list contract"
 bash tests/checks/labctl-list
 
+step "labctl clean-closure contract"
+bash tests/checks/labctl-clean
+
 step "Documentation contract"
 tools/check-docs
 

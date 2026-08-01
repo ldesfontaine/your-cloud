@@ -112,12 +112,12 @@ jobs:
         shell: pwsh
         run: ./tests/checks/console-windows-ci.ps1
 
-      - name: Archiver la preuve WebView2 Windows
+      - name: Archiver le smoke WebView2 Windows
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: console-windows-webview2-proof
-          path: ${{ runner.temp }}/your-cloud-windows-ui-proof
+          name: console-windows-webview2-smoke
+          path: ${{ runner.temp }}/your-cloud-windows-webview2-smoke
           if-no-files-found: error
           retention-days: 7
 
