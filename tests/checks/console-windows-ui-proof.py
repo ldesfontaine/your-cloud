@@ -221,6 +221,13 @@ def assert_metrics(metrics: dict[str, object], heading: str) -> None:
     assert float(metrics["minimum_control_height"]) >= 44
 
 
+def css_pixels(value: object) -> float:
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)px", str(value))
+    if match is None:
+        raise AssertionError(f"expected a CSS pixel value, got {value!r}")
+    return float(match.group(1))
+
+
 def capture_view(
     driver: Driver,
     output: pathlib.Path,
@@ -250,13 +257,37 @@ def capture_view(
     assert_metrics(compact, heading)
     driver.screenshot(output / f"windows-{slug}-640x560.png")
 
-    driver.execute("document.documentElement.style.fontSize='32px'; return true;")
-    zoomed = driver.execute(METRICS_SCRIPT)
-    assert isinstance(zoomed, dict)
-    assert zoomed["root_font_size"] == "32px"
-    assert zoomed["horizontal_overflow"] is False
-    driver.screenshot(output / f"windows-{slug}-640x560-text-200.png")
-    driver.execute("document.documentElement.style.fontSize=''; return true;")
+    compact_root_font_size = css_pixels(compact["root_font_size"])
+    zoomed_root_font_size = compact_root_font_size * 2
+    try:
+        driver.execute(
+            "document.documentElement.style.setProperty("
+            "'font-size',`${arguments[0]}px`,'important'); return true;",
+            [zoomed_root_font_size],
+        )
+        driver.wait(
+            "return Math.abs(parseFloat(getComputedStyle(document.documentElement).fontSize)"
+            "-arguments[0])<0.01;",
+            arguments=[zoomed_root_font_size],
+        )
+        zoomed = driver.execute(METRICS_SCRIPT)
+        assert isinstance(zoomed, dict)
+        actual_zoomed_root_font_size = css_pixels(zoomed["root_font_size"])
+        assert abs(actual_zoomed_root_font_size - zoomed_root_font_size) < 0.01, {
+            "expected": zoomed_root_font_size,
+            "actual": actual_zoomed_root_font_size,
+        }
+        assert zoomed["horizontal_overflow"] is False
+        driver.screenshot(output / f"windows-{slug}-640x560-text-200.png")
+    finally:
+        driver.execute(
+            "document.documentElement.style.removeProperty('font-size'); return true;"
+        )
+        driver.wait(
+            "return Math.abs(parseFloat(getComputedStyle(document.documentElement).fontSize)"
+            "-arguments[0])<0.01;",
+            arguments=[compact_root_font_size],
+        )
     return {
         "desktop": desktop,
         "compact": compact,
