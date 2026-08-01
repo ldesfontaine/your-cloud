@@ -151,6 +151,15 @@ bloquante l'absence de l'installation, du certificat et de sa clé privée, du
 compte et profil éphémères, des fichiers temporaires, des processus, du port de
 debugger WebView2 et des données applicatives. La signature publique de
 distribution et la preuve visuelle WebView2 restent des portes distinctes.
+Les processus à retirer sont attribués positivement au SID du compte éphémère
+ou aux chemins exacts de la Console et de ses pilotes ; une WebView2 étrangère
+n'est jamais ciblée d'après son seul chemin. Avant chaque arrêt, le PID, l'heure
+de création et l'attribution sont relus, puis un handle lié à cette instance est
+utilisé ; aucun nouvel arrêt n'est engagé après l'échéance globale de quinze
+secondes. Le profil est ensuite supprimé par
+le service de profils Windows, sous l'autorité `SYSTEM` déjà admise par la DACL
+privée du coffre. Le runner ne reprend pas possession des données et n'élargit
+pas leurs permissions pour les effacer.
 Ce schéma enrichi appartient au candidat courant : le run historique
 `30700406219` prouve le smoke antérieur, pas ces nouveaux champs. Ils ne sont
 tenus pour exécutés que par le run exact lié depuis l'issue `#9` selon la
@@ -165,6 +174,19 @@ masquait cette première erreur. Ce run reste un incident diagnostique, jamais
 une preuve de fermeture. Le contrôle rapide de l'agrégateur et l'extraction
 administrative du MSI empêchent désormais ces deux confusions avant le nouveau
 candidat natif.
+
+La seconde tentative finale, le run `30706885722` sur `eb34fc1`, a de nouveau
+validé les deux gardes et Linux. Sous Windows, la construction, les signatures,
+l'image administrative, l'installation, l'égalité des exécutables, le coffre
+réel et le smoke WebView2 ont réussi. Le nettoyage final a ensuite révélé deux
+défauts supplémentaires du harnais : son attribution globale considérait toute
+WebView2 apparue après le démarrage comme appartenant à la preuve, puis le
+compte administrateur du runner tentait d'effacer directement un coffre dont la
+DACL autorise volontairement seulement l'utilisateur éphémère et `SYSTEM`.
+Aucun artefact Windows n'a été publié. Le drain borné, réattribué par SID et
+protégé contre la réutilisation d'un PID, puis la suppression du profil par le
+service Windows corrigent ces deux défauts sans affaiblir la
+DACL. Ce run reste diagnostique et ne ferme pas `v0.0.3`.
 
 Le job `Politique Plumber` exécute Plumber `v0.4.8`. L'action GitHub est fixée
 au commit `7970e5df1e7d217de41b2880832b63a6f2152b97`, vérifie le checksum et

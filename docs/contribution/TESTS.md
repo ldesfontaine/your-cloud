@@ -144,6 +144,14 @@ nettoyage bloquant vérifie notamment l'absence de l'installation, du certificat
 et de sa clé privée, du compte et profil éphémères, des fichiers temporaires,
 des processus, du port de debugger WebView2 et des données applicatives. Aucun
 paquet, exécutable, certificat ou secret synthétique n'entre dans l'archive.
+Le drain final attribue les processus au SID éphémère ou aux chemins exacts des
+binaires de preuve ; il ne tue pas une WebView2 étrangère d'après son seul
+chemin. Chaque arrêt relit le PID, l'heure de création et l'attribution, emploie
+un handle de processus et aucun nouvel arrêt n'est engagé après l'échéance
+globale de quinze secondes. Le profil est retiré par le service de profils
+Windows, autorisé comme
+`SYSTEM` par la DACL du coffre, sans `takeown`, élargissement d'ACL ni suppression
+directe privilégiée des données privées.
 Cette structure renforcée est implémentée dans le candidat courant mais n'est
 pas attribuée rétroactivement au run `30700406219` ; seule la preuve finale
 liée depuis l'issue `#9` peut l'attribuer à sa révision exacte.
@@ -156,6 +164,17 @@ garde rapide extrait désormais cette fonction, prouve que la liste vide est
 acceptée et qu'une erreur synthétique est agrégée. La preuve native extrait de
 son côté l'image administrative du MSI, vérifie son exécutable signé puis son
 égalité avec l'installation réelle. Ce run en échec ne ferme aucun palier.
+
+Le run `30706885722` sur `eb34fc1` a ensuite réussi les gardes, Linux et toutes
+les assertions produit Windows jusqu'au message de succès du smoke WebView2.
+Son nettoyage a refusé un processus encore observé par une attribution globale
+et la suppression directe du coffre par le compte runner, correctement rejetée
+par la DACL privée utilisateur plus `SYSTEM`. Aucun artefact Windows n'a été
+publié. Le contrat rapide couvre désormais l'attribution positive par SID et
+chemins bornés, refuse une WebView2 d'un autre SID, un PID réutilisé et un
+chemin frère du profil, borne l'attente globale, verrouille l'ordre du nettoyage
+et interdit la suppression directe du coffre.
+Une nouvelle preuve native entièrement verte reste nécessaire avant fermeture.
 
 Le contrôle statique `tests/checks/ci-workflow-policy.py`, appelé par la porte
 générique, ferme les déclencheurs et permissions du workflow, sa concurrence,

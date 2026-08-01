@@ -11,7 +11,7 @@ a été exécuté.
 
 | Couche | Contenu | Runner attendu | Autorité |
 |---|---|---|---|
-| porte rapide sous [`checks/`](checks/) | format, syntaxe, contrat PowerShell de nettoyage, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
+| porte rapide sous [`checks/`](checks/) | format, syntaxe, contrat PowerShell de nettoyage attribué par SID et chemins bornés, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
 | matrice native sous [`checks/`](checks/) | tests frontend et Rust, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, journaux et smoke borné |
 | [`lab/v0.0.1/`](lab/v0.0.1/) | préparation, déploiement, scénarios hostiles multi-VM, nettoyage et restitution P2 | topologie KVM/libvirt `v1-full` pilotée par `labctl` | `result.json` et assertions machine |
 

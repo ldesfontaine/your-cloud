@@ -33,7 +33,6 @@ $webViewUserData = $null
 $tauriDriverPath = $null
 $edgeDriverPath = $null
 $webViewRuntimePath = $null
-$baselineWebViewProcesses = @{}
 $remoteDebuggingPort = $null
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = $null
@@ -56,7 +55,7 @@ function Invoke-Native {
 function Stop-BoundedProcessTree {
     param(
         [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
-        [ValidateRange(1, 60)][int]$TimeoutSeconds = 10
+        [ValidateRange(1, 60000)][int]$TimeoutMilliseconds = 10000
     )
 
     $Process.Refresh()
@@ -64,7 +63,7 @@ function Stop-BoundedProcessTree {
         return
     }
     try {
-        & taskkill.exe /PID $Process.Id /T /F | Out-Null
+        $Process.Kill($true)
     }
     catch {
         $Process.Refresh()
@@ -72,8 +71,32 @@ function Stop-BoundedProcessTree {
             throw
         }
     }
-    if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
-        throw "process $($Process.Id) remained active after ${TimeoutSeconds}s"
+    if (-not $Process.WaitForExit($TimeoutMilliseconds)) {
+        throw "process $($Process.Id) remained active after ${TimeoutMilliseconds}ms"
+    }
+}
+
+function Stop-BoundedProcessInstance {
+    param(
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
+        [ValidateRange(1, 60000)][int]$TimeoutMilliseconds = 10000
+    )
+
+    $Process.Refresh()
+    if ($Process.HasExited) {
+        return
+    }
+    try {
+        $Process.Kill()
+    }
+    catch {
+        $Process.Refresh()
+        if (-not $Process.HasExited) {
+            throw
+        }
+    }
+    if (-not $Process.WaitForExit($TimeoutMilliseconds)) {
+        throw "process $($Process.Id) remained active after ${TimeoutMilliseconds}ms"
     }
 }
 
@@ -167,6 +190,255 @@ function Get-ProcessOwnerIdentity {
         throw "owner of process $ProcessId could not be resolved"
     }
     return "$($owner.Domain)\$($owner.User)"
+}
+
+function Test-ProofProcessAttribution {
+    param(
+        [AllowNull()][string]$CandidatePath,
+        [AllowNull()][string]$CandidateOwnerSid,
+        [AllowNull()][string]$AutomationSid,
+        [AllowEmptyCollection()][string[]]$TrackedExecutablePaths = @()
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($AutomationSid) -and
+        [string]::Equals(
+            $CandidateOwnerSid,
+            $AutomationSid,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        return $true
+    }
+    if ([string]::IsNullOrWhiteSpace($CandidatePath)) {
+        return $false
+    }
+    foreach ($trackedPath in $TrackedExecutablePaths) {
+        if (-not [string]::IsNullOrWhiteSpace($trackedPath) -and
+            [string]::Equals(
+                $CandidatePath,
+                $trackedPath,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-ProcessInstanceIdentity {
+    param(
+        [Parameter(Mandatory = $true)][uint32]$ExpectedProcessId,
+        [AllowNull()]$ExpectedCreationDate,
+        [Parameter(Mandatory = $true)][uint32]$CurrentProcessId,
+        [AllowNull()]$CurrentCreationDate
+    )
+
+    return $ExpectedProcessId -eq $CurrentProcessId -and
+        $null -ne $ExpectedCreationDate -and
+        $null -ne $CurrentCreationDate -and
+        $ExpectedCreationDate.ToUniversalTime().Ticks -eq
+            $CurrentCreationDate.ToUniversalTime().Ticks
+}
+
+function Get-BoundedWaitMilliseconds {
+    param(
+        [Parameter(Mandatory = $true)][double]$RemainingMilliseconds,
+        [ValidateRange(1, 60000)][int]$MaximumMilliseconds = 5000
+    )
+
+    if ($RemainingMilliseconds -le 0) {
+        return 0
+    }
+    return [int][Math]::Min(
+        $MaximumMilliseconds,
+        [Math]::Max(1, [Math]::Floor($RemainingMilliseconds))
+    )
+}
+
+function Get-CurrentProcessInstance {
+    param([Parameter(Mandatory = $true)]$Candidate)
+
+    $current = Get-CimInstance `
+        Win32_Process `
+        -Filter "ProcessId = $($Candidate.ProcessId)" `
+        -ErrorAction Stop
+    if ($null -eq $current) {
+        return $null
+    }
+    if ($null -eq $Candidate.CreationDate -or
+        $null -eq $current.CreationDate) {
+        throw "creation time of process $($Candidate.ProcessId) could not be verified"
+    }
+    if (-not (Test-ProcessInstanceIdentity `
+            -ExpectedProcessId $Candidate.ProcessId `
+            -ExpectedCreationDate $Candidate.CreationDate `
+            -CurrentProcessId $current.ProcessId `
+            -CurrentCreationDate $current.CreationDate)) {
+        return $null
+    }
+    return $current
+}
+
+function Resolve-ProofProcessAttribution {
+    param(
+        [Parameter(Mandatory = $true)]$Candidate,
+        [AllowNull()][string]$AutomationSid,
+        [AllowEmptyCollection()][string[]]$TrackedExecutablePaths = @(),
+        [AllowEmptyCollection()][string[]]$OwnerRequiredPaths = @()
+    )
+
+    $pathAttributed = Test-ProofProcessAttribution `
+        -CandidatePath $Candidate.ExecutablePath `
+        -CandidateOwnerSid $null `
+        -AutomationSid $null `
+        -TrackedExecutablePaths $TrackedExecutablePaths
+    $ownerRequired = Test-ProofProcessAttribution `
+        -CandidatePath $Candidate.ExecutablePath `
+        -CandidateOwnerSid $null `
+        -AutomationSid $null `
+        -TrackedExecutablePaths $OwnerRequiredPaths
+    $ownerSid = $null
+    $ownerFailure = $null
+    try {
+        $owner = Invoke-CimMethod `
+            -InputObject $Candidate `
+            -MethodName GetOwnerSid `
+            -ErrorAction Stop
+        if ($owner.ReturnValue -eq 0 -and
+            $owner.Sid -match '^S-[0-9]+(?:-[0-9]+)+$') {
+            $ownerSid = [string]$owner.Sid
+        }
+        elseif ($ownerRequired) {
+            $ownerFailure = "owner SID lookup failed with status $($owner.ReturnValue)"
+        }
+    }
+    catch {
+        $ownerFailure = $_.Exception.Message
+    }
+    if ($ownerRequired -and $null -ne $ownerFailure) {
+        $current = Get-CurrentProcessInstance -Candidate $Candidate
+        if ($null -eq $current) {
+            return $null
+        }
+        throw "owner SID of process $($Candidate.ProcessId) could not be resolved"
+    }
+    $attributed = $pathAttributed -or (Test-ProofProcessAttribution `
+        -CandidatePath $Candidate.ExecutablePath `
+        -CandidateOwnerSid $ownerSid `
+        -AutomationSid $AutomationSid `
+        -TrackedExecutablePaths @())
+    if (-not $attributed) {
+        return $null
+    }
+    if ($null -eq $Candidate.CreationDate) {
+        throw "attributed process $($Candidate.ProcessId) has no creation time"
+    }
+    return [pscustomobject]@{
+        ProcessId = [uint32]$Candidate.ProcessId
+        ExecutablePath = [string]$Candidate.ExecutablePath
+        CreationDate = $Candidate.CreationDate
+        OwnerSid = $ownerSid
+    }
+}
+
+function Get-AttributedProofProcesses {
+    param(
+        [AllowNull()][string]$AutomationSid,
+        [AllowEmptyCollection()][string[]]$TrackedExecutablePaths = @(),
+        [AllowEmptyCollection()][string[]]$OwnerRequiredPaths = @()
+    )
+
+    return @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
+        Resolve-ProofProcessAttribution `
+            -Candidate $_ `
+            -AutomationSid $AutomationSid `
+            -TrackedExecutablePaths $TrackedExecutablePaths `
+            -OwnerRequiredPaths $OwnerRequiredPaths
+    })
+}
+
+function Get-RevalidatedProofProcessHandle {
+    param(
+        [Parameter(Mandatory = $true)]$Candidate,
+        [AllowNull()][string]$AutomationSid,
+        [AllowEmptyCollection()][string[]]$TrackedExecutablePaths = @(),
+        [AllowEmptyCollection()][string[]]$OwnerRequiredPaths = @()
+    )
+
+    $process = Get-Process -Id $Candidate.ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process) {
+        return $null
+    }
+    try {
+        $boundHandle = $process.SafeHandle
+        if ($boundHandle.IsInvalid -or $boundHandle.IsClosed) {
+            throw "process handle could not be pinned"
+        }
+        $handleCreationDate = $process.StartTime.ToUniversalTime()
+    }
+    catch {
+        $current = Get-CurrentProcessInstance -Candidate $Candidate
+        $process.Dispose()
+        if ($null -eq $current) {
+            return $null
+        }
+        throw "process $($Candidate.ProcessId) could not be bound before termination"
+    }
+    try {
+        $current = Get-CurrentProcessInstance -Candidate $Candidate
+        if ($null -eq $current -or
+            $boundHandle.IsInvalid -or
+            $boundHandle.IsClosed) {
+            $process.Dispose()
+            return $null
+        }
+        if ([Math]::Abs(
+            ($current.CreationDate.ToUniversalTime() - $handleCreationDate).TotalMilliseconds
+        ) -gt 1) {
+            $process.Dispose()
+            return $null
+        }
+        $currentAttribution = Resolve-ProofProcessAttribution `
+            -Candidate $current `
+            -AutomationSid $AutomationSid `
+            -TrackedExecutablePaths $TrackedExecutablePaths `
+            -OwnerRequiredPaths $OwnerRequiredPaths
+        if ($null -eq $currentAttribution) {
+            $process.Dispose()
+            return $null
+        }
+        return [pscustomobject]@{
+            Process = $process
+            BoundHandle = $boundHandle
+        }
+    }
+    catch {
+        $process.Dispose()
+        throw
+    }
+}
+
+function Resolve-BoundedChildPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $separatorCharacters = [char[]]@(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    $rootPath = [IO.Path]::GetFullPath(
+        $Root.TrimEnd($separatorCharacters) + [IO.Path]::DirectorySeparatorChar
+    )
+    $candidatePath = [IO.Path]::GetFullPath($Path)
+    if (-not $candidatePath.StartsWith(
+        $rootPath,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "$Description escaped its bounded root"
+    }
+    return $candidatePath
 }
 
 function Invoke-CleanupAction {
@@ -399,22 +671,6 @@ try {
     }
     $webViewRuntime = $webViewRuntimes[0]
     $webViewRuntimePath = $webViewRuntime.Executable
-    $baselineWebViewProcessList = @(Get-CimInstance Win32_Process -ErrorAction Stop |
-        Where-Object {
-            [string]::Equals(
-                $_.ExecutablePath,
-                $webViewRuntimePath,
-                [StringComparison]::OrdinalIgnoreCase
-            )
-        })
-    foreach ($baselineProcess in $baselineWebViewProcessList) {
-        if ($null -eq $baselineProcess.CreationDate) {
-            throw "a baseline WebView2 process has no creation time"
-        }
-        $baselineWebViewProcesses[[string]$baselineProcess.ProcessId] = (
-            $baselineProcess.CreationDate.ToUniversalTime().Ticks
-        )
-    }
     Write-Host "CI Windows: WebView2 Runtime $($webViewRuntime.Version) from $($webViewRuntime.RegistryPath)"
 
     $edgeDriverArchive = Join-Path $temporaryRoot "edgedriver_win64.zip"
@@ -777,6 +1033,23 @@ catch {
 }
 finally {
     $cleanupFailures = [Collections.Generic.List[string]]::new()
+    $automationSid = if ($automationUserCreated -and $null -ne $automationUser) {
+        $automationUser.SID.Value
+    }
+    else {
+        $null
+    }
+    $trackedExecutablePaths = @(
+        @(
+            $installedExecutable,
+            $tauriDriverPath,
+            $edgeDriverPath
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    $ownerRequiredPaths = @()
+    if (-not [string]::IsNullOrWhiteSpace($webViewRuntimePath)) {
+        $ownerRequiredPaths += $webViewRuntimePath
+    }
 
     Invoke-CleanupAction $cleanupFailures "automation process cleanup" {
         if ($null -ne $automationProcess) {
@@ -793,49 +1066,75 @@ finally {
             Stop-BoundedProcessTree -Process $process
         }
     }
-    Invoke-CleanupAction $cleanupFailures "product and driver process absence" {
-        $trackedExecutablePaths = @(
-            @(
-                $installedExecutable,
-                $tauriDriverPath,
-                $edgeDriverPath
-            ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        )
-        if ($trackedExecutablePaths.Count -ne 0 -or
-            -not [string]::IsNullOrWhiteSpace($webViewRuntimePath)) {
-            $remainingTrackedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop |
-                Where-Object {
-                    if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
-                        return $false
-                    }
-                    foreach ($trackedPath in $trackedExecutablePaths) {
-                        if ([string]::Equals(
-                            $_.ExecutablePath,
-                            $trackedPath,
-                            [StringComparison]::OrdinalIgnoreCase
-                        )) {
-                            return $true
+    Invoke-CleanupAction $cleanupFailures "attributed proof process drain" {
+        $drainDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        $remainingAttributedProcesses = @(Get-AttributedProofProcesses `
+            -AutomationSid $automationSid `
+            -TrackedExecutablePaths $trackedExecutablePaths `
+            -OwnerRequiredPaths $ownerRequiredPaths)
+        while ($remainingAttributedProcesses.Count -ne 0 -and
+            [DateTime]::UtcNow -lt $drainDeadline) {
+            foreach ($remainingProcess in $remainingAttributedProcesses) {
+                $remainingMilliseconds = Get-BoundedWaitMilliseconds `
+                    -RemainingMilliseconds (
+                        ($drainDeadline - [DateTime]::UtcNow).TotalMilliseconds
+                    )
+                if ($remainingMilliseconds -eq 0) {
+                    break
+                }
+                $processBinding = Get-RevalidatedProofProcessHandle `
+                    -Candidate $remainingProcess `
+                    -AutomationSid $automationSid `
+                    -TrackedExecutablePaths $trackedExecutablePaths `
+                    -OwnerRequiredPaths $ownerRequiredPaths
+                if ($null -ne $processBinding) {
+                    try {
+                        if ($processBinding.BoundHandle.IsInvalid -or
+                            $processBinding.BoundHandle.IsClosed) {
+                            throw "revalidated process handle was released before termination"
                         }
+                        Stop-BoundedProcessInstance `
+                            -Process $processBinding.Process `
+                            -TimeoutMilliseconds $remainingMilliseconds
                     }
-                    if (-not [string]::IsNullOrWhiteSpace($webViewRuntimePath) -and
-                        [string]::Equals(
-                            $_.ExecutablePath,
-                            $webViewRuntimePath,
-                            [StringComparison]::OrdinalIgnoreCase
-                        )) {
-                        if ($null -eq $_.CreationDate) {
-                            return $true
-                        }
-                        $baselineCreationTime = $baselineWebViewProcesses[[string]$_.ProcessId]
-                        return $null -eq $baselineCreationTime -or
-                            $baselineCreationTime -ne
-                                $_.CreationDate.ToUniversalTime().Ticks
+                    finally {
+                        $processBinding.Process.Dispose()
                     }
-                    return $false
-                })
-            if ($remainingTrackedProcesses.Count -ne 0) {
-                throw "Console, driver or WebView2 process remained active"
+                }
             }
+            $sleepMilliseconds = Get-BoundedWaitMilliseconds `
+                -RemainingMilliseconds (
+                    ($drainDeadline - [DateTime]::UtcNow).TotalMilliseconds
+                ) `
+                -MaximumMilliseconds 250
+            if ($sleepMilliseconds -ne 0) {
+                Start-Sleep -Milliseconds $sleepMilliseconds
+            }
+            $remainingAttributedProcesses = @(Get-AttributedProofProcesses `
+                -AutomationSid $automationSid `
+                -TrackedExecutablePaths $trackedExecutablePaths `
+                -OwnerRequiredPaths $ownerRequiredPaths)
+        }
+        if ($remainingAttributedProcesses.Count -ne 0) {
+            $remainingDetails = @($remainingAttributedProcesses | ForEach-Object {
+                $imageName = if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
+                    "unknown"
+                }
+                else {
+                    [IO.Path]::GetFileName($_.ExecutablePath)
+                }
+                "PID=$($_.ProcessId), image=$imageName, owner_sid=$($_.OwnerSid)"
+            })
+            throw "attributed proof processes remained active: $($remainingDetails -join '; ')"
+        }
+    }
+    Invoke-CleanupAction $cleanupFailures "product and driver process absence" {
+        $remainingTrackedProcesses = @(Get-AttributedProofProcesses `
+            -AutomationSid $automationSid `
+            -TrackedExecutablePaths $trackedExecutablePaths `
+            -OwnerRequiredPaths $ownerRequiredPaths)
+        if ($remainingTrackedProcesses.Count -ne 0) {
+            throw "Console, driver or ephemeral-user process remained active"
         }
     }
     Invoke-CleanupAction $cleanupFailures "WebView2 debugger cleanup" {
@@ -926,33 +1225,19 @@ finally {
         }
     }
 
-    Invoke-CleanupAction $cleanupFailures "application data cleanup" {
+    Invoke-CleanupAction $cleanupFailures "application data containment" {
         if ($null -ne $applicationData) {
             if ([string]::IsNullOrWhiteSpace($automationProfilePath)) {
                 throw "ephemeral profile path is unavailable"
             }
-            $profileRoot = [IO.Path]::GetFullPath(
-                $automationProfilePath + [IO.Path]::DirectorySeparatorChar
-            )
-            $applicationDataPath = [IO.Path]::GetFullPath($applicationData)
-            if (-not $applicationDataPath.StartsWith(
-                $profileRoot,
-                [StringComparison]::OrdinalIgnoreCase
-            )) {
-                throw "Windows Console test data escaped the ephemeral profile"
-            }
-            if (Test-Path -LiteralPath $applicationDataPath) {
-                Remove-Item -LiteralPath $applicationDataPath -Recurse -Force -ErrorAction Stop
-            }
-            if (Test-Path -LiteralPath $applicationDataPath) {
-                throw "application data remained at $applicationDataPath"
-            }
+            [void](Resolve-BoundedChildPath `
+                -Root $automationProfilePath `
+                -Path $applicationData `
+                -Description "Windows Console test data")
         }
     }
 
-    $automationSid = $null
     if ($automationUserCreated -and $null -ne $automationUser) {
-        $automationSid = $automationUser.SID.Value
         Invoke-CleanupAction $cleanupFailures "ephemeral profile removal" {
             $profile = $null
             for ($attempt = 0; $attempt -lt 40; $attempt++) {
@@ -968,7 +1253,27 @@ finally {
                 throw "ephemeral profile remained loaded"
             }
             if ($null -ne $profile) {
+                if ([string]::IsNullOrWhiteSpace($profile.LocalPath) -or
+                    -not [string]::Equals(
+                        [IO.Path]::GetFullPath($profile.LocalPath),
+                        [IO.Path]::GetFullPath($automationProfilePath),
+                        [StringComparison]::OrdinalIgnoreCase
+                    )) {
+                    throw "ephemeral profile path changed before removal"
+                }
                 Remove-CimInstance -InputObject $profile -ErrorAction Stop
+                for ($attempt = 0; $attempt -lt 40; $attempt++) {
+                    $profile = Get-CimInstance Win32_UserProfile -ErrorAction Stop |
+                        Where-Object { $_.SID -eq $automationSid } |
+                        Select-Object -First 1
+                    if ($null -eq $profile) {
+                        break
+                    }
+                    Start-Sleep -Milliseconds 250
+                }
+                if ($null -ne $profile) {
+                    throw "ephemeral profile registration remained after removal"
+                }
             }
         }
         Invoke-CleanupAction $cleanupFailures "ephemeral account removal" {
@@ -987,6 +1292,12 @@ finally {
                     (Test-Path -LiteralPath $automationProfilePath))) {
                 throw "ephemeral account, profile registration or profile directory remained for SID $automationSid"
             }
+        }
+    }
+    Invoke-CleanupAction $cleanupFailures "application data absence" {
+        if ($null -ne $applicationData -and
+            (Test-Path -LiteralPath $applicationData)) {
+            throw "application data remained at $applicationData"
         }
     }
     Invoke-CleanupAction $cleanupFailures "ephemeral credential disposal" {
