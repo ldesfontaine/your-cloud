@@ -13,11 +13,11 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 
 | Élément | État | Autorité |
 |---|---|---|
-| contrôles génériques | implémentés ; dernière simulation LAB sous Go `1.24.4`, CI courante fixée à Go `1.26.5` sans nouveau rejeu LAB | codes de sortie de `tests/checks/source-v0.0.1 ci` |
-| matrice Console Linux/Windows | configurée sur `ubuntu-24.04` et `windows-2025`, deux exécutions parallèles indépendantes ; non exécutée sur GitHub tant que les sources ne sont pas poussées | codes de sortie des tests, builds, installations et lancements natifs |
-| analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub configurée mais non exécutée | sortie de Plumber puis garde indépendant |
+| contrôles génériques | implémentés ; run GitHub de référence réussi sous Go `1.26.5` ; dernière simulation LAB sous Go `1.24.4` sans nouveau rejeu LAB | codes de sortie de `tests/checks/source-v0.0.1 ci` |
+| matrice Console Linux/Windows | exécutée avec succès sur `ubuntu-24.04` et `windows-2025` dans le run de référence ; les deux variantes parallèles restent limitées au contrat hébergé | codes de sortie des tests, builds, installations et lancements natifs |
+| analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès dans le run de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
-| exécution GitHub Actions réelle | non exécutée tant que le travail n'est ni committé ni poussé | aucune affirmation de CI verte avant un run GitHub |
+| exécution GitHub Actions réelle | [run `30697643868`](https://github.com/ldesfontaine/your-cloud/actions/runs/30697643868) entièrement vert sur `f1d2f31` ; ce résultat ne couvre ni la preuve multi-VM ni la porte Windows LAB complète | états des jobs, journaux et artefact de smoke du run |
 | preuve multi-VM | volontairement hors de cette CI | `result.json` et assertions de `tests/lab/v0.0.1/prove` |
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
@@ -56,6 +56,42 @@ propriétaire du code, car Lucas ne peut pas approuver sa propre pull request.
 Les checks CI peuvent en revanche rester obligatoires avant fusion.
 
 ## Jobs et résultat attendu
+
+### Découpage, déclenchement et relance
+
+Le graphe GitHub Actions doit montrer des responsabilités et des dépendances
+réelles, pas seulement fragmenter un long fichier. Le workflow actuel possède
+déjà trois familles indépendantes : les contrôles génériques, la matrice Console
+Linux/Windows et la politique Plumber. Les deux plateformes de la Console sont
+des variantes parallèles du même contrat ; elles ne forment pas deux chaînes de
+déploiement différentes.
+
+Le découpage suit ces règles :
+
+- un job porte un résultat bloquant identifiable et peut être diagnostiqué
+  sans parcourir les logs d'un autre domaine ;
+- `needs` exprime uniquement une dépendance de données ou une porte réelle ;
+  des jobs sans dépendance s'exécutent en parallèle ;
+- une matrice couvre plusieurs plateformes soumises au même contrat ;
+- un nouveau fichier de workflow est justifié par un déclencheur, un niveau de
+  permission, un environnement ou un cycle d'artefact différent ;
+- un workflow réutilisable sert à supprimer une duplication réelle entre
+  plusieurs appelants, pas à cacher quelques étapes locales ;
+- la relance normale cible les jobs en échec ou le job précis à diagnostiquer,
+  sans relancer volontairement les jobs déjà réussis.
+
+Éviter un job dès le déclenchement demande un **routage par chemins** : la CI
+détermine quels domaines ont changé, puis conditionne les jobs concernés. Ce
+routage doit conserver un contrôle requis qui rend toujours un état GitHub. Un
+filtre `paths` placé sur l'ensemble d'un workflow requis est interdit ici : si
+GitHub ne déclenche pas le workflow, son check peut rester en attente et bloquer
+la pull request sans avoir évalué le changement.
+
+Ajouter ce routage constitue un chantier CI autonome. Il doit définir la table
+chemins-vers-jobs, couvrir les changements transverses et hostiles, mettre à
+jour les assertions Plumber qui attendent actuellement trois jobs dans un seul
+workflow, puis être exécuté dans un runner isolé avant de devenir obligatoire.
+Le seul gain de présentation du graphe ne suffit pas à justifier ce changement.
 
 Le job `Contrôles génériques` installe Go `1.26.5`, puis appelle
 `tests/checks/source-v0.0.1 ci` sous une identité non root. Cette entrée vérifie
@@ -221,6 +257,9 @@ n'est pas une condition pour ouvrir `v0.0.2` tant que la limite reste visible.
 - [GitHub — Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use) ;
 - [GitHub — runners hébergés](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) ;
 - [GitHub — matrice de jobs](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax) ;
+- [GitHub — relancer des workflows et des jobs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs) ;
+- [GitHub — réutiliser des configurations de workflow](https://docs.github.com/en/actions/concepts/workflows-and-actions/reusing-workflow-configurations) ;
+- [GitHub — effet d'un workflow ignoré sur les checks requis](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs) ;
 - [GitHub — maintenir les actions avec Dependabot](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/auto-update-actions) ;
 - [Go — politique et historique des versions](https://go.dev/doc/devel/release) ;
 - [Node.js — versions](https://nodejs.org/en/about/previous-releases) ;
