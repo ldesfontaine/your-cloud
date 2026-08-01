@@ -150,9 +150,11 @@ propres, seconde Console hostile, deux Controllers synthétiquement séparés,
 deux Daemons et un Relay colocalisé avec l'un d'eux. Une matrice native manuelle
 construit, installe et lance ensuite le même candidat exact sur des runners
 Linux et Windows jetables ; elle n'y crée ni Controller, ni Relay, ni Daemon ou
-topologie simulée. Ces couches restent complémentaires. `v0.0.3` ne ferme
-qu'après un run natif manuel vert sur le candidat final et la clôture explicite
-des autres critères inventoriés.
+topologie simulée. Ces couches restent complémentaires. `v0.0.3` est déclarée
+fermée uniquement pour le SHA dont l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9)
+lie un `workflow_dispatch` entièrement vert. Sans cette preuve, la branche
+reste non fusionnable ; seul le SHA prouvé est ensuite fusionné, sans retouche
+documentaire.
 
 Chaque association approuve une origine HTTPS TLS 1.3 exacte. L'enveloppe
 présente une identité d'appareil mTLS puis une session humaine opaque, toutes

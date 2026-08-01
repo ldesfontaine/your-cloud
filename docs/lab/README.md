@@ -130,8 +130,9 @@ documentée et reproductible dans le LAB approprié.
   claires/sombres exécutés le 20 juillet 2026 puis parcours critique revalidé le
   22 juillet. La matrice native Linux/Windows a depuis réussi dans GitHub
   Actions sur `9c6f14f` ; elle reste une preuve hébergée distincte et ne modifie
-  pas les faits du rapport LAB Linux. Le palier complet reste ouvert jusqu'au
-  run manuel du candidat final et à la clôture de ses autres critères.
+  pas les faits du rapport LAB Linux. Le palier est déclaré fermé uniquement
+  pour le SHA dont l'issue `#9` lie un `workflow_dispatch` entièrement vert ;
+  sans cette preuve, la branche reste non fusionnable.
 - [`v0.0.2` — observation authentifiée et bornée](v0.0.2-observation.md) :
   mTLS, enrôlement et révocation, profil fixe, tampon saturé avec lacune,
   reprise, redémarrages et cycle retrait-réinstallation exécutés dans

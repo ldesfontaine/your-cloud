@@ -13,12 +13,23 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 
 | Élément | État | Autorité |
 |---|---|---|
-| porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; son rejeu sur la révision qui introduit ce découpage reste attendu | états des jobs `Contrôles génériques` et `Politique Plumber` |
-| matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; un run antérieur au découpage a déjà exécuté les deux variantes avec succès, mais le run manuel final reste attendu | codes de sortie des tests, builds, installations et lancements natifs |
+| porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; leur résultat de fermeture est celui du run enregistré dans l'issue `#9` | états des jobs `Contrôles génériques` et `Politique Plumber` |
+| matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; un run antérieur au découpage a déjà exécuté les deux variantes avec succès, tandis que l'autorité finale appartient au run enregistré dans l'issue `#9` | codes de sortie des tests, builds, installations et lancements natifs |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
 | exécution GitHub Actions réelle | [run `30700406219`](https://github.com/ldesfontaine/your-cloud/actions/runs/30700406219) entièrement vert sur `9c6f14f`, avec les deux variantes natives ; il prouve leur contenu à cette révision, pas encore le nouveau déclenchement manuel | états des jobs, journaux et artefact de smoke du run |
 | preuve fonctionnelle multi-VM | exécutée dans le LAB Linux et volontairement hors de cette CI | rapport LAB, résultats structurés et assertions machine |
+
+### Condition de fermeture de `v0.0.3`
+
+`v0.0.3` est déclarée fermée uniquement pour une révision dont
+l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9) lie un run
+GitHub Actions déclenché par `workflow_dispatch`, entièrement vert, avec le SHA
+exact de cette révision. Les deux gardes rapides et les variantes natives Linux
+et Windows doivent toutes réussir. Sans cette preuve liée, la branche reste non
+fusionnable et le palier n'est pas fermé. Une fois la condition satisfaite,
+seul ce SHA est fusionné, sans retoucher la documentation ; toute modification
+ultérieure crée un nouveau SHA et exige un nouveau run.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation
@@ -136,8 +147,9 @@ compte et profil éphémères, des fichiers temporaires, des processus, du port 
 debugger WebView2 et des données applicatives. La signature publique de
 distribution et la preuve visuelle WebView2 restent des portes distinctes.
 Ce schéma enrichi appartient au candidat courant : le run historique
-`30700406219` prouve le smoke antérieur, pas encore ces nouveaux champs. Le run
-manuel final doit les produire sur sa révision exacte.
+`30700406219` prouve le smoke antérieur, pas ces nouveaux champs. Ils ne sont
+tenus pour exécutés que par le run exact lié depuis l'issue `#9` selon la
+condition de fermeture ci-dessus.
 
 Le job `Politique Plumber` exécute Plumber `v0.4.8`. L'action GitHub est fixée
 au commit `7970e5df1e7d217de41b2880832b63a6f2152b97`, vérifie le checksum et

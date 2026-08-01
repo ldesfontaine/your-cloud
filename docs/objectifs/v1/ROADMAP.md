@@ -5,9 +5,11 @@
 > [preuve fonctionnelle Linux](../../lab/v0.0.3-console-controller-linux.md), réussie une
 > première fois sur `afb31e8`, a été revalidée après review le 22 juillet 2026
 > sur le commit produit exact `02fe4f5`. La matrice native Linux/Windows a
-> réussi dans le run hébergé `30700406219` sur `9c6f14f`. Le palier reste ouvert
-> jusqu'au run manuel du candidat final et à la clôture explicite des preuves
-> encore inventoriées.
+> réussi dans le run hébergé `30700406219` sur `9c6f14f`. `v0.0.3` est déclarée
+> fermée uniquement pour le SHA dont l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9)
+> lie un `workflow_dispatch` entièrement vert ; sans cette preuve, la branche
+> reste non fusionnable. Seul ce SHA est ensuite fusionné sans retouche de ces
+> statuts.
 
 Une [édition HTML autonome et visuelle](../../html/roadmap-v1.html) accompagne cette source
 Markdown.
@@ -63,6 +65,11 @@ découpée en sous-issues exécutables.
 | Rendre la responsabilité externe visible | [`#18`](https://github.com/ldesfontaine/your-cloud/issues/18) |
 | Prouver le scénario complet et les artefacts V1 | [`#19`](https://github.com/ldesfontaine/your-cloud/issues/19) |
 
+L'issue `#9` est le registre unique de la preuve finale : elle doit lier le run
+manuel entièrement vert et son SHA exact. Sa fermeture seule ne vaut pas
+preuve. Toute modification après le run invalide la condition et impose un
+nouveau `workflow_dispatch` avant fusion.
+
 La licence du dépôt public ([`#11`](https://github.com/ldesfontaine/your-cloud/issues/11))
 et la signature Windows publique gratuite
 ([`#12`](https://github.com/ldesfontaine/your-cloud/issues/12)) peuvent avancer
@@ -81,7 +88,7 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | Contrat V1 | oui | non | non |
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
-| `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat Linux/Windows présent | partiellement — fonctionnel LAB Linux et matrice native hébergée exécutés ; run manuel final attendu |
+| `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat Linux/Windows présent | fermeture conditionnée à la preuve finale — fonctionnel LAB Linux et matrice historique exécutés ; fermée uniquement pour le SHA dont le run final vert est lié dans `#9` |
 | Amorçage et remplacement du Controller | oui — prochain contrat V1 après fermeture de `v0.0.3` | non | non |
 | Autres paliers postérieurs de la V1 | proposés, à relire | non | non |
 
@@ -202,7 +209,7 @@ donnée et les lacunes éventuelles sont déjà définis et vérifiables.
 <!-- coherence: V1-OBSERVATION:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### Incrément ouvert et partiellement prouvé : `v0.0.3` — Console cliente et Controller de lecture
+### Incrément à fermeture conditionnée par la preuve finale : `v0.0.3` — Console cliente et Controller de lecture
 
 **Résultat :** installer une Console signée fonctionnelle sur Linux et Windows,
 créer une infrastructure dans un Controller, y rattacher les deux machines et
@@ -296,8 +303,9 @@ repassé les gates, le `.deb`, le coffre, l'appairage, les deux machines, la
 panne/reprise Relay et les sept vues. L'orchestration complète reste assistée.
 Le run hébergé `30700406219` a ensuite exécuté sur `9c6f14f` les builds,
 installations et smokes natifs Linux et Windows. Il ne rejoue ni ne simule la
-topologie `v1-full`. Le palier ne ferme pas avant un nouveau run manuel sur le
-candidat final exact et la clôture explicite des critères encore ouverts.
+topologie `v1-full`. Le palier est déclaré fermé uniquement pour le SHA dont
+l'issue `#9` lie un `workflow_dispatch` entièrement vert ; sans cette preuve,
+la branche reste non fusionnable.
 
 **Précondition validée :** le chemin Daemon–Relay authentifié, le tampon borné
 et la représentation des données anciennes ou lacunaires ont franchi leur
@@ -344,10 +352,10 @@ HTTPS normal.
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ### Prochain palier décidé — amorçage réutilisable
 
-Ce palier ne reçoit pas encore de numéro : `v0.0.3` reste ouverte tant que son
-candidat final et ses preuves restantes ne sont pas explicitement fermés. Son
-contrat est néanmoins décidé afin que le développement suivant ne réinvente pas
-l'autorité initiale.
+Ce palier ne reçoit pas encore de numéro : il ne commence qu'après satisfaction
+de la condition de fermeture `#9` de `v0.0.3` sur le SHA effectivement fusionné.
+Son contrat est néanmoins décidé afin que le développement suivant ne réinvente
+pas l'autorité initiale.
 
 **Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
@@ -582,8 +590,10 @@ paramètres 1 à 8 de `v0.0.3` sont fermés et la preuve fonctionnelle Linux de 
 branche `console-controller` a été revalidée après review sur le commit produit
 exact `02fe4f5`. La matrice native Linux/Windows a réussi sur `9c6f14f` dans le
 run `30700406219`, sans prétendre rejouer la topologie multi-VM. Le budget du
-projet reste nul et aucun merge de fermeture n'est permis avant un run manuel
-vert du candidat final exact. L'amorçage, le remplacement du Controller et
+projet reste nul. `v0.0.3` est déclarée fermée uniquement pour le SHA dont
+l'issue `#9` lie un `workflow_dispatch` entièrement vert ; sans cette preuve,
+la branche reste non fusionnable, et toute retouche après le run impose une
+nouvelle preuve. L'amorçage, le remplacement du Controller et
 l'Auxiliaire appartiennent
 désormais au contrat V1 et au prochain ordre de preuve, mais ne sont encore ni
 implémentés ni prouvés. Ansible intégré, WireGuard, OCI, téléphone, navigateur

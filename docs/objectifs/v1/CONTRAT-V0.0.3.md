@@ -6,9 +6,11 @@
 > [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md) conserve ses
 > preuves et limites. La matrice native Linux/Windows a également réussi dans
 > le [run hébergé `30700406219`](https://github.com/ldesfontaine/your-cloud/actions/runs/30700406219)
-> sur `9c6f14f`. Cette exécution antérieure au déclenchement manuel final prouve
-> le contenu des jobs à cette révision ; `v0.0.3` reste ouverte jusqu'au run
-> manuel du candidat final et à la clôture explicite de ses autres critères.
+> sur `9c6f14f`. Cette exécution antérieure prouve le contenu des jobs à cette
+> révision. `v0.0.3` est déclarée fermée uniquement pour le SHA dont
+> l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9) lie un
+> `workflow_dispatch` entièrement vert ; sans cette preuve, la branche reste
+> non fusionnable. Le SHA ainsi prouvé est fusionné sans retoucher ce contrat.
 
 ## Résultat utilisateur
 
@@ -1816,6 +1818,7 @@ Les paramètres 1 à 8 sont validés et la preuve fonctionnelle Linux de la bran
 été revalidé sur le commit produit exact `02fe4f5` avec un signataire LAB
 synthétique. La matrice native Linux/Windows a réussi sur `9c6f14f` dans le run
 hébergé `30700406219`, sans infrastructure distribuée. Les preuves et limites
-réellement exécutées restent visibles, et le palier ne devient terminé et
-fusionnable qu'après un run manuel vert sur le candidat final exact et la
-clôture explicite des critères restants.
+réellement exécutées restent visibles. Le palier est déclaré terminé uniquement
+pour le SHA dont l'issue `#9` lie un `workflow_dispatch` entièrement vert ; sans
+ce lien, la branche reste non fusionnable. Seul ce SHA peut être fusionné sans
+retouche documentaire.

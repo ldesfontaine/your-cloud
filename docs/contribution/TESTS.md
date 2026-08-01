@@ -9,8 +9,9 @@ Ce registre conserve les contrôles réalisés, les difficultés rencontrées et
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
 distingue la couverture automatisée de `v0.0.1`, la preuve assistée de
 `v0.0.2`, la preuve fonctionnelle Linux assistée puis revalidée de `v0.0.3` et
-la matrice native Linux/Windows déjà exécutée, dont le run manuel final reste à
-obtenir. Il prépare aussi les matrices
+la matrice native Linux/Windows déjà exécutée. La fermeture est attribuée
+uniquement au SHA dont le run manuel entièrement vert est lié depuis
+l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9). Il prépare aussi les matrices
 d'amorçage et d'action V1 ; une ligne planifiée ne constitue jamais une preuve.
 
 ## Vocabulaire de travail
@@ -129,8 +130,9 @@ sur `9c6f14f` les variantes natives Linux et Windows : tests, builds,
 installations, lancements et refus de listener, plus signature Authenticode
 synthétique et smoke WebView2 sous Windows. Cette preuve hébergée ne démarre
 aucune infrastructure produit et ne remplace aucune ligne fonctionnelle ou
-multi-VM du LAB. Un run manuel sur le
-candidat final exact reste obligatoire avant de fermer `v0.0.3`.
+multi-VM du LAB. `v0.0.3` est fermée uniquement si l'issue `#9` lie un
+`workflow_dispatch` entièrement vert pour le SHA exact fusionné ; sans ce lien,
+la branche reste non fusionnable.
 
 Le smoke Windows publie uniquement un JSON et des captures PNG. Le JSON lie le
 SHA et l'identifiant du run GitHub au checkout propre, conserve les SHA-256 des
@@ -141,8 +143,8 @@ clé privée, du compte et profil éphémères, des fichiers temporaires, des
 processus, du port de debugger WebView2 et des données applicatives. Aucun
 paquet, exécutable, certificat ou secret synthétique n'entre dans l'archive.
 Cette structure renforcée est implémentée dans le candidat courant mais n'est
-pas attribuée rétroactivement au run `30700406219` ; le run manuel final doit
-l'exécuter sur sa révision exacte.
+pas attribuée rétroactivement au run `30700406219` ; seule la preuve finale
+liée depuis l'issue `#9` peut l'attribuer à sa révision exacte.
 
 Le contrôle statique `tests/checks/ci-workflow-policy.py`, appelé par la porte
 générique, ferme les déclencheurs et permissions du workflow, sa concurrence,
@@ -151,7 +153,7 @@ prouve la forme versionnée de cette politique, pas son exécution sur GitHub.
 
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | Automatisation rejouable complète |
 |---|---|---|---|
-| sources et artefacts | `package.json` fournit la version Console à Tauri, au SBOM et au manifeste candidat ; Cargo et le verrou npm doivent rester alignés ; même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | version divergente, identifiant d'exécution couplé à une version de livraison, artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | garde source et Linux exact prouvés ; build et signature synthétique Windows exécutés sur `9c6f14f` ; lot final commun encore attendu |
+| sources et artefacts | `package.json` fournit la version Console à Tauri, au SBOM et au manifeste candidat ; Cargo et le verrou npm doivent rester alignés ; même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | version divergente, identifiant d'exécution couplé à une version de livraison, artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | garde source et Linux exact prouvés ; build et signature synthétique Windows exécutés sur `9c6f14f` ; lot final accepté uniquement par la condition `#9` du SHA fusionné |
 | enveloppe Tauri | frontend React, TypeScript et Vite embarqué ; opérations natives nommées ; aucun listener sur l'appareil Console ou chargement de code distant | navigation distante, ressource active externe, appel réseau frontend, accès fichier ou shell non autorisé | Linux LAB prouvé ; installation, lancement, absence de listener et smoke WebView2 Windows exécutés sur `9c6f14f` |
 | origine Console–Controller | TLS 1.3 sur l'origine exacte avec certificat serveur, identité d'appareil et session humaine attendus | HTTP, mauvais nom, CA, port, query, fragment, redirection, proxy, certificat inconnu, révoqué ou d'un autre Controller | planifié, non exécuté |
 | API métier | initialisation unique, lecture de l'infrastructure, lecture des machines et rattachement idempotent d'une machine enrôlée | méthode, route, type, `Accept`, schéma, doublon, casse, seconde valeur, taille, délai ou concurrence hors borne | planifié, non exécuté |
@@ -293,7 +295,7 @@ preuve, mais ne constituent plus une suite exécutable contre le binaire actuel.
 | `gofmt -l` vide | automatique | automatique | automatique | sans objet | couvre les sources Go de `cmd/` et `internal/` |
 | `bash -n` sur les scripts Bash du lot | automatique | automatique | automatique | sans objet | sélection par shebang dans `deploy/`, `tools/` et `tests/` |
 | syntaxe du générateur Python de restitution | automatique | automatique | automatique | automatique | compilation seule de `tests/lab/v0.0.1/report/renderer.py` ; le rendu réel reste vérifié dans `lab-console` |
-| résultat structuré Plumber absent, ambigu, incomplet, sauté ou dégradé | automatique | automatique | automatique | automatique | 23 cas de frontière (20 refus, 3 acceptations), liaison au lot et refus intégré d'un tag mutable exécutés dans `lab-console` ; le vrai workflow GitHub reste à exécuter après publication |
+| résultat structuré Plumber absent, ambigu, incomplet, sauté ou dégradé | automatique | automatique | automatique | automatique | 23 cas de frontière (20 refus, 3 acceptations), liaison au lot et refus intégré d'un tag mutable exécutés dans `lab-console` ; le workflow historique est prouvé sur `9c6f14f` et la fermeture suit la condition `#9` du SHA fusionné |
 | contrat `labctl list` humain et TSV | automatique | automatique | automatique | automatique | double `virsh` isolé ; le vrai inventaire reste contrôlé avant mutation |
 | `tools/check-docs` sur l'arbre complet | automatique | automatique | automatique | automatique | la cohérence sémantique reste une relecture humaine |
 | `go test -count=1 ./...` | automatique | automatique | automatique | automatique | mode `lab` sur `lab-console` root ou mode `ci` sur runner distant non privilégié |
