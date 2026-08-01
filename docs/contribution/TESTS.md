@@ -8,8 +8,8 @@ Ce registre conserve les contrôles réalisés, les difficultés rencontrées et
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
 distingue la couverture automatisée de `v0.0.1`, la preuve assistée de
 `v0.0.2`, la porte Linux assistée puis revalidée de `v0.0.3` et la matrice CI
-Linux/Windows dont le run natif reste à exécuter ; une ligne planifiée ne
-constitue jamais une preuve.
+Linux/Windows dont le run natif reste à exécuter. Il prépare aussi les matrices
+d'amorçage et d'action V1 ; une ligne planifiée ne constitue jamais une preuve.
 
 ## Vocabulaire de travail
 
@@ -72,7 +72,7 @@ L'arborescence rend cette frontière visible :
   et unités installables de leur contrat, jamais un scénario hostile.
 
 Une image CI ordinaire peut fournir la première couche, mais elle ne remplace
-pas automatiquement KVM/libvirt, les réseaux et les quatre VM de `v1-full`.
+pas automatiquement KVM/libvirt, les réseaux et les six VM de `v1-full`.
 La preuve complète pourra entrer dans la CI sur un runner dédié : inventaire en
 lecture seule, mutation bornée, publication des artefacts, puis nettoyage
 vérifié même si une assertion échoue. `labctl` reste le même contrôleur pour une
@@ -200,6 +200,31 @@ refus réseau depuis `lab-machine-2` ; une seconde arrête le lecteur légitime 
 atteint la frontière applicative depuis l'IP exacte de `lab-coordinateur`, mais
 sans le bon certificat, afin de prouver que le filtre IP ne remplace pas mTLS.
 Chaque phase réaffirme ensuite l'état nominal et le nettoyage attendu.
+
+## Matrice V1 planifiée — amorçage et première action
+
+Cette matrice projette les contrats désormais décidés dans
+[l'amorçage du Controller](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
+et la [roadmap](../objectifs/v1/ROADMAP.md). Aucun de ces scénarios n'est encore
+implémenté ou exécuté. Ils doivent recevoir leurs propres contrats exécutables
+et rapports LAB lorsque leur palier s'ouvre ; ce tableau n'anticipe ni leur code
+ni un résultat vert.
+
+| Frontière | Nominal à automatiser | Refus hostile à automatiser | État |
+|---|---|---|---|
+| lot Console et serveur | installateur contenant l'Assistant, l'artefact Debian 13 `amd64`, les définitions et le manifeste exact ; binaire installé avant la clé forcée ; entrée Auxiliaire initiale en lecture seule et en refus de mutation | binaire privilégié téléchargé à la volée, clé activée avant le binaire, cible, version, taille ou empreinte divergente, opération de mutation acceptée avant son contrat, `arm64` accepté sans preuve ; certificat Windows synthétique présenté comme signature publique | planifié, non exécuté |
+| secret personnel et frontend | sous les Consoles Linux et Windows, `ssh-agent` signe sans exporter la clé ; repli par clé chiffrée déverrouillée seulement en mémoire ; état détruit après succès, échec, timeout et fermeture | clé, mot de passe SSH ou `sudo` retrouvé dans le frontend, IPC non typé, Controller, fichier persistant, journal, crash dump ou artefact de test | planifié, non exécuté |
+| déclaration et audit | endpoints fournis un par un, clé d'hôte confirmée, audit SSH strictement en lecture seule, Debian 13 `amd64`, rôles et ressources rendus ; chaque endpoint et sa clé d'hôte revérifiés depuis le Controller avant mutation des cibles | scan du LAN, plage ou fournisseur, clé d'hôte acceptée silencieusement, mutation pendant l'audit, cible ou rôle incompatible proposé, cible joignable depuis le laptop mais pas depuis le Controller | planifié, non exécuté |
+| consentement privilégié | fenêtre native hors WebView répétant empreintes, étape, actions et expiration ; compte non-root et `sudo` protégé proposé par défaut ; accès `root` fourni seulement pour l'opération affichée et après consentement explicite | secret livré par IPC, frontend utilisant SSH ou `ssh-agent` comme oracle, essai `root` implicite, réutilisation du consentement ou du secret après expiration, cible ou action différente de celle approuvée | planifié, non exécuté |
+| placement et autonomie | Controller privé normalement allumé, cohabitation isolée sur petite infrastructure et recommandation dédiée lorsque taille ou risque augmentent ; fermeture de la Console sans arrêt du contrôle ou des services ; perte du Controller sans arrêt des services des autres hôtes et interruption colocalisée rendue visible | Controller permanent sur le laptop ou proposé par défaut sur le VPS public ; partage de compte, secret, répertoire ou budget entre rôles ; promesse de continuité d'un service placé sur l'hôte perdu | planifié, non exécuté |
+| identités SSH par machine | paire différente sur chaque machine, clé privée root-owned fournie au seul Controller par credentials systemd, clé publique vérifiée avant transfert d'autorité | même clé sur deux machines, clé d'une machine acceptée par une autre, clé privée visible à la Console ou à l'Agent, clé personnelle retirée | planifié, non exécuté |
+| commande forcée Auxiliaire | compte technique verrouillé sans mot de passe ; fichier de clés, parents et chemin absolu du binaire root-owned et non inscriptibles ; restrictions SSH et élévation exacte avec environnement réinitialisé ; plan typé sur stdin | option SSH retirée, répertoire remplaçable, binaire ou parent inscriptible, shell, PTY, SFTP, rc, X11, transfert, `environment=`, `SETENV`, règle `sudo` générale, sous-commande, argument, chemin ou opération libre | planifié, non exécuté |
+| approbation et anti-rejeu | cœur natif signant l'enveloppe canonique plan + rollback ; clé publique, infrastructure, machine, époque et successeur exact de la séquence vérifiés localement ; séquence consommée avant mutation et persistante après redémarrage | signature libre accessible au frontend, plan forgé ou altéré par un Controller compromis, mauvaise clé ou époque, séquence sautée, ancienne, concurrente ou rejouée avant et après restart | planifié, non exécuté |
+| récupération de Console et actions | rotation du certificat avec même clé humaine conservant l'ancre ; nouvelle clé humaine verrouillant les actions jusqu'à rotation cible par cible via l'Assistant et l'accès personnel | Controller tournant seul l'ancre, code de récupération signant une action, ancienne et nouvelle clés humaines acceptées ensemble, action disponible pendant une rotation partielle | planifié, non exécuté |
+| remplacement du Controller | choix explicite, nouvelle association Console, Agents compatibles réutilisés, lecteur Relay limité au nouveau Controller, nouvelle époque et toutes identités exposées tournées avant retrait des seules anciennes identités marquées | remplacement automatique sur panne ambiguë, Controller compromis non isolé ou hôte non assaini, ancien lecteur/session/clé encore actif, Controller sain écrasé, clé personnelle ou inconnue retirée, ancienne identité retirée avant preuve de la nouvelle | planifié, non exécuté |
+| plan et sonde OCI | plan et rollback exacts approuvés, registre et digest épinglés, sonde locale Podman rootless/Quadlet ; premier passage `changed=true`, nouveau plan demandant le même état `changed=false`, retrait absent `changed=false` | plan altéré, expiré ou rejoué, digest flottant, registre, volume, port, privilège, système d'init ou cgroup hors contrat ; dérive corrigée silencieusement ou réécriture/redémarrage inutile | planifié, non exécuté |
+| échec, reprise et rollback | échec contrôlé tentant le rollback approuvé et borné ; échec du rollback rendu partiel ; injection d'une coupure à chaque étape d'amorçage, de rotation et d'action ; reconstruction des états `ancien seul`, `chevauchement borné`, `nouveau seul`, `inconnu` avant nouvelle décision | rollback non approuvé ou touchant une ressource externe, retrait dans un état inconnu, rejeu automatique, succès global inventé après coupure, continuation autonome non contractée | planifié, non exécuté |
+| ressources et échelle V1 | CPU, mémoire, processus et disque bornés avec le mécanisme disponible ; destinations, listeners, tailles, concurrences, délais et débits réseau mesurés sur petite machine ; cohabitation puis placement dédié ; scénarios à 1, 2 et 64 machines | dépassement silencieux, OOM ou saturation réseau masqués, limite systemd fictive, 65e machine acceptée dans le format courant, borne de 64 présentée comme limite définitive du produit | planifié, non exécuté |
 
 ## Matrice exécutée de `v0.0.2` — orchestration assistée
 

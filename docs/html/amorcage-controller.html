@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Vue visuelle du contrat d'amorçage et de remplacement du Controller Your Cloud.">
+  <title>Amorçage du Controller — Your Cloud</title>
+  <style>
+    :root{color-scheme:dark;--bg:#07111e;--panel:#0e1d31;--panel2:#12263d;--text:#f3f7fb;--muted:#aab9ca;--line:#29445f;--cyan:#62d9e8;--green:#72dda8;--amber:#ffc86b;--pink:#fb91bd;--blue:#80aaff}*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 10% 0,#12354b,transparent 32rem),radial-gradient(circle at 100% 32%,#251b43,transparent 30rem),var(--bg);font:16px/1.6 Inter,system-ui,sans-serif}main{width:min(1120px,calc(100% - 36px));margin:auto;padding:60px 0 90px}h1,h2,h3{line-height:1.12}h1{font-size:clamp(2.7rem,7vw,5.5rem);letter-spacing:-.045em;margin:.15em 0}h2{margin-top:64px;font-size:clamp(1.6rem,4vw,2.6rem)}h3{margin:.1em 0 .5em}.eyebrow{color:var(--cyan);font:750 .78rem ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}.lead{max-width:850px;color:var(--muted);font-size:1.16rem}.statebar{display:flex;flex-wrap:wrap;gap:10px;margin:27px 0}.pill{padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:#0b1727}.pill.decided{border-color:var(--green);color:var(--green)}.pill.pending{border-color:var(--amber);color:var(--amber)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card,.machine,.bundle,.boundary{border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,rgba(18,38,61,.96),rgba(8,20,34,.96))}.card,.machine,.bundle{padding:22px}.card h3,.machine h3,.bundle h3{color:var(--green)}.card.warning h3{color:var(--amber)}.card ul,.machine ul,.bundle ul{padding-left:21px;margin-bottom:0}.journey{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:27px}.step{position:relative;min-height:132px;padding:17px 15px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}.step b{display:block;color:var(--cyan);margin-bottom:7px}.step:not(:last-child)::after{content:"→";position:absolute;z-index:2;right:-16px;top:50%;color:var(--cyan);font-weight:900;transform:translateY(-50%)}.handoff{margin-top:20px;padding:20px;border-left:4px solid var(--green);border-radius:8px;background:rgba(114,221,168,.08)}.authorities{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:25px}.authority{padding:23px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}.authority.user{border-color:var(--amber)}.authority.cloud{border-color:var(--cyan)}.authority h3{color:var(--text)}.authority.user strong{color:var(--amber)}.authority.cloud strong{color:var(--cyan)}.not-third{margin-top:15px;padding:15px 18px;border:1px dashed var(--pink);border-radius:13px;color:var(--muted)}.replace{display:grid;grid-template-columns:1fr 70px 1fr;gap:16px;align-items:center;margin-top:25px}.controller{padding:22px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}.controller.old{border-color:var(--pink)}.controller.new{border-color:var(--green)}.arrow{text-align:center;color:var(--cyan);font-size:2rem}.boundary{margin-top:22px;padding:18px 20px;color:var(--muted)}.boundary strong{color:var(--text)}.facts{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.placement{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.machine small{display:block;color:var(--muted)}.machine.recommended{border-color:var(--green)}.machine.allowed{border-color:var(--amber)}.machine.refused{border-color:var(--pink)}.resource-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:16px}.resource-list span{padding:11px;border:1px solid var(--line);border-radius:12px;background:var(--panel);text-align:center;color:var(--muted)}code{color:var(--cyan)}a{color:var(--cyan)}footer{margin-top:70px;padding-top:22px;border-top:1px solid var(--line);color:var(--muted)}@media(max-width:850px){.journey,.placement{grid-template-columns:1fr 1fr}.step:nth-child(2)::after{display:none}.facts{grid-template-columns:1fr}.resource-list{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.grid,.authorities,.journey,.placement{grid-template-columns:1fr}.step:not(:last-child)::after{content:"↓";right:50%;top:auto;bottom:-21px;transform:translateX(50%)}.step:nth-child(2)::after{display:block}.replace{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.resource-list{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Architecture · amorçage et remplacement</p>
+    <!-- coherence: BOOTSTRAP-RECOVERY:start -->
+    <h1>Créer l’autorité, puis fonctionner sans dépendance permanente au laptop.</h1>
+    <p class="lead">La Console lance un Assistant natif temporaire, utilise l’accès SSH déjà détenu par l’utilisateur, installe le premier Controller, puis lui transfère l’administration opérationnelle. Le même parcours permet plus tard de remplacer explicitement un Controller perdu.</p>
+    <div class="statebar" aria-label="État du contrat">
+      <span class="pill decided">Contrat décidé</span>
+      <span class="pill pending">Non implémenté</span>
+      <span class="pill pending">Non prouvé</span>
+    </div>
+
+    <h2>Un parcours borné, sans dépendance permanente au laptop</h2>
+    <div class="journey" aria-label="Parcours de création d'une infrastructure">
+      <div class="step"><b>1 · Déclarer</b>Nom, IP ou DNS, port SSH et exposition de chaque machine. Aucun scan du LAN.</div>
+      <div class="step"><b>2 · Auditer</b>L’Assistant vérifie en lecture seule identité, OS, architecture, systemd, cgroup v2 et ressources.</div>
+      <div class="step"><b>3 · Approuver</b>Une fenêtre native hors WebView confirme cibles, actions, expiration et secrets nécessaires.</div>
+      <div class="step"><b>4 · Transférer</b>Le Controller vérifie les routes SSH ; l’artefact précède chaque accès forcé en lecture seule.</div>
+    </div>
+    <p class="handoff"><strong>Résultat attendu :</strong> fermer la Console ou éteindre le laptop n’arrête ni le Controller, ni l’administration future, ni les services déjà déployés.</p>
+
+    <h2>Deux catégories SSH, pas une troisième autorité</h2>
+    <div class="authorities">
+      <article class="authority user">
+        <h3><strong>Accès personnel</strong> de l’utilisateur</h3>
+        <p>Compte d’administration existant, de préférence non-root avec clé SSH et <code>sudo</code> protégé par mot de passe. Un accès <code>root</code> reste un repli explicite pour l’opération nommée.</p>
+        <ul>
+          <li>prêté temporairement à l’Assistant ;</li>
+          <li>clé utilisée via l’agent SSH ou déchiffrée seulement en mémoire native ;</li>
+          <li>passphrase, mot de passe et consentement saisis hors WebView ;</li>
+          <li>jamais transmis au frontend ou au Controller ;</li>
+          <li>jamais supprimé par Your Cloud.</li>
+        </ul>
+      </article>
+      <article class="authority cloud">
+        <h3><strong>Identité Your Cloud</strong> par machine</h3>
+        <p>Une paire opérationnelle différente par cible, générée et conservée sur le Controller pour exécuter uniquement un plan typé approuvé.</p>
+        <ul>
+          <li>clé privée fournie au service par un credential systemd root-owned ;</li>
+          <li>compte technique verrouillé, sans mot de passe ni <code>sudo</code> général ;</li>
+          <li>fichier, parents et binaire root-owned non inscriptibles ;</li>
+          <li>commande forcée refusant rc, X11, environnement, shell, PTY, SFTP et transferts ;</li>
+          <li>révocable sans toucher à l’accès personnel.</li>
+        </ul>
+      </article>
+    </div>
+    <p class="not-third"><strong>À distinguer :</strong> l’authentification Console–Controller autorise l’humain et son appareil dans le produit. Elle n’est pas une autorité SSH sur les machines et ne devient pas une troisième voie de secours.</p>
+
+    <h2>Création et transfert d’autorité</h2>
+    <div class="grid">
+      <article class="card">
+        <h3>Assistant temporaire</h3>
+        <ul>
+          <li>distinct du frontend et sans listener permanent ;</li>
+          <li>prompt natif liant consentement, cibles, actions et expiration ;</li>
+          <li>demandes typées seulement, sans primitive SSH ou signature libre ;</li>
+          <li>clé d’hôte confirmée, jamais acceptée silencieusement ;</li>
+          <li>secrets effacés à la fin, à l’échec ou au timeout.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h3>Controller autonome</h3>
+        <ul>
+          <li>installé et associé sur la machine privée approuvée ;</li>
+          <li>doit joindre chaque cible SSH avec la clé d’hôte confirmée ;</li>
+          <li>génère une identité différente pour chaque machine ;</li>
+          <li>installe l’artefact avant l’accès Auxiliaire en lecture seule ;</li>
+          <li>devient ensuite le coordinateur autonome de l’infrastructure.</li>
+        </ul>
+      </article>
+    </div>
+    <p class="boundary"><strong>Approbation d’une action :</strong> après confirmation, le cœur natif signe une enveloppe canonique liant infrastructure, machine, époque, successeur exact de la séquence, plan, rollback, privilèges et expiration. La cible conserve la clé publique et consomme atomiquement la séquence dans un état root-owned minimal ; le Controller transporte sans pouvoir modifier, forger, sauter une séquence ou faire accepter un rejeu.</p>
+    <p class="boundary"><strong>Cohabitation :</strong> sur une petite infrastructure, le Controller peut partager un hôte avec d’autres rôles isolés, mais pas leur domaine de panne matériel. Les services des autres hôtes continuent si le Controller est perdu ; un service colocalisé peut être interrompu par la perte ou l’isolement de cet hôte. La Console doit rendre ce risque visible avant le placement.</p>
+
+    <h2>Remplacer explicitement un Controller perdu</h2>
+    <p class="lead">Une simple indisponibilité ne déclenche rien. L’utilisateur choisit <code>Remplacer un Controller</code>, redéclare les endpoints si l’ancien inventaire est perdu et prête de nouveau son accès personnel.</p>
+    <div class="replace" aria-label="Rotation lors du remplacement du Controller">
+      <article class="controller old"><h3>Ancien Controller</h3><p>Toute autorité qu’il pouvait exercer devient candidate à rotation. S’il est soupçonné compromis, son hôte est isolé avant de continuer.</p></article>
+      <div class="arrow" aria-hidden="true">→</div>
+      <article class="controller new"><h3>Nouveau Controller</h3><p>Sur une base saine, il reçoit une nouvelle association Console, un nouveau lecteur Relay et de nouvelles autorités vérifiées avant retrait.</p></article>
+    </div>
+    <p class="boundary"><strong>Invariant :</strong> association Console, identité et filtre du lecteur Relay, époque d’approbation, clés SSH, certificats, sessions et manifestes exposés sont tournés ; comptes, clés et droits personnels restent intacts. Une coupure rend <code>ancien seul</code>, <code>chevauchement borné</code>, <code>nouveau seul</code> ou <code>inconnu</code> par machine, jamais un succès global. Le code de récupération réassocie seulement une Console à un Controller vivant ; s’il remplace la clé humaine, les actions restent verrouillées jusqu’à rotation des ancres via l’accès personnel.</p>
+
+    <h2>Placement proportionné aux machines disponibles</h2>
+    <div class="placement">
+      <article class="machine recommended"><h3>Recommandé</h3><small>Machine privée, fiable et normalement allumée</small><p>Controller dédié lorsque la taille ou le risque le justifie.</p></article>
+      <article class="machine allowed"><h3>Accepté en petite infra</h3><small>Cohabitation privée et explicitement isolée</small><p>Processus, comptes, secrets, fichiers et budgets séparés.</p></article>
+      <article class="machine refused"><h3>Pas proposé par défaut</h3><small>Laptop ou VPS public du Relay</small><p>Le laptop n’est pas permanent ; la zone exposée n’est pas la place naturelle du Controller.</p></article>
+    </div>
+    <div class="resource-list" aria-label="Budgets de ressources séparés"><span>CPU</span><span>Mémoire</span><span>Processus</span><span>Disque</span><span>Réseau</span></div>
+    <p class="boundary">Les machines peuvent être lentes ou hétérogènes. CPU, mémoire, processus et disque sont bornés par systemd, cgroup v2 et quotas disponibles ; le réseau par les listeners, destinations, tailles, concurrences, délais et débits propres au rôle, jamais par systemd générique. L’Assistant refuse un placement insuffisant avec sa cause. La borne de 64 machines appartient à la V1 et à ses preuves, pas à la promesse générale du produit.</p>
+
+    <h2>Un lot vérifiable, pas un téléchargement root improvisé</h2>
+    <div class="facts">
+      <article class="bundle">
+        <h3>Bundle Console V1</h3>
+        <ul>
+          <li>Assistant natif temporaire ;</li>
+          <li>binaire Go <code>your-cloud</code> pour Debian 13 <code>amd64</code> ;</li>
+          <li>définitions d’installation ;</li>
+          <li>manifeste avec version, cible, taille et empreinte.</li>
+        </ul>
+      </article>
+      <article class="card warning">
+        <h3>Bornes de distribution</h3>
+        <p>Mise à jour manuelle en V1. <code>arm64</code> attend une preuve LAB dédiée. Une signature Windows synthétique ne vaut pas distribution publique reconnue.</p>
+      </article>
+    </div>
+
+    <h2>Ce qui devra être prouvé</h2>
+    <div class="grid">
+      <article class="card">
+        <h3>Secrets et autorités</h3>
+        <p>Prompt natif hors WebView, aucun secret personnel persistant, identité différente par machine, SSH root-owned durci et anti-rejeu durable.</p>
+      </article>
+      <article class="card warning">
+        <h3>Pannes et petites machines</h3>
+        <p>Joignabilité depuis le Controller, entrée Auxiliaire en lecture seule, remplacement de toutes les autorités, états partiels honnêtes et ancienne base compromise isolée.</p>
+      </article>
+    </div>
+    <p class="boundary"><strong>Limite V1 :</strong> pas de bascule automatique, troisième autorité SSH, scan de récupération, conservation de la clé personnelle, reprise autonome d’une action interrompue ou Ansible obligatoire. Une coupure pendant une mutation donne un <code>résultat inconnu</code> : observer d’abord, ne jamais rejouer aveuglément.</p>
+    <!-- coherence: BOOTSTRAP-RECOVERY:end -->
+
+    <footer>Source canonique : <a href="../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md">AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md</a> · <a href="index.html">Index visuel</a></footer>
+  </main>
+</body>
+</html>

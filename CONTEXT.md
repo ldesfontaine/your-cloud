@@ -25,7 +25,7 @@ Application ou capacité que l'utilisateur veut exécuter sur une ou plusieurs m
 Produit formé par une Console et un ou plusieurs Controllers, sans confondre leur interface et leur autorité.
 
 **Console**:
-Application cliente installée et signée sur un appareil administrateur. Elle embarque l'interface, conserve les associations approuvées vers des Controllers et recueille les demandes sans être la source de leur inventaire ni détenir de secret de machine. Elle n'héberge aucun serveur local et ne télécharge pas son code depuis un Controller.
+Application cliente installée et signée sur un appareil administrateur. Elle embarque l'interface, conserve les associations approuvées vers des Controllers et recueille les demandes sans être la source de leur inventaire ni conserver de secret de machine. Elle n'héberge aucun serveur local et ne télécharge pas son code depuis un Controller.
 Dans le profil géré, elle présente une opération de connexion privée nommée pour
 chaque infrastructure sans exposer à l'administrateur une configuration réseau
 libre.
@@ -33,6 +33,33 @@ libre.
 **Controller**:
 Backend privé d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination. Il expose une API authentifiée mais n'héberge aucun frontend.
 <!-- coherence: V1-APP-ACCESS:end -->
+
+<!-- coherence: BOOTSTRAP-RECOVERY:start -->
+**Amorçage**:
+Parcours qui utilise temporairement l'accès personnel pour installer un Controller, créer les identités Your Cloud et enrôler les machines.
+_Avoid_: « découverte automatique », car l'utilisateur déclare chaque machine et prête lui-même l'accès initial.
+
+**Assistant d'amorçage**:
+Composant temporaire de la Console qui utilise l'accès personnel seulement pendant un amorçage ou un remplacement du Controller, sans le transmettre au frontend ni le conserver.
+_Avoid_: « Controller local », car l'Assistant s'arrête après le transfert d'autorité.
+
+**Accès d'administration personnel**:
+Accès SSH indépendant que l'utilisateur apporte, conserve et peut reprêter pour remplacer le Controller ; Your Cloud ne le possède pas et ne le retire jamais.
+_Avoid_: « clé de secours Your Cloud », car cet accès reste sous l'autorité de l'utilisateur.
+
+**Identité d'administration Your Cloud**:
+Accès SSH opérationnel propre à une machine, détenu par son Controller et limité au lancement de l'Auxiliaire local pour un plan que l'utilisateur a explicitement approuvé.
+_Avoid_: « clé SSH globale », car deux machines ne partagent jamais cette identité.
+
+**Remplacement du Controller**:
+Amorçage explicite après la perte ou l'isolement d'un Controller, qui associe la Console à son remplaçant et renouvelle ses autorités sans réinstaller les Agents compatibles.
+_Avoid_: « récupération de la Console », qui réassocie seulement une Console à un Controller encore vivant.
+
+Il existe exactement deux catégories d'accès SSH d'administration des machines :
+l'accès personnel conservé par l'utilisateur et l'identité Your Cloud propre à
+chaque machine. L'authentification Console–Controller autorise l'humain dans le
+produit, mais ne constitue pas une troisième autorité SSH.
+<!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 **Agent**:
@@ -42,7 +69,7 @@ Frontière de l'installation locale unique de Your Cloud sur une machine enrôl�
 Processus permanent non privilégié fourni par l'Agent, chargé uniquement des échanges sortants d'observation sans connaître le Controller ni appliquer lui-même de changement privilégié.
 
 **Auxiliaire local**:
-Autorité optionnelle et ponctuelle de l'Agent capable d'appliquer sur sa propre machine une opération nommée et approuvée, sans devenir un shell général.
+Processus ponctuel de l'Agent qui vérifie puis applique sur sa machine une opération explicitement approuvée, sans devenir un shell ni un service permanent.
 
 **Relay**:
 Rôle activé seulement sur une machine candidate qui authentifie, borne, persiste et accuse les observations des Daemons sans porter d'utilisateur ni d'action.
@@ -186,7 +213,7 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
   Cloud ne scanne pas le LAN et ne déduit aucune confiance de la présence d'un
   appareil sur le même réseau.
 - « Agent unique » signifie une seule installation locale, pas une autorité ou
-  une exécution unique : son Daemon permanent, son éventuel Relay et son futur
+  une exécution unique : son Daemon permanent, son éventuel Relay et son
   Auxiliaire local restent des rôles séparés avec des droits différents.
 - L'utilisateur n'a pas à mémoriser l'adresse d'un **Controller**, mais la
   **Console** possède nécessairement une association approuvée pour le joindre.

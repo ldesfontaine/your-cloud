@@ -44,7 +44,7 @@ cadrées lorsqu'elles deviendront le prochain objectif réel.
 
 ## État de départ
 
-Le développement produit commence avec le prochain incrément décrit ci-dessous.
+Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessous.
 `tools/labctl` contrôle le LAB sans constituer une capacité de Your Cloud.
 
 | Élément | Décidé | Implémenté | Prouvé |
@@ -54,7 +54,8 @@ Le développement produit commence avec le prochain incrément décrit ci-dessou
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
 | `v0.0.3` | oui — architecture et paramètres 1 à 8 validés | partiellement — porte Linux | partiellement — porte Linux ; Windows absente |
-| Paliers postérieurs de la V1 | proposés, à relire | non | non |
+| Amorçage et remplacement du Controller | oui — prochain contrat V1 après fermeture de `v0.0.3` | non | non |
+| Autres paliers postérieurs de la V1 | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
 
@@ -66,13 +67,14 @@ simplement la roadmap V1 d'oublier la direction déjà validée.
 |---|---|---|---|
 | Produit | Représenter une infrastructure, observer deux machines et déployer deux services depuis une interface qui montre les opérations réelles | Étendre progressivement l'observation, les opérations et les plateformes sans retirer les parcours externes | [Cap](../../projet/CAP.md) |
 | Machines | Partir de machines Linux déjà installées | Provisionner plus tard par des intégrations OpenStack et Terraform/OpenTofu explicites | [Cap](../../projet/CAP.md) |
-| Agent | Un exécutable `your-cloud` identique par version sur chaque machine ; Daemon actif après enrôlement, autres rôles refusés sans activation explicite | Conserver un cycle de vie unique avec des capacités optionnelles explicitement activées et des processus isolés | [Glossaire](../../../CONTEXT.md) et [cap](../../projet/CAP.md) |
-| Daemon | Processus permanent Go, non-root, sans port entrant ; collecteurs nommés, tampon borné et communications sortantes vers son Relay approuvé | Rester consacré à l'observation, sans connaître le Controller ni transporter de plan ; tout futur chemin d'action est distinct et cadré séparément | [Cap](../../projet/CAP.md) |
+| Amorçage | Assistant natif temporaire ; secrets hors WebView, endpoints déclarés sans scan, route SSH vérifiée depuis le Controller, artefact avant accès forcé, état temporaire détruit après transfert et accès utilisateur conservé | Réutiliser le parcours pour remplacer toutes les autorités du Controller sans ajouter une troisième autorité SSH ; sauvegarder son état reste un sujet séparé | [Contrat d'amorçage](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) |
+| Agent | Un exécutable `your-cloud` identique par version sur chaque machine ; Daemon actif après enrôlement, Relay refusé sans activation et Auxiliaire lancé seulement pour un plan approuvé | Conserver un cycle de vie unique avec des capacités optionnelles explicitement activées et des processus isolés | [Glossaire](../../../CONTEXT.md) et [cap](../../projet/CAP.md) |
+| Daemon | Processus permanent Go, non-root, sans port entrant ; collecteurs nommés, tampon borné et communications sortantes vers son Relay approuvé | Rester consacré à l'observation, sans connaître le Controller ni transporter de plan ; le chemin d'action reste distinct | [Cap](../../projet/CAP.md) |
 | Relay | Mode du même exécutable, activé seulement sur le VPS candidat ; processus, compte, identité, secrets et stockage séparés du Daemon ; aucun ordre retour | Rester une frontière d'observation explicitement provisionnée : le Controller peut obtenir son dernier état d'observation validé, mais le Relay ne porte ni utilisateur, ni inventaire métier, ni statut d'interface, ni canal d'action | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
-| Auxiliaire local | Absent du contrat et de l'exécutable V1 | Futur mode ponctuel du même artefact, sans réseau, invoqué pour un plan exact mais validé indépendamment avant privilège ; aucun shell général | [Cap](../../projet/CAP.md) |
-| Chemin d'action | Console → Controller → plan lisible → approbation liée au contenu → Ansible → SSH borné → vérification | Garder le même plan approuvé mais choisir l'autorité adaptée : Auxiliaire pour Linux local, API OpenStack, runner IaC isolé ou API K3s | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
+| Auxiliaire local | Mode ponctuel du même artefact, lancé par commande SSH forcée root-owned pour une enveloppe signée ; aucun listener, accès réseau général ou shell | Garder cette autorité pour les opérations Linux locales et utiliser une API ou un runner isolé pour les autres plateformes | [Cap](../../projet/CAP.md) |
+| Chemin d'action | Plan et rollback exacts → confirmation et signature natives → transport Controller → clé publique, époque et anti-rejeu local → Auxiliaire → vérification | Garder le même plan approuvé mais choisir l'autorité adaptée : Auxiliaire pour Linux local, API OpenStack, runner IaC isolé ou API K3s | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
 | App | Console cliente installée et signée sur Linux et Windows, frontend embarqué sans serveur local ; Controller backend d'une infrastructure sans frontend | Controller privé derrière WireGuard, clé de pair et identité distinctes par appareil administrateur, authentification humaine et fournisseur central d'identité facultatif ; téléphone puis navigateur public seulement comme modes futurs séparés | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
-| Chiffrement et identités | mTLS séparés pour l'ingestion Daemon `8443` et le lecteur Controller `8444`, filtre source privé par défaut, autorités et registres propres, SSH pour l'administration et HTTPS pour le Web ; chaque identité et chaque flux restent bornés | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif V1](README.md) |
+| Chiffrement et identités | mTLS séparés pour l'observation, identité SSH par machine, approbation signée et anti-rejeu local, HTTPS pour le Web ; l'accès SSH personnel reste indépendant | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif V1](README.md) |
 | Exposition des services | Traefik sur le VPS, file provider sans socket de moteur, deux noms sur la même IP et `443` ; BentoPDF local au VPS et Vaultwarden atteint uniquement par WireGuard | Représenter plus tard une vraie DMZ seulement si des frontières réseau indépendantes sont appliquées et vérifiées | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
 | Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif V1](README.md) |
 | Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
@@ -172,7 +174,7 @@ donnée et les lacunes éventuelles sont déjà définis et vérifiables.
 <!-- coherence: V1-OBSERVATION:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### Incrément en cadrage : `v0.0.3` — Console cliente et Controller de lecture
+### Incrément ouvert et partiellement prouvé : `v0.0.3` — Console cliente et Controller de lecture
 
 **Résultat :** installer une Console signée fonctionnelle sur Linux et Windows,
 créer une infrastructure dans un Controller, y rattacher les deux machines et
@@ -295,7 +297,8 @@ projection surdimensionnée, les libellés Unicode hostiles, le port temporaire
 fermé, les codes faux, expirés, rejoués ou concurrents, les challenges croisés, les
 certificats candidats et les pertes de réponse pendant chaque activation.
 Chaque refus doit laisser l'API nominale disponible, l'autorité active unique et
-l'inventaire inchangé. Cette matrice est décidée mais pas encore exécutée.
+l'inventaire inchangé. Cette matrice est décidée, mais elle n'est pas encore
+entièrement exécutée ni rejouable en une commande.
 
 La preuve s'exécute dans le LAB et les runners isolés, jamais sur le laptop de
 développement. WireGuard, téléphone, navigateur public, SSO obligatoire et
@@ -308,29 +311,106 @@ frontend ; son mécanisme reste ouvert. Les services publics gardent leur accès
 HTTPS normal.
 <!-- coherence: V1-APP-ACCESS:end -->
 
-### 3. Premier plan appliqué de manière contrôlée
+<!-- coherence: BOOTSTRAP-RECOVERY:start -->
+### Prochain palier décidé — amorçage réutilisable
 
-**Résultat :** le Controller construit un plan lisible que la Console présente,
-lie l'approbation à son contenu exact, puis utilise Ansible et une identité SSH
-bornée pour déployer
-sur le VPS du LAB une **sonde OCI de validation** avec Podman rootless et
-Quadlet. Cette sonde est un petit service HTTP jetable, sans donnée persistante,
-accessible uniquement localement sur la machine. Son image est choisie à ce
-palier, puis épinglée par version et digest ; elle ne devient pas un composant
-de Your Cloud.
+Ce palier ne reçoit pas encore de numéro : `v0.0.3` reste ouverte tant que sa
+porte Windows n'est pas exécutée. Son contrat est néanmoins décidé afin que le
+développement suivant ne réinvente pas l'autorité initiale.
+
+**Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
+déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
+auditer les machines en lecture seule, approuver le placement puis installer un
+Controller autonome et les rôles approuvés. Avant de modifier les autres
+machines, le nouveau Controller prouve qu'il joint leurs endpoints SSH. Le même
+Assistant natif fournit `Remplacer un Controller` après une perte ou l'isolement
+d'un Controller compromis, sans dépendre de lui.
+
+L'enveloppe serveur initiale est Debian 13 `amd64`. L'installateur de Console
+embarque l'Assistant, l'artefact serveur, les définitions d'installation et
+leur manifeste d'empreintes ; aucun binaire privilégié n'est téléchargé
+dynamiquement. Le Controller réside sur une machine privée et normalement
+allumée. La cohabitation isolée est permise pour une petite infrastructure, une
+machine ou VM dédiée est recommandée lorsque taille ou sensibilité augmentent.
+Cette cohabitation partage la panne matérielle : perdre ou isoler l'hôte peut
+interrompre ses services locaux, tandis que les services des autres hôtes
+continuent.
+
+**Preuve de sortie :**
+
+- le frontend, le Controller, les fichiers persistants et les journaux ne
+  reçoivent jamais la clé personnelle ou le mot de passe `sudo` ;
+- sous Linux comme sous Windows, le prompt natif lie passphrase, mot de passe
+  et consentement `root` aux cibles, actions et expiration exactes sans
+  primitive SSH libre pour la WebView ;
+- `root` n'est utilisé qu'après ce consentement explicite ;
+- l'audit refuse une clé d'hôte non confirmée, une cible incompatible, un rôle
+  non approuvé, tout scan implicite et toute cible non joignable depuis le
+  Controller choisi ;
+- le lot serveur est installé avant la commande forcée ; l'entrée Auxiliaire
+  initiale est en lecture seule et refuse toute mutation inconnue ;
+- chaque machine reçoit une identité SSH Your Cloud différente, restreinte par
+  commande forcée vers l'Auxiliaire ; fichier, parents et binaire sont
+  root-owned, tandis que shell, PTY, SFTP, rc, X11, environnement et transferts
+  échouent ;
+- fermer l'Assistant et éteindre la Console n'arrêtent ni le Controller ni les
+  services ;
+- l'accès personnel reste intact ;
+- un remplacement explicite crée une nouvelle association Console, limite le
+  lecteur Relay au nouveau Controller, tourne toute autorité exposée, réutilise
+  les Agents compatibles et retire seulement les anciennes identités marquées
+  Your Cloud après vérification ;
+- une suspicion de compromission exige l'isolement de l'ancien hôte ; une
+  coupure à chaque étape rend un état partiel reconstructible et jamais un
+  succès global ;
+- la perte du Controller n'est pas confondue avec la récupération d'association
+  d'une Console vers un Controller encore vivant ; si cette récupération
+  remplace la clé humaine, l'action reste verrouillée jusqu'à une rotation via
+  l'accès personnel.
+
+Ces preuves sont exécutées dans le LAB avec des secrets synthétiques. Elles ne
+sont encore ni implémentées ni exécutées. La signature Windows synthétique peut
+valider la mécanique de build, mais une distribution publique attend une
+signature reconnue et gratuite réellement opérationnelle.
+
+Le contrat complet est
+[Amorçage et remplacement du Controller](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
+<!-- coherence: BOOTSTRAP-RECOVERY:end -->
+
+### Palier dépendant — premier plan appliqué de manière contrôlée
+
+**Résultat :** le Controller construit un plan lisible que la Console présente
+avec son rollback exact. Après confirmation, le cœur natif signe leur enveloppe
+canonique ; le Controller la transporte sans pouvoir fabriquer l'approbation,
+puis utilise l'identité SSH Your Cloud propre au VPS et sa commande forcée pour
+lancer l'Auxiliaire. Celui-ci déploie une **sonde OCI de validation** avec
+Podman rootless et Quadlet. Cette sonde est un petit service HTTP jetable, sans
+donnée persistante et accessible uniquement localement sur la machine. Son
+image est choisie à ce palier, puis épinglée par version et digest ; elle ne
+devient pas un composant de Your Cloud.
 
 **Précondition d'autorité :** avant toute mutation, le Controller authentifie
-explicitement l'humain, l'appareil et la session qui approuvent le plan exact.
+l'humain, l'appareil et la session, puis l'Auxiliaire vérifie indépendamment la
+signature de la Console, la clé publique et l'époque root-owned de la cible, la
+successeur exact de la séquence anti-rejeu et l'expiration. La séquence est
+consommée durablement avant la mutation et reste refusée après redémarrage.
 L'accès au réseau privé ne remplace aucun de ces contrôles et une session de
-lecture `v0.0.3` ne reçoit pas implicitement le droit d'agir.
+lecture `v0.0.3` ne reçoit pas implicitement le droit d'agir. Le palier
+d'amorçage précédent a déjà prouvé l'identité par machine, la commande forcée
+et l'absence de shell général.
 
 **Preuve de sortie :** aucun playbook, inventaire, argument, chemin ou commande
-libre ne vient du navigateur ; une cible inconnue, un digest flottant, un volume,
-un port ou un privilège non approuvé est refusé ; une cible sans systemd ou sans
-cgroup v2 est refusée avant mutation, sans solution de repli automatique ; le
-second passage Ansible reste à `changed=0` ; une requête locale obtient la
-réponse attendue ; redémarrage et retrait produisent l'état annoncé sans port
-public ni donnée restante.
+libre ne vient du frontend ; l'Auxiliaire refuse une cible inconnue, un plan
+altéré, expiré ou rejoué, un digest flottant, un registre, volume, port ou
+privilège non approuvé. Une cible sans systemd ou cgroup v2 est refusée avant
+mutation. La première application rend `changed=true` ; un nouveau plan
+demandant le même état rend `changed=false` sans réécriture ni redémarrage,
+tandis que rejouer l'ancienne enveloppe est refusé. Une dérive exige un nouveau
+plan ; retirer une sonde déjà absente rend `changed=false`. Un échec contrôlé
+tente le rollback exact approuvé ; une coupure rend le résultat inconnu, ne
+déclenche aucun rejeu et impose une observation avant un nouveau plan. Une
+requête locale obtient la réponse attendue ; redémarrage et retrait produisent
+l'état annoncé sans port public ni donnée restante.
 
 **Dépendance validée :** ce mécanisme générique est prouvé avant BentoPDF. Le
 palier suivant réutilise donc un chemin de plan, d'approbation et d'exécution
@@ -338,7 +418,7 @@ déjà compris au lieu de déboguer simultanément l'action, le proxy, TLS et le
 premier véritable service.
 
 <!-- coherence: V1-NETWORK:start -->
-### 4. Premier véritable service public
+### Palier dépendant — premier véritable service public
 
 **Résultat :** déployer BentoPDF sur le VPS, installer Traefik sans socket de
 moteur, générer sa route avec le file provider et terminer HTTPS sur un nom
@@ -350,7 +430,7 @@ privé ; une requête directe par l'IP ou un nom inconnu n'obtient aucune route
 applicative ; l'image, la configuration et les dépendances sont épinglées et
 vérifiées.
 
-### 5. Passage privé limité au service
+### Palier dépendant — passage privé limité au service
 
 **Résultat :** Your Cloud prépare, fait approuver puis applique le passage
 WireGuard entre les deux machines enrôlées, avec adresses `/32`, routes et règles
@@ -361,7 +441,7 @@ VPS ne peut joindre ni SSH, ni les autres ports, ni le sous-réseau du LAN ; une
 modification de pair, destination ou port produit un nouveau plan au lieu d'une
 mutation silencieuse.
 
-### 6. Véritable service privé publié par le VPS
+### Palier dépendant — véritable service privé publié par le VPS
 
 **Résultat :** déployer Vaultwarden avec Podman rootless et stockage persistant
 sur la machine du LAN, puis ajouter dans Traefik une seconde route HTTPS qui le
@@ -379,7 +459,7 @@ vers Internet, les zones privées et le plan d'administration.
 <!-- coherence: V1-NETWORK:end -->
 
 <!-- coherence: OWNERSHIP-MODES:start -->
-### 7. Responsabilité externe visible
+### Palier dépendant — responsabilité externe visible
 
 **Résultat :** déclarer dans l'App un service ou un passage installé à la main,
 sans transférer son autorité à Your Cloud, et distinguer l'état déclaré de ce
@@ -390,37 +470,43 @@ silencieusement, ni présenté comme géré ; l'App annonce clairement ce qu'ell
 peut ni mettre à jour, ni restaurer, ni supprimer.
 <!-- coherence: OWNERSHIP-MODES:end -->
 
-### 8. Preuve complète de la V1
+### Preuve complète de la V1
 
 **Résultat :** rejouer depuis une base LAB propre le scénario complet de
 l'[objectif V1](README.md), puis produire les artefacts et preuves de
 release.
 
 **Preuve de sortie :** deux machines observées, deux véritables services
-accessibles en HTTPS, App privée utilisable depuis le navigateur, plans
-approuvés, second passage sans changement, redémarrages, sauvegarde/restauration,
-retrait propre, refus hostiles réseau et autorisation, secrets expurgés, versions
-épinglées, SBOM, provenance et rapport visuel. Toute capacité non prouvée reste
-annoncée comme telle et bloque la V1.
+accessibles en HTTPS depuis leur navigateur normal, Console native installable
+sur Linux et Windows, Controller privé autonome, plans approuvés, second passage
+sans changement, redémarrages, sauvegarde/restauration, retrait propre, refus
+hostiles réseau et autorisation, secrets expurgés, versions épinglées, SBOM,
+provenance et rapport visuel. Une signature Windows synthétique ne suffit pas à
+une distribution publique. Toute capacité non prouvée reste annoncée comme
+telle et bloque la V1.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
-## Décisions conservées après la V1, sans les planifier
+## Frontières d'autorité conservées au-delà de la V1
 
-La roadmap s'arrête à la preuve complète précédente. Elle conserve toutefois
-les frontières déjà validées afin qu'une future roadmap ne reparte pas d'une
-architecture contradictoire :
+La roadmap s'arrête à la preuve complète précédente. Les frontières suivantes
+s'appliquent déjà au chemin V1 et empêchent une future roadmap de repartir
+d'une architecture contradictoire :
 
 - l'Agent reste une installation unique ; son Daemon permanent non-root et son
-  éventuel Auxiliaire local conservent des autorités différentes ; le Relay
+  Auxiliaire local ponctuel conservent des autorités différentes ; le Relay
   optionnel utilise le même artefact mais un processus et une identité séparés ;
-- l'Auxiliaire n'est ni un second Daemon permanent ni un service réseau. Il est
-  optionnel, lancé pour une opération connue, puis s'arrête ;
-- le futur chemin des plans reste séparé du Daemon et du Relay d'observation.
-  Son transport et son autorité de lancement seront cadrés avant implémentation ;
-  l'Auxiliaire revérifie indépendamment origine, cible, empreinte, approbation,
+- l'Auxiliaire n'est ni un second Daemon permanent, ni un listener, ni un shell
+  général. Une identité SSH propre à la machine et une commande forcée le
+  lancent pour une opération connue, puis il s'arrête ;
+- le chemin des plans reste séparé du Daemon et du Relay d'observation.
+  L'Auxiliaire revérifie indépendamment origine, cible, empreinte, approbation,
   expiration, anti-rejeu et limites sémantiques locales ;
+- une coupure rend le résultat inconnu ; la V1 n'ajoute ni rejeu aveugle, ni
+  journal local permettant une continuation autonome ;
 - une action OpenStack, Terraform/OpenTofu, Ansible ou K3s utilise l'API ou le
   runner adapté au lieu de détourner artificiellement l'Agent d'une machine ;
+- Ansible reste un outil du mode externe et une intégration future possible,
+  pas une dépendance du Controller ou des machines V1 ;
 - le Controller final reste privé derrière WireGuard, chaque appareil
   administrateur est enrôlé séparément et l'authentification humaine reste
   nécessaire ; une passerelle Web publique demeure une option distincte ;
@@ -430,8 +516,8 @@ architecture contradictoire :
   indépendantes ; le VPS de la V1 reste seulement une zone d'exposition durcie.
 
 Cette section ne planifie ni OpenStack, ni Terraform/OpenTofu, ni K3s, ni
-l'Auxiliaire, ni la découverte assistée, ni la haute disponibilité. Elle fixe
-leurs frontières avant leur futur cadrage.
+runner Ansible, ni découverte assistée, ni haute disponibilité. Elle fixe leurs
+frontières avant leur futur cadrage.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 Le seul jalon déjà noté après cette limite est la demande d'une `v1.0.1` pour un
@@ -442,8 +528,13 @@ la présente roadmap.
 ## Points volontairement non décidés
 
 - Les numéros et le découpage exacts des paliers postérieurs à `v0.0.3`.
-- L'enveloppe de distribution autour de l'exécutable unique — paquet Debian,
-  archive signée ou autre format — sans rouvrir la séparation des processus.
+- Le format serveur exact à l'intérieur du lot Console — paquet Debian ou
+  archive signée — sans rouvrir le manifeste embarqué, Debian 13 `amd64` ni la
+  séparation des processus déjà décidés.
+- Le dispositif gratuit de signature Windows et la preuve d'éligibilité du
+  projet. Le dépôt ne contient actuellement aucune licence ; son choix reste
+  une décision explicite du mainteneur et ne sera pas déduit uniquement pour
+  obtenir une signature.
 - Windows Hello, passkeys, FIDO2 et SSO/OIDC restent post-V1 ; la phrase, le
   coffre, l'appairage, les certificats, sessions, rotations, révocations et la
   récupération locale de la V1 sont décidés et ne sont plus des points ouverts.
@@ -458,7 +549,11 @@ la présente roadmap.
 `v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Les
 paramètres 1 à 8 de `v0.0.3` sont fermés et la porte Linux de la branche
 `console-controller` a été revalidée après review sur le commit produit exact
-`02fe4f5`. La porte Windows est autorisée et en préparation, mais reste non
-exécutée. Aucun merge n'est permis avant son résultat vert. Action distante,
-Ansible métier, Auxiliaire, WireGuard, OCI, téléphone, navigateur public,
-Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors périmètre.
+`02fe4f5`. La porte Windows reste non exécutée. Au 29 juillet 2026, le quota
+GitHub Actions épuisé bloque son run hébergé ; le budget du projet reste nul et
+aucun merge n'est permis avant un résultat vert obtenu dans un runner Windows
+isolé. L'amorçage, le remplacement du Controller et l'Auxiliaire appartiennent
+désormais au contrat V1 et au prochain ordre de preuve, mais ne sont encore ni
+implémentés ni prouvés. Ansible intégré, WireGuard, OCI, téléphone, navigateur
+public, Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors
+du périmètre de code actuel `v0.0.3`.

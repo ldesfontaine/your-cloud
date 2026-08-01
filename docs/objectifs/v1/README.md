@@ -93,14 +93,15 @@ autorité :
 - la **Console** est une application cliente Tauri 2 installée et signée. Elle
   embarque le frontend React, TypeScript et Vite et le client réseau natif sans
   héberger de serveur local ni télécharger son code depuis un Controller. Elle
-  n'est pas la source de l'inventaire, ne détient aucun secret de machine ou de
-  runner et ne possède aucune identité lui permettant d'exécuter seule une
-  action d'infrastructure ;
+  n'est pas la source de l'inventaire, ne conserve aucun secret de machine ou
+  de runner et ne possède aucune identité lui permettant d'exécuter seule une
+  action d'infrastructure. Son Assistant temporaire reste la seule exception
+  bornée pendant l'amorçage décrit plus bas ;
 - le **Controller** est le backend d'une seule infrastructure. À terme, il porte
   son inventaire, ses utilisateurs et rôles, ses décisions d'enrôlement, ses
-  plans, son état attendu et son audit. En V1, il coordonne Ansible par le chemin
-  d'administration distinct. Il expose une API privée authentifiée mais ne sert
-  aucun frontend.
+  plans, son état attendu et son audit. En V1, il coordonne l'Auxiliaire par un
+  chemin SSH d'administration distinct pour chaque machine. Il expose une API
+  privée authentifiée mais ne sert aucun frontend.
 
 La V1 prouve une Console installée, un Controller et une infrastructure. La
 Console peut conserver plusieurs associations approuvées, une par Controller.
@@ -120,7 +121,7 @@ Appareil administrateur
                                       `- GET mTLS ----> Relay reader privé :8444
 ```
 
-La première Console est fonctionnelle sur Linux et Windows depuis le même
+La première Console doit être fonctionnelle sur Linux et Windows depuis le même
 frontend. Tauri 2 forme l'enveloppe native ; React, TypeScript et Vite forment le
 frontend commun. Ces fichiers appartiennent à l'artefact signé : ce n'est ni un
 site hébergé, ni une page `localhost`. Le client natif expose seulement des
@@ -203,6 +204,10 @@ Les libellés UTF-8 sont normalisés en NFC, bornés à 256 octets et 80 valeurs
 scalaires par une liste positive Unicode ; l'identifiant immuable, non le
 libellé, reste l'autorité visible.
 
+La borne de 64 machines limite l'état et les preuves de cette version ; elle
+n'est pas une limite générale du produit. Son relèvement exige des mesures et
+des formats adaptés plutôt qu'une promesse non éprouvée dans la V1.
+
 La preuve de cette application, ses builds et ses tests restent dans le LAB ou
 un runner isolé. Le laptop de développement continue de servir uniquement à
 Git, l'édition, aux contrôles statiques et au pilotage de `labctl`.
@@ -251,6 +256,113 @@ résiduels sur le routage, la disponibilité, TLS, l'intégrité du code livré 
 transmission d'identité devront être bornés.
 <!-- coherence: V1-APP-ACCESS:end -->
 
+<!-- coherence: BOOTSTRAP-RECOVERY:start -->
+## Amorçage et remplacement du Controller
+
+Le premier Controller n'existe pas encore pour installer sa propre autorité.
+La V1 fournit donc dans l'installation de la Console un **Assistant
+d'amorçage** natif, temporaire et distinct du frontend. Le parcours utilisateur
+reste simple :
+
+1. choisir `Créer une infrastructure` ;
+2. déclarer chaque machine par son nom, son endpoint SSH et son rôle envisagé ;
+3. prêter un accès SSH personnel déjà fonctionnel ;
+4. consulter l'audit en lecture seule et le placement recommandé ;
+5. approuver les comptes, artefacts, flux et privilèges exacts ;
+6. laisser l'Assistant installer et associer le Controller, vérifier depuis
+   celui-ci la joignabilité des cibles, puis enrôler les machines et transférer
+   l'autorité ;
+7. fermer l'Assistant sans interrompre le Controller ni les services.
+
+L'Assistant préfère un agent SSH déjà déverrouillé, qui signe sans livrer la
+clé. En repli, il déchiffre en mémoire une clé chiffrée choisie par
+l'utilisateur. Ni le frontend, ni le Controller, ni un journal ne reçoivent la
+clé personnelle ou le mot de passe `sudo`. Un compte non-root avec `sudo`
+protégé reste le défaut recommandé ; un accès SSH `root` exige un consentement
+explicite à chaque opération. Your Cloud ne supprime jamais cet accès personnel.
+Passphrase, mot de passe et consentement passent par une fenêtre du cœur natif
+qui répète cibles, actions et expiration ; la WebView ne peut ni les fournir,
+ni les valider, ni appeler librement SSH ou `ssh-agent`.
+
+L'audit ne scanne pas le LAN. Pour la V1 serveur, il accepte Debian 13
+`amd64` ; systemd et cgroup v2 sont en plus requis pour héberger un service OCI
+géré. Il confirme les clés d'hôte, les rôles existants et les ressources avant
+de proposer un Controller sur une machine privée, de confiance et normalement
+allumée. Le Controller peut cohabiter sur une petite infrastructure si ses
+processus, comptes, secrets, fichiers et budgets restent séparés ; une machine
+ou VM dédiée est recommandée lorsque taille ou sensibilité augmentent. Le
+laptop et le VPS public portant le Relay ne sont pas les placements permanents
+par défaut. Cette cohabitation partage la panne matérielle : perdre ou isoler
+l'hôte peut interrompre ses services locaux, et la Console doit le rendre
+visible avant approbation.
+
+Chaque rôle borne CPU, mémoire, processus et disque avec systemd/cgroup ou le
+quota disponible. Ses destinations, listeners, tailles, concurrences, délais
+et débits bornent séparément le réseau. L'audit rend ces coûts et ressources
+disponibles. La preuve couvre une petite machine et les inventaires de 1, 2 et
+64 machines. Un placement réellement insuffisant est refusé avec sa cause ; la
+borne de 64 appartient à la V1 et ne constitue pas un plafond général du
+produit.
+
+Il existe exactement deux catégories d'accès SSH d'administration des machines :
+
+- l'accès personnel indépendant que l'utilisateur conserve ;
+- une identité Your Cloud différente par machine, créée et détenue par le
+  Controller.
+
+La seconde clé publique impose une commande forcée vers `your-cloud aux` et
+interdit shell, PTY, SFTP, transfert de port et transfert d'agent. Sa clé privée
+reste sur le Controller dans un fichier possédé par `root`, fourni au seul
+service Controller par les credentials systemd. L'authentification
+Console–Controller autorise l'humain dans le produit ; elle n'ajoute pas une
+troisième autorité SSH.
+
+La clé publique est installée pour un compte technique verrouillé, distinct du
+Daemon et du Relay et sans mot de passe. Son fichier et ses parents root-owned
+ne sont pas modifiables par ce compte. Les restrictions SSH refusent aussi rc
+utilisateur, X11 et environnement, puis imposent le chemin absolu root-owned de
+l'Auxiliaire. La politique d'élévation autorise uniquement cette invocation
+exacte, environnement réinitialisé, avec le plan typé sur l'entrée standard,
+jamais un `sudo`, `SETENV` ou des arguments libres.
+
+Le lot serveur est installé avant cette clé. L'entrée Auxiliaire du palier
+d'amorçage valide seulement son protocole en lecture seule et refuse par défaut
+toute mutation ; la première opération réelle, la sonde OCI, appartient au
+palier suivant.
+
+Le même Assistant expose `Remplacer un Controller`. Ce choix reste manuel :
+une panne temporaire ne déclenche aucune bascule. L'utilisateur redéclare les
+endpoints si l'inventaire est perdu ; l'Assistant installe le nouveau
+Controller et crée une nouvelle association Console. Il réutilise les Agents
+compatibles, reprovisionne l'identité et le filtre du lecteur Relay, puis tourne
+l'époque d'approbation, les clés SSH, certificats, sessions et manifestes que
+l'ancien Controller pouvait utiliser. Chaque nouvelle autorité est vérifiée
+avant le retrait de l'ancienne. Une coupure rend un état partiel par machine et
+interdit d'annoncer une réussite globale.
+
+Si l'ancien Controller est soupçonné compromis, son hôte est d'abord isolé et
+le nouveau part d'une base saine ; sinon le remplacement reste explicitement
+non sécurisé. Les accès personnels restent intacts et les services des autres
+hôtes continuent ; un service colocalisé sur l'hôte perdu ou isolé peut être
+interrompu. Le code de récupération existant réassocie une Console à un
+Controller vivant ; il ne restaure pas un Controller détruit. Si cette
+récupération remplace la clé humaine, les actions restent verrouillées jusqu'à
+ce que l'Assistant tourne les ancres publiques avec l'accès SSH personnel.
+
+L'installateur V1 embarque l'Assistant, l'artefact serveur Debian 13 `amd64`,
+les définitions d'installation et leur manifeste d'empreintes. Il ne télécharge
+aucun binaire privilégié à la volée. `arm64` attend une preuve séparée et les
+mises à jour restent manuelles. Les builds Windows emploient un certificat
+synthétique pour tester la mécanique ; une distribution publique Windows reste
+bloquée tant qu'une signature reconnue et gratuite n'est pas réellement
+opérationnelle.
+
+Le contrat détaillé se trouve dans
+[Amorçage et remplacement du Controller](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
+Cette capacité est décidée pour la V1, mais elle n'est encore ni implémentée ni
+prouvée.
+<!-- coherence: BOOTSTRAP-RECOVERY:end -->
+
 ## Quatre chemins différents
 
 | Chemin | Rôle |
@@ -263,7 +375,9 @@ transmission d'identité devront être bornés.
 La Console ne devient pas un accès direct au Relay. Le Relay ne devient ni le
 proxy Web, ni le backend métier, ni un canal d'action. Le Daemon ne devient pas
 un accès d'administration. Une panne de la Console, du Controller ou de
-l'observation ne doit pas arrêter les services.
+l'observation ne doit pas arrêter, par elle-même, les services hébergés sur
+d'autres machines ; la perte d'un hôte reste une panne de ses services
+colocalisés.
 
 ### Comment l'interface agit réellement en V1
 
@@ -276,8 +390,8 @@ Quand l'utilisateur demande un déploiement ou une modification prise en charge 
 3. la Console affiche les changements, privilèges, flux, effets d'un échec et
    limites ;
 4. l'utilisateur approuve ce plan dans la Console ;
-5. le Controller l'applique avec Ansible par le chemin SSH
-   distinct ;
+5. le Controller utilise l'identité SSH propre à la machine et sa commande
+   forcée pour faire appliquer le plan typé par l'Auxiliaire ponctuel ;
 6. le Controller vérifie le résultat par des contrôles directs puis par les
    nouvelles observations du Daemon obtenues auprès du Relay.
 
@@ -297,43 +411,66 @@ NAT.
 
 La V1 et la cible à long terme conservent le même contrat utilisateur :
 demander une action, comprendre le plan, approuver son contenu exact, appliquer
-par une autorité adaptée puis vérifier le résultat. Seul le chemin d'application
-évoluera.
+par une autorité adaptée puis vérifier le résultat.
 
 La V1 distribue un seul exécutable `your-cloud` sur les deux machines. Sur la
-machine du LAN, systemd lance uniquement `your-cloud daemon`. Sur le VPS,
-systemd lance en parallèle `your-cloud daemon` et `your-cloud relay` depuis ce
-même fichier, mais sous des comptes, configurations, identités, secrets et
-budgets distincts. Le rôle Relay est désactivé par défaut et refuse de démarrer
-sans provisionnement local explicite de la machine candidate. Une seule version
-à maintenir ne signifie donc ni un seul processus, ni une autorité commune.
+machine du LAN, systemd lance `your-cloud daemon`. Sur le VPS, systemd lance en
+parallèle `your-cloud daemon` et `your-cloud relay` depuis ce même fichier, mais
+sous des comptes, configurations, identités, secrets et budgets distincts. Le
+rôle Relay est désactivé par défaut et refuse de démarrer sans provisionnement
+local explicite de la machine candidate. Une seule version à maintenir ne
+signifie donc ni un seul processus, ni une autorité commune.
 
-Dans la V1, cette autorité est Ansible par SSH. Après la V1, une machine placée
-en mode géré pourra recevoir une capacité optionnelle d'action dans son Agent :
-un chemin encore à cadrer, distinct du Daemon et du Relay d'observation, pourra
-activer un Auxiliaire local sans réseau pour une opération nommée. OpenStack,
-Terraform, OpenTofu et K3s utiliseront plutôt leurs API ou un runner isolé
-lorsque cette autorité est plus adaptée. Cette cible est détaillée dans le
+Sur une machine placée en mode géré, une commande SSH forcée peut lancer
+ponctuellement `your-cloud aux` depuis les mêmes octets. L'Auxiliaire n'est ni
+une unité permanente, ni un listener, ni un shell général. Il reçoit un plan
+typé dont l'enveloppe canonique a été signée par le cœur natif de la Console
+après l'approbation explicite. La cible conserve la clé publique, l'époque et la
+séquence anti-rejeu dans un état root-owned minimal. Le Controller transporte
+l'enveloppe sans pouvoir la modifier. L'Auxiliaire revérifie signature, cible,
+époque, successeur exact de la séquence, expiration et contraintes locales,
+consomme durablement la séquence avant mutation, applique seulement l'opération
+connue, rend un résultat structuré puis s'arrête. Il n'a aucun accès réseau
+général ;
+une opération OCI peut faire demander à Podman rootless uniquement un registre
+autorisé et un digest exact déjà visibles dans le plan.
+
+Ce chemin SSH d'action reste totalement séparé du Daemon et du Relay
+d'observation. Ansible ne fait pas partie du runtime ou du cœur produit V1 :
+l'utilisateur peut continuer à l'employer en mode externe et une intégration
+isolée pourra être étudiée après stabilisation. OpenStack, Terraform, OpenTofu
+et K3s utiliseront leurs API ou un runner isolé lorsque cette autorité est plus
+adaptée. Cette cible est détaillée dans le
 [cap du projet](../../projet/CAP.md).
 
-Le contrat V1 n'ajoute aucun canal d'action au Daemon et aucun Auxiliaire local.
-La roadmap conserve Ansible et SSH comme unique chemin d'application géré. Une
-réouverture de ce périmètre exigerait une modification explicite et une nouvelle
-validation du contrat V1. Les contraintes imposées dès maintenant sont :
+Les contraintes V1 sont :
 
-- le plan compris et approuvé reste distinct de son rendu Ansible ;
-- l'approbation identifie le contenu exact qui sera appliqué ;
+- le plan compris et approuvé est le document exact reçu par l'Auxiliaire ;
+- l'approbation couvre aussi le rollback exact, borné aux seules ressources
+  gérées par Your Cloud ;
+- le cœur natif signe seulement cette enveloppe nommée ; le frontend n'obtient
+  aucune signature libre et le Controller ne peut pas forger l'approbation ;
 - tout artefact ou paramètre généré qui ne correspond plus à l'empreinte
   approuvée arrête l'application avant la première mutation ;
 - le Controller ne reçoit depuis la Console ni playbook, inventaire, commande,
   argument libre ou chemin arbitraire : il sélectionne un parcours connu et des
   entrées typées, puis borne la cible à une machine enrôlée ;
-- l'identité SSH, la clé d'hôte et les droits `sudo` sont propres au chemin
-  prévu et minimaux pour l'opération ;
+- l'identité SSH opérationnelle est différente sur chaque machine ; sa commande
+  forcée, son répertoire et son binaire root-owned interdisent shell, PTY, SFTP,
+  rc, X11, environnement et transferts ;
 - le Daemon et le Relay restent consacrés à l'observation ;
 - la cohabitation sur le VPS ne leur donne aucun fichier d'identité, secret,
   stockage ou compte commun ;
-- l'échec de la Console, du Controller, du chemin SSH ou d'une future action ne
+- la première application d'un changement rend `changed=true` ; le même état
+  demandé sans dérive et le retrait d'un élément déjà absent rendent
+  `changed=false`, sans réécriture ni redémarrage inutiles ;
+- une dérive est signalée et exige un nouveau plan ; elle n'est pas corrigée
+  silencieusement ;
+- après un échec contrôlé, l'Auxiliaire tente le rollback approuvé tant qu'il
+  garde la maîtrise ; une coupure rend le résultat inconnu, interdit tout rejeu
+  aveugle et impose d'observer avant de proposer un nouveau plan ; l'époque et
+  la séquence consommée rendent ce refus durable après redémarrage ;
+- l'échec de la Console, du Controller, du chemin SSH ou d'une action ne
   doit pas arrêter un service déjà déployé ;
 - les résultats directs et les observations ultérieures restent deux preuves
   distinctes, visibles dans la Console.
@@ -357,7 +494,7 @@ mécanisme adapté au chemin :
 | Daemon vers Relay | mTLS avec une identité propre à chaque Daemon, y compris au-dessus de WireGuard lorsque le Relay est distant |
 | Console installée vers Controller | origine HTTPS TLS 1.3 exacte ; identité d'appareil P-256 mTLS et signature humaine Ed25519 liées au Controller et à son infrastructure ; clés distinctes dans un coffre Tauri Stronghold commun Linux/Windows déverrouillé par six mots locaux Argon2id ; appairage et récupération sur listener temporaire épinglé, session bornée et rotations en deux phases |
 | Controller vers Relay | `GET /v0/snapshot` sur le listener privé exact `8444`, filtré sur l'IP source Controller puis protégé par TLS 1.3 mTLS, CA Ed25519 dédiées, manifeste et `infrastructure_id` commun ; UTC et reprise bornées |
-| Controller vers machine pour un plan approuvé | SSH avec identité d'administration distincte et clé d'hôte vérifiée |
+| Controller vers machine pour un plan approuvé | SSH avec une identité Your Cloud propre à la machine et une commande forcée root-owned ; enveloppe signée par la Console, clé publique, époque et anti-rejeu vérifiés sur la cible ; aucun shell, PTY, SFTP, rc, X11, environnement ou transfert |
 | Navigateur vers service publié | HTTPS jusqu'au point d'entrée public |
 | VPS vers service du LAN | WireGuard et autorisation limitée à la destination et au port du service |
 
@@ -419,7 +556,7 @@ L'utilisateur choisit dans l'App « publier ce service par ce VPS ». Your Cloud
 2. calcule les adresses, routes et autorisations strictement nécessaires ;
 3. présente le plan et les conséquences d'une suppression ou d'un échec ;
 4. attend l'approbation ;
-5. applique la configuration avec Ansible ;
+5. fait appliquer les opérations typées par l'Auxiliaire de chaque machine ;
 6. vérifie le passage privé, le refus des autres ports et l'accès HTTPS ;
 7. conserve l'état attendu afin de détecter une dérive ultérieure.
 
@@ -450,7 +587,15 @@ commencer par un audit, un diff et une approbation ; elle n'est jamais implicite
 
 ## Capacités nécessaires
 
-- Créer une infrastructure et lui rattacher les deux machines existantes.
+- Amorcer une infrastructure depuis la Console avec un accès SSH personnel
+  temporaire, sans scanner le LAN ni conserver cet accès.
+- Installer un Controller autonome puis pouvoir le remplacer explicitement en
+  conservant les accès personnels, les services des hôtes survivants et les
+  Agents compatibles tout en renouvelant toutes les autorités que l'ancien
+  Controller pouvait exercer ; rendre visible l'interruption possible d'un
+  service colocalisé sur l'hôte perdu.
+- Rattacher les deux machines existantes avec une identité SSH Your Cloud
+  différente et restreinte par machine.
 - Installer un Agent minimal proprement identifiable sur chaque machine, dont
   le Daemon est limité à l'observation.
 - Activer sur le seul VPS déclaré candidat un processus Relay séparé à partir du
@@ -458,7 +603,8 @@ commencer par un audit, un diff et une approbation ; elle n'est jamais implicite
 - Recevoir par le Relay leur présence, leur version et un premier état utile.
 - Afficher clairement une donnée absente, récente ou devenue ancienne.
 - Présenter depuis l'App un plan de déploiement avant exécution.
-- Exécuter le déploiement approuvé avec Ansible vers la machine concernée.
+- Exécuter le déploiement approuvé par l'utilisateur et vérifié par
+  l'Auxiliaire ponctuel de la machine concernée, sans shell ni commande libre.
 - Déployer deux services aux versions précisément maîtrisées : un sur le VPS et
   un dans le LAN.
 - Configurer le passage chiffré entre le VPS et la machine du LAN.
@@ -520,10 +666,10 @@ facilement le plan Your Cloud à une configuration déjà familière.
 
 Your Cloud reste l'autorité déclarative des publications : il génère une
 configuration dynamique Traefik en YAML avec le `file provider`, la présente
-dans le plan, la dépose avec Ansible puis vérifie le résultat. Traefik ne
-découvre pas seul les conteneurs et ne reçoit pas le socket Docker dans la V1.
-La configuration vise explicitement BentoPDF sur le VPS et Vaultwarden par son
-adresse WireGuard et son port autorisé.
+dans le plan, la fait déposer atomiquement par l'Auxiliaire du VPS puis vérifie
+le résultat. Traefik ne découvre pas seul les conteneurs et ne reçoit pas le
+socket Docker dans la V1. La configuration vise explicitement BentoPDF sur le
+VPS et Vaultwarden par son adresse WireGuard et son port autorisé.
 
 Contraintes de sécurité :
 
@@ -568,22 +714,26 @@ sûr et réduction du risque de NIS2, sans constituer une conformité à lui seu
 
 ## Méthode de déploiement
 
-Ansible est le moyen retenu pour orchestrer et vérifier un changement. Il n'est
-pas le format universel des services : une intégration peut installer un paquet
-natif ou une image OCI, mais la V1 n'implémente qu'un premier parcours officiel
-fondé sur des **images OCI**.
+Le Controller orchestre et vérifie les changements ; l'Auxiliaire applique sur
+sa propre machine les opérations locales typées. La V1 n'en fait pas un format
+universel des services : elle implémente un premier parcours officiel fondé sur
+des **images OCI**. Ansible reste un outil externe de l'utilisateur, pas une
+dépendance du produit ou du runtime V1.
 
 BentoPDF et Vaultwarden sont référencés par un nom lisible, une version précise
 et le digest du manifeste réellement approuvé. Un tag flottant comme `latest`
 est refusé. Le plan affiche l'origine, la version, le digest, les volumes, les
 ports, les besoins réseau et les limites de ressources avant approbation.
 
-Ansible télécharge l'image depuis un registre explicitement autorisé, vérifie
-que le digest obtenu correspond au plan, installe la définition du service puis
-prouve son état. Une mise à jour est un nouveau plan vers un nouveau digest ;
-elle ne suit jamais silencieusement un tag modifié. Une suppression retire le
-conteneur et ses autorisations, mais ne détruit les données persistantes que si
-cette conséquence a été explicitement demandée et approuvée.
+L'Auxiliaire demande à Podman rootless de télécharger l'image depuis le seul
+registre autorisé dans le plan, vérifie que le digest obtenu correspond, puis
+installe la définition du service et rend ses contrôles directs. Il n'ouvre
+aucun listener et ne dispose d'aucun accès réseau général : le registre, le
+digest et l'effet réseau appartiennent au plan. Une mise à jour produit un
+nouveau plan vers un nouveau digest ; elle ne suit jamais silencieusement un
+tag modifié. Une suppression retire le conteneur et ses autorisations, mais ne
+détruit les données persistantes que si cette conséquence a été explicitement
+demandée et approuvée.
 
 Ce choix borne le premier adaptateur sans faire des conteneurs le modèle unique
 du produit. Un futur adaptateur de paquet natif ou de K3s devra respecter le
@@ -625,9 +775,9 @@ Quadlet ne bascule pas automatiquement vers OpenRC, runit ou un script maison.
 Un service installé par l'utilisateur peut rester représenté en mode externe.
 Aucun adaptateur pour un autre système d'init n'est planifié dans la V1.
 
-Cette limite concerne le déploiement OCI géré. Elle ne suffit pas, à elle seule,
-à décider si une machine peut être enrôlée et observée : le paquet et les
-prérequis définitifs de l'Agent seront cadrés dans leur propre incrément.
+Cette limite concerne le déploiement OCI géré. L'enveloppe serveur V1 est
+bornée à Debian 13 `amd64` ; une autre architecture ou distribution n'est
+annoncée qu'après une preuve dédiée.
 
 Podman offre une ligne de commande comparable à celle de Docker, ce qui réduit
 le coût d'apprentissage pour un utilisateur habitué aux commandes `docker`.
@@ -638,7 +788,7 @@ signaleront les différences utiles.
 Quadlet n'est pas une couche d'orchestration cachée. C'est la fiche déclarative
 qui associe une image précise à son compte, ses volumes, son réseau, ses ports,
 ses limites et sa politique de redémarrage. systemd transforme cette fiche en
-service Linux observable. Ansible installe et retire ces définitions après
+service Linux observable. L'Auxiliaire installe et retire ces définitions après
 approbation ; aucune API Podman permanente n'est nécessaire à Traefik ou aux
 services.
 
@@ -813,9 +963,10 @@ changer ce modèle de sécurité : chaque collecteur possède un identifiant, un
 version, un schéma de sortie, un manifeste de privilèges et des tests hostiles.
 
 Le Daemon principal reste non-root. Si une future donnée exige davantage de
-droits, elle sera lue par un auxiliaire local séparé, sans réseau, qui n'expose
-qu'une opération fixe et renvoie une sortie typée. Donner root au Daemon entier
-ou lui permettre d'exécuter des plugins arbitraires reste exclu.
+droits, elle sera lue par une opération locale séparée, sans listener ni accès
+réseau général, qui n'expose qu'un schéma fixe et renvoie une sortie typée.
+Donner root au Daemon entier ou lui permettre d'exécuter des plugins
+arbitraires reste exclu.
 
 ### Justification OWASP et NIS2
 
@@ -871,7 +1022,8 @@ avant d'ajouter une nouvelle capacité.
 
 Le LAB simulera au minimum :
 
-- une VM de contrôle pour le Controller et Ansible ;
+- des environnements d'administration isolés pour la Console, son Assistant
+  temporaire et le Controller ;
 - une VM jouant le rôle du VPS sur un réseau exposé ;
 - une VM placée derrière un réseau LAN sans entrée directe ;
 - une sonde extérieure au LAN pour vérifier les accès publics et l'absence
@@ -895,8 +1047,13 @@ seule tout le système Linux en pare-feu général du domicile.
 
 - Créer les VM ou installer leur système d'exploitation.
 - Piloter OpenStack, Terraform, OpenTofu ou un fournisseur cloud.
-- Recevoir des plans d'action par l'Agent ou activer un Auxiliaire local pour
-  les appliquer sans SSH.
+- Transporter des plans par le Daemon ou le Relay, ou ouvrir un shell général
+  par l'Auxiliaire.
+- Intégrer Ansible dans le Controller ou l'imposer aux machines.
+- Basculer automatiquement vers un autre Controller, reconstruire son
+  inventaire par scan ou ajouter une troisième autorité SSH de secours.
+- Reprendre automatiquement une action interrompue dont le résultat est
+  inconnu.
 - Fournir depuis l'interface des opérations générales sur la machine au-delà des
   déploiements, passages et routes précisément pris en charge par la V1.
 - Fournir un catalogue générique acceptant arbitrairement tout service.

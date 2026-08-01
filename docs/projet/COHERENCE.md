@@ -25,6 +25,7 @@ sources.
 | `docs/contribution/QUALITE.md` | Les règles de conception, développement et validation |
 | `docs/contribution/TESTS.md` | Le registre des contrôles, incidents et écarts à automatiser, jamais une preuve par lui-même |
 | `docs/architecture/ANATOMIE.md` | La projection visuelle des placements, flux, autorités et états |
+| `docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md` | Le contrat de l'autorité SSH initiale, de son transfert et du remplacement explicite du Controller |
 | `docs/architecture/CHAINE-D-OBSERVATION.md` | La projection détaillée des rôles Daemon/Relay, du signal de présence et de leur coordination |
 | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | Le cycle sûr validé du déploiement, de la publication, de la migration et du retrait d'un service |
 | `docs/lab/` | Les preuves réellement exécutées, jamais une décision par elles-mêmes |
@@ -80,7 +81,8 @@ ci-dessous sert seulement à reconnaître son sujet.
 <!-- coherence-registry:start -->
 | Identifiant | Frontière suivie | Source canonique | Projections obligatoires |
 |---|---|---|---|
-| `AGENT-AUTHORITY` | Un artefact Agent par version, rôles en processus isolés, Daemon non-root, Relay explicitement activé, Auxiliaire optionnel ponctuel et autorités adaptées | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
+| `AGENT-AUTHORITY` | Un artefact Agent par version, rôles en processus isolés, Daemon non-root, Relay explicitement activé, Auxiliaire ponctuel et autorités adaptées | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md`, `docs/contribution/QUALITE.md` |
+| `BOOTSTRAP-RECOVERY` | Assistant temporaire, accès personnel conservé, approbation signée, identités par machine et remplacement explicite de toutes les autorités du Controller | `docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 | `V1-OBSERVATION` | Collecteurs nommés, sortie mTLS, Relay sans ordre, tampon borné et lacunes visibles | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
 | `V1-APP-ACCESS` | Console cliente installée et signée, Controller backend sans frontend, accès privé par appareil et services publiés indépendants | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
 | `V1-NETWORK` | Machines enrôlées, flux bornés, WireGuard, mTLS, HTTPS et zone d'exposition sans fausse DMZ | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
@@ -88,7 +90,7 @@ ci-dessous sert seulement à reconnaître son sujet.
 | `SERVICE-LIFECYCLE` | Réseau préparé fermé, service vérifié avant publication, bascule observable et retour honnête | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 <!-- coherence-registry:end -->
 
-Le registre reste limité aux six frontières dont une divergence changerait le
+Le registre reste limité aux sept frontières dont une divergence changerait le
 modèle de confiance ou le parcours utilisateur. Les choix de déploiement, la
 discipline LAB, la portée de la roadmap et les notes hors de l'objectif actif
 suivent la table de propagation précédente, mais ne reçoivent pas de marqueurs

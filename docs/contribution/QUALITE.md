@@ -106,9 +106,64 @@ Références de départ :
 - Documenter avec GoDoc les API et invariants importants sans paraphraser les
   évidences.
 
-## Ansible
+<!-- coherence: AGENT-AUTHORITY:start -->
+## Auxiliaire et actions locales
 
-- Nommer chaque tâche par l'état recherché et préférer les modules déclaratifs.
+- Implémenter l'Auxiliaire comme un mode ponctuel du même artefact Go, jamais
+  comme un service permanent, un listener ou un shell général. Son premier
+  palier n'expose qu'un diagnostic de protocole en lecture seule et refuse toute
+  mutation avant l'ajout d'une opération contractée.
+- Accepter uniquement une opération versionnée et des paramètres typés par une
+  liste positive ; refuser champ, comportement, chemin, destination, capacité
+  ou ressource inconnus avant mutation.
+- Garder Daemon, Relay et Auxiliaire dans des processus, comptes, identités,
+  secrets, fichiers et budgets distincts. Le Daemon et le Relay ne transportent
+  jamais de plan.
+- Lancer l'Auxiliaire par une identité SSH propre à la machine et une commande
+  forcée qui interdit shell, PTY, SFTP, rc utilisateur, X11, environnement,
+  transfert de port et transfert d'agent.
+- Lier cette clé à un compte technique verrouillé distinct ; garder
+  `authorized_keys`, ses parents, le chemin absolu du binaire et l'élévation
+  possédés par `root` et non inscriptibles par ce compte. Borner l'élévation à
+  l'invocation exacte de l'Auxiliaire, environnement réinitialisé, sans argument,
+  `SETENV` ou règle `sudo` générale.
+- Faire signer l'enveloppe canonique du plan et de son rollback par le cœur
+  natif de la Console après confirmation explicite ; ne fournir au frontend
+  aucune primitive de signature libre.
+- Revérifier localement signature, clé publique d'approbation, infrastructure,
+  machine, époque, successeur exact de la séquence, action, version, expiration
+  et préconditions sans faire confiance au Controller qui transporte le plan.
+- Consommer atomiquement la séquence avant la première mutation dans un état
+  anti-rejeu root-owned minimal. Refuser les séquences anciennes ou déjà
+  consommées avant et après redémarrage.
+- Après une récupération de Console qui remplace la clé humaine, refuser toute
+  action jusqu'à la rotation des ancres par l'Assistant et l'accès SSH
+  personnel ; ne jamais laisser le Controller tourner seul cette confiance.
+- Ne donner aucun accès réseau général à l'Auxiliaire. Une opération OCI peut
+  seulement faire utiliser par Podman rootless le registre autorisé et le
+  digest exact présents dans le plan.
+- Rendre `changed=true` pour la première mutation réelle. Le même état demandé
+  sans dérive et le retrait d'un élément déjà absent rendent `changed=false`
+  sans réécriture ni redémarrage.
+- Signaler une dérive et exiger un nouveau plan au lieu de la corriger
+  silencieusement.
+- Décrire un rollback exact dans le plan et le couvrir par son approbation.
+  Après un échec contrôlé, le tenter tant que l'Auxiliaire garde la maîtrise ;
+  annoncer un état partiel s'il échoue.
+- Après une coupure, rendre `résultat inconnu`, ne rien rejouer et observer
+  avant tout nouveau plan. La V1 n'ajoute ni historique local général, ni
+  continuation autonome de l'Auxiliaire ; seul l'état anti-rejeu minimal
+  persiste.
+
+## Ansible externe ou futur
+
+- Ansible n'est ni une dépendance du Controller, ni le runtime d'action de la
+  V1. L'utilisateur peut conserver ses playbooks en mode externe.
+- Une intégration future exige son propre contrat et un runner isolé ; elle
+  n'est pas préconçue dans le cœur ou l'Auxiliaire actuel.
+- Lorsqu'un playbook existe pour le LAB, un parcours externe ou une future
+  intégration, nommer chaque tâche par l'état recherché et préférer les modules
+  déclaratifs.
 - Réserver le shell aux cas justifiés, bornés et vérifiés.
 - Garder variables, conditions et inclusions explicites.
 - Refuser tôt avec un message précis lorsque les préconditions ou les chemins
@@ -130,12 +185,13 @@ action ; elles ne justifient aucune abstraction anticipée :
 - une autorité privilégiée revérifie localement le plan sans faire confiance au
   composant qui l'a transporté et reçoit seulement les droits de l'opération ;
 - les transitions `en attente`, `en cours`, `réussi`, `échoué` et `résultat
-  inconnu` sont persistantes et aucun retry d'une mutation non idempotente n'est
-  implicite ;
+  inconnu` sont persistées par le Controller et aucun retry d'une mutation non
+  idempotente n'est implicite ;
 - les résultats sont structurés, bornés, expurgés et reliés à l'identifiant du
   plan sans transporter de secret persistant ;
 - mise à jour de l'Agent, politiques privilégiées et actions métier utilisent
   des autorités distinctes.
+<!-- coherence: AGENT-AUTHORITY:end -->
 
 ## Shell et `labctl`
 
