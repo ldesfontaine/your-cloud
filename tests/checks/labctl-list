@@ -27,4 +27,16 @@ if PATH="$workdir/bin:$PATH" "$root/tools/labctl" list --format=json >/dev/null 
   exit 1
 fi
 
-printf 'PASS: labctl list human and TSV contracts\n'
+if failure_output=$(
+  FAKE_VIRSH_SCENARIO=error PATH="$workdir/bin:$PATH" \
+    "$root/tools/labctl" list 2>&1
+); then
+  echo "libvirt inventory failure was rendered as an empty list" >&2
+  exit 1
+fi
+[[ "$failure_output" == *"impossible d'inventorier les domaines libvirt"* ]] || {
+  printf 'unexpected fail-closed diagnostic:\n%s\n' "$failure_output" >&2
+  exit 1
+}
+
+printf 'PASS: labctl list human, TSV and fail-closed contracts\n'

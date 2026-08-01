@@ -118,6 +118,20 @@ metadata_attr() {
   sed -n "s/.* $attr=\"\([^\"]*\)\".*/\1/p" <<<"$xml"
 }
 
+list_domain_names() {
+  local names
+  names=$("${VIRSH[@]}" list --all --name) \
+    || die "impossible d'inventorier les domaines libvirt"
+  printf '%s\n' "$names"
+}
+
+list_network_names() {
+  local names
+  names=$("${VIRSH[@]}" net-list --all --name) \
+    || die "impossible d'inventorier les réseaux libvirt"
+  printf '%s\n' "$names"
+}
+
 require_managed_domain() {
   local name="$1" origin template topology
   valid_name "$name"
@@ -746,12 +760,13 @@ cmd_topology() {
 }
 
 cmd_list() {
-  local format=human name state origin template topology ip
+  local format=human names name state origin template topology ip
   if [[ "${1:-}" == --format=tsv ]]; then
     format=tsv
     shift
   fi
   [[ $# -eq 0 ]] || die "usage: labctl list [--format=tsv]"
+  names=$(list_domain_names)
   if [[ "$format" == human ]]; then
     printf '%-24s %-10s %-15s %-13s %-10s %s\n' VM ETAT IP GABARIT TOPOLOGIE ORIGINE
   else
@@ -775,8 +790,40 @@ cmd_list() {
     else
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$state" "$ip" "$template" "$topology" "$origin"
     fi
-  done < <("${VIRSH[@]}" list --all --name)
+  done <<<"$names"
   return 0
+}
+
+cmd_assert_clean() {
+  [[ $# -eq 0 ]] || die "usage: labctl assert-clean"
+  local domains networks name origin xml description retained=0
+  domains=$(list_domain_names)
+  networks=$(list_network_names)
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    origin=$(metadata_attr "$name" origin)
+    if [[ "$origin" == "$ORIGIN" || "$name" == lab-* ]]; then
+      printf 'VM LAB persistante : %s (origine=%s)\n' "$name" "${origin:--}" >&2
+      retained=1
+    fi
+  done <<<"$domains"
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    xml=$("${VIRSH[@]}" net-dumpxml "$name") \
+      || die "impossible d'inspecter le réseau libvirt '$name'"
+    description=$(sed -n 's:.*<description>\(.*\)</description>.*:\1:p' <<<"$xml")
+    if [[ "$description" == "$ORIGIN topology="* || "$name" == lab-* ]]; then
+      printf 'Réseau LAB persistant : %s (description=%s)\n' \
+        "$name" "${description:--}" >&2
+      retained=1
+    fi
+  done <<<"$networks"
+
+  [[ $retained -eq 0 ]] \
+    || die "LAB non fermé ; détruire chaque topologie avec labctl ou documenter explicitement sa conservation"
+  echo "✔ aucune VM ni aucun réseau LAB persistant"
 }
 
 cmd_revert() {
@@ -947,6 +994,7 @@ labctl v6 — LAB your-cloud borné
   labctl topology prepare v1-full
   labctl topology destroy <quick|v1-full>
   labctl list [--format=tsv]
+  labctl assert-clean
   labctl revert  <vm> [snapshot]
   labctl snap    <vm> <snapshot>
   labctl start   <vm>
@@ -969,6 +1017,7 @@ command="${1:-}"; [[ $# -gt 0 ]] && shift
 case "$command" in
   topology) cmd_topology "$@" ;;
   list) cmd_list "$@" ;;
+  assert-clean) cmd_assert_clean "$@" ;;
   revert) cmd_revert "$@" ;;
   snap) cmd_snap "$@" ;;
   start) cmd_start "$@" ;;

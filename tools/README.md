@@ -6,7 +6,9 @@ aucun scénario de test.
 
 - [`labctl`](labctl) crée, inspecte et commande les VM KVM/libvirt du LAB. Il
   reste utile depuis le poste de développement pour une preuve autorisée et
-  depuis un futur runner CI dédié ; il n'est donc pas réservé à la CI.
+  depuis un futur runner CI dédié ; il n'est donc pas réservé à la CI. Sa
+  commande `assert-clean`, sans mutation, rend bloquante toute VM ou tout réseau
+  LAB encore persistant à la clôture.
 - [`check-docs`](check-docs) vérifie la structure et les liens de la
   documentation sans lancer le produit.
 

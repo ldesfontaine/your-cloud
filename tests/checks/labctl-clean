@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Verify fail-closed LAB closure detection without touching real libvirt state.
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "$0")/../.." && pwd)
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+mkdir "$workdir/bin"
+ln -s "$root/tests/checks/fixtures/virsh-list" "$workdir/bin/virsh"
+
+clean_output=$(
+  FAKE_VIRSH_SCENARIO=clean PATH="$workdir/bin:$PATH" \
+    "$root/tools/labctl" assert-clean
+)
+[[ "$clean_output" == "✔ aucune VM ni aucun réseau LAB persistant" ]] || {
+  printf 'unexpected clean output:\n%s\n' "$clean_output" >&2
+  exit 1
+}
+
+if retained_output=$(
+  FAKE_VIRSH_SCENARIO=retained PATH="$workdir/bin:$PATH" \
+    "$root/tools/labctl" assert-clean 2>&1
+); then
+  echo "retained LAB resources were accepted" >&2
+  exit 1
+fi
+for expected in \
+  "VM LAB persistante : lab-managed" \
+  "VM LAB persistante : lab-stopped" \
+  "Réseau LAB persistant : lab-v1-full" \
+  "ERREUR : LAB non fermé"; do
+  [[ "$retained_output" == *"$expected"* ]] || {
+    printf 'missing retained-resource diagnostic %s:\n%s\n' \
+      "$expected" "$retained_output" >&2
+    exit 1
+  }
+done
+
+if failure_output=$(
+  FAKE_VIRSH_SCENARIO=error PATH="$workdir/bin:$PATH" \
+    "$root/tools/labctl" assert-clean 2>&1
+); then
+  echo "libvirt inventory failure was accepted as a clean LAB" >&2
+  exit 1
+fi
+[[ "$failure_output" == *"impossible d'inventorier les domaines libvirt"* ]] || {
+  printf 'unexpected fail-closed diagnostic:\n%s\n' "$failure_output" >&2
+  exit 1
+}
+
+printf 'PASS: labctl closure guard and fail-closed inventory\n'

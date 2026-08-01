@@ -86,6 +86,14 @@ assertion conserve son code de sortie ; le nettoyage s'exécute aussi après un
 échec. Aucun `|| true` global, agrégat de logs ou rapport visuel ne doit masquer
 le premier contrôle rouge.
 
+La clôture de l'environnement possède une assertion distincte :
+`tools/labctl assert-clean` échoue si une VM ou un réseau LAB reste persistant,
+y compris sous un nom `lab-*` absent du contrôleur courant. Le contrôle
+générique [`tests/checks/labctl-clean`](../../tests/checks/labctl-clean) couvre
+l'état vide, les ressources conservées et l'indisponibilité de libvirt. Cette
+assertion ne détruit rien et ne remplace pas la décision humaine de conserver
+explicitement une topologie entre deux tâches.
+
 ## Matrice de `v0.0.3` — Linux prouvé, CI Windows configurée non exécutée
 
 Cette première matrice vient du

@@ -9,7 +9,7 @@ relié au lot exact qui a été exécuté.
 
 | Couche | Contenu | Runner attendu | Autorité |
 |---|---|---|---|
-| [`checks/`](checks/) | format, syntaxe, documentation, tests Go, build, contrat `labctl list` et schéma de restitution | runner isolé, actuellement `lab-console` pour le palier complet | codes de sortie et assertions |
+| [`checks/`](checks/) | format, syntaxe, documentation, tests Go, build, contrats `labctl list`/`assert-clean` et schéma de restitution | runner isolé, actuellement `lab-console` pour le palier complet | codes de sortie et assertions |
 | [`lab/v0.0.1/`](lab/v0.0.1/) | préparation, déploiement, scénarios hostiles multi-VM, nettoyage et restitution P2 | topologie KVM/libvirt `v1-full` pilotée par `labctl` | `result.json` et assertions machine |
 
 Cette séparation prépare une CI propre sans prétendre qu'un conteneur standard

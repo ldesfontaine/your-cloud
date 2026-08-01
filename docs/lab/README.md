@@ -45,6 +45,25 @@ technique existant.
 `labctl` applique également ces gardes aux commandes mutantes. Cela ne remplace
 pas le contrôle humain préalable.
 
+## Fermeture obligatoire
+
+Une VM arrêtée reste définie avec ses volumes et snapshots ; un réseau libvirt
+persistant peut également rester actif sans VM connectée. La fin d'une tâche
+LAB exige donc l'un des deux états explicites suivants :
+
+1. chaque topologie devenue inutile est retirée avec
+   `tools/labctl topology destroy <topologie>`, puis
+   `tools/labctl assert-clean` réussit ;
+2. une topologie est volontairement conservée pour une reprise identifiée :
+   le compte rendu nomme la topologie, la raison, la prochaine tâche responsable
+   et le résultat rouge attendu de `tools/labctl assert-clean`.
+
+Une simple série de `stop` ne constitue pas une fermeture. La commande
+`assert-clean` ne modifie rien : elle refuse les VM et réseaux portant
+l'origine `your-cloud/labctl`, ainsi que les noms `lab-*` suspects. Elle échoue
+également si l'inventaire libvirt est inaccessible, afin qu'une erreur de
+contrôle ne puisse jamais être confondue avec un LAB vide.
+
 Le contenu de `keys.txt` et de `/srv/infra/secrets/` ne doit jamais être lu,
 affiché ou copié. Seuls des secrets synthétiques générés pour le scénario
 entrent dans le LAB.
@@ -62,6 +81,7 @@ tools/labctl topology inspect <quick|v1-full>
 tools/labctl topology prepare v1-full
 tools/labctl topology destroy <quick|v1-full>
 tools/labctl revert <vm> [snapshot]
+tools/labctl assert-clean
 tools/labctl start <vm>
 tools/labctl stop <vm>
 tools/labctl ssh <vm> [commande...]
