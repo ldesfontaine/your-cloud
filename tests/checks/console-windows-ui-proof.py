@@ -348,6 +348,7 @@ def main() -> int:
         "debugger_transport": "ephemeral loopback TCP, removed before normal launch",
         "proof_scope": "installed-native-smoke",
         "controller_exercised": False,
+        "native_minimum_window_enforcement": "not_exercised_by_webview_webdriver",
         "post_association_views": "not_executed_without_real_controller",
         "views": {},
     }
@@ -373,12 +374,9 @@ def main() -> int:
             "Association ou récupération",
         )
 
-        minimum_rectangle = driver.resize(500, 400)
-        assert minimum_rectangle["width"] >= 640 and minimum_rectangle["height"] >= 560
         report.update(
             {
                 "real_windows_vault_initialized": True,
-                "minimum_window_after_500x400_request": minimum_rectangle,
                 "result": "pass",
             }
         )
