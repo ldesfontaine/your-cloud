@@ -11,7 +11,7 @@ command -v timeout >/dev/null || { echo "timeout is required" >&2; exit 1; }
 
 script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 source_root=$(cd -- "$script_dir/../../../.." && pwd)
-deploy_dir="$source_root/deploy/v0.0.1"
+deploy_dir="$source_root/tests/lab/v0.0.1/deploy"
 [[ -d "$deploy_dir" && ! -L "$deploy_dir" ]] \
   || { echo "v0.0.1 deploy source is missing or symbolic" >&2; exit 1; }
 artifact=/usr/local/lib/your-cloud/your-cloud

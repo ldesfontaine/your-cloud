@@ -11,8 +11,8 @@ build/
 /console/src-tauri/target/
 
 # Sorties de preuve locales ; seule leur convention est versionnée.
-/artifacts/*
-!/artifacts/README.md
+/tests/artifacts/*
+!/tests/artifacts/README.md
 
 # Routeurs, propositions et caches propres aux assistants locaux.
 /AGENTS.md

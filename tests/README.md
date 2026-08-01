@@ -14,6 +14,7 @@ a été exécuté.
 | porte rapide sous [`checks/`](checks/) | format, syntaxe, contrat PowerShell de nettoyage attribué par SID, chemins bornés et collecte sans faux candidat nul, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
 | matrice native sous [`checks/`](checks/) | tests frontend et Rust, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, journaux et smoke borné |
 | [`lab/v0.0.1/`](lab/v0.0.1/) | préparation, déploiement, scénarios hostiles multi-VM, nettoyage et restitution P2 | topologie KVM/libvirt `v1-full` pilotée par `labctl` | `result.json` et assertions machine |
+| [`artifacts/`](artifacts/) | convention et sorties locales non versionnées des preuves | poste de pilotage après rapatriement d'un résultat LAB | résultat structuré du run exact |
 
 Cette séparation prépare une CI propre sans prétendre qu'un conteneur standard
 équivaut au LAB :
@@ -33,6 +34,12 @@ explicite : le mode `lab` exige `lab-console` et root isolé pour produire
 `dist/your-cloud`, tandis que le mode `ci` exige un runner distant déclaré et
 non privilégié, puis construit dans un répertoire temporaire. Aucun mode
 n'autorise l'exécution sur le laptop.
+
+Les sous-dossiers `lab/<version>/deploy/` figent les unités et scripts
+effectivement exercés par la preuve de ce palier. Ils ne constituent ni un
+installateur général, ni le packaging de production courant. Les futures
+définitions d'installation produit seront introduites avec leur propre contrat
+et leur propre preuve au lieu de réutiliser implicitement ces fixtures LAB.
 
 Les contrôles sont maintenus avec le code : tout défaut corrigé reçoit le cas
 hostile proportionné dans la couche la plus petite capable de le reproduire,

@@ -19,6 +19,6 @@ ses préconditions, commandes, résultats et incidents. La présence de ces
 sources ne constitue pas, à elle seule, une preuve.
 
 Lorsqu'un pilote en une commande sera décidé puis implémenté, chacun de ses
-rejeux devra produire sous `artifacts/proofs/v0.0.2/` un résultat structuré et
+rejeux devra produire sous `tests/artifacts/proofs/v0.0.2/` un résultat structuré et
 explicitement vert. Ce pilote est seulement enregistré comme automatisation
 restante ; il ne fait pas partie de `v0.0.2`.

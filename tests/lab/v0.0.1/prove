@@ -17,7 +17,7 @@ remote_lock=/run/your-cloud-v0.0.1-proof.lock
 remote_layout=/tmp/your-cloud-v0.0.1
 remote_target_archive="$remote_layout/source.tgz"
 remote_target_source="$remote_layout/source"
-remote_deploy="$remote_target_source/deploy/v0.0.1"
+remote_deploy="$remote_target_source/tests/lab/v0.0.1/deploy"
 remote_tests="$remote_target_source/tests/lab/v0.0.1/remote"
 remote_target_transfer="$remote_target_source/tests/lab/v0.0.1/transfer-artifact"
 remote_clock_state=/run/your-cloud-v0.0.1-proof-clock-state
@@ -70,12 +70,12 @@ declare -a step_results=()
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 console_transfer_state="/tmp/your-cloud-v0.0.1-transfer-$run_id"
 target_transfer_state="/run/your-cloud-v0.0.1-transfer-$run_id"
-result_dir="$root/artifacts/proofs/v0.0.1/$run_id"
+result_dir="$root/tests/artifacts/proofs/v0.0.1/$run_id"
 result_file="$result_dir/result.json"
 transport_failure_marker="$workdir/transport-failure"
 [[ "$run_id" =~ ^[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*$ ]] \
   || { echo "invalid v0.0.1 proof run identifier" >&2; /bin/rm -rf "$workdir"; exit 1; }
-mkdir -p "$root/artifacts/proofs/v0.0.1"
+mkdir -p "$root/tests/artifacts/proofs/v0.0.1"
 [[ ! -e "$result_dir" && ! -L "$result_dir" ]] \
   || { echo "v0.0.1 proof result path already exists" >&2; /bin/rm -rf "$workdir"; exit 1; }
 mkdir -m 0755 "$result_dir" \
@@ -476,7 +476,7 @@ while IFS= read -r -d '' path; do
     .git|.git/*|.agents|.agents/*|.codex|.codex/*|.claude|.claude/*|.cursor|.cursor/*)
       continue
       ;;
-    dist|dist/*|build|build/*|artifacts/proofs|artifacts/proofs/*)
+    dist|dist/*|build|build/*|tests/artifacts/proofs|tests/artifacts/proofs/*)
       continue
       ;;
   esac
@@ -569,13 +569,11 @@ for target in "${targets[@]}"; do
     || fail "source archive remains on $target after extraction"
   lab_ssh "$target" chmod 0755 \
     "$remote_layout" "$remote_target_source" \
-    "$remote_target_source/deploy" "$remote_deploy" \
     "$remote_target_source/tests" "$remote_target_source/tests/lab" \
-    "$remote_target_source/tests/lab/v0.0.1" "$remote_tests"
+    "$remote_target_source/tests/lab/v0.0.1" "$remote_deploy" "$remote_tests"
   lab_ssh "$target" chmod 0644 "$remote_transfer_helper"
   assert_remote_root_guard "$target" "$remote_layout" directory
   assert_remote_root_guard "$target" "$remote_target_source" directory
-  assert_remote_root_guard "$target" "$remote_target_source/deploy" directory
   assert_remote_root_guard "$target" "$remote_deploy" directory
   assert_remote_root_guard "$target" "$remote_target_source/tests" directory
   assert_remote_root_guard "$target" "$remote_target_source/tests/lab" directory

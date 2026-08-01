@@ -150,13 +150,13 @@
     </section>
 
     <section>
-      <h2>Pourquoi les trois lots sous <code>deploy/</code></h2>
+      <h2>Pourquoi trois lots <code>deploy/</code> sous <code>tests/lab/</code></h2>
       <table><thead><tr><th>Palier</th><th>Contrat</th><th>Cycle installé</th></tr></thead><tbody>
         <tr><td><code>v0.0.1</code></td><td>présence HTTP de LAB</td><td>aucun certificat, état Relay mémoire</td></tr>
         <tr><td><code>v0.0.2</code></td><td>observation mTLS bornée</td><td>credentials séparés et états durables</td></tr>
         <tr><td><code>v0.0.3</code></td><td>reader Relay et Controller de lecture</td><td>identités reader séparées, inventaire et cache atomiques</td></tr>
       </tbody></table>
-      <p class="note">Ces dossiers figent les entrées de preuve de chaque palier, pas trois versions actives du produit. Un ancien lot permet de relire sa preuve mais ne doit pas être appliqué au binaire courant ; le code métier reste unique dans <code>cmd/</code> et <code>internal/</code>.</p>
+      <p class="note">Ces dossiers figent les entrées de preuve de chaque palier, pas trois versions actives du produit. Un ancien lot permet de relire ou rejouer sa preuve mais ne doit pas être appliqué au binaire courant ni présenté comme packaging de production. Un futur installateur fournira ses propres définitions ; le code métier reste unique dans <code>cmd/</code> et <code>internal/</code>.</p>
     </section>
 
     <section>
