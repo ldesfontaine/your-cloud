@@ -214,7 +214,7 @@ $revalidationFunctions = @($functionDefinitions | Where-Object {
 })
 if ($revalidationFunctions.Count -ne 1 -or
     $revalidationFunctions[0].Extent.Text -notmatch '\.SafeHandle\b' -or
-    $revalidationFunctions[0].Extent.Text -notmatch '\bTest-ProcessInstanceIdentity\b' -or
+    $revalidationFunctions[0].Extent.Text -notmatch '\bGet-CurrentProcessInstance\b' -or
     $revalidationFunctions[0].Extent.Text -notmatch '\bResolve-ProofProcessAttribution\b') {
     throw "the drain must pin and reattribute the exact process instance before termination"
 }
