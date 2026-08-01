@@ -19,7 +19,7 @@ $automationUserCreated = $false
 $automationUserProfile = $null
 $automationAccount = $null
 $msi = $null
-$uiProofRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-ui-proof"
+$uiSmokeRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-webview2-smoke"
 $webViewUserData = $null
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = Join-Path $env:APPDATA "fr.your-cloud.console"
@@ -103,8 +103,8 @@ function Get-ProcessOwnerIdentity {
 
 try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
-    if (Test-Path -LiteralPath $uiProofRoot) {
-        Remove-Item -LiteralPath $uiProofRoot -Recurse -Force
+    if (Test-Path -LiteralPath $uiSmokeRoot) {
+        Remove-Item -LiteralPath $uiSmokeRoot -Recurse -Force
     }
     Write-Host "CI Windows: creating the synthetic code-signing certificate"
     $certificate = New-SelfSignedCertificate `
@@ -402,7 +402,7 @@ try {
     $automationLocalData = Join-Path $automationUserProfile.LocalPath "AppData\Local"
     $automationRoamingData = Join-Path $automationUserProfile.LocalPath "AppData\Roaming"
     $automationTemp = Join-Path $automationLocalData "Temp"
-    $webViewUserData = Join-Path $automationLocalData "your-cloud-windows-ui-proof\webview2"
+    $webViewUserData = Join-Path $automationLocalData "your-cloud-windows-webview2-smoke\webview2"
     New-Item -ItemType Directory -Path $automationTemp, $webViewUserData -Force | Out-Null
     Write-Host "CI Windows: installed Console will run as a bounded standard user"
 
@@ -499,7 +499,7 @@ try {
                 "--application", $installedExecutable,
                 "--debugger-address", $debuggerAddress,
                 "--session-ready-marker", $sessionReadyMarker,
-                "--output", $uiProofRoot
+                "--output", $uiSmokeRoot
             )
     }
     catch {
