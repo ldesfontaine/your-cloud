@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the installed Windows Console renderer without exposing generated secrets."""
+"""Smoke-test the installed Windows Console renderer without exposing generated secrets."""
 
 from __future__ import annotations
 
@@ -221,6 +221,13 @@ def assert_metrics(metrics: dict[str, object], heading: str) -> None:
     assert float(metrics["minimum_control_height"]) >= 44
 
 
+def css_pixels(value: object) -> float:
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)px", str(value))
+    if match is None:
+        raise AssertionError(f"expected a CSS pixel value, got {value!r}")
+    return float(match.group(1))
+
+
 def capture_view(
     driver: Driver,
     output: pathlib.Path,
@@ -250,13 +257,37 @@ def capture_view(
     assert_metrics(compact, heading)
     driver.screenshot(output / f"windows-{slug}-640x560.png")
 
-    driver.execute("document.documentElement.style.fontSize='32px'; return true;")
-    zoomed = driver.execute(METRICS_SCRIPT)
-    assert isinstance(zoomed, dict)
-    assert zoomed["root_font_size"] == "32px"
-    assert zoomed["horizontal_overflow"] is False
-    driver.screenshot(output / f"windows-{slug}-640x560-text-200.png")
-    driver.execute("document.documentElement.style.fontSize=''; return true;")
+    compact_root_font_size = css_pixels(compact["root_font_size"])
+    zoomed_root_font_size = compact_root_font_size * 2
+    try:
+        driver.execute(
+            "document.documentElement.style.setProperty("
+            "'font-size',`${arguments[0]}px`,'important'); return true;",
+            [zoomed_root_font_size],
+        )
+        driver.wait(
+            "return Math.abs(parseFloat(getComputedStyle(document.documentElement).fontSize)"
+            "-arguments[0])<0.01;",
+            arguments=[zoomed_root_font_size],
+        )
+        zoomed = driver.execute(METRICS_SCRIPT)
+        assert isinstance(zoomed, dict)
+        actual_zoomed_root_font_size = css_pixels(zoomed["root_font_size"])
+        assert abs(actual_zoomed_root_font_size - zoomed_root_font_size) < 0.01, {
+            "expected": zoomed_root_font_size,
+            "actual": actual_zoomed_root_font_size,
+        }
+        assert zoomed["horizontal_overflow"] is False
+        driver.screenshot(output / f"windows-{slug}-640x560-text-200.png")
+    finally:
+        driver.execute(
+            "document.documentElement.style.removeProperty('font-size'); return true;"
+        )
+        driver.wait(
+            "return Math.abs(parseFloat(getComputedStyle(document.documentElement).fontSize)"
+            "-arguments[0])<0.01;",
+            arguments=[compact_root_font_size],
+        )
     return {
         "desktop": desktop,
         "compact": compact,
@@ -294,146 +325,6 @@ def initialize_real_windows_vault(driver: Driver) -> None:
     assert residual == {"secrets": 0, "local": [], "session": [], "passwords": []}
 
 
-def install_visual_fixture(driver: Driver) -> tuple[str, str]:
-    controller_id = "11111111-1111-4111-8111-111111111111"
-    infrastructure_id = "22222222-2222-4222-8222-222222222222"
-    association = {
-        "controller_id": controller_id,
-        "infrastructure_id": infrastructure_id,
-        "infrastructure_label": "Infrastructure Windows CI",
-        "origin": "https://10.42.0.10:9443",
-        "device_status": "active",
-        "certificate_expires_at": "2027-01-01T00:00:00Z",
-    }
-    infrastructure = {
-        "schema_version": 1,
-        "controller_id": controller_id,
-        "infrastructure_id": infrastructure_id,
-        "initialized": True,
-        "label": "Infrastructure Windows CI",
-        "inventory_revision": 7,
-    }
-    machines = {
-        "schema_version": 1,
-        "controller_id": controller_id,
-        "infrastructure_id": infrastructure_id,
-        "inventory_revision": 7,
-        "relay_status": "available",
-        "relay_snapshot_at": "2026-07-21T00:00:00Z",
-        "machines": [
-            {
-                "machine_id": "machine-windows-ci-1",
-                "label": "Machine principale",
-                "enrollment_status": "active",
-                "observation_status": "recent",
-                "observation": {
-                    "profile": "host-health.v1",
-                    "sequence": 42,
-                    "observed_at": "2026-07-21T00:00:00Z",
-                    "received_at": "2026-07-21T00:00:01Z",
-                    "observed_time_warning": False,
-                    "continuity": "complete",
-                    "gap_summary": None,
-                    "health": {
-                        "uptime": {"status": "ok", "uptime_seconds": 3600, "error": None},
-                        "memory": {
-                            "status": "ok",
-                            "total_bytes": 8589934592,
-                            "available_bytes": 4294967296,
-                            "error": None,
-                        },
-                        "rootfs": {
-                            "status": "ok",
-                            "total_bytes": 137438953472,
-                            "available_bytes": 68719476736,
-                            "error": None,
-                        },
-                    },
-                },
-            },
-            {
-                "machine_id": "machine-windows-ci-2",
-                "label": "<img src=x onerror=window.__ycHostileExecuted=true>",
-                "enrollment_status": "active",
-                "observation_status": "old",
-                "observation": {
-                    "profile": "host-health.v1",
-                    "sequence": 41,
-                    "observed_at": "2026-07-20T20:00:00Z",
-                    "received_at": "2026-07-20T20:00:01Z",
-                    "observed_time_warning": True,
-                    "continuity": "gapped",
-                    "gap_summary": {
-                        "range_count": 1,
-                        "dropped_count": 3,
-                        "first_sequence": 38,
-                        "last_sequence": 40,
-                    },
-                    "health": {
-                        "uptime": {"status": "error", "uptime_seconds": None, "error": "source_unavailable"},
-                        "memory": {"status": "error", "total_bytes": None, "available_bytes": None, "error": "source_invalid"},
-                        "rootfs": {"status": "error", "total_bytes": None, "available_bytes": None, "error": "source_unavailable"},
-                    },
-                },
-            },
-        ],
-    }
-    installed = driver.execute(
-        "const internals=window.__TAURI_INTERNALS__;"
-        "if(!internals || typeof internals.invoke!=='function') return false;"
-        "const original=internals.invoke.bind(internals);"
-        "const fixture=arguments[0];"
-        "window.__ycHostileExecuted=false;"
-        "internals.invoke=async(command,args,options)=>{"
-        "if(command==='pair_controller') return fixture.association;"
-        "if(command==='read_infrastructure') return fixture.infrastructure;"
-        "if(command==='read_machines') return fixture.machines;"
-        "return original(command,args,options);};"
-        "return true;",
-        [{"association": association, "infrastructure": infrastructure, "machines": machines}],
-    )
-    assert installed is True
-    return controller_id, infrastructure_id
-
-
-def pair_visual_fixture(driver: Driver) -> None:
-    driver.fill_fields(
-        {
-            "#pair-origin": "https://10.42.0.10:9443",
-            "#pair-temporary-origin": "https://10.42.0.10:9444",
-            "#pair-controller-id": "11111111-1111-4111-8111-111111111111",
-            "#pair-infrastructure-id": "22222222-2222-4222-8222-222222222222",
-            "#pair-spki": "a" * 64,
-            "#pair-ca": "-----BEGIN CERTIFICATE-----\nWINDOWS-CI-VISUAL-FIXTURE\n-----END CERTIFICATE-----",
-            "#pair-window-id": "33333333-3333-4333-8333-333333333333",
-            "#pair-window-code": "visual-fixture-only",
-            "#pair-recovery-code": "visual-fixture-only",
-        }
-    )
-    driver.click_button("Vérifier et associer")
-    driver.wait("return document.querySelector('h1')?.textContent ?? null;", "Synthèse", 60)
-    driver.wait(
-        "const refresh=[...document.querySelectorAll('button')]"
-        ".find((e)=>e.textContent.trim()==='Actualiser');"
-        "return refresh?.getAttribute('aria-busy')==='false';",
-        True,
-        60,
-    )
-
-
-def navigate(driver: Driver, label: str, heading: str) -> None:
-    driver.click_button(label)
-    driver.wait("return document.querySelector('h1')?.textContent ?? null;", heading)
-    if heading in {"Synthèse", "Parc", "Observations"}:
-        driver.wait(
-            "const refresh=[...document.querySelectorAll('button')]"
-            ".find((e)=>e.textContent.trim()==='Actualiser');"
-            "return refresh?.getAttribute('aria-busy')==='false';",
-            True,
-            60,
-        )
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:4444")
@@ -455,7 +346,10 @@ def main() -> int:
             "attached to the installed WebView2"
         ),
         "debugger_transport": "ephemeral loopback TCP, removed before normal launch",
-        "fixture_scope": "renderer-only IPC responses after real Windows vault initialization",
+        "proof_scope": "installed-native-smoke",
+        "controller_exercised": False,
+        "native_minimum_window_enforcement": "not_exercised_by_webview_webdriver",
+        "post_association_views": "not_executed_without_real_controller",
         "views": {},
     }
     try:
@@ -480,47 +374,23 @@ def main() -> int:
             "Association ou récupération",
         )
 
-        controller_id, infrastructure_id = install_visual_fixture(driver)
-        pair_visual_fixture(driver)
-        views["summary"] = capture_view(driver, args.output, "summary", "Synthèse")
-        navigate(driver, "Parc", "Parc")
-        views["fleet"] = capture_view(driver, args.output, "fleet", "Parc")
-        hostile = driver.execute(
-            "return {executed:window.__ycHostileExecuted===true,"
-            "element:document.querySelector('img[src=x]')!==null,"
-            "text:document.body.textContent.includes('<img src=x onerror=window.__ycHostileExecuted=true>')};"
-        )
-        assert hostile == {"executed": False, "element": False, "text": True}
-        navigate(driver, "Observations", "Observations")
-        views["observations"] = capture_view(
-            driver, args.output, "observations", "Observations"
-        )
-        navigate(driver, "Profil et sessions", "Profil et sessions")
-        views["profile"] = capture_view(
-            driver, args.output, "profile", "Profil et sessions"
-        )
-
-        minimum_rectangle = driver.resize(500, 400)
-        assert minimum_rectangle["width"] >= 640 and minimum_rectangle["height"] >= 560
         report.update(
             {
-                "controller_id": controller_id,
-                "infrastructure_id": infrastructure_id,
-                "hostile_label_rendered_as_text": True,
-                "minimum_window_after_500x400_request": minimum_rectangle,
+                "real_windows_vault_initialized": True,
                 "result": "pass",
             }
         )
     finally:
         driver.close()
 
-    (args.output / "windows-ui-report.json").write_text(
+    (args.output / "windows-webview2-smoke.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     print(
-        "PASS: Windows WebView2 rendered seven views at 1280x800 and 640x560, "
-        "kept 200% text responsive, exposed no remote resource and escaped hostile content"
+        "PASS: installed Windows WebView2 rendered three pre-association views at "
+        "1280x800 and 640x560, initialized the real Windows vault, kept 200% text "
+        "responsive and exposed no remote resource"
     )
     return 0
 
