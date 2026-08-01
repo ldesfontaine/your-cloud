@@ -26,6 +26,7 @@ REQUIRED_FILES = (
     "docs/contribution/QUALITE.md",
     "docs/contribution/TESTS.md",
     "docs/architecture/ANATOMIE.md",
+    "docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md",
     "docs/architecture/CHAINE-D-OBSERVATION.md",
     "docs/lab/README.md",
     "docs/html/index.html",
@@ -33,6 +34,7 @@ REQUIRED_FILES = (
     "docs/html/objectif-v1.html",
     "docs/html/roadmap-v1.html",
     "docs/html/anatomie.html",
+    "docs/html/amorcage-controller.html",
     "docs/html/chaine-observation.html",
 )
 
@@ -41,6 +43,9 @@ HTML_MIRRORS = {
     "docs/objectifs/v1/README.md": "docs/html/objectif-v1.html",
     "docs/objectifs/v1/ROADMAP.md": "docs/html/roadmap-v1.html",
     "docs/architecture/ANATOMIE.md": "docs/html/anatomie.html",
+    "docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md": (
+        "docs/html/amorcage-controller.html"
+    ),
     "docs/architecture/CHAINE-D-OBSERVATION.md": "docs/html/chaine-observation.html",
 }
 

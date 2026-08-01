@@ -5,9 +5,8 @@
 > commit produit exact `02fe4f5`, avec `.deb`, SBOM, manifeste, signature,
 > parcours installé et vues revérifiés. Le
 > [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md) conserve les
-> preuves et limites. Lucas a autorisé la porte Windows ; elle est maintenant
-> en préparation et reste obligatoire avant de déclarer le palier terminé et
-> prouvé.
+> preuves et limites. La porte Windows est autorisée, en préparation et reste
+> obligatoire avant de déclarer le palier terminé et prouvé.
 
 ## Résultat utilisateur
 

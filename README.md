@@ -30,6 +30,9 @@ présence ne prouve aucune capacité du produit.
 - [Anatomie du projet](docs/architecture/ANATOMIE.md) : le placement, les flux
   et leur [vue HTML visuelle](docs/html/anatomie.html), mis à jour au fil du
   développement.
+- [Amorçage et remplacement du Controller](docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) :
+  l'autorité SSH initiale, l'approbation des actions, son transfert et le
+  parcours de remplacement décidé pour la V1.
 - [Documentation visuelle](docs/html/index.html) : l'entrée vers toutes les
   éditions HTML.
 - [LAB](docs/lab/README.md) : le contrôleur et ses gardes.

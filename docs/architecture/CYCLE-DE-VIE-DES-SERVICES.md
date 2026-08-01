@@ -52,10 +52,24 @@ dernier.
 | Observation | santé du service, refus hostiles et fraîcheur de chaque preuve | ne pas confondre panne de la Console, du Controller, du Relay et du service |
 | Retrait | ancienne instance, règles, secrets et date de fin de rétention | conserver ce qui est encore nécessaire au retour |
 
+Un rollback n'est jamais une promesse vague. Le plan nomme les opérations
+exactes de retour, les borne aux ressources gérées par Your Cloud et soumet ce
+contenu à la même approbation. Le cœur natif de la Console signe l'enveloppe
+canonique après confirmation ; le Controller la transporte et l'Auxiliaire
+revérifie localement la clé publique, l'époque et la séquence root-owned. Après
+un échec contrôlé, l'Auxiliaire tente ce rollback tant qu'il garde la maîtrise ;
+son propre échec produit un état partiel. Le premier changement rend
+`changed=true`, un nouveau plan demandant le même état et un retrait déjà
+effectif rendent `changed=false` sans réécriture ni redémarrage. Une dérive
+exige un nouveau plan.
+
 Une coupure au milieu d'une mutation ne déclenche aucun rejeu aveugle. Le
 Controller marque `résultat inconnu`, la Console l'affiche, puis le Controller
 observe le système par un chemin indépendant et propose seulement les actions
-compatibles avec l'état réellement constaté.
+compatibles avec l'état réellement constaté. La V1 ne promet ni rollback, ni
+continuation autonome lorsque l'Auxiliaire n'est plus joignable. La séquence
+consommée avant mutation reste refusée après redémarrage : reprendre exige
+toujours une nouvelle approbation.
 
 ## Scénario homelab : VPS public et mini-PC privé
 

@@ -130,12 +130,110 @@ dans un incrément ultérieur. La preuve `v0.0.3` s'exécute dans le LAB ou un r
 isolé : elle ne lance pas le produit sur le laptop de développement et
 n'implémente pas WireGuard par avance.
 
-La Console ne reçoit jamais une clé de machine, un secret de runner ou une
-identité d'Agent. Une panne de la Console, du Controller, du Relay ou du chemin
-d'administration ne doit pas interrompre les services déjà déployés. Les
-services destinés à Internet restent accessibles par leur HTTPS normal, sans
-imposer WireGuard à leurs utilisateurs.
+Le frontend et le fonctionnement normal de la Console ne reçoivent jamais une
+clé de machine, un secret de runner ou une identité d'Agent. Seul l'Assistant
+temporaire décrit ci-dessous peut utiliser l'accès personnel en mémoire pendant
+l'amorçage. Une panne de la Console, du Controller, du Relay ou du chemin
+d'administration ne doit pas interrompre, par elle-même, les services hébergés
+sur d'autres machines. La perte d'un hôte peut interrompre les services qui y
+cohabitent. Les services destinés à Internet restent accessibles par leur HTTPS
+normal, sans imposer WireGuard à leurs utilisateurs.
 <!-- coherence: V1-APP-ACCESS:end -->
+
+<!-- coherence: BOOTSTRAP-RECOVERY:start -->
+### Amorcer une fois, remplacer sans nouvelle autorité
+
+L'utilisateur installe seulement la Console sur son appareil d'administration.
+Son **Assistant d'amorçage** natif et temporaire prend en charge les deux
+parcours explicites `Créer une infrastructure` et `Remplacer un Controller`.
+Il utilise un accès SSH personnel déjà possédé par l'utilisateur, de préférence
+par son agent SSH, seulement pendant l'opération. Le frontend, le Controller et
+les journaux ne reçoivent jamais cet accès. Un fichier de clé chiffré peut
+servir de repli, mais il est déchiffré uniquement en mémoire par l'Assistant.
+L'état temporaire disparaît à la fermeture, à l'échec ou au timeout.
+Passphrase, mot de passe `sudo` et consentement `root` passent par une fenêtre
+du cœur natif hors de la WebView. Elle répète les cibles, actions et durées
+exactes ; le frontend ne peut ni fournir le secret, ni approuver à la place de
+l'utilisateur, ni obtenir une primitive SSH ou de signature générale.
+
+Avant toute mutation, l'utilisateur déclare les endpoints un par un et
+l'Assistant réalise un audit en lecture seule. Il ne scanne ni le LAN, ni une
+plage réseau, ni un compte fournisseur. La Console recommande ensuite un
+placement et montre les comptes, artefacts, flux et privilèges exacts.
+L'utilisateur l'approuve avant que l'Assistant installe le premier Controller.
+Un compte non-root avec clé SSH et `sudo` protégé par mot de passe reste le
+choix recommandé. Un accès SSH `root` n'est utilisé qu'après consentement
+explicite pour cette opération et n'est jamais repris silencieusement.
+Après l'installation du Controller et avant de modifier une autre machine, la
+joignabilité SSH et la clé d'hôte de chaque cible sont aussi vérifiées depuis
+ce Controller.
+
+Il existe exactement deux catégories d'accès SSH d'administration des
+machines :
+
+1. l'accès personnel, indépendant, conservé sous l'autorité de l'utilisateur ;
+2. une identité Your Cloud différente par machine, générée et détenue par le
+   Controller.
+
+L'authentification Console–Controller autorise l'humain dans le produit, mais
+ne constitue pas une troisième autorité SSH. Your Cloud ne retire jamais le
+compte, la clé ou le droit d'administration personnel. La clé publique Your
+Cloud d'une machine impose une commande forcée vers l'Auxiliaire et interdit
+shell, PTY, SFTP, transfert de port et transfert d'agent. Sa clé privée reste
+sur le Controller, dans un fichier possédé par `root` fourni au seul service
+Controller par les credentials systemd ; elle ne rejoint ni la Console, ni le
+frontend, ni l'Agent.
+
+Sur la cible, la clé publique appartient à un compte technique verrouillé,
+séparé du Daemon et du Relay. Son fichier et ses parents root-owned ne sont pas
+inscriptibles par ce compte. Les restrictions SSH refusent shell, PTY, SFTP,
+rc utilisateur, X11, environnement et transferts, puis imposent le chemin
+absolu root-owned de l'Auxiliaire. Une politique root-owned permet uniquement
+cette invocation exacte, avec environnement réinitialisé, sans argument,
+`SETENV` ou `sudo` général ; le plan typé arrive sur l'entrée standard.
+
+Le Controller vit sur une machine privée, de confiance et normalement allumée,
+jamais durablement sur le laptop. Pour une petite infrastructure, il peut
+cohabiter avec d'autres rôles si processus, comptes, secrets, fichiers et
+budgets restent séparés. Une machine ou VM dédiée devient la recommandation
+pour une infrastructure plus grande ou plus sensible. Le VPS public portant un
+Relay ou des services exposés n'est pas proposé par défaut pour ce rôle.
+La cohabitation partage cependant la panne matérielle : perdre ou isoler cet
+hôte peut interrompre ses services locaux, ce que la Console doit annoncer
+avant le placement.
+
+Perdre le Controller ne retire pas l'accès personnel. Les services hébergés sur
+d'autres machines continuent ; ceux qui cohabitent sur l'hôte perdu ou isolé
+peuvent être interrompus. Après choix explicite de l'utilisateur, le même
+Assistant installe un nouveau Controller, crée une nouvelle association
+Console–Controller et tourne toutes les autorités que l'ancien pouvait
+exercer : identité lecteur Relay, filtre et manifeste associés, clés SSH par
+machine, clé publique d'approbation et sessions. Les Daemons, le Relay
+d'ingestion et les services compatibles des hôtes survivants restent en place.
+Chaque nouvelle autorité est vérifiée avant le retrait de l'ancienne ; une
+coupure rend les états `ancien seul`, `chevauchement borné`, `nouveau seul` ou
+`inconnu` par machine et interdit d'annoncer un succès global.
+
+Une suspicion de compromission impose d'abord l'isolement de l'ancien hôte et
+un nouveau Controller sur une base saine ; sinon le résultat reste
+`remplacement non sécurisé`. Sans sauvegarde de l'ancien inventaire,
+l'utilisateur redéclare ses endpoints. Le code de récupération
+Console–Controller répond à un autre incident : il réassocie une Console à un
+Controller encore vivant, sans restaurer un Controller perdu.
+S'il remplace la clé humaine, le chemin d'action reste verrouillé jusqu'à ce que
+l'Assistant tourne les clés publiques d'approbation avec l'accès SSH personnel ;
+le Controller ne peut pas s'autoriser lui-même.
+
+L'installateur V1 de la Console embarque l'Assistant, les artefacts serveur
+Debian 13 `amd64`, leurs définitions d'installation et un manifeste
+d'empreintes. Aucun binaire privilégié n'est téléchargé dynamiquement à
+l'amorçage. La prise en charge de `arm64` et d'autres distributions attend une
+preuve séparée. La mise à jour reste manuelle en V1.
+
+Le contrat complet et ses preuves attendues sont fixés dans
+[Amorçage et remplacement du Controller](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
+Il est décidé, mais n'est encore ni implémenté ni prouvé.
+<!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 ### Un seul artefact, des rôles réellement isolés
 
@@ -167,19 +265,24 @@ présence :
 Une machine ordinaire lance donc seulement `your-cloud daemon`. Une candidate
 Relay explicitement provisionnée peut lancer simultanément `your-cloud daemon`
 et `your-cloud relay` depuis les mêmes octets, sous deux comptes différents.
-Lorsqu'il sera implémenté après la V1, `your-cloud aux` sera un troisième
-processus ponctuel : un chemin d'action distinct de l'observation pourra demander
-son activation pour un plan exact, mais son mécanisme de transport et de
-lancement devra être cadré avant implémentation. L'autorité locale et
-l'Auxiliaire revérifieront le plan indépendamment avant tout privilège. Les
-versions qui ne prennent pas encore l'Auxiliaire en charge ne l'exposent pas et
-ne l'installent pas par avance.
+Dans la V1, `your-cloud aux` devient un troisième processus ponctuel. Le
+Controller l'invoque par une identité SSH propre à la machine et une commande
+forcée pour un plan exact. Après confirmation native, le cœur de la Console
+signe l'enveloppe canonique du plan et de son rollback avec la clé humaine de
+l'association ; le Controller ne fait que la transporter. Chaque machine garde
+la clé publique correspondante, une époque d'autorité et une séquence
+anti-rejeu minimale dans des fichiers root-owned. L'Auxiliaire revérifie
+signature, infrastructure, machine, époque, séquence, expiration et contraintes
+avant tout privilège, exige le successeur exact de la valeur locale, puis
+consomme durablement la séquence avant la première mutation. Il renvoie un
+résultat structuré et s'arrête. Une machine placée seulement en observation
+n'active pas ce chemin.
 
 Cette séparation constitue une frontière de sécurité réellement maintenue et
 testée. Une machine limitée à l'observation ne possède aucune élévation dormante
 de type binaire `setuid` ou règle `sudo` générale. Ni le Daemon ni le Relay ne
-transportent un plan, un shell, un script libre ou un chemin arbitraire. Le futur
-chemin d'action et l'Auxiliaire revérifieront indépendamment le plan avant tout
+transportent un plan, un shell, un script libre ou un chemin arbitraire. Le
+chemin d'action et l'Auxiliaire revérifient indépendamment le plan avant tout
 changement privilégié. Les privilèges appartiennent à l'opération autorisée,
 pas à un auxiliaire root universel.
 
@@ -190,10 +293,11 @@ systemd distincts. Un défaut du lot commun peut atteindre plusieurs rôles ; le
 tests par rôle, la cohabitation, les déploiements progressifs et le rollback du
 lot entier restent donc obligatoires.
 
-L'activation initiale de cette capacité exige nécessairement une autorité déjà
-présente : chemin SSH/Ansible approuvé, installation manuelle ou mécanisme du
-fournisseur. Un Agent non privilégié ne s'accorde jamais lui-même de nouveaux
-droits.
+L'activation initiale exige l'accès SSH personnel prêté à l'Assistant
+d'amorçage. Une fois le Controller installé et son accès par machine vérifié,
+l'Assistant détruit tout état temporaire permettant de l'utiliser, sans
+modifier l'accès qui reste sous le contrôle de l'utilisateur. Un Agent non
+privilégié ne s'accorde jamais lui-même de nouveaux droits.
 
 ### Utiliser l'autorité adaptée à chaque cible
 
@@ -209,8 +313,10 @@ Toutes les actions de l'interface ne traversent donc pas l'Agent :
 
 Pour une opération coordonnée sur plusieurs machines, le Controller construit un
 plan global puis une partie ciblée par machine ou plateforme. La Console le rend
-lisible et recueille son approbation. Chaque autorité ne voit et ne peut appliquer
-que la partie qui la concerne.
+lisible et recueille son approbation. Son cœur natif signe seulement l'enveloppe
+exacte de chaque partie après ce consentement ; il n'expose aucune signature
+libre au frontend. Chaque autorité ne voit et ne peut appliquer que la partie
+qui la concerne.
 
 ### Contrat commun d'une action
 
@@ -221,26 +327,37 @@ Quel que soit l'adaptateur, le parcours final conserve les mêmes garanties :
 2. le Controller produit un plan typé qui nomme la cible, l'action et sa version, les
    changements, privilèges, flux, effets d'échec et possibilités de retour ;
 3. l'approbation est liée au contenu exact du plan, pas seulement à son titre ;
-4. l'ordre résultant est authentifié, ciblé, unique, de courte durée et protégé
-   contre la modification et le rejeu ;
+4. l'ordre résultant est signé par la clé humaine native, authentifié, ciblé,
+   unique, de courte durée et protégé contre la modification et le rejeu sans
+   faire confiance au seul Controller ;
 5. l'autorité qui applique revérifie la cible, l'action, sa version, la durée,
    l'approbation et les limites locales ;
 6. l'adaptateur refuse par défaut tout champ ou comportement inconnu et valide
    aussi le sens des paramètres : volumes, chemins, destinations, ports,
    capacités, règles réseau et ressources restent dans des listes positives
    locales ;
-7. l'adaptateur applique de façon idempotente lorsqu'il le promet et annonce
-   honnêtement les effets partiels ainsi que son rollback ;
-8. le résultat direct puis l'observation indépendante rendent le succès,
+7. le plan décrit un rollback exact, borné aux ressources Your Cloud, et son
+   approbation couvre ce rollback ;
+8. l'adaptateur applique de façon idempotente lorsqu'il le promet : le premier
+   changement rend `changed=true`, le même état sans dérive rend
+   `changed=false` sans réécriture ni redémarrage, et un retrait déjà effectif
+   rend aussi `changed=false` ;
+9. une dérive reste visible et exige un nouveau plan ; après un échec contrôlé,
+   le rollback approuvé est tenté tant que l'autorité garde la maîtrise ;
+10. le résultat direct puis l'observation indépendante rendent le succès,
    l'échec ou l'état partiel visibles dans la Console ;
-9. demande, approbation, identité, empreinte du plan et résultat forment une
+11. demande, approbation, identité, empreinte du plan et résultat forment une
    trace d'audit expurgée des secrets.
 
 Une action possède des états honnêtes : en attente, en cours, réussie, échouée
 ou résultat inconnu. Une coupure ne déclenche aucun rejeu aveugle d'une mutation
-non idempotente. L'expiration et l'anti-rejeu survivent aux redémarrages ; une
-opération réseau susceptible de couper son propre contrôle annonce et prouve son
-chemin de reprise avant d'être proposée.
+non idempotente et ne permet pas de promettre un rollback autonome en V1. Après
+reconnexion, le Controller observe l'état réel puis prépare un nouveau plan.
+L'expiration et l'anti-rejeu survivent aux redémarrages grâce à l'époque et à la
+séquence consommée dans l'état root-owned minimal de chaque cible. Cet état
+n'est pas un historique d'actions et ne permet aucune reprise autonome. Une
+opération réseau susceptible de couper son propre contrôle annonce et prouve
+son chemin de reprise avant d'être proposée.
 
 Un plan d'action ne transporte pas de secret persistant en clair. Les actions
 qui nécessiteront un secret demanderont un canal et un cycle de vie dédiés,
@@ -254,7 +371,8 @@ autorité de mise à jour distincte.
 | Option | Conclusion |
 |---|---|
 | Daemon unique fonctionnant en root | Plus simple, mais sa compromission donnerait une autorité générale : refusé |
-| SSH et Ansible comme unique chemin final | Valable pour la V1 et le mode manuel, mais insuffisant pour un Controller distant face au NAT : conservé sans devenir l'unique modèle |
+| Ansible dans le cœur V1 | Bon moteur externe de convergence, mais ajoute un second langage et une autorité générale au premier parcours : conservé comme outil utilisateur et intégration future éventuelle, pas comme dépendance du produit V1 |
+| SSH restreint vers l'Auxiliaire | Transport simple pour les machines Linux déjà déclarées, sans ordre par le Daemon ni shell général : cible V1 retenue |
 | Binaires indépendants pour Daemon et Relay | Isolation visible, mais versions, signatures, SBOM et mises à jour peuvent dériver : écarté |
 | Exécutable unique lancé comme un seul processus multi-rôle | Distribution simple, mais mémoire, compte, secrets, crash et surface réseau partagés : refusé |
 | Exécutable unique, processus et comptes séparés | Une version et une chaîne d'approvisionnement, avec des frontières d'exécution par rôle : cible retenue |
@@ -302,7 +420,7 @@ passe ou contenu applicatif sensible.
 | Autorisation et refus par défaut | Décision par utilisateur, infrastructure, cible, action, version et durée | Mauvaise combinaison refusée avant toute mutation |
 | Validation des entrées | Schéma strict et contraintes sémantiques locales | Chemin, port, volume, capacité et destination hors liste refusés |
 | Journalisation et incident | Identifiant, acteur, empreinte, transitions et résultat sans secret | Reconstituer une action et une erreur sans exposer ses secrets |
-| Continuité NIS2 | Services indépendants de la Console, du Controller, du Relay et du canal d'action | Une panne du contrôle retarde les actions sans arrêter les services |
+| Continuité NIS2 | Services indépendants des processus Console, Controller, Relay et du canal d'action ; domaine de panne d'une éventuelle cohabitation rendu visible | Une panne du contrôle retarde les actions sans arrêter les services des autres hôtes ; la perte d'un hôte peut interrompre ses services colocalisés |
 | Chaîne d'approvisionnement et développement sûr | Artefacts épinglés et signés, SBOM, tests hostiles, mise à jour séparée | Refus d'un lot altéré et retour vers le dernier lot valide |
 | Cryptographie, accès et actifs | Identités bornées, communications chiffrées, inventaire et révocation | Pair, identité, cible ou plan inconnu refusé et révocable |
 
@@ -318,42 +436,43 @@ Cloud à NIS2.
 
 ### Risques résiduels à conserver visibles
 
-- La compromission de l'autorité centrale d'action pourrait produire des plans
-  valides pour toutes les opérations qu'elle est autorisée à signer.
+- La compromission d'une Console déverrouillée ou de sa clé humaine pourrait
+  produire des approbations valides. Un Controller compromis ne peut pas les
+  forger seul, mais il expose ses clés SSH, peut transporter une enveloppe
+  signée encore valide et peut viser une erreur de l'Auxiliaire.
 - Une machine compromise peut falsifier ses observations et détourner les
   capacités locales qui lui ont déjà été accordées.
 - Une erreur dans un adaptateur privilégié peut endommager sa cible malgré un
   plan valide ; ses entrées, effets et rollback doivent donc être testés de
   façon hostile.
-- Le futur chemin d'action ajoutera une autorité sensible même s'il reste séparé
+- Le chemin d'action ajoute une autorité sensible même s'il reste séparé
   du Daemon et du Relay. Sa compromission pourrait utiliser les opérations qui
   lui sont permises ; l'identité bornée, la révocation et la validation
   indépendante par l'Auxiliaire resteront nécessaires.
 - Un défaut ou un lot compromis dans l'exécutable partagé peut toucher Daemon,
-  Relay et futur Auxiliaire. Les comptes séparés limitent les droits à
+  Relay et Auxiliaire. Les comptes séparés limitent les droits à
   l'exécution, mais ne remplacent ni signature, SBOM, tests par mode, déploiement
   progressif ni retour atomique vers le dernier lot valide.
-- La gestion des secrets, des mises à jour de l'Agent, de la révocation et des
-  rôles multi-utilisateurs reste à concevoir dans les incréments qui en auront
-  réellement besoin.
+- La gestion des secrets applicatifs, des mises à jour de l'Agent et des rôles
+  multi-utilisateurs reste à concevoir dans les incréments qui en auront
+  réellement besoin ; elle ne réutilise pas implicitement les autorités
+  d'amorçage et d'action déjà bornées.
 
 ### Cohérence avec la V1
 
 La V1 constitue une première marche cohérente, pas une implémentation anticipée
-de toute cette cible. Son exécutable commun ne fournit que les modes réellement
-pris en charge par la V1 : `daemon` et `relay`, lancés séparément. Il ne contient
-aucun Auxiliaire actif ni canal d'action caché. Elle prouve le parcours
-utilisateur stable — plan,
-approbation, application et vérification — avec Ansible et une identité SSH
-distincte. Son Daemon reste strictement limité à l'observation et son Relay ne
-transporte aucune action.
+de toute cette cible. Son exécutable commun fournit `daemon`, `relay` et
+`aux`, lancés comme des processus séparés. Elle prouve le parcours utilisateur
+stable — plan exact avec rollback exact, approbation liée au contenu,
+enveloppe signée par le cœur natif, anti-rejeu durable, application locale typée
+et vérification — par une identité SSH distincte sur chaque machine. Son Daemon
+reste strictement limité à l'observation, son Relay ne transporte aucune action
+et son Auxiliaire n'est ni permanent, ni un listener, ni un shell général.
 
-Le contrat V1 n'exige ni canal sortant d'action, ni Auxiliaire local, ni
-adaptateur OpenStack ou K3s. La roadmap V1 ne les avance donc pas. Les ajouter
-exigerait de modifier et de faire revalider explicitement le contrat, pas de les
-glisser dans un incrément. La V1 garde toutefois le plan utilisateur séparé de
-son application Ansible afin qu'un futur adaptateur puisse changer le chemin
-d'exécution sans changer ce que l'utilisateur approuve.
+Le contrat V1 n'exige aucun adaptateur OpenStack ou K3s ni runner IaC.
+Ansible reste utilisable par l'utilisateur en mode externe ; une intégration
+isolée pourra être étudiée après stabilisation sans changer le plan que
+l'utilisateur comprend et approuve.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: SERVICE-LIFECYCLE:start -->
@@ -446,6 +565,12 @@ aucune autorisation envers les autres appareils.
   uniquement pour une hypothétique version future.
 - L'interface montre le résultat attendu, les changements prévus et les preuves
   obtenues.
+- Chaque rôle annonce et respecte des budgets mesurés sur de petites machines :
+  CPU, mémoire, processus et disque par systemd/cgroup ou quota disponible ;
+  réseau par destinations, listeners, tailles, concurrence, délais et débits
+  propres au rôle. Un placement trop faible est refusé avec sa cause ; une borne
+  de capacité propre à une version, comme les 64 machines actuelles, n'est
+  jamais présentée comme une limite durable du produit.
 - Une machine située dans un LAN privé n'exige ni adresse publique, ni
   redirection de port entrante pour être observée ou publier un service par un
   point d'entrée distinct.
@@ -484,12 +609,15 @@ aucune autorisation envers les autres appareils.
   envoie par une connexion sortante authentifiée et conserve localement un
   tampon borné tant qu'elles ne sont pas confirmées durablement.
 - L'Agent reste limité à l'observation par défaut. Une capacité locale d'action
-  est activée explicitement par machine, utilise un Auxiliaire sans réseau et ne
-  fournit jamais de commande ou de script libre.
-- Le futur transport des plans d'action reste séparé du Relay d'observation.
-  Une approbation est liée au contenu exact, à la cible et à l'opération ; une
-  action inconnue, expirée, rejouée ou insuffisamment autorisée est refusée sans
-  mutation.
+  est activée explicitement par machine, utilise un Auxiliaire sans listener ni
+  accès réseau général et ne fournit jamais de commande ou de script libre. Une
+  opération OCI peut autoriser uniquement un registre et un digest exacts,
+  visibles dans le plan.
+- Le transport V1 des plans d'action reste séparé du Relay d'observation.
+  Le cœur natif signe une approbation liée au contenu exact, au rollback, à la
+  cible, à l'époque et à la séquence ; l'Auxiliaire la vérifie contre son état
+  root-owned. Une action inconnue, expirée, rejouée ou insuffisamment autorisée
+  est refusée sans mutation.
 - Une action visant une plateforme disposant de sa propre API ou un moteur IaC
   passe par un adaptateur ou runner borné, pas artificiellement par l'Agent
   d'une machine.

@@ -27,7 +27,8 @@ de vie :
 - L'**Agent** est l'installation locale de Your Cloud. Ce n'est pas un
   processus supplémentaire.
 - L'**artefact** est le fichier exécutable unique `your-cloud`.
-- Un **rôle** est choisi au lancement : `daemon`, `relay` ou `diagnose`.
+- Un **rôle** est choisi au lancement : `daemon`, `relay`, `controller` ou
+  `diagnose`.
 - Un **processus** est une exécution en mémoire de l'artefact. Deux rôles lancés
   séparément restent deux processus indépendants.
 - Une **goroutine** est une fonction exécutée concurremment dans le même
@@ -43,6 +44,11 @@ de vie :
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 ## Placement des capacités
+
+Cette section décrit les processus réellement présents dans `v0.0.2` et dans la
+porte de lecture `v0.0.3`. L'Auxiliaire appartient désormais au contrat V1,
+mais il n'est encore ni implémenté ni prouvé et ne doit pas être inventé dans
+la chaîne actuelle.
 
 ```text
 machine administrée                  machine d'observation
@@ -149,11 +155,13 @@ qu'elles aient réellement terminé avant que `runDaemon` retourne.
 
 ## Chemin `relay`
 
-L'unité [`your-cloud-relay.service`](../../deploy/v0.0.2/your-cloud-relay.service)
+L'unité
+[`your-cloud-relay.service` de `v0.0.3`](../../deploy/v0.0.3/your-cloud-relay.service)
+prolonge l'unité d'observation `v0.0.2` avec le lecteur privé du Controller et
 lance le rôle uniquement sur la candidate :
 
 ```text
-your-cloud relay --listen=192.168.242.103:8443
+your-cloud relay --listen=192.168.243.153:8443
 ```
 
 ```mermaid
@@ -165,11 +173,14 @@ flowchart TD
     C --> TLS[transport.NewRelayConfig]
     TLS --> S[relay.OpenObservationStore]
     S --> H[relay.NewObservationHandler]
-    H --> HTTP[newRelayServer]
-    HTTP --> SERVE[serveRelayUntilStopped]
-    HUP[SIGHUP] --> RELOAD[Store.Reload]
+    H --> HTTP[newRelayServer ingestion :8443]
+    S --> READER[assembleRelayReader]
+    READER --> SNAP[SnapshotHandler lecteur :8444]
+    HTTP --> SERVE[serveRelayServersUntilStopped]
+    SNAP --> SERVE
+    HUP[SIGHUP] --> RELOAD[enrollment et reader Reload]
     RELOAD --> SERVE
-    STOP[SIGINT ou SIGTERM] --> SHUT[shutdown HTTP borné à 3 s]
+    STOP[SIGINT ou SIGTERM] --> SHUT[shutdown borné des deux serveurs]
 ```
 
 L'ordre est une frontière de sécurité : adresse, candidature, enrôlement,
@@ -177,8 +188,11 @@ credentials et stockage sont validés avant l'ouverture du socket. Le callback
 d'autorisation est appliqué pendant la négociation TLS et à chaque requête ;
 une révocation rechargée ne dépend donc pas d'une nouvelle connexion.
 
-Le Relay expose uniquement `POST /v0/observations`. Il ne possède ni route de
-lecture, ni route d'enrôlement, ni réponse contenant un ordre pour le Daemon.
+La frontière d'ingestion `:8443` expose uniquement
+`POST /v0/observations`. La frontière reader distincte `:8444`, ouverte
+seulement lorsque son registre, son manifeste et ses credentials sont valides,
+expose uniquement `GET /v0/snapshot`. Aucune des deux ne possède de route
+d'enrôlement ou d'action, et aucune réponse au Daemon ne contient un ordre.
 
 ## Chemin `diagnose`
 
@@ -214,6 +228,12 @@ enveloppes en attente, prochaine séquence et nombre de lacunes.
 `buffer.Inspect` lit sans créer, réordonner, purger ou réécrire. La commande
 refuse un chemin, un sujet ou un format libre. Elle ne montre ni clé privée ni
 valeurs de santé collectées.
+
+Le prochain chemin V1 n'ajoute aucun ordre à ces rôles : une identité SSH propre
+à la machine et une commande forcée lanceront `your-cloud aux` comme processus
+ponctuel séparé. Le Daemon et le Relay resteront non privilégiés et consacrés à
+l'observation. Cette cartographie n'ajoutera l'Auxiliaire à ses fonctions et
+fichiers qu'après son implémentation réelle.
 
 <!-- coherence: AGENT-AUTHORITY:end -->
 
@@ -397,10 +417,10 @@ intégrité, authenticité et confidentialité de bout en bout restent donc troi
 questions distinctes, hors de `v0.0.2`.
 
 Le système visuel, les sept vues et les deux portes de preuve de l'incrément
-Console–Controller sont décidés. Linux commence sur `v1-full` avec le Relay et
-un Daemon colocalisés sur `lab-machine-1` ; Windows attend la stabilité de cette
-porte mais reste nécessaire à la fermeture du palier. Le transport conserve
-atomiquement son dernier snapshot comme `indisponible`
+Console–Controller sont décidés. La porte Linux a été implémentée et prouvée
+sur `v1-full`, avec le Relay et un Daemon colocalisés sur `lab-machine-1`.
+Windows reste non exécuté et nécessaire à la fermeture du palier. Le transport
+conserve atomiquement son dernier snapshot comme `indisponible`
 après panne ou restart, reprend à la demande avec un backoff
 `1/2/4/8/16/30 s` et ne transmet jamais ses 2 Mio bruts à l'API Console bornée
 à 128 Kio. Le Controller initial reste en lecture seule : aucun SSH, Ansible,
@@ -456,20 +476,31 @@ et son état courant.
 
 ## Carte des packages
 
+Cette carte couvre le chemin produit courant de `v0.0.3`. L'index d'appel
+détaillé qui suit reste volontairement borné à la chaîne d'observation prouvée
+en `v0.0.2`.
+
 | Emplacement | Responsabilité actuelle | Appelé par |
 |---|---|---|
 | `cmd/your-cloud/main.go` | sélection stricte du rôle | système d'exploitation |
 | `cmd/your-cloud/daemon.go` | assemblage et durée de vie du Daemon | `run()` |
-| `cmd/your-cloud/relay.go` | assemblage, signaux et serveur Relay | `run()` |
+| `cmd/your-cloud/relay.go` | assemblage, signaux, ingestion `:8443` et reader `:8444` | `run()` |
+| `cmd/your-cloud/controller.go` | initialisation, assemblage du reader Relay et API privée Controller | `run()` |
 | `cmd/your-cloud/diagnose.go` | lecture et rendu ponctuels | `run()` |
+| `console/src-tauri` | coffre, client réseau nommé et frontières natives de la Console | système d'exploitation et frontend embarqué |
+| `console/src/product` | vues et projection de l'infrastructure sans autorité réseau libre | frontend embarqué |
 | `internal/observation` | schéma, validation et trois collecteurs | Collector, Buffer, Relay |
 | `internal/buffer` | file locale bornée, séquences, lacunes et diagnostic | Daemon, Diagnose |
 | `internal/daemon/observer.go` | boucles Collector et Publisher | `runDaemon` |
-| `internal/transport` | politiques TLS 1.3 client et serveur | Daemon, Relay |
+| `internal/controller` | identités, sessions, inventaire, cache, projection et API Controller | `runController` |
+| `internal/transport` | politiques TLS 1.3 client et serveur | Daemon, Relay, Controller |
 | `internal/enrollment` | registre, empreinte et révocation rechargeable | Relay |
 | `internal/relay/observation_http.go` | frontière HTTP d'écriture | `runRelay` |
 | `internal/relay/observation_store.go` | persistance, rejeu, collision et lacunes | handler Relay |
-| `internal/credentials` | lecture bornée des noms systemd fixes | Daemon, Relay |
+| `internal/relay/snapshot_http.go` | instantané borné du reader privé | `runRelay` |
+| `internal/readeridentity` | manifeste et autorisation du lecteur Controller | Relay |
+| `internal/protocol` et `internal/identifier` | noms, URI et identifiants communs canoniques | Relay et Controller |
+| `internal/credentials` | lecture bornée des noms systemd fixes | Daemon, Relay, Controller |
 | `internal/securefile` | lecture root-owned sans suivre de lien | candidature, enrôlement, diagnostic |
 | `internal/strictjson` | refus des noms non canoniques, champs inconnus, doublons et valeurs multiples | schémas persistés et réseau |
 | `internal/machineid` | syntaxe commune d'identité | présence historique et observation |
@@ -512,16 +543,17 @@ preuves de présence restent consultables sous `docs/lab/`, `tests/lab/` et
 lecture `GET /v0/machines` et sa politique de fraîcheur appartiennent au
 Controller actuel.
 
-## Pourquoi deux dossiers dans `deploy/`
+## Pourquoi trois dossiers dans `deploy/`
 
-`deploy/v0.0.1` et `deploy/v0.0.2` figent les entrées de preuve de deux contrats
-différents ; ce ne sont ni deux installations actives, ni deux implémentations
-produit maintenues en parallèle :
+`deploy/v0.0.1`, `deploy/v0.0.2` et `deploy/v0.0.3` figent les entrées de preuve
+de trois contrats différents ; ce ne sont ni trois installations actives, ni
+trois implémentations produit maintenues en parallèle :
 
 | Palier | Transport et données | Credentials | État |
 |---|---|---|---|
 | `v0.0.1` | présence HTTP LAB | aucun certificat | présence Relay en mémoire |
 | `v0.0.2` | observations HTTPS mTLS | identité Daemon, identité Relay et CA séparées | tampon Daemon et stockage Relay durables |
+| `v0.0.3` | reader Relay et API Controller privés | identités reader, appareil et humaine séparées | inventaire Controller et cache Relay atomiques |
 
 Un ancien lot permet de relire la preuve correspondante, mais ne doit pas être
 appliqué au binaire courant. L’installation courante utilise le lot qui porte

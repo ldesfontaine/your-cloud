@@ -21,8 +21,10 @@ Trois états ne doivent jamais être confondus :
   refus hostiles.
 
 À ce jour, `v0.0.1` et la chaîne d'observation authentifiée et bornée de
-`v0.0.2` sont implémentées et prouvées dans le LAB. L'App, le chemin d'action et
-les services du reste de la V1 restent décidés mais pas implémentés.
+`v0.0.2` sont implémentées et prouvées dans le LAB. La porte Linux de l'App
+`v0.0.3` est également implémentée et prouvée ; sa porte Windows reste non
+exécutée. L'amorçage, le chemin d'action et les services du reste de la V1 sont
+décidés mais pas implémentés.
 
 ## Distribution réellement prouvée pour `v0.0.2`
 
@@ -76,17 +78,18 @@ lacune, reprise et cycle de retrait-réinstallation.
        | Environnement d'administration                   |
        | Console installée -- API privée --> Controller   |
        | Controller -- GET mTLS :8444 -------> Relay     |
-       | Controller -> plan -> approbation -> Ansible     |
+       | Controller -> SSH forcé -> Auxiliaire ponctuel   |
        +--------------------------------------------------+
 ```
 
 <!-- coherence: V1-APP-ACCESS:start -->
 La Console, le Controller et le Relay restent hors du chemin emprunté par le
-trafic Web vers les services : leur panne ne doit pas arrêter BentoPDF ou
-Vaultwarden. Le Controller porte l'autorité d'une seule infrastructure. La V1
-prouve une Console installée, un Controller et une infrastructure ; les
-associations futures à plusieurs Controllers isolent identités d'appareil et
-sessions.
+trafic Web vers les services : la panne de leurs processus ne doit pas arrêter
+un service hébergé sur une autre machine. La perte d'un hôte interrompt
+cependant les services qui y cohabitent. Le Controller porte l'autorité d'une
+seule infrastructure. La V1 prouve une Console installée, un Controller et une
+infrastructure ; les associations futures à plusieurs Controllers isolent
+identités d'appareil et sessions.
 
 La Console est une application Tauri 2 signée qui embarque un frontend React,
 TypeScript et Vite et son client réseau natif. Elle n'ouvre aucun serveur local,
@@ -167,6 +170,8 @@ projection Console contient seulement les zéro à 64 machines attendues sous
 secondes incluses ou ancienne, et continuité. Les lacunes sont résumées sans
 troncature et les 2 Mio bruts restent côté Controller. Les libellés Unicode NFC
 sont bornés et non autoritaires : le `machine_id` reste visible à côté.
+Cette borne appartient au format et aux preuves de la version courante ; elle
+n'est pas un plafond définitif de Your Cloud.
 
 À long terme, l'API du Controller reste privée derrière WireGuard. Chaque
 appareil administrateur possède un pair distinct et révocable, avec un routage
@@ -188,6 +193,89 @@ IP du VPS et Traefik reçoit les deux sur `443`, puis route le nom BentoPDF vers
 le service local et le nom Vaultwarden vers le passage WireGuard. Aucun port de
 backend n'est exposé directement.
 <!-- coherence: V1-NETWORK:end -->
+
+<!-- coherence: BOOTSTRAP-RECOVERY:start -->
+## Créer puis remplacer le Controller
+
+L'installation de la Console contient un Assistant natif temporaire distinct du
+frontend. La création suit ce transfert d'autorité :
+
+```text
+Utilisateur
+|- déclare les endpoints, aucun scan
+|- confirme les clés d'hôte et le placement
+`- prête son accès SSH personnel pour cette opération
+                     |
+                     v
+Console
+|- frontend : demandes et résultats typés, aucun secret SSH
+`- Assistant temporaire
+   |- prompt natif : secrets et consentement exact
+   |- audit SSH en lecture seule
+   |- installe et associe le Controller privé approuvé
+   |- vérifie depuis lui la route SSH vers chaque cible
+   |- installe l'artefact avant les accès forcés
+   `- détruit son état SSH temporaire puis s'arrête
+                     |
+                     v
+Controller autonome
+|- une identité SSH Your Cloud différente par machine
+|- clés privées root-owned fournies au service par credentials systemd
+`- clés publiques -> commande forcée `your-cloud aux`
+                      `- protocole lecture seule, mutation refusée par défaut
+```
+
+Il existe deux catégories d'accès SSH d'administration des machines : l'accès
+personnel conservé par l'utilisateur et l'identité Your Cloud propre à chaque
+machine. L'authentification Console–Controller est séparée et ne devient pas une
+troisième autorité SSH. Shell, PTY, SFTP et transferts sont interdits à la clé
+Your Cloud. Un accès personnel `root` exige un consentement explicite pour
+l'opération exacte ; le défaut recommandé reste un compte non-root avec `sudo`
+protégé. La WebView ne reçoit ni secret, ni primitive SSH générale ; le prompt
+natif lie l'utilisation aux cibles, actions et durées affichées.
+
+Le Controller réside sur une machine privée, de confiance et normalement
+allumée. Il peut cohabiter dans une petite infrastructure si ses processus,
+comptes, secrets, fichiers et budgets sont séparés ; une machine ou VM dédiée
+est recommandée quand la taille ou le risque augmentent. Il ne dépend jamais du
+laptop après l'amorçage et n'est pas placé par défaut sur le VPS public.
+
+Le remplacement réutilise le même Assistant :
+
+```text
+perte confirmée ou ancien hôte isolé + choix explicite
+        |
+        v
+accès SSH personnel -> Assistant -> nouveau Controller
+                                      |
+                                      |- nouvelle association Console
+                                      |- nouveau lecteur Relay exclusif
+                                      |- réutilise les Agents compatibles
+                                      |- tourne approbation, sessions et clés
+                                      `- retire seulement les anciennes
+                                         identités marquées Your Cloud
+
+accès personnels -------------------------------> inchangés
+services des autres hôtes ----------------------> inchangés
+service colocalisé sur l'hôte perdu ------------> interruption possible
+```
+
+Le code de récupération d'une Console réassocie celle-ci à un Controller encore
+vivant ; il ne remplace pas ce parcours. Sans sauvegarde de l'ancien
+Controller, l'utilisateur redéclare ses endpoints. L'installateur V1 embarque
+l'Assistant, l'artefact Debian 13 `amd64`, ses définitions et son manifeste
+d'empreintes ; il ne télécharge aucun binaire privilégié à la volée.
+
+Le remplacement avance cible par cible : `ancien seul`, `chevauchement borné`,
+`nouveau seul` ou `inconnu`. Après une coupure, l'Assistant reconstruit ces
+états depuis les marqueurs root-owned avant toute nouvelle décision. Il ne
+déclare une réussite que lorsque la Console, le lecteur Relay et chaque cible
+font confiance au nouveau Controller seul. Une suspicion de compromission
+impose une base saine et l'isolement vérifié de l'ancien hôte.
+
+Le [contrat d'amorçage et de remplacement](AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
+est décidé pour la V1, mais reste non implémenté et non prouvé.
+<!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 <!-- coherence: SERVICE-LIFECYCLE:start -->
 ## Préparer fermé, publier en dernier
@@ -239,11 +327,16 @@ Le contrat et ses scénarios sont détaillés dans le
 En V1, une action demandée dans l'interface suit ce chemin :
 
 ```text
-Utilisateur -> Console -> Controller -> plan lisible -> approbation
-                                                       |
-                                                       v
-Controller -> Ansible -> SSH distinct -> machine
-machine -> contrôles directs -> Controller -> Console
+Utilisateur -> Console -> plan lisible -> confirmation native -> signature
+                                                               |
+                                                               v
+Controller -> enveloppe inchangée -> identité SSH par machine -> commande forcée
+                                                   |
+                                                   v
+machine -> Auxiliaire ponctuel -> opération typée -> résultat direct
+                                                   |
+                                                   v
+Controller -> Console
 Daemon de la machine -> observations -> Relay -> Controller -> Console
 ```
 
@@ -258,28 +351,33 @@ normalisées en UTC `Z` : le fuseau n'affecte pas l'instant. L'âge part de
 hôtes supérieure à 30 secondes ou une correction civile supérieure à une
 seconde ne produit jamais un état récent.
 
-À terme, une machine gérée pourra recevoir les plans sans ouvrir de port
-d'administration sur le LAN, au moyen de son Agent unique :
+Une machine gérée reçoit les plans par l'accès SSH Your Cloud installé pendant
+l'amorçage. Cet accès n'ouvre aucun port supplémentaire et ne donne aucun shell :
 
 ```text
-Controller / autorité du plan
+Controller / constructeur et transport du plan
         |
-        | plan exact, approuvé, ciblé et expirant
+        | plan exact + rollback signés par le cœur natif
         v
-chemin d'action distinct, transport et lancement encore à cadrer
+SSH existant + identité par machine + commande forcée
         |
         v
 Agent sur la machine
 |- même artefact signé
 |- Daemon non-root : observation uniquement
-`- Auxiliaire local : processus ponctuel, revérifie, applique, puis s'arrête
+`- Auxiliaire local
+   |- clé publique + époque + séquence root-owned
+   `- revérifie, consomme l'anti-rejeu, applique, puis s'arrête
 ```
 
-L'Auxiliaire n'a aucun réseau, aucun shell général et aucune élévation dormante.
-Il refuse une opération ou un paramètre hors de sa liste positive locale. Une
-machine d'observation ne l'active pas. Le Daemon et le Relay restent consacrés
-aux observations ; le chemin d'action sera contracté séparément et le chemin
-Ansible ou externe reste disponible.
+L'Auxiliaire n'a aucun listener, aucun accès réseau général, aucun shell et
+aucune élévation dormante. Il refuse une opération ou un paramètre hors de sa
+liste positive locale. Une opération OCI peut seulement faire utiliser par
+Podman rootless le registre autorisé et le digest exact annoncés dans le plan.
+Une machine d'observation ne l'active pas. Le Daemon et le Relay restent
+consacrés aux observations. Ansible reste disponible comme outil externe de
+l'utilisateur ; il n'appartient pas au cœur V1. Le Controller ne possède pas la
+clé humaine de la Console et ne peut donc pas forger seul une approbation.
 
 Les autres cibles utilisent leur propre autorité plutôt que ce chemin local :
 
@@ -291,10 +389,14 @@ Plan approuvé
 `- cluster K3s --------------------> adaptateur API K3s
 ```
 
-Cette cible n'appartient pas au contrat V1. La roadmap garde
-`Console -> Controller -> plan -> approbation -> Ansible -> SSH` et un Daemon
-d'observation seulement. La modifier exige une nouvelle validation du contrat ;
-elle ne peut pas dériver silencieusement au cours d'un incrément.
+Les adaptateurs OpenStack, IaC et K3s restent hors V1. Le chemin local par
+l'Auxiliaire appartient en revanche à son contrat : le plan inclut un rollback
+exact ; la première mutation rend `changed=true`, le même état sans dérive rend
+`changed=false` sans réécriture ni redémarrage, et une dérive exige un nouveau
+plan. Un échec contrôlé tente le rollback approuvé tant que l'Auxiliaire garde
+la maîtrise. Une coupure produit un résultat inconnu, sans rejeu ni continuation
+autonome ; la séquence consommée reste refusée après redémarrage et le
+Controller observe avant de proposer un autre plan.
 
 Le Relay peut provenir du même exécutable que le Daemon sans appartenir au même
 processus. Son compte, son identité réseau, ses secrets, son stockage et son
@@ -378,7 +480,8 @@ La V1 utilise donc le **file provider** :
 1. l'utilisateur demande une publication dans l'App ;
 2. Your Cloud calcule une route précise ;
 3. le plan montre le nom public, la destination et le port ;
-4. après approbation, Ansible écrit la configuration dynamique Traefik ;
+4. après approbation, l'Auxiliaire du VPS écrit atomiquement la configuration
+   dynamique Traefik ;
 5. Traefik charge uniquement cette route ;
 6. Your Cloud vérifie HTTPS et le refus des chemins non prévus.
 
@@ -404,7 +507,7 @@ redémarrer et observer le conteneur comme un service Linux ordinaire.
 Podman rootless avec Quadlet est retenu pour la V1. Le flux sera :
 
 ```text
-Plan Your Cloud -> Ansible -> fichier Quadlet -> systemd -> Podman -> conteneur
+Plan Your Cloud -> Auxiliaire -> fichier Quadlet -> systemd -> Podman -> conteneur
 ```
 
 Ce flux n'existe que sur une machine hôte équipée de systemd et de cgroup v2.
