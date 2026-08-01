@@ -47,7 +47,7 @@ localement, le mode Relay refuse avant toute écoute. Le
 lacune, reprise et cycle de retrait-réinstallation.
 
 <!-- coherence: V1-NETWORK:start -->
-## Placement V1
+## Topologie de référence pour la preuve V1
 
 ```text
                             INTERNET
@@ -84,6 +84,13 @@ lacune, reprise et cycle de retrait-réinstallation.
        | Controller -> SSH forcé -> Auxiliaire ponctuel   |
        +--------------------------------------------------+
 ```
+
+Cette topologie rend la preuve V1 déterministe ; elle ne prescrit pas
+l'infrastructure réelle d'un utilisateur. BentoPDF et Vaultwarden sont deux
+profils de service sélectionnés explicitement dans le LAB, jamais des composants
+installés par défaut. Une infrastructure peut ne choisir aucun de ces profils ;
+un service placé autrement reste externe tant qu'un parcours géré dédié n'est
+pas pris en charge.
 
 <!-- coherence: V1-APP-ACCESS:start -->
 La Console, le Controller et le Relay restent hors du chemin emprunté par le
@@ -191,10 +198,11 @@ mode futur distinct, sans autorité d'administration ni secret de machine. Les
 services publiés conservent leur propre accès HTTPS sans WireGuard.
 <!-- coherence: V1-APP-ACCESS:end -->
 
-Les deux services suivent un autre chemin. Leurs noms DNS pointent vers la même
-IP du VPS et Traefik reçoit les deux sur `443`, puis route le nom BentoPDF vers
-le service local et le nom Vaultwarden vers le passage WireGuard. Aucun port de
-backend n'est exposé directement.
+Dans le scénario de référence, les deux profils de service suivent un autre
+chemin. Leurs noms DNS pointent vers la même IP du VPS et Traefik reçoit les deux
+sur `443`, puis route le nom BentoPDF vers le service local et le nom
+Vaultwarden vers le passage WireGuard. Aucun port de backend n'est exposé
+directement.
 <!-- coherence: V1-NETWORK:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
@@ -308,10 +316,10 @@ flux exact autorisé -> publication ou bascule
 observation -> retrait après la fenêtre de retour
 ```
 
-Pour Vaultwarden, WireGuard peut donc être établi avec des routes `/32` tandis
-que le port applicatif reste refusé. Le service est d'abord vérifié localement,
-puis le seul flux VPS-destination est autorisé et testé. Traefik ne reçoit sa
-route publique qu'en dernier.
+Pour le profil de référence Vaultwarden, WireGuard peut donc être établi avec
+des routes `/32` tandis que le port applicatif reste refusé. Le service est
+d'abord vérifié localement, puis le seul flux VPS-destination est autorisé et
+testé. Traefik ne reçoit sa route publique qu'en dernier.
 
 Une migration avec données affiche la source qui possède l'écriture, la
 synchronisation et le point de non-retour. Après les premières écritures sur la
@@ -465,6 +473,11 @@ Un élément externe reste sous l'autorité de l'utilisateur. Une observation pe
 faire passer son état de déclaré à vérifié, mais ne donne à Your Cloud aucun
 droit de modification. Une future adoption exige un audit et un nouveau plan
 approuvé ; elle n'est jamais déclenchée par la seule découverte.
+
+Un profil de service disponible dans l'App ne crée aucune ressource. Son
+instance n'existe qu'après une déclaration, un placement, un plan et une
+approbation explicites ; les profils nommés dans le LAB ne deviennent pas une
+topologie imposée aux utilisateurs.
 
 La découverte future reste limitée à des adaptateurs en lecture seule sur les
 machines déjà enrôlées. Ni le Daemon, ni le Relay, ni l'App ne scannent le LAN,

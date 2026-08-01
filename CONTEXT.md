@@ -124,6 +124,9 @@ Mode dans lequel Your Cloud conserve l'état attendu d'un élément, prépare se
 **Mode externe**:
 Mode dans lequel l'utilisateur configure un élément en dehors de Your Cloud tandis que l'App peut le représenter et l'observer sans le modifier.
 
+**Profil de service**:
+Définition bornée d'un type de service que Your Cloud sait proposer dans un plan. Sa disponibilité ne crée aucune ressource : chaque instance exige une déclaration, un placement, un plan et une approbation explicites. Un profil utilisé comme référence dans le LAB n'est pas imposé aux infrastructures utilisateur.
+
 **État déclaré**:
 Information fournie par l'utilisateur sans preuve actuelle obtenue par Your Cloud.
 

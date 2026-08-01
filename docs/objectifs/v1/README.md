@@ -9,16 +9,19 @@ Markdown.
 
 ## Résultat attendu
 
-Depuis la Console, un utilisateur demande au Controller de créer une
-infrastructure composée de deux machines Linux déjà installées :
+La V1 se ferme contre un scénario LAB de référence, pas contre une
+infrastructure imposée aux utilisateurs. Depuis la Console, un utilisateur y
+demande au Controller de représenter une infrastructure à partir de deux
+machines Linux déjà installées :
 
 - un VPS disposant d'une adresse publique ;
 - une machine située dans un LAN privé, sans adresse publique et sans port
   entrant ouvert sur Internet.
 
-Your Cloud observe les deux machines, y déploie proprement deux véritables
-services et les rend accessibles en HTTPS par le VPS. Un service tourne sur le
-VPS ; l'autre tourne dans le LAN derrière un passage chiffré sortant.
+Your Cloud observe les deux machines, y déploie proprement deux profils de
+service explicitement sélectionnés et les rend accessibles en HTTPS par le VPS.
+Un service tourne sur le VPS ; l'autre tourne dans le LAN derrière un passage
+chiffré sortant.
 
 Your Cloud ne suppose pas ce passage et le proxy déjà préparés. Le Controller
 prépare le plan, la Console le présente, puis l'autorité adaptée configure le
@@ -28,7 +31,14 @@ le service après approbation.
 Atteindre ce scénario de manière reproductible, compréhensible et vérifiée
 constitue la ligne d'arrivée fonctionnelle de la V1.
 
-## Placement visé
+Ce placement sert à prouver les capacités génériques d'observer des machines déjà
+installées, de déployer un service web OCI public et de publier un service privé
+persistant. Il ne provisionne pas les machines et n'oblige aucune infrastructure
+réelle à employer deux hôtes, un VPS, un LAN ou les deux profils de référence.
+L'utilisateur peut ne sélectionner aucun de ces profils. Un service placé
+autrement reste externe tant qu'un parcours géré dédié n'est pas pris en charge.
+
+## Placement du scénario de référence
 
 ```text
 Navigateur Internet
@@ -57,10 +67,16 @@ les VM nécessaires à la preuve.
 
 ## Comment l'utilisateur atteint chaque interface
 
-### BentoPDF et Vaultwarden
+### Profils de référence BentoPDF et Vaultwarden
 
-Les deux services sont publics par **la même adresse IP du VPS et le même port
-HTTPS `443`**, mais l'utilisateur les ouvre avec deux noms différents :
+BentoPDF et Vaultwarden sont des charges de référence déterministes pour la
+preuve V1. Ils ne sont ni des composants de Your Cloud, ni des installations
+par défaut. Chaque profil doit être déclaré, placé, planifié puis approuvé avant
+la moindre création de ressource.
+
+Dans ce scénario, les deux services sont publics par **la même adresse IP du
+VPS et le même port HTTPS `443`**, mais l'utilisateur les ouvre avec deux noms
+différents :
 
 ```text
 https://pdf.<domaine> ----+
@@ -568,6 +584,11 @@ Le calcul est dynamique, mais l'application ne l'est pas : un changement de
 placement, de port ou de VPS crée un nouveau plan à approuver. Aucun événement
 de découverte ne modifie silencieusement le réseau.
 
+La disponibilité d'un profil de service dans l'App ne déploie rien. Une
+instance n'existe qu'après déclaration, placement, plan et approbation
+explicites ; les profils BentoPDF et Vaultwarden de la preuve V1 ne sont donc
+requis dans aucune infrastructure utilisateur.
+
 ### Mode externe
 
 L'utilisateur peut installer lui-même un service et construire lui-même son
@@ -609,8 +630,8 @@ commencer par un audit, un diff et une approbation ; elle n'est jamais implicite
 - Présenter depuis l'App un plan de déploiement avant exécution.
 - Exécuter le déploiement approuvé par l'utilisateur et vérifié par
   l'Auxiliaire ponctuel de la machine concernée, sans shell ni commande libre.
-- Déployer deux services aux versions précisément maîtrisées : un sur le VPS et
-  un dans le LAN.
+- Déployer dans le LAB deux profils de référence aux versions précisément
+  maîtrisées : un sur le VPS et un dans le LAN.
 - Configurer le passage chiffré entre le VPS et la machine du LAN.
 - Configurer le point d'entrée HTTPS du VPS et les routes des deux services.
 - Ne donner au VPS que l'accès nécessaire au service privé publié.
@@ -663,10 +684,10 @@ révocation. Your Cloud porte ces responsabilités supplémentaires.
 
 ## Point d'entrée HTTPS retenu
 
-La V1 utilise **Traefik** sur le VPS pour terminer HTTPS et router les noms
-publics vers BentoPDF et Vaultwarden. Ce choix tient compte de son usage réel
-dans l'environnement professionnel de référence et permettra de comparer plus
-facilement le plan Your Cloud à une configuration déjà familière.
+Dans son scénario de référence, la V1 utilise **Traefik** sur le VPS pour
+terminer HTTPS et router les noms publics vers BentoPDF et Vaultwarden. Ce
+choix rend la preuve déterministe sans imposer ce proxy, ces services ou ce
+placement à une infrastructure utilisateur.
 
 Your Cloud reste l'autorité déclarative des publications : il génère une
 configuration dynamique Traefik en YAML avec le `file provider`, la présente
@@ -724,10 +745,11 @@ universel des services : elle implémente un premier parcours officiel fondé su
 des **images OCI**. Ansible reste un outil externe de l'utilisateur, pas une
 dépendance du produit ou du runtime V1.
 
-BentoPDF et Vaultwarden sont référencés par un nom lisible, une version précise
-et le digest du manifeste réellement approuvé. Un tag flottant comme `latest`
-est refusé. Le plan affiche l'origine, la version, le digest, les volumes, les
-ports, les besoins réseau et les limites de ressources avant approbation.
+Lorsqu'un profil BentoPDF ou Vaultwarden est explicitement sélectionné, il est
+référencé par un nom lisible, une version précise et le digest du manifeste
+réellement approuvé. Un tag flottant comme `latest` est refusé. Le plan affiche
+l'origine, la version, le digest, les volumes, les ports, les besoins réseau et
+les limites de ressources avant approbation.
 
 L'Auxiliaire demande à Podman rootless de télécharger l'image depuis le seul
 registre autorisé dans le plan, vérifie que le digest obtenu correspond, puis
@@ -847,13 +869,15 @@ Un déploiement V1 est au minimum versionné, relançable, vérifié après
 application et désinstallable. Les scripts opaques et non idempotents ne
 constituent pas le parcours normal.
 
-## Services envisagés pour la preuve finale
+## Profils de service retenus pour la preuve finale
 
 Deux services temporaires de type `hello-world` pourront servir de sondes dans
 les micro-versions qui construisent le déploiement, le passage privé et le
 routage. Ils ne compteront pas comme les deux véritables services de la V1.
 
-La cible recommandée pour la preuve finale est :
+La preuve finale doit couvrir deux capacités génériques : un service web OCI
+public et un service privé persistant publié par un point d'entrée séparé. Pour
+rester déterministe, le LAB utilise les deux profils de référence suivants :
 
 - **BentoPDF sur le VPS** : service public essentiellement statique, sans base
   de données, dont le traitement des PDF reste dans le navigateur ; son image et
@@ -864,20 +888,30 @@ La cible recommandée pour la preuve finale est :
   la sauvegarde, la restauration, le redémarrage, la fermeture des inscriptions
   et l'absence d'accès latéral au LAN.
 
-Cette cible est validée pour la V1. Les sondes `hello-world` restent uniquement
-des outils de construction intermédiaires et ne satisfont pas sa preuve finale.
+Cette cible de preuve est validée pour la V1. La preuve devra montrer que les
+deux profils peuvent être proposés puis sélectionnés explicitement ; aucun ne
+deviendra une obligation pour l'infrastructure réelle. Les sondes `hello-world`
+restent uniquement des outils de construction intermédiaires et ne satisfont
+pas sa preuve finale.
 
 Vaultwarden est volontairement réservé à un incrément tardif : il ne doit pas
 servir à déboguer en même temps le premier conteneur, WireGuard, le proxy et la
 persistance. Le LAB n'utilisera que des secrets synthétiques.
 
-Les documentations officielles confirment que
-[BentoPDF peut être auto-hébergé](https://www.bentopdf.com/docs/self-hosting/)
-comme site statique et que ses fonctions traitent les fichiers dans le
-navigateur. [Vaultwarden](https://github.com/dani-garcia/vaultwarden) recommande
-une image de conteneur avec stockage persistant, HTTPS et un proxy inverse. Les
-exemples amont utilisent parfois `latest` ; Your Cloud utilisera au contraire
-une version et un digest précis, conformément à sa politique de chaîne
+La [documentation officielle de BentoPDF](https://www.bentopdf.com/docs/self-hosting/)
+fournit une image OCI, des commandes Podman et un exemple Quadlet. Son profil
+devra sélectionner une édition et une licence adaptées à l'exposition,
+préserver HTTPS et les en-têtes COOP/COEP nécessaires à `SharedArrayBuffer`,
+puis borner ou auto-héberger les dépendances chargées au runtime.
+
+Le [dépôt officiel de Vaultwarden](https://github.com/dani-garcia/vaultwarden)
+fournit une image OCI, documente Podman, utilise `/data` pour la persistance,
+attend une origine `DOMAIN` cohérente en HTTPS et recommande un proxy inverse.
+Ces propriétés rendent les deux profils compatibles **en principe** avec le
+parcours cible. Rootless, Quadlet, filtrage, redémarrage, sauvegarde et
+restauration restent à implémenter puis à prouver dans le LAB. Les exemples
+amont utilisent parfois `latest` ; Your Cloud utilisera au contraire une
+version et un digest précis, conformément à sa politique de chaîne
 d'approvisionnement.
 
 <!-- coherence: V1-OBSERVATION:start -->
@@ -1033,9 +1067,9 @@ Le LAB simulera au minimum :
 - une sonde extérieure au LAN pour vérifier les accès publics et l'absence
   d'exposition directe.
 
-La preuve montrera le placement, les commandes significatives, les deux
-services accessibles, les ports réellement exposés, un second passage sans
-changement, les redémarrages et la suppression propre.
+La preuve montrera le placement de référence, les commandes significatives, les
+deux profils de service accessibles, les ports réellement exposés, un second
+passage sans changement, les redémarrages et la suppression propre.
 
 Un test hostile partira du VPS supposé compromis et tentera d'atteindre SSH,
 les ports non publiés et le reste du LAN. Seul le port exact du service publié
@@ -1075,11 +1109,11 @@ jamais un simple changement de roadmap.
 
 ## Premier jalon demandé après la V1
 
-La `v1.0.1` ajoutera un petit parcours SSO pour Vaultwarden au moyen d'un
-fournisseur d'identité compatible OpenID Connect. Le fournisseur, son placement
-et son mode de récupération seront choisis seulement lors du cadrage de ce
-jalon ; cette note ne les impose pas à la V1 et ne préconçoit pas encore sa
-solution.
+La `v1.0.1` ajoutera au profil optionnel Vaultwarden un petit parcours SSO au
+moyen d'un fournisseur d'identité compatible OpenID Connect. Le fournisseur,
+son placement et son mode de récupération seront choisis seulement lors du
+cadrage de ce jalon ; cette note n'installe aucun de ces services par défaut,
+ne les impose pas à la V1 et ne préconçoit pas encore sa solution.
 
 ## Paramètres fixés au bon incrément
 

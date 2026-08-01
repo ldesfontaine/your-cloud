@@ -3,13 +3,20 @@
 > Statut : contrat d'architecture validé. Il s'applique aux opérations gérées
 > qui déploient, publient, déplacent ou retirent un service.
 
+Ce contrat ne prescrit ni un service, ni un placement. BentoPDF et Vaultwarden
+sont des profils de référence ; le VPS et le mini-PC sont les machines du
+scénario LAB qui rend les preuves lisibles. Aucune ressource n'est créée sans
+déclaration, placement, plan et approbation explicites.
+
 <!-- coherence: SERVICE-LIFECYCLE:start -->
 
 ## Deux ordres à ne pas confondre
 
 La roadmap V1 décrit **l'ordre de construction du produit**. Elle peut prouver
-BentoPDF sur le VPS avant d'introduire WireGuard, car ce premier service permet
-de comprendre séparément le déploiement OCI, Traefik et HTTPS.
+le profil BentoPDF sur le VPS de référence avant d'introduire WireGuard, car ce
+premier service permet de comprendre séparément le déploiement OCI, Traefik et
+HTTPS. Cette séquence de preuve ne devient pas l'ordre obligatoire d'une
+infrastructure réelle.
 
 Une opération réelle décrit **l'ordre de changement d'une infrastructure**.
 Pour un service privé, « préparer le réseau avant le service » ne signifie
@@ -71,10 +78,10 @@ continuation autonome lorsque l'Auxiliaire n'est plus joignable. La séquence
 consommée avant mutation reste refusée après redémarrage : reprendre exige
 toujours une nouvelle approbation.
 
-## Scénario homelab : VPS public et mini-PC privé
+## Scénario de référence homelab : VPS public et mini-PC privé
 
-Exemple : Traefik sur le VPS publie Vaultwarden, installé sur un mini-PC derrière
-une box sans redirection entrante.
+Exemple optionnel : Traefik sur le VPS publie le profil Vaultwarden, installé
+sur un mini-PC derrière une box sans redirection entrante.
 
 1. Observer les deux machines et confirmer le chemin d'administration.
 2. Préparer et restaurer une sauvegarde synthétique de Vaultwarden.
@@ -133,7 +140,7 @@ changements DNS supposés instantanés.
 
 ## Migration avec données persistantes
 
-Pour Vaultwarden, une base de données ou un autre service avec écritures :
+Pour un service avec écritures, tel que le profil optionnel Vaultwarden :
 
 1. Vérifier les versions, formats, volumes, clés et tâches planifiées.
 2. Produire une sauvegarde cohérente et prouver sa restauration.

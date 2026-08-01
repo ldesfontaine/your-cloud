@@ -511,8 +511,8 @@ compréhensibles.
 <!-- coherence: V1-NETWORK:start -->
 ## Zone d'exposition et vraie DMZ
 
-Le VPS public de la V1 constitue une zone d'exposition durcie, pas à lui seul
-une DMZ. Une vraie DMZ nécessite une séparation réseau vérifiable : le trafic
+Le VPS public du scénario de référence V1 constitue une zone d'exposition
+durcie, pas à lui seul une DMZ. Une vraie DMZ nécessite une séparation réseau vérifiable : le trafic
 Internet entre par une frontière filtrante, les composants exposés résident
 dans un segment dédié, puis une seconde politique limite leurs accès vers les
 services privés et le plan d'administration reste séparé.
@@ -531,6 +531,12 @@ le configure avec ses propres outils : l'App peut alors le représenter et, si
 un adaptateur borné existe, le vérifier en lecture seule sans revendiquer son
 cycle de vie. Un état fourni par l'utilisateur reste **déclaré** tant qu'une
 observation datée ne l'a pas rendu **vérifié**.
+
+Your Cloud n'impose ni une topologie type, ni un catalogue de services à
+installer. Un **profil de service** décrit seulement un parcours pris en charge :
+sa présence dans l'App ne crée rien sans déclaration, placement, plan et
+approbation. Les services nommés dans une preuve LAB rendent ce scénario
+reproductible ; ils ne deviennent pas des prérequis de l'infrastructure réelle.
 
 ## Découverte et adoption
 
