@@ -20,11 +20,11 @@ $automationUserProfile = $null
 $automationProfilePath = $null
 $automationAccount = $null
 $msi = $null
-$builtExecutable = $null
+$packagedExecutable = $null
 $shortcut = $null
 $installedExecutable = $null
 $msiSha256 = $null
-$builtExecutableSha256 = $null
+$packagedExecutableSha256 = $null
 $installedExecutableSha256 = $null
 $packageLockSha256 = $null
 $cargoLockSha256 = $null
@@ -33,6 +33,7 @@ $webViewUserData = $null
 $tauriDriverPath = $null
 $edgeDriverPath = $null
 $webViewRuntimePath = $null
+$baselineWebViewProcesses = @{}
 $remoteDebuggingPort = $null
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = $null
@@ -170,7 +171,9 @@ function Get-ProcessOwnerIdentity {
 
 function Invoke-CleanupAction {
     param(
-        [Parameter(Mandatory = $true)][Collections.Generic.List[string]]$Failures,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [Collections.Generic.List[string]]$Failures,
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][scriptblock]$Action
     )
@@ -266,16 +269,15 @@ try {
         Pop-Location
     }
 
-    $executables = @(Get-ChildItem `
+    $buildOutputs = @(Get-ChildItem `
         -LiteralPath (Join-Path $console "src-tauri\target\release") `
         -Filter "your-cloud-console.exe" -File)
     $installers = @(Get-ChildItem `
         -LiteralPath (Join-Path $console "src-tauri\target\release\bundle\msi") `
         -Filter "*.msi" -File)
-    if ($executables.Count -ne 1 -or $installers.Count -ne 1) {
+    if ($buildOutputs.Count -ne 1 -or $installers.Count -ne 1) {
         throw "expected exactly one Windows executable and one MSI"
     }
-    $builtExecutable = $executables[0]
     $msi = $installers[0]
 
     $signTool = Get-ChildItem `
@@ -287,11 +289,35 @@ try {
     Assert-AuthenticodeSignature $msi.FullName $certificate.Thumbprint $signTool.FullName
     $msiSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi.FullName).Hash.ToLowerInvariant()
     Write-Host "CI Windows: verified MSI SHA-256 $msiSha256"
-    Assert-AuthenticodeSignature $builtExecutable.FullName $certificate.Thumbprint $signTool.FullName
-    $builtExecutableSha256 = (
-        Get-FileHash -Algorithm SHA256 -LiteralPath $builtExecutable.FullName
+
+    # Tauri restaure volontairement la sortie Cargo non signee apres avoir cree
+    # le MSI. Une image administrative permet de verifier l'executable reellement
+    # embarque sans confondre ces deux artefacts.
+    $administrativeImage = Join-Path $temporaryRoot "msi-administrative-image"
+    $administrativeInstall = Start-Process -FilePath "msiexec.exe" `
+        -ArgumentList "/a `"$($msi.FullName)`" /qn /norestart TARGETDIR=`"$administrativeImage`"" `
+        -PassThru
+    Wait-BoundedProcess `
+        -Process $administrativeInstall `
+        -TimeoutSeconds 300 `
+        -Operation "MSI administrative extraction"
+    $packagedExecutables = @(Get-ChildItem `
+        -LiteralPath $administrativeImage `
+        -Filter "your-cloud-console.exe" `
+        -Recurse `
+        -File)
+    if ($packagedExecutables.Count -ne 1) {
+        throw "expected exactly one packaged Console executable in the MSI"
+    }
+    $packagedExecutable = $packagedExecutables[0]
+    Assert-AuthenticodeSignature `
+        $packagedExecutable.FullName `
+        $certificate.Thumbprint `
+        $signTool.FullName
+    $packagedExecutableSha256 = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath $packagedExecutable.FullName
     ).Hash.ToLowerInvariant()
-    Write-Host "CI Windows: verified built executable SHA-256 $builtExecutableSha256"
+    Write-Host "CI Windows: verified packaged executable SHA-256 $packagedExecutableSha256"
 
     $shortcutRoots = @(
         (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs"),
@@ -318,8 +344,8 @@ try {
         Get-FileHash -Algorithm SHA256 -LiteralPath $installedExecutable
     ).Hash.ToLowerInvariant()
     Write-Host "CI Windows: verified installed executable SHA-256 $installedExecutableSha256"
-    if ($installedExecutableSha256 -ne $builtExecutableSha256) {
-        throw "installed executable differs from the signed build output"
+    if ($installedExecutableSha256 -ne $packagedExecutableSha256) {
+        throw "installed executable differs from the executable packaged in the MSI"
     }
 
     Write-Host "CI Windows: preparing the bounded WebView2 driver"
@@ -373,6 +399,22 @@ try {
     }
     $webViewRuntime = $webViewRuntimes[0]
     $webViewRuntimePath = $webViewRuntime.Executable
+    $baselineWebViewProcessList = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+        Where-Object {
+            [string]::Equals(
+                $_.ExecutablePath,
+                $webViewRuntimePath,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        })
+    foreach ($baselineProcess in $baselineWebViewProcessList) {
+        if ($null -eq $baselineProcess.CreationDate) {
+            throw "a baseline WebView2 process has no creation time"
+        }
+        $baselineWebViewProcesses[[string]$baselineProcess.ProcessId] = (
+            $baselineProcess.CreationDate.ToUniversalTime().Ticks
+        )
+    }
     Write-Host "CI Windows: WebView2 Runtime $($webViewRuntime.Version) from $($webViewRuntime.RegistryPath)"
 
     $edgeDriverArchive = Join-Path $temporaryRoot "edgedriver_win64.zip"
@@ -461,6 +503,9 @@ try {
         }
         finally {
             $client.Dispose()
+        }
+        if (-not $driverReady) {
+            Start-Sleep -Milliseconds 250
         }
     }
     if (-not $driverReady) {
@@ -753,11 +798,11 @@ finally {
             @(
                 $installedExecutable,
                 $tauriDriverPath,
-                $edgeDriverPath,
-                $webViewRuntimePath
+                $edgeDriverPath
             ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
         )
-        if ($trackedExecutablePaths.Count -ne 0) {
+        if ($trackedExecutablePaths.Count -ne 0 -or
+            -not [string]::IsNullOrWhiteSpace($webViewRuntimePath)) {
             $remainingTrackedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop |
                 Where-Object {
                     if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) {
@@ -771,6 +816,20 @@ finally {
                         )) {
                             return $true
                         }
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($webViewRuntimePath) -and
+                        [string]::Equals(
+                            $_.ExecutablePath,
+                            $webViewRuntimePath,
+                            [StringComparison]::OrdinalIgnoreCase
+                        )) {
+                        if ($null -eq $_.CreationDate) {
+                            return $true
+                        }
+                        $baselineCreationTime = $baselineWebViewProcesses[[string]$_.ProcessId]
+                        return $null -eq $baselineCreationTime -or
+                            $baselineCreationTime -ne
+                                $_.CreationDate.ToUniversalTime().Ticks
                     }
                     return $false
                 })
@@ -822,14 +881,22 @@ finally {
                 "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
             )
             $remainingRegistrations = @(
-                Get-ChildItem -Path $uninstallRegistryRoots -ErrorAction Stop |
-                    ForEach-Object {
-                        Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction Stop
-                    } |
-                    Where-Object {
-                        $null -ne $_.PSObject.Properties["DisplayName"] -and
-                        $_.DisplayName -eq "Your Cloud"
+                foreach ($registryRoot in $uninstallRegistryRoots) {
+                    if (-not (Test-Path -LiteralPath $registryRoot)) {
+                        continue
                     }
+                    foreach ($registration in Get-ChildItem `
+                        -LiteralPath $registryRoot `
+                        -ErrorAction Stop) {
+                        $registrationProperties = Get-ItemProperty `
+                            -LiteralPath $registration.PSPath `
+                            -ErrorAction Stop
+                        if ($null -ne $registrationProperties.PSObject.Properties["DisplayName"] -and
+                            $registrationProperties.DisplayName -eq "Your Cloud") {
+                            $registration
+                        }
+                    }
+                }
             )
             if ($remainingShortcuts.Count -ne 0 -or
                 $remainingRegistrations.Count -ne 0) {
@@ -974,11 +1041,11 @@ $proofReport | Add-Member -Force -NotePropertyName "verified_artifacts" -NotePro
         sha256 = $msiSha256
     }
     executable = [ordered]@{
-        file_name = $builtExecutable.Name
-        sha256 = $builtExecutableSha256
+        packaged_file_name = $packagedExecutable.Name
+        packaged_sha256 = $packagedExecutableSha256
         installed_file_name = [IO.Path]::GetFileName($installedExecutable)
         installed_sha256 = $installedExecutableSha256
-        installed_matches_build = $true
+        installed_matches_package = $true
     }
 })
 $proofReport | Add-Member -Force -NotePropertyName "cleanup" -NotePropertyValue ([ordered]@{

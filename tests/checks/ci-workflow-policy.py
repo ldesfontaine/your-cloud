@@ -97,11 +97,11 @@ def validate() -> None:
     require("if" not in source, "source checks must remain automatic")
     require("if" not in plumber, "Plumber policy must remain automatic")
     require(
-        "      - name: Vérifier la syntaxe PowerShell Windows" in source_lines
+        "      - name: Vérifier le contrat PowerShell Windows" in source_lines
         and "        shell: pwsh" in source_lines
-        and "            (Resolve-Path ./tests/checks/console-windows-ci.ps1),"
+        and "        run: ./tests/checks/console-windows-ci-contract.ps1"
         in source_lines,
-        "the fast gate must parse the Windows proof script without executing it",
+        "the fast gate must parse the Windows proof and exercise its cleanup contract",
     )
     require(
         console.get("needs") == "[source, plumber_policy]",

@@ -111,11 +111,13 @@ transverse et couvrir sa table chemins-vers-jobs par des cas nominaux et
 hostiles avant activation.
 
 Le job `Contrôles génériques` fait d'abord analyser le script Windows par le
-parseur PowerShell de l'image Linux, sans l'exécuter, puis installe Go `1.26.5`
-et appelle `tests/checks/source-v0.0.1 ci` sous une identité non root. Cette
-entrée vérifie formatage, syntaxe, schémas structurés, documentation, tests Go,
-`go vet` et build statique, ainsi que le garde de politique du workflow. Le
-binaire temporaire est vérifié puis supprimé ; il n'est ni déployé ni publié.
+parseur PowerShell de l'image Linux, sans exécuter la preuve native, puis isole
+et exerce le contrat de son agrégateur de nettoyage avec une liste vide et une
+erreur synthétique. Il installe ensuite Go `1.26.5` et appelle
+`tests/checks/source-v0.0.1 ci` sous une identité non root. Cette entrée vérifie
+formatage, syntaxe, schémas structurés, documentation, tests Go, `go vet` et
+build statique, ainsi que le garde de politique du workflow. Le binaire
+temporaire est vérifié puis supprimé ; il n'est ni déployé ni publié.
 
 Le job matriciel `Console`, exécuté seulement sur déclenchement manuel, fixe
 Node.js `24.18.0` LTS et Rust `1.94.1`, désactive le cache automatique et lance
@@ -140,8 +142,11 @@ publique de Your Cloud. Aucun `.deb`, `.msi`, exécutable ou certificat n'est
 archivé. L'archive Windows bornée contient seulement un rapport JSON et des
 captures PNG. Le rapport lie `github.sha`, `github.run_id`, le checkout et la
 propreté initiale du worktree ; `source_locks` conserve les SHA-256 des verrous
-npm et Cargo. `verified_artifacts` relie le `.msi`, l'exécutable construit et
-l'exécutable installé, dont l'égalité est vérifiée. Enfin, `cleanup` rend
+npm et Cargo. `verified_artifacts` relie le `.msi`, l'exécutable signé extrait
+de son image administrative et l'exécutable installé, dont l'égalité est
+vérifiée. La sortie Cargo restaurée par Tauri après le bundling n'est pas
+confondue avec l'exécutable signé réellement placé dans le paquet. Enfin,
+`cleanup` rend
 bloquante l'absence de l'installation, du certificat et de sa clé privée, du
 compte et profil éphémères, des fichiers temporaires, des processus, du port de
 debugger WebView2 et des données applicatives. La signature publique de
@@ -150,6 +155,16 @@ Ce schéma enrichi appartient au candidat courant : le run historique
 `30700406219` prouve le smoke antérieur, pas ces nouveaux champs. Ils ne sont
 tenus pour exécutés que par le run exact lié depuis l'issue `#9` selon la
 condition de fermeture ci-dessus.
+
+La première tentative finale, le run `30705241755` sur `46b05ce`, a validé les
+deux gardes rapides et la variante Linux. La variante Windows a construit et
+signé le MSI, puis a révélé deux défauts de la preuve : elle contrôlait la
+sortie Cargo que Tauri restaure volontairement non signée après le bundling,
+puis son agrégateur refusait la liste vide normale au début du nettoyage et
+masquait cette première erreur. Ce run reste un incident diagnostique, jamais
+une preuve de fermeture. Le contrôle rapide de l'agrégateur et l'extraction
+administrative du MSI empêchent désormais ces deux confusions avant le nouveau
+candidat natif.
 
 Le job `Politique Plumber` exécute Plumber `v0.4.8`. L'action GitHub est fixée
 au commit `7970e5df1e7d217de41b2880832b63a6f2152b97`, vérifie le checksum et

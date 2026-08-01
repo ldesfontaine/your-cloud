@@ -137,14 +137,25 @@ la branche reste non fusionnable.
 Le smoke Windows publie uniquement un JSON et des captures PNG. Le JSON lie le
 SHA et l'identifiant du run GitHub au checkout propre, conserve les SHA-256 des
 verrous npm et Cargo, puis relie les noms et empreintes du `.msi`, de
-l'exécutable construit et de l'exécutable installé identique. Son nettoyage
-bloquant vérifie notamment l'absence de l'installation, du certificat et de sa
-clé privée, du compte et profil éphémères, des fichiers temporaires, des
-processus, du port de debugger WebView2 et des données applicatives. Aucun
+l'exécutable signé extrait de l'image administrative du MSI et de l'exécutable
+installé identique. Tauri restaure sa sortie Cargo originale après le bundling ;
+elle n'est donc pas prise à tort pour l'exécutable signé du paquet. Le
+nettoyage bloquant vérifie notamment l'absence de l'installation, du certificat
+et de sa clé privée, du compte et profil éphémères, des fichiers temporaires,
+des processus, du port de debugger WebView2 et des données applicatives. Aucun
 paquet, exécutable, certificat ou secret synthétique n'entre dans l'archive.
 Cette structure renforcée est implémentée dans le candidat courant mais n'est
 pas attribuée rétroactivement au run `30700406219` ; seule la preuve finale
 liée depuis l'issue `#9` peut l'attribuer à sa révision exacte.
+
+Le run final tenté `30705241755` sur `46b05ce` a réussi les gardes rapides et
+la variante Linux. Sous Windows, le MSI a été construit et signé avant que le
+contrôle de la sortie Cargo restaurée non signée échoue ; l'agrégateur de
+nettoyage a ensuite refusé sa liste vide et masqué cette cause initiale. Le
+garde rapide extrait désormais cette fonction, prouve que la liste vide est
+acceptée et qu'une erreur synthétique est agrégée. La preuve native extrait de
+son côté l'image administrative du MSI, vérifie son exécutable signé puis son
+égalité avec l'installation réelle. Ce run en échec ne ferme aucun palier.
 
 Le contrôle statique `tests/checks/ci-workflow-policy.py`, appelé par la porte
 générique, ferme les déclencheurs et permissions du workflow, sa concurrence,

@@ -22,19 +22,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Vérifier la syntaxe PowerShell Windows
+      - name: Vérifier le contrat PowerShell Windows
         shell: pwsh
-        run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path ./tests/checks/console-windows-ci.ps1),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -ne 0) {
-            throw ($errors.Message -join [Environment]::NewLine)
-          }
+        run: ./tests/checks/console-windows-ci-contract.ps1
 
       - name: Installer Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
