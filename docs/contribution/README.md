@@ -65,4 +65,7 @@ dans leurs sources documentaires dédiées.
 Résumer simplement le résultat, les preuves exécutées, les limites connues et
 la prochaine étape sûre. Pour une décision validée, nommer les sources mises à
 jour et les choix qui restent ouverts. Toute preuve manuelle destinée à être
-rejouée rejoint aussi le [registre des tests](TESTS.md).
+rejouée rejoint aussi le [registre des tests](TESTS.md). Après toute tâche qui
+a utilisé le LAB, exécuter `tools/labctl assert-clean` ; un échec interdit une
+clôture silencieuse et impose soit la destruction des topologies, soit la
+documentation explicite de leur conservation et de la tâche responsable.

@@ -6,14 +6,33 @@ set -euo pipefail
 shift 2
 command=${1:-}
 shift || true
+scenario=${FAKE_VIRSH_SCENARIO:-retained}
 
 case "$command" in
   list)
     [[ "$*" == "--all --name" ]] || exit 64
-    printf '%s\n' lab-managed lab-unmanaged lab-stopped
+    if [[ "$scenario" == error ]]; then
+      echo "synthetic libvirt failure" >&2
+      exit 1
+    elif [[ "$scenario" == clean ]]; then
+      printf '%s\n' gold
+    else
+      printf '%s\n' lab-managed lab-unmanaged lab-stopped
+    fi
+    ;;
+  net-list)
+    [[ "$*" == "--all --name" ]] || exit 64
+    if [[ "$scenario" == error ]]; then
+      echo "synthetic libvirt failure" >&2
+      exit 1
+    elif [[ "$scenario" == clean ]]; then
+      printf '%s\n' default
+    else
+      printf '%s\n' default lab-v1-full
+    fi
     ;;
   domstate)
-    if [[ "${1:-}" == lab-stopped ]]; then
+    if [[ "${1:-}" == lab-stopped || "${1:-}" == gold ]]; then
       printf '%s\n' 'shut off'
     else
       printf '%s\n' running
@@ -34,6 +53,20 @@ case "$command" in
     else
       exit 1
     fi
+    ;;
+  net-dumpxml)
+    case "${1:-}" in
+      default)
+        printf '%s\n' '<network><name>default</name></network>'
+        ;;
+      lab-v1-full)
+        printf '%s\n' \
+          '<network><name>lab-v1-full</name><description>your-cloud/labctl topology=v1-full</description></network>'
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
     ;;
   *)
     exit 64
