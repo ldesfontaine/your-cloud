@@ -12,20 +12,21 @@
 <body>
   <main>
     <p class="eyebrow">Première ligne d'arrivée</p>
-    <h1>Deux machines. Deux services. Un seul point d'entrée public.</h1>
-    <p class="lead">La V1 observe un VPS et une machine de LAN, déploie un service sur chacun et configure leur accès HTTPS sans ouvrir le LAN à Internet.</p>
+    <h1>Deux capacités de service. Un scénario de référence vérifiable.</h1>
+    <p class="lead">La V1 doit prouver dans le LAB qu'un VPS et une machine de LAN déjà installés peuvent porter deux profils de service explicitement sélectionnés et accessibles en HTTPS, sans imposer cette infrastructure aux utilisateurs.</p>
     <span class="status">Contrat validé pour découpage</span>
-    <h2>Placement</h2>
+    <h2>Topologie LAB de référence</h2>
     <div class="topology">
       <article class="node public"><h3>VPS public</h3><ul><li>Un exécutable <code>your-cloud</code></li><li>Daemon et Relay en processus séparés</li><li>Point d'entrée HTTPS</li><li>Service A</li></ul></article>
       <div class="link" aria-label="Passage chiffré configuré par Your Cloud">passage chiffré<br>configuré<br>→</div>
       <article class="node private"><h3>Machine du LAN</h3><ul><li>Aucun port Internet entrant</li><li>Même exécutable, Daemon seulement</li><li>Relay refusé sans provisionnement</li><li>Service B</li></ul></article>
     </div>
+    <div class="open"><p><strong>Portée :</strong> cette topologie déterministe sert à prouver les capacités génériques d'observer des machines existantes, de déployer un service web OCI public et de publier un service privé persistant. BentoPDF et Vaultwarden sont des profils de référence optionnels, jamais des composants ni des installations par défaut. Toute instance exige une déclaration, un placement, un plan et une approbation explicites ; une infrastructure réelle peut ne sélectionner aucun de ces profils, et un service placé autrement reste externe tant qu'un parcours géré dédié n'est pas pris en charge.</p></div>
     <!-- coherence: V1-APP-ACCESS:start -->
     <h2>Trois accès à ne pas confondre</h2>
     <table><thead><tr><th>Ce que l'utilisateur ouvre</th><th>Chemin V1 décidé</th><th>Exposition</th></tr></thead><tbody>
-      <tr><td><code>https://pdf.&lt;domaine&gt;</code></td><td>DNS → IP du VPS:443 → Traefik → BentoPDF local</td><td>Public</td></tr>
-      <tr><td><code>https://vault.&lt;domaine&gt;</code></td><td>DNS → même IP du VPS:443 → Traefik → WireGuard → Vaultwarden</td><td>Public</td></tr>
+      <tr><td><code>https://pdf.&lt;domaine&gt;</code></td><td>DNS → IP du VPS:443 → Traefik → profil BentoPDF de référence</td><td>Public</td></tr>
+      <tr><td><code>https://vault.&lt;domaine&gt;</code></td><td>DNS → même IP du VPS:443 → Traefik → WireGuard → profil Vaultwarden de référence</td><td>Public</td></tr>
       <tr><td>Console Your Cloud</td><td>Application installée et signée → API privée authentifiée → Controller d'une infrastructure</td><td>Plan d'administration uniquement</td></tr>
     </tbody></table>
     <p>La Console est une application cliente Tauri 2 installée et signée ; le Controller est le backend sans frontend et l'autorité d'une seule infrastructure. La Console embarque React, TypeScript et Vite, n'ouvre aucun serveur local, ne télécharge aucun code depuis un Controller et conserve des associations et sessions séparées. Son fonctionnement normal ne reçoit aucune clé de machine ; seul l'Assistant temporaire décrit plus bas utilise en mémoire l'accès personnel pendant l'amorçage. Elle contacte uniquement les Controllers approuvés : chacun lit son Relay par une frontière privée authentifiée, tandis que les Daemons ne connaissent aucun Controller.</p>
@@ -51,7 +52,7 @@
     <!-- coherence: BOOTSTRAP-RECOVERY:end -->
     <!-- coherence: OWNERSHIP-MODES:start -->
     <h2>Responsabilité choisie</h2>
-    <p>En mode géré, l'App présente puis applique le plan qui configure WireGuard, limite le trafic autorisé, termine HTTPS sur le VPS et route chaque nom. En mode externe, l'utilisateur garde la main et l'App distingue clairement ce qui est déclaré de ce qui est vérifié.</p>
+    <p>En mode géré, l'App présente puis applique le plan qui configure WireGuard, limite le trafic autorisé, termine HTTPS sur le VPS et route chaque nom. En mode externe, l'utilisateur garde la main et l'App distingue clairement ce qui est déclaré de ce qui est vérifié. La disponibilité d'un profil dans l'App ne crée rien : déclaration, placement, plan et approbation restent obligatoires, et la topologie LAB n'est jamais imposée à une infrastructure utilisateur.</p>
     <!-- coherence: OWNERSHIP-MODES:end -->
     <!-- coherence: AGENT-AUTHORITY:start -->
     <h2>Quatre chemins séparés</h2>
@@ -70,27 +71,29 @@
     <table><thead><tr><th>Flux</th><th>Protection V1</th></tr></thead><tbody><tr><td>Machines enrôlées</td><td>WireGuard, pairs nommés et routes bornées</td></tr><tr><td>Daemon → Relay</td><td>mTLS avec une identité par Daemon</td></tr><tr><td>Console installée → Controller</td><td>origine HTTPS TLS 1.3 exacte ; identité d'appareil P-256 mTLS et signature humaine Ed25519 liées au Controller et à son infrastructure ; clés distinctes dans un coffre Tauri Stronghold commun Linux/Windows déverrouillé par six mots locaux Argon2id ; appairage et récupération sur listener temporaire épinglé, session bornée et rotations en deux phases</td></tr><tr><td>Controller → Relay</td><td><code>GET /v0/snapshot</code> sur le listener privé exact <code>8444</code>, filtre IP source puis TLS 1.3 mTLS, CA Ed25519 dédiées, manifeste et UUID commun ; UTC et reprise bornées</td></tr><tr><td>Controller → machine</td><td>SSH avec une identité Your Cloud distincte par machine, clé d'hôte vérifiée et commande forcée vers l'Auxiliaire ; aucun shell, PTY, SFTP ou transfert</td></tr><tr><td>Navigateur → service</td><td>HTTPS</td></tr><tr><td>VPS → service LAN</td><td>WireGuard, destination et port explicites</td></tr></tbody></table>
     <p>Cette défense en profondeur répond aux risques d'écoute, d'usurpation et de déplacement latéral. Les tests refusent un pair inconnu, un certificat de Daemon révoqué, une mauvaise clé SSH et tout port non prévu. Une machine totalement compromise peut encore utiliser ses propres clés et ses seuls flux autorisés : le chiffrement ne remplace donc jamais le confinement.</p>
     <h2>Ce que la V1 doit prouver</h2>
-    <ul class="checks"><li>Amorçage sans que Your Cloud conserve l'accès SSH personnel.</li><li>Remplacement explicite sans toucher à cet accès.</li><li>Deux machines dans une infrastructure.</li><li>État reçu depuis les deux Daemons.</li><li>Observation récente ou ancienne visible.</li><li>Plan lisible avant chaque changement.</li><li>Un service versionné sur chaque machine.</li><li>Passage privé configuré par Your Cloud.</li><li>Deux services accessibles en HTTPS.</li><li>Aucun port entrant vers le LAN.</li><li>Second passage sans changement inutile.</li><li>Résultat inconnu sans rejeu après coupure.</li><li>Redémarrage et suppression propres.</li></ul>
+    <ul class="checks"><li>Amorçage sans que Your Cloud conserve l'accès SSH personnel.</li><li>Remplacement explicite sans toucher à cet accès.</li><li>Deux machines dans l'infrastructure de référence.</li><li>État reçu depuis les deux Daemons.</li><li>Observation récente ou ancienne visible.</li><li>Plan lisible avant chaque changement.</li><li>Un profil de service versionné et explicitement sélectionné sur chaque machine.</li><li>Passage privé configuré par Your Cloud.</li><li>Deux profils de référence accessibles en HTTPS.</li><li>Aucun port entrant vers le LAN.</li><li>Second passage sans changement inutile.</li><li>Résultat inconnu sans rejeu après coupure.</li><li>Redémarrage et suppression propres.</li></ul>
     <h2>WireGuard borné</h2>
     <p>Une clé par machine, adresses <code>/32</code>, aucune route vers le LAN, refus par défaut et seuls les ports explicitement publiés. Depuis un VPS compromis, SSH, les autres ports et les autres machines doivent rester injoignables. Le Daemon ne scanne aucun voisin et un service géré ne reçoit aucun accès latéral non déclaré.</p>
     <!-- coherence: V1-NETWORK:end -->
     <h2>Traefik explicite</h2>
-    <p>Traefik termine HTTPS et route BentoPDF ainsi que Vaultwarden. Your Cloud génère sa configuration avec le <code>file provider</code> : aucune découverte implicite, aucun socket Docker, aucune API ou dashboard public. Un conteneur non déclaré ne reçoit jamais de route.</p>
+    <p>Dans le scénario de référence, Traefik termine HTTPS et route les profils BentoPDF et Vaultwarden explicitement sélectionnés. Your Cloud génère sa configuration avec le <code>file provider</code> : aucune découverte implicite, aucun socket Docker, aucune API ou dashboard public. Un conteneur non déclaré ne reçoit jamais de route.</p>
     <h2>Images OCI maîtrisées</h2>
-    <p>Le premier parcours de déploiement utilise des images OCI avec nom, version et digest approuvés. <code>latest</code> est refusé. Le plan montre l'origine, les volumes, les ports, les ressources et les flux ; une mise à jour exige un nouveau plan et la suppression préserve les données persistantes par défaut.</p>
+    <p>Le premier parcours de déploiement utilise des images OCI avec nom, version et digest approuvés. <code>latest</code> est refusé. Lorsqu'un profil est sélectionné, le plan montre l'origine, les volumes, les ports, les ressources et les flux ; une mise à jour exige un nouveau plan et la suppression préserve les données persistantes par défaut.</p>
     <h2>Podman rootless et Quadlet</h2>
     <p>Podman rootless exécute les images sans démon central privilégié. Sa CLI reste proche de Docker sans promettre une compatibilité parfaite. Quadlet décrit chaque conteneur comme un service systemd lisible : image, utilisateur, volumes, réseau, limites et redémarrage.</p>
     <p><strong>Limite V1 :</strong> le déploiement OCI géré exige systemd et cgroup v2 sur la machine hôte. L'App vérifie ces prérequis avant toute mutation et refuse clairement une cible incompatible. Quadlet ne fabrique pas de solution OpenRC ou runit ; un service installé autrement peut rester externe. Cette limite ne décide pas encore des prérequis du seul Daemon d'observation.</p>
     <p>OWASP ne recommande pas Quadlet par son nom. Nous l'utilisons pour appliquer et prouver rootless, l'absence de socket exposé, les capacités minimales, l'interdiction d'élévation, les écritures explicites et les limites de ressources. Lors de sa première utilisation, le rapport expliquera visuellement chaque réglage et son test hostile.</p>
-    <h2>Services proposés pour la preuve finale</h2>
-    <p>Des services <code>hello-world</code> servent seulement de sondes pendant les premiers incréments. La cible validée pour la V1 finale est <a href="https://www.bentopdf.com/docs/self-hosting/">BentoPDF</a> épinglé sur le VPS et <a href="https://github.com/dani-garcia/vaultwarden">Vaultwarden</a> dans le LAN, avec stockage, sauvegarde, restauration et secrets synthétiques réellement prouvés.</p>
+    <h2>Profils retenus pour la preuve finale</h2>
+    <p>Des services <code>hello-world</code> servent seulement de sondes pendant les premiers incréments. Le LAB prouvera deux capacités génériques avec des profils optionnels et déterministes : un service web OCI public avec BentoPDF sur le VPS et un service privé persistant avec Vaultwarden dans le LAN. Cette sélection ne vaut ni installation par défaut, ni obligation pour une infrastructure réelle.</p>
+    <p>La <a href="https://www.bentopdf.com/docs/self-hosting/">documentation officielle de BentoPDF</a> fournit une image OCI, des commandes Podman et un exemple Quadlet. Le profil devra fixer la licence et le build retenus, maintenir HTTPS et les en-têtes COOP/COEP nécessaires à <code>SharedArrayBuffer</code>, puis borner ou auto-héberger ses dépendances chargées au runtime.</p>
+    <p>Le <a href="https://github.com/dani-garcia/vaultwarden">dépôt officiel de Vaultwarden</a> fournit une image OCI compatible avec Podman, documente la persistance sous <code>/data</code>, attend un <code>DOMAIN</code> cohérent en HTTPS et recommande un proxy inverse. Ces éléments établissent seulement une faisabilité amont : l'intégration Your Cloud, Podman rootless, Quadlet, le filtrage, les redémarrages, la sauvegarde et la restauration restent à implémenter puis à prouver dans le LAB.</p>
     <!-- coherence: V1-OBSERVATION:start -->
     <h2>Observer sans backdoor</h2>
     <p>L'utilisateur choisit un profil composé de collecteurs nommés. Le plan montre leurs données, lectures locales, fréquence, rétention et ressources. Le Daemon non-root n'ouvre aucun port : il conserve un tampon local borné puis pousse les observations en mTLS. Le Relay accuse réception, mais ne peut envoyer aucune commande.</p>
     <p>Une consultation locale reste possible sans Relay. Quand le tampon atteint sa limite, l'état courant est conservé et la perte historique devient une lacune visible. Commande shell, chemin arbitraire, scan du LAN et plugin téléchargé à la demande sont refusés.</p>
     <!-- coherence: V1-OBSERVATION:end -->
     <h2>Premier jalon après la V1</h2>
-    <p>La <code>v1.0.1</code> ajoutera un petit parcours SSO OpenID Connect pour Vaultwarden. Le fournisseur, son placement et sa récupération seront cadrés seulement après la preuve V1 ; cette note ne préconçoit pas encore la solution.</p>
+    <p>La <code>v1.0.1</code> ajoutera au profil optionnel Vaultwarden un petit parcours SSO OpenID Connect. Le fournisseur, son placement et sa récupération seront cadrés seulement après la preuve V1 ; cette note n'installe aucun de ces services par défaut et ne préconçoit pas encore la solution.</p>
     <h2>Premier incrément</h2>
     <p><code>v0.0.1</code> s'arrête au même exécutable sur les deux machines, au Relay et au Daemon parallèles sur le VPS, au Daemon seul sur le LAN et à leur signal de présence horodaté. Cette distribution, le refus Relay par défaut et le protocole sont prouvés dans le LAB. Aucun déploiement, aucune métrique système et aucun mTLS ne sont revendiqués.</p>
     <h2>Preuves uniquement dans le LAB</h2>

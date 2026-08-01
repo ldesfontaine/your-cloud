@@ -59,9 +59,9 @@ découpée en sous-issues exécutables.
 | Fermer les preuves finales de `v0.0.3` | [`#9`](https://github.com/ldesfontaine/your-cloud/issues/9) |
 | Amorcer et remplacer un Controller | [`#13`](https://github.com/ldesfontaine/your-cloud/issues/13) |
 | Appliquer un premier plan OCI contrôlé | [`#14`](https://github.com/ldesfontaine/your-cloud/issues/14) |
-| Publier BentoPDF derrière Traefik | [`#15`](https://github.com/ldesfontaine/your-cloud/issues/15) |
+| Prouver le profil BentoPDF optionnel | [`#15`](https://github.com/ldesfontaine/your-cloud/issues/15) |
 | Limiter le passage privé au service approuvé | [`#16`](https://github.com/ldesfontaine/your-cloud/issues/16) |
-| Publier Vaultwarden via le VPS | [`#17`](https://github.com/ldesfontaine/your-cloud/issues/17) |
+| Prouver le profil privé Vaultwarden optionnel | [`#17`](https://github.com/ldesfontaine/your-cloud/issues/17) |
 | Rendre la responsabilité externe visible | [`#18`](https://github.com/ldesfontaine/your-cloud/issues/18) |
 | Prouver le scénario complet et les artefacts V1 | [`#19`](https://github.com/ldesfontaine/your-cloud/issues/19) |
 
@@ -100,7 +100,7 @@ simplement la roadmap V1 d'oublier la direction déjà validée.
 
 | Sujet | Avant la fin de la V1 | Direction conservée après la V1 | Source détaillée |
 |---|---|---|---|
-| Produit | Représenter une infrastructure, observer deux machines et déployer deux services depuis une interface qui montre les opérations réelles | Étendre progressivement l'observation, les opérations et les plateformes sans retirer les parcours externes | [Cap](../../projet/CAP.md) |
+| Produit | Représenter l'infrastructure de référence, observer deux machines et déployer deux profils de service explicitement sélectionnés depuis une interface qui montre les opérations réelles | Étendre progressivement l'observation, les opérations et les plateformes sans retirer les parcours externes ni imposer cette topologie | [Cap](../../projet/CAP.md) |
 | Machines | Partir de machines Linux déjà installées | Provisionner plus tard par des intégrations OpenStack et Terraform/OpenTofu explicites | [Cap](../../projet/CAP.md) |
 | Amorçage | Assistant natif temporaire ; secrets hors WebView, endpoints déclarés sans scan, route SSH vérifiée depuis le Controller, artefact avant accès forcé, état temporaire détruit après transfert et accès utilisateur conservé | Réutiliser le parcours pour remplacer toutes les autorités du Controller sans ajouter une troisième autorité SSH ; sauvegarder son état reste un sujet séparé | [Contrat d'amorçage](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) |
 | Agent | Un exécutable `your-cloud` identique par version sur chaque machine ; Daemon actif après enrôlement, Relay refusé sans activation et Auxiliaire lancé seulement pour un plan approuvé | Conserver un cycle de vie unique avec des capacités optionnelles explicitement activées et des processus isolés | [Glossaire](../../../CONTEXT.md) et [cap](../../projet/CAP.md) |
@@ -110,7 +110,7 @@ simplement la roadmap V1 d'oublier la direction déjà validée.
 | Chemin d'action | Plan et rollback exacts → confirmation et signature natives → transport Controller → clé publique, époque et anti-rejeu local → Auxiliaire → vérification | Garder le même plan approuvé mais choisir l'autorité adaptée : Auxiliaire pour Linux local, API OpenStack, runner IaC isolé ou API K3s | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
 | App | Console cliente installée et signée sur Linux et Windows, frontend embarqué sans serveur local ; Controller backend d'une infrastructure sans frontend | Controller privé derrière WireGuard, clé de pair et identité distinctes par appareil administrateur, authentification humaine et fournisseur central d'identité facultatif ; téléphone puis navigateur public seulement comme modes futurs séparés | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
 | Chiffrement et identités | mTLS séparés pour l'observation, identité SSH par machine, approbation signée et anti-rejeu local, HTTPS pour le Web ; l'accès SSH personnel reste indépendant | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif V1](README.md) |
-| Exposition des services | Traefik sur le VPS, file provider sans socket de moteur, deux noms sur la même IP et `443` ; BentoPDF local au VPS et Vaultwarden atteint uniquement par WireGuard | Représenter plus tard une vraie DMZ seulement si des frontières réseau indépendantes sont appliquées et vérifiées | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
+| Exposition des services | Scénario LAB de référence avec Traefik sur le VPS, file provider sans socket de moteur et deux profils optionnels sur la même IP et `443` ; BentoPDF local et Vaultwarden atteint uniquement par WireGuard | Accepter d'autres placements pris en charge ou externes et représenter plus tard une vraie DMZ seulement si des frontières réseau indépendantes sont appliquées et vérifiées | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
 | Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif V1](README.md) |
 | Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
 | Sécurité et preuves | Justification OWASP et NIS2 proportionnée, refus hostiles, secrets synthétiques, artefacts épinglés, rapport visuel et aucune revendication de conformité | Conserver le moindre privilège, les mises à jour séparées, la révocation, les SBOM, la provenance et les risques résiduels visibles | [Qualité](../../contribution/QUALITE.md) et [cap](../../projet/CAP.md) |
@@ -459,9 +459,11 @@ premier véritable service.
 <!-- coherence: V1-NETWORK:start -->
 ### Palier dépendant — premier véritable service public
 
-**Résultat :** déployer BentoPDF sur le VPS, installer Traefik sans socket de
-moteur, générer sa route avec le file provider et terminer HTTPS sur un nom
-explicitement déclaré.
+**Résultat :** prouver le parcours générique d'un service web OCI public avec le
+profil BentoPDF explicitement sélectionné dans le scénario LAB de référence :
+déploiement sur le VPS, Traefik sans socket de moteur, route générée avec le
+file provider et HTTPS sur un nom déclaré. Ce profil n'est jamais installé par
+défaut dans une infrastructure utilisateur.
 
 **Preuve de sortie :** seul `443` est nécessaire publiquement, avec `80`
 éventuellement limité à la redirection ; le port interne de BentoPDF reste
@@ -482,9 +484,12 @@ mutation silencieuse.
 
 ### Palier dépendant — véritable service privé publié par le VPS
 
-**Résultat :** déployer Vaultwarden avec Podman rootless et stockage persistant
-sur la machine du LAN, puis ajouter dans Traefik une seconde route HTTPS qui le
-rejoint uniquement par WireGuard.
+**Résultat :** prouver le parcours générique d'un service privé persistant avec
+le profil Vaultwarden explicitement sélectionné dans le scénario LAB de
+référence : déploiement avec Podman rootless sur la machine du LAN, stockage
+persistant, puis seconde route HTTPS Traefik qui le rejoint uniquement par
+WireGuard. Ce profil et cette topologie ne sont jamais imposés à une
+infrastructure utilisateur.
 
 **Preuve de sortie :** `pdf.<domaine>` et `vault.<domaine>` utilisent la même IP
 publique et `443` sans exposer leurs ports internes ; Vaultwarden survit aux
@@ -504,6 +509,11 @@ vers Internet, les zones privées et le plan d'administration.
 sans transférer son autorité à Your Cloud, et distinguer l'état déclaré de ce
 qu'un adaptateur en lecture seule sait réellement vérifier.
 
+La présence d'un profil de service pris en charge ne crée aucune ressource et
+n'impose aucun placement : chaque instance gérée exige une déclaration, un
+placement, un plan et une approbation explicites, tandis qu'un autre service
+peut rester externe.
+
 **Preuve de sortie :** un élément inconnu n'est ni découvert par scan, ni adopté
 silencieusement, ni présenté comme géré ; l'App annonce clairement ce qu'elle ne
 peut ni mettre à jour, ni restaurer, ni supprimer.
@@ -516,13 +526,14 @@ l'[objectif V1](README.md), puis produire les artefacts et preuves de
 release.
 
 **Preuve de sortie :** deux machines observées, deux véritables services
-accessibles en HTTPS depuis leur navigateur normal, Console native installable
-sur Linux et Windows, Controller privé autonome, plans approuvés, second passage
-sans changement, redémarrages, sauvegarde/restauration, retrait propre, refus
-hostiles réseau et autorisation, secrets expurgés, versions épinglées, SBOM,
-provenance et rapport visuel. Une signature Windows synthétique ne suffit pas à
-une distribution publique. Toute capacité non prouvée reste annoncée comme
-telle et bloque la V1.
+de référence accessibles en HTTPS depuis leur navigateur normal, Console native
+installable sur Linux et Windows, Controller privé autonome, plans approuvés,
+second passage sans changement, redémarrages, sauvegarde/restauration, retrait
+propre, refus hostiles réseau et autorisation, secrets expurgés, versions
+épinglées, SBOM, provenance et rapport visuel. La preuve confirme que les
+profils peuvent être sélectionnés ; elle n'en fait pas des installations par
+défaut. Une signature Windows synthétique ne suffit pas à une distribution
+publique. Toute capacité non prouvée reste annoncée comme telle et bloque la V1.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 ## Frontières d'autorité conservées au-delà de la V1

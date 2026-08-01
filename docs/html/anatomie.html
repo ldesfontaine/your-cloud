@@ -17,30 +17,31 @@
     <p class="eyebrow">Architecture vivante · V1</p>
     <h1>Voir où chaque chose vit, parle et agit.</h1>
     <p class="lead">Cette vue accompagne le développement de Your Cloud. Elle sépare les décisions, le code réellement présent et les preuves obtenues dans le LAB. La <a href="chaine-observation.html">carte technique de l'observation</a> détaille les appels, données, états et protections de <code>v0.0.2</code>.</p>
-    <div class="statebar"><span class="pill decided">Placement V1 décidé</span><span class="pill decided">Cycle d'opération validé</span><span class="pill decided"><code>v0.0.1</code> prouvée</span><span class="pill decided"><code>v0.0.2</code> prouvée</span><span class="pill decided"><code>v0.0.3</code> fonctionnel Linux prouvé</span><span class="pill decided">Natif Linux/Windows exécuté</span><span class="pill decided">Fermeture conditionnée au run #9 du SHA exact</span><span class="pill off">Sans preuve #9, branche non fusionnable</span><span class="pill off">Amorçage et action décidés, non implémentés</span></div>
+    <div class="statebar"><span class="pill decided">Topologie de preuve V1 décidée</span><span class="pill decided">Cycle d'opération validé</span><span class="pill decided"><code>v0.0.1</code> prouvée</span><span class="pill decided"><code>v0.0.2</code> prouvée</span><span class="pill decided"><code>v0.0.3</code> fonctionnel Linux prouvé</span><span class="pill decided">Natif Linux/Windows exécuté</span><span class="pill decided">Fermeture conditionnée au run #9 du SHA exact</span><span class="pill off">Sans preuve #9, branche non fusionnable</span><span class="pill off">Amorçage et action décidés, non implémentés</span></div>
 
     <h2>Distribution réellement prouvée pour <code>v0.0.2</code></h2>
     <div class="convergence" aria-label="Les Daemons du LAN et du VPS ouvrent chacun une connexion mTLS vers l'unique Relay du VPS"><div class="convergence-sources"><div class="convergence-node"><strong>Daemon LAN</strong><br>tampon et identité propres</div><div class="convergence-node"><strong>Daemon VPS</strong><br>tampon et identité propres</div></div><div class="convergence-links"><span>mTLS :8443 →</span><span>mTLS local →</span></div><div class="convergence-node relay-target"><strong>Relay VPS unique</strong><br>identité, registre, état durable et lacunes propres</div></div>
     <p class="boundary">Les mêmes octets vivent sur les deux machines. Le VPS lance Daemon et Relay avec comptes, credentials, états et politiques systemd séparés ; la machine du LAN n'a aucun manifeste candidat Relay. Le <a href="../lab/v0.0.2-observation.md">rapport LAB</a> prouve mTLS, révocation, saturation, lacune, reprise et réinstallation.</p>
 
     <!-- coherence: V1-NETWORK:start -->
-    <h2>Placement visé</h2>
+    <h2>Topologie de référence pour la preuve V1</h2>
     <section class="architecture" aria-label="Architecture V1">
       <article class="machine public">
         <h3>VPS public</h3><small>Zone d'exposition durcie</small>
         <div class="component"><strong>Traefik</strong><br>HTTPS et routes explicitement approuvées</div>
-        <div class="component"><strong>BentoPDF</strong><br>Service public, traitement dans le navigateur</div>
+        <div class="component"><strong>Profil BentoPDF</strong><br>Référence publique, traitement dans le navigateur</div>
         <div class="component"><strong>Relay</strong><br>Réception mTLS des observations</div>
         <div class="component"><strong>Agent</strong><br>Daemon non-root d'observation</div>
       </article>
       <div class="tunnel"><div>WireGuard</div><div class="line"></div><small>/32 · port précis<br>aucune route LAN</small></div>
       <article class="machine private">
         <h3>Machine du LAN</h3><small>Aucun port Internet entrant</small>
-        <div class="component"><strong>Vaultwarden</strong><br>Secrets persistants, atteint seulement via le VPS</div>
+        <div class="component"><strong>Profil Vaultwarden</strong><br>Référence persistante, atteinte seulement via le VPS</div>
         <div class="component"><strong>Agent</strong><br>Daemon non-root, observation mTLS vers le Relay</div>
         <div class="component"><strong>Refus latéral</strong><br>Aucun accès implicite aux appareils du domicile</div>
       </article>
     </section>
+    <p class="boundary">Cette topologie rend la preuve V1 déterministe ; elle ne prescrit pas l'infrastructure réelle d'un utilisateur. BentoPDF et Vaultwarden sont deux profils de service explicitement sélectionnés dans le LAB, jamais des composants installés par défaut. Une infrastructure peut n'en choisir aucun ; un service placé autrement reste externe tant qu'un parcours géré dédié n'est pas pris en charge.</p>
     <!-- coherence: V1-APP-ACCESS:start -->
     <div class="admin"><b>Environnement d'administration</b><br>Console native installée et signée → API privée → Controller backend<br>Controller → <code>GET</code> mTLS privé <code>:8444</code> → Relay<br>Controller → plan lisible → approbation humaine → identité SSH par machine → commande forcée → Auxiliaire ponctuel</div>
     <p class="boundary"><strong>Décision V1 :</strong> la Console Tauri 2 embarque son frontend React, TypeScript et Vite et n'ouvre aucun serveur local ; le Controller ne sert aucun code d'interface. Son client natif contacte seulement l'origine HTTPS exacte des Controllers approuvés avec identité d'appareil mTLS et session humaine séparée. Six mots français aléatoires déverrouillent le coffre Tauri Stronghold commun à Linux et Windows ; le frontend voit brièvement la saisie puis l'efface et ne reçoit jamais clé dérivée, clé privée, contenu du coffre ou session. L'autorité locale ouvre le listener TLS d'appairage ou de récupération sur l'adresse privée exacte du Controller, pendant dix minutes au plus, puis le ferme réellement. Le certificat P-256 de 180 jours se remplace en deux phases et la session expire après 30 minutes d'inactivité ou huit heures absolues. Un code global de 256 bits conservé hors ligne dérive une clé différente par Controller. Un seul humain et un seul appareil sont actifs par Controller dans <code>v0.0.3</code>. L'autorité TLS serveur des Controllers, l'autorité d'émission des appareils Console, l'autorité cliente des Daemons et l'autorité cliente de lecture Controller–Relay sont distinctes ; leurs certificats ne se croisent pas. Chaque Controller garde un identifiant d'infrastructure immuable et refuse une machine que son Relay authentifié ne rattache pas à cette infrastructure. Le Controller initie la lecture du Relay et les Daemons ne connaissent aucun Controller. La preuve produit, dont les tentatives croisées depuis une VM hostile, reste dans le LAB ou un runner isolé.</p>
@@ -52,7 +53,7 @@
 
     <h2>Une IP publique, deux noms de service</h2>
     <div class="flow" aria-label="Accès aux services publiés"><div class="step">Nom PDF ou Vault</div><div class="step">DNS</div><div class="step">IP VPS :443</div><div class="step">Traefik</div><div class="step">Route par nom</div><div class="step">Backend privé</div></div>
-    <p class="boundary">BentoPDF et Vaultwarden ne publient jamais leurs ports internes. Une requête directe vers l'IP sans nom déclaré n'a aucune route applicative par défaut.</p>
+    <p class="boundary">Dans le scénario de référence, les profils BentoPDF et Vaultwarden ne publient jamais leurs ports internes. Une requête directe vers l'IP sans nom déclaré n'a aucune route applicative par défaut.</p>
     <!-- coherence: V1-NETWORK:end -->
 
     <!-- coherence: BOOTSTRAP-RECOVERY:start -->
@@ -68,7 +69,7 @@
     <h2>Préparer fermé, publier en dernier</h2>
     <div class="flow" aria-label="Cycle sûr d'une opération"><div class="step">Plan et reprise</div><div class="step">Réseau privé fermé</div><div class="step">Service non exposé</div><div class="step">Vérification locale</div><div class="step">Flux exact et bascule</div><div class="step">Observation puis retrait</div></div>
     <div class="compare">
-      <article class="explain"><h3>Homelab</h3><ul><li>WireGuard avec routes <code>/32</code></li><li>Port applicatif encore refusé</li><li>Test local puis depuis le VPS</li><li>Route Traefik ajoutée en dernier</li></ul></article>
+      <article class="explain"><h3>Homelab de référence</h3><ul><li>Profil Vaultwarden explicitement sélectionné</li><li>WireGuard avec routes <code>/32</code></li><li>Port applicatif encore refusé</li><li>Test local puis route Traefik en dernier</li></ul></article>
       <article class="explain warning"><h3>Migration avec données</h3><ul><li>Restauration prouvée avant la bascule</li><li>Une seule autorité d'écriture</li><li>Point de non-retour visible</li><li>Retour conditionnel après nouvelles écritures</li></ul></article>
     </div>
     <p class="boundary">Une perte de connexion produit un résultat inconnu. Your Cloud observe la route et l'autorité d'écriture avant de proposer la suite ; il ne rejoue jamais aveuglément la mutation. Le détail vit dans le <a href="../architecture/CYCLE-DE-VIE-DES-SERVICES.md">cycle de vie sûr des services</a>.</p>
@@ -111,6 +112,7 @@
       <article class="explain"><h3>Mode géré</h3><ul><li>État attendu conservé</li><li>Plan puis approbation</li><li>Application et vérification</li><li>Nouveau plan pour chaque changement</li></ul></article>
       <article class="explain warning"><h3>Mode externe</h3><ul><li>Autorité conservée par l'utilisateur</li><li>État déclaré distingué du vérifié</li><li>Aucune promesse de mise à jour</li><li>Adoption future auditée et approuvée</li></ul></article>
     </div>
+    <p class="boundary">Un profil disponible dans l'App ne crée aucune ressource. Chaque instance exige une déclaration, un placement, un plan et une approbation explicites ; les profils nommés dans le LAB ne deviennent jamais une topologie imposée aux utilisateurs.</p>
     <p class="boundary">Une future découverte reste en lecture seule et limitée aux machines enrôlées. Ni le Daemon, ni le Relay, ni l'App ne scannent le LAN ; la présence sur le même réseau ne donne aucune confiance.</p>
     <!-- coherence: OWNERSHIP-MODES:end -->
 
