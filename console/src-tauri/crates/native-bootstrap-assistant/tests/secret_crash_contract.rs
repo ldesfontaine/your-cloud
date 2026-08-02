@@ -32,6 +32,12 @@ const REG_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(target_os = "windows")]
 const CREATE_DEFAULT_ERROR_MODE: u32 = 0x0400_0000;
 #[cfg(target_os = "windows")]
+// 0x321 = MiniDumpWithDataSegs | MiniDumpWithUnloadedModules |
+// MiniDumpWithProcessThreadData | MiniDumpWithPrivateReadWriteMemory.
+// Unlike MiniDumpWithFullMemory, this keeps an ordinary PAGE_READWRITE control
+// observable while allowing WER's registered-memory exclusion to take effect.
+const WER_CUSTOM_DUMP_FLAGS: &str = "801";
+#[cfg(target_os = "windows")]
 const AEDEBUG_AUTO_EXCLUSION_KEY: &str =
     r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug\AutoExclusionList";
 #[cfg(all(target_os = "windows", target_pointer_width = "64"))]
@@ -111,7 +117,7 @@ fn hardened_abort_produces_no_core_file() {
 
 #[test]
 #[cfg(target_os = "windows")]
-fn wer_full_user_dump_excludes_the_registered_mapping() {
+fn wer_custom_heap_dump_excludes_the_registered_mapping() {
     let scratch = ScratchDirectory::new("windows-wer");
     let executable = fixture_path();
     let executable_name = executable
@@ -143,7 +149,7 @@ fn wer_full_user_dump_excludes_the_registered_mapping() {
     assert_eq!(&signature, b"MDMP", "WER must create a minidump file");
     assert!(
         file_contains(&dump, &dump_control).expect("scan dump control"),
-        "DumpType=2 must contain the ordinary heap control"
+        "the custom WER heap dump must contain the ordinary heap control"
     );
     assert!(
         !file_contains(&dump, &protected_canary).expect("scan protected canary"),
@@ -650,7 +656,8 @@ impl WerLocalDumpRegistration {
             OsString::from("/f"),
         ]);
         assert!(created.success(), "configure WER DumpFolder");
-        registration.add_dword("DumpType", "2");
+        registration.add_dword("DumpType", "0");
+        registration.add_dword("CustomDumpFlags", WER_CUSTOM_DUMP_FLAGS);
         registration.add_dword("DumpCount", "1");
         registration
     }
