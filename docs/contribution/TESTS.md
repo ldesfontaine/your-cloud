@@ -24,6 +24,23 @@ le helper empaqueté, le gate PE et le dispatch Tauri vivant. Le
 leurs limites. Cette preuve ne remplit aucune ligne de consentement secret #45,
 d'accès SSH #42, d'audit ou de mutation métier.
 
+Le [rapport de consentement natif #45](../lab/v0.1.0-native-secret-consent-linux-windows.md)
+enregistre désormais une implémentation candidate et ses tentatives
+diagnostiques. Des sous-cas Linux ont réussi sur des SHA intermédiaires, mais
+`30768351689` puis `30768749538` ont produit un dump WER contenant le contrôle
+et le canari. Ils sont rouges sous l'ancien oracle qui exigeait le canari absent,
+mais caractérisent désormais `LocalDumps` administrateur, hors garantie.
+`WerRegisterExcludedMemoryBlock` reste une défense en profondeur. `ae550470`
+exige cette présence, supprime le dump, prouve son répertoire vide et les deux
+inscriptions de registre absentes, mais retire le répertoire par `Drop` après le
+verdict. Son run `30769440106` a entièrement réussi ses quatre jobs et prouve
+cette étape intermédiaire, sans fermer #45. `c8643b0` devient le prochain
+candidat exact en
+prouvant avec `remove_and_prove_absent` le répertoire absent avant verdict ; il
+n'a pas encore de run complet. Cette ligne reste donc implémentée mais non
+prouvée dans la matrice finale Linux/Windows ; elle ne ferme ni #45, ni #42, ni
+#35.
+
 ## Vocabulaire de travail
 
 - Une **assertion** compare automatiquement un résultat observé avec le résultat
@@ -312,19 +329,28 @@ et ne crée aucune topologie métier.
 
 La décision documentaire #44 fixe le canal à construire, mais n'exécute aucun
 scénario runtime. Le bornage du processus et de son IPC appartient à #43, la
-surface de consentement native à #45, puis l'accès SSH personnel à #42. Leurs
-preuves Linux et Windows devront reprendre les lignes correspondantes ci-dessous
-avec des secrets exclusivement synthétiques.
+surface de consentement native à #45, puis l'accès SSH personnel à #42. #45
+possède maintenant son implémentation candidate et un rapport, mais attend
+encore une matrice Linux/Windows entièrement verte sur le SHA documentaire
+exact. Les preuves emploient des secrets exclusivement synthétiques.
+
+#42 est découpée dans l'ordre en #51 pour les bornes KDF et la politique
+`sudo`, #52 pour l'agent personnel contre une cible exacte, #53 pour la clé
+OpenSSH chiffrée dans la même session, puis #54 pour l'élévation et l'état
+terminal `access_verified`. Cet état couvre seulement adresse figée, clé
+d'hôte, identité choisie et sonde `/usr/bin/id -u`, jamais l'audit,
+l'installation ou un succès d'amorçage. Après ces quatre preuves, #42 puis #35
+peuvent se fermer.
 
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | État |
 |---|---|---|---|
 | lot Console et serveur | installateur contenant l'Assistant, l'unique `.deb` Debian 13 `amd64`, ses définitions statiques et le manifeste signé exact ; signature, cible, version, taille, SHA-256 et dépendances hors ligne vérifiés avant privilège ; `/usr/lib/your-cloud/your-cloud` `root:root` `0755` sans setuid, setgid ni capacité et exactement trois unités `root:root` `0644` inactives sous `/usr/lib/systemd/system` ; état propre à la machine géré par l'Assistant ; binaire installé et vérifié avant la clé forcée ; retour à l'absence ou à la version antérieure avant transfert d'autorité ; entrée Auxiliaire initiale en lecture seule et en refus de mutation | paquet ou manifeste altéré, cible, version, taille ou empreinte divergente, dépendance exigeant le réseau, fichier ou unité supplémentaire, propriétaire ou mode divergent, setuid, setgid, capacité ou unité activée par l'installation, script mainteneur interactif ou activant un rôle, secret ou configuration propre à une machine dans le paquet, état à demi configuré présenté comme sain, retrait aveugle après coupure, binaire privilégié téléchargé à la volée, clé activée avant le binaire, mutation acceptée avant son contrat, `arm64` accepté sans preuve ; certificat Windows synthétique présenté comme signature publique | helper Linux construit et contrôlé puis `.deb` Console installé pour #43 ; sous Windows, le `.msi` installé contient exactement les deux exécutables installables et le certificat synthétique prouve seulement la mécanique Authenticode. Le paquet serveur, ses unités, son manifeste public et son cycle privilégié restent planifiés |
-| helper natif et cycle de vie | binaire compagnon `your-cloud-native-bootstrap-assistant` lancé une fois par consentement avec la garde `--native-bootstrap-assistant`, graphe autonome sans Tauri, Wry, Tao, WebKit ou JavaScriptCore ; pipes anonymes typés portant seulement le périmètre public immuable et des états expurgés ; expiration native monotone fixe de 300 secondes ; fermeture des enfants après succès, refus, annulation, timeout, EOF, mort du parent et crash | durée fournie ou prolongée par le frontend, dépendance directe, transitive ou chargée dynamiquement vers WebKit/JavaScriptCore, seconde WebView, secret dans l'IPC frontend, arguments, environnement, URL, descripteur hérité inattendu, fichier temporaire, journal ou dump ; helper ou enfant survivant, état réutilisé entre deux opérations | bornage #43 prouvé sous Linux et Windows : gates Cargo/ELF, imports PE normaux et différés, framing, échéance native, lancement Console, WebView Tauri vivante, session unique, forge et rejeu refusés, groupe Linux, Job Windows avec racine et descendant, branches avant reprise, récolte autonome et refus de relance si le nettoyage n'est pas prouvable. Le gate PE ne prouve pas l'absence universelle de chargement dynamique. Le canal d'annulation coopérative via stdin, la collecte secrète et les protections mémoire restent à #45 ; les vrais descendants SSH et privilégiés restent à #42 |
-| moteur SSH et agent personnel | `russh 0.62.4` épinglé, algorithmes sur liste positive, clé d'hôte exacte ; socket Unix absolu appartenant à l'utilisateur courant sous Linux ou pipe `\\.\pipe\openssh-ssh-agent` sous Windows ; une clé et un budget fini de signatures pour l'authentification exacte | clé d'hôte inattendue, DSA, DES, compression ou `ssh-rsa` SHA-1, autre endpoint d'agent, deuxième signature, message de signature libre, TOFU, écriture de `known_hosts`, shell, PTY, SFTP, X11, redirection, transfert d'agent ou commande générale | planifié, non exécuté (#42) |
-| repli par fichier de clé | sélecteur natif ouvrant sans réécriture une clé `OPENSSH PRIVATE KEY` chiffrée bcrypt + `aes256-ctr`, Ed25519 ou RSA d'au moins 3072 bits ; octets, passphrase et clé déchiffrée zéroïsés sur sortie contrôlée | clé en clair, RSA trop courte, PKCS#1, PKCS#8, SEC1, PPK, autre KDF ou chiffrement, fichier trop grand ou remplacé pendant l'ouverture, passphrase ou clé retrouvée dans un état persistant ou un artefact | planifié, non exécuté (#42 et #45) |
+| helper natif et cycle de vie | binaire compagnon `your-cloud-native-bootstrap-assistant` lancé une fois par consentement avec la garde `--native-bootstrap-assistant`, graphe autonome sans Tauri, Wry, Tao, WebKit ou JavaScriptCore ; pipes anonymes typés portant seulement le périmètre public immuable et des états expurgés ; expiration native monotone fixe de 300 secondes ; fermeture des enfants après succès, refus, annulation, timeout, EOF, mort du parent et crash | durée fournie ou prolongée par le frontend, dépendance directe, transitive ou chargée dynamiquement vers WebKit/JavaScriptCore, seconde WebView, secret dans l'IPC frontend, arguments, environnement, URL, descripteur hérité inattendu, fichier temporaire, journal ou dump ; helper ou enfant survivant, état réutilisé entre deux opérations | bornage #43 prouvé sous Linux et Windows : gates Cargo/ELF, imports PE normaux et différés, framing, échéance native, lancement Console, WebView Tauri vivante, session unique, forge et rejeu refusés, groupe Linux, Job Windows avec racine et descendant, branches avant reprise, récolte autonome et refus de relance si le nettoyage n'est pas prouvable. Le gate PE ne prouve pas l'absence universelle de chargement dynamique. #45 implémente en candidat le pair/parent lié, le périmètre immuable, l'annulation coopérative, la collecte secrète et les protections mémoire ; sa matrice finale reste en attente. Les vrais descendants SSH et privilégiés restent à #42 |
+| moteur SSH et agent personnel | `russh 0.62.4` épinglé, algorithmes sur liste positive, clé d'hôte exacte ; socket Unix absolu appartenant à l'utilisateur courant sous Linux ou pipe `\\.\pipe\openssh-ssh-agent` sous Windows ; une clé et un budget fini de signatures pour l'authentification exacte | clé d'hôte inattendue, DSA, DES, compression ou `ssh-rsa` SHA-1, autre endpoint d'agent, deuxième signature, message de signature libre, TOFU, écriture de `known_hosts`, shell, PTY, SFTP, X11, redirection, transfert d'agent ou commande générale | planifié, non exécuté (#52 puis #42) |
+| repli par fichier de clé | sélecteur natif ouvrant sans réécriture une clé `OPENSSH PRIVATE KEY` chiffrée bcrypt + `aes256-ctr`, Ed25519 ou RSA d'au moins 3072 bits ; octets, passphrase et clé déchiffrée zéroïsés sur sortie contrôlée | clé en clair, RSA trop courte, PKCS#1, PKCS#8, SEC1, PPK, autre KDF ou chiffrement, fichier trop grand ou remplacé pendant l'ouverture, passphrase ou clé retrouvée dans un état persistant ou un artefact | dialogue secret implémenté en candidat par #45 ; KDF #51 et ouverture de clé #53 planifiés, non exécutés, avant fermeture de #42 |
 | déclaration et audit | endpoints fournis un par un, clé d'hôte confirmée, audit SSH strictement en lecture seule, Debian 13 `amd64`, rôles et ressources rendus ; chaque endpoint et sa clé d'hôte revérifiés depuis le Controller avant mutation des cibles | scan du LAN, plage ou fournisseur, clé d'hôte acceptée silencieusement, mutation pendant l'audit, cible ou rôle incompatible proposé, cible joignable depuis le laptop mais pas depuis le Controller | planifié, non exécuté |
-| consentement privilégié | dialogue GTK3 direct sous Linux et Win32 modal `EDIT | ES_PASSWORD` sous Windows, répétant empreintes, étape, actions et expiration ; `sudo -n` tenté d'abord, puis un unique envoi sans PTY à `sudo -k -S` pour le chemin absolu autorisé ; accès `root` explicite | secret livré par IPC, cible, action ou expiration substituée, essai `root` implicite, réutilisation ou retry, prompt distant inattendu, shell ou interpolation, politique distante non bornable ou journalisation d'entrée susceptible de capturer le mot de passe | consentement GTK3 initial sans secret prouvé sous Xvfb : scope répété, refus, fermeture, expiration et autorisation sans faux succès ; collecte secrète GTK3, dialogue Win32 et consentement privilégié restent planifiés (#45 puis #42) |
-| effacement et anti-dump | buffers du helper zéroïsés ; sous Linux mort avec parent, `PR_SET_DUMPABLE=0`, `RLIMIT_CORE=0`, `mlock` et `MADV_DONTDUMP` disponibles ; sous Windows Job Object, `VirtualLock` et exclusion Windows Error Reporting disponibles ; limites observées et publiées | faux résultat « aucun secret possible » après crash, core dump ou fichier d'échange sans inspection ; descendant survivant ; copie propre au produit retrouvée après sortie contrôlée ; root/admin, accessibilité hostile ou dump noyau présentés comme couverts | Job Object, handle sentinelle, racine, vrai descendant, terminaison et récolte prouvés pour #43 ; `mlock`, `MADV_DONTDUMP`, `VirtualLock`, Windows Error Reporting et l'effacement des secrets restent à #45, les vrais descendants SSH et privilégiés à #42 |
+| consentement privilégié | dialogue GTK3 direct sous Linux et Win32 modal `EDIT | ES_PASSWORD` sous Windows, répétant empreintes, étape, actions et expiration ; `sudo -n` tenté d'abord, puis un unique envoi sans PTY à `sudo -k -S` pour le chemin absolu autorisé ; accès `root` explicite | secret livré par IPC, cible, action ou expiration substituée, essai `root` implicite, réutilisation ou retry, prompt distant inattendu, shell ou interpolation, politique distante non bornable ou journalisation d'entrée susceptible de capturer le mot de passe | #45 implémente les dialogues GTK3/Win32, la saisie masquée, les refus de mutation et l'événement terminal public `Unavailable` ; les sous-cas Linux ont réussi sur des candidats intermédiaires, mais le rejeu natif final reste en attente. `sudo`, l'accès `root` et leur politique distante appartiennent à #51/#54 puis #42 |
+| effacement et anti-dump | buffers du helper zéroïsés ; sous Linux mort avec parent, `PR_SET_DUMPABLE=0`, `RLIMIT_CORE=0`, `mlock` et `MADV_DONTDUMP` disponibles ; sous Windows Job Object, `VirtualLock` et enregistrement Windows Error Reporting en défense en profondeur ; `LocalDumps` administrateur explicitement hors garantie et limites publiées | faux résultat « aucun secret possible » après crash, core dump ou fichier d'échange sans inspection ; descendant survivant ; copie propre au produit retrouvée après sortie contrôlée ; `WerRegisterExcludedMemoryBlock` présenté comme garantie face à un admin ; dump, répertoire ou inscription de registre de la fixture non supprimé | Job Object, handle sentinelle, racine, vrai descendant, terminaison et récolte prouvés pour #43. #45 implémente `ProtectedSecret` 4096, wipe, `mmap`/`mlock`/`MADV_DONTDUMP`, contrôle `gcore` présent et canari absent, `VirtualAlloc`/`VirtualLock` et enregistrement WER best effort. Les runs rouges `30768351689` et `30768749538` caractérisent le dump administrateur avec contrôle et canari présents. `30769440106` réussit ses quatre jobs sur `ae550470` : même observation, dump supprimé, répertoire vide et inscriptions absentes avant verdict, mais répertoire retiré seulement par `Drop`. Cette preuve reste intermédiaire. `c8643b0` ajoute `remove_and_prove_absent` et devient le prochain candidat exact sans run complet. La matrice finale exacte reste en attente. Les vrais descendants SSH et privilégiés restent à #42 |
 | placement et autonomie | Controller privé normalement allumé, cohabitation isolée sur petite infrastructure et recommandation dédiée lorsque taille ou risque augmentent ; fermeture de la Console sans arrêt du contrôle ou des services ; perte du Controller sans arrêt des services des autres hôtes et interruption colocalisée rendue visible | Controller permanent sur le laptop ou proposé par défaut sur le VPS public ; partage de compte, secret, répertoire ou budget entre rôles ; promesse de continuité d'un service placé sur l'hôte perdu | planifié, non exécuté |
 | identités SSH par machine | paire différente sur chaque machine, clé privée root-owned fournie au seul Controller par credentials systemd, clé publique vérifiée avant transfert d'autorité | même clé sur deux machines, clé d'une machine acceptée par une autre, clé privée visible à la Console ou à l'Agent, clé personnelle retirée | planifié, non exécuté |
 | commande forcée Auxiliaire | compte technique verrouillé sans mot de passe ; fichier de clés, parents et chemin absolu du binaire root-owned et non inscriptibles ; restrictions SSH et élévation exacte avec environnement réinitialisé ; plan typé sur stdin | option SSH retirée, répertoire remplaçable, binaire ou parent inscriptible, shell, PTY, SFTP, rc, X11, transfert, `environment=`, `SETENV`, règle `sudo` générale, sous-commande, argument, chemin ou opération libre | planifié, non exécuté |
@@ -334,6 +360,50 @@ avec des secrets exclusivement synthétiques.
 | plan et sonde OCI | plan et rollback exacts approuvés, registre et digest épinglés, sonde locale Podman rootless/Quadlet ; premier passage `changed=true`, nouveau plan demandant le même état `changed=false`, retrait absent `changed=false` | plan altéré, expiré ou rejoué, digest flottant, registre, volume, port, privilège, système d'init ou cgroup hors contrat ; dérive corrigée silencieusement ou réécriture/redémarrage inutile | planifié, non exécuté |
 | échec, reprise et rollback | échec contrôlé tentant le rollback approuvé et borné ; échec du rollback rendu partiel ; injection d'une coupure à chaque étape d'amorçage, de rotation et d'action ; reconstruction des états `ancien seul`, `chevauchement borné`, `nouveau seul`, `inconnu` avant nouvelle décision | rollback non approuvé ou touchant une ressource externe, retrait dans un état inconnu, rejeu automatique, succès global inventé après coupure, continuation autonome non contractée | planifié, non exécuté |
 | ressources et échelle de `v0.1.0` | CPU, mémoire, processus et disque bornés avec le mécanisme disponible ; destinations, listeners, tailles, concurrences, délais et débits réseau mesurés sur petite machine ; cohabitation puis placement dédié ; scénarios à 1, 2 et 64 machines | dépassement silencieux, OOM ou saturation réseau masqués, limite systemd fictive, 65e machine acceptée dans le format courant, borne de 64 présentée comme limite définitive du produit | planifié, non exécuté |
+
+Les runs #45 `30764166496`, `30764301331`, `30765033336`, `30766208361`,
+`30767224411`, `30767609914`, `30768351689` et `30768749538` restent
+diagnostiques. Ils ont respectivement
+révélé un garde Plumber non aligné, des erreurs de compilation multi-OS, trois
+variantes successives sans dump WER exploitable, puis un formatage Rust rouge
+avant le rejeu WER. Les deux derniers runs produisent un dump avec le contrôle
+ordinaire et le canari : ils sont rouges sous l'ancien oracle, mais leurs
+observations fixent désormais la frontière administrateur hors garantie.
+L'absence de dump des essais précédents ne caractérise pas cette frontière. Le
+rapport #45 conserve les SHA, les causes et la condition de rejeu. Le run
+suivant `30769440106` réussit entièrement, mais reste intermédiaire ; seule une
+matrice entièrement verte sur le futur SHA documentaire exact incluant
+`c8643b0` permettra de remplacer ici l'état `en attente`.
+
+Le dernier run évalue `DumpType=0` et `CustomDumpFlags=0x321` : un dump WER
+personnalisé incluant `PAGE_READWRITE`, sans `MiniDumpWithFullMemory`. Le
+`MDMP` stable contient le contrôle du tas et le canari protégé. Le panic de
+l'ancien oracle précède le nettoyage explicite ; seuls le `Drop` best effort et
+le runner éphémère bornent alors les restes. `ae550470` corrige l'oracle avec
+`catch_unwind`, supprime le dump et prouve le répertoire vide ainsi que la clé
+`LocalDumps` et l'exclusion `AeDebug` absentes. Le répertoire n'est cependant
+retiré que par `Drop`, après le verdict. Son run `30769440106` a réussi ses
+quatre jobs entre `2026-08-02T22:08:15Z` et `2026-08-02T22:36:00Z` : Plumber
+`91553861038`, contrôles génériques `91553861065`, Windows `91553980937` en
+26 min 27 s et Linux `91553980938` en 15 min 24 s. Il ne peut néanmoins pas
+fermer #45. `c8643b0` remplace ce chemin par `remove_and_prove_absent` pour
+prouver le répertoire absent avant verdict ; aucun run complet ne l'a encore
+évalué.
+
+Ce run intermédiaire publie exactement trois artefacts : Windows `8840335490`
+(`sha256:4d88cb47143c921e9ae6bd12f07387ea92eda78b5ea1b69fa01b0bca4056d24e`,
+JSON `b33189dfaab1c971222a3ccc65b5ef2532657e5ba7c7ae185be74c7a01281900`),
+Linux `8840204853`
+(`sha256:f2694d8ec926d92e085327ffcb76e862687160f0da9d0c326319e8545dce4936`,
+JSON `ab150f2527a35633196c2e4cef15d2cb90fb8ef78c2a366dd4cbb7873f3e3303`)
+et Plumber `8840019185`
+(`sha256:9b007bb48ff01347f42b204900d071b976fdcad6f069e84fc846eb68f44f1ba2`,
+JSON `339c545d3f8bdc0e9109ef76d38a592e069d9ce4a7e570ab700beb539c39a747`).
+Les smokes contiennent chacun un JSON et dix PNG ; les vingt captures ont été
+inspectées visuellement, cohérentes et sans secret. Le scan ne retrouve aucun
+`MDMP`, core, clé, paquet, binaire, canari ou sentinelle. Le JSON Windows lie
+SHA, run, verrous sources CRLF cohérents, artefacts vérifiés et nettoyage
+`pass` ; le JSON Linux rend `pass` et reste relié par la métadonnée GitHub.
 
 ## Matrice exécutée de `v0.0.2` — orchestration assistée
 

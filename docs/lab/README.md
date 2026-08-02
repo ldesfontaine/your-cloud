@@ -123,6 +123,23 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — consentement natif et mémoire secrète Linux/Windows](v0.1.0-native-secret-consent-linux-windows.md) :
+  implémentation candidate de #45 ; `ae550470bcff08c08624988c17d16db6cb62070a`
+  reste un candidat intermédiaire et
+  `c8643b0903aee8ad194fb7c34ae6e459c52550a3` devient le prochain candidat
+  documentaire, sans preuve finale.
+  `30768351689` et `30768749538` sont rouges sous l'ancien oracle ; ils
+  caractérisent `LocalDumps` administrateur hors garantie avec contrôle et
+  canari présents. `30769440106` a réussi ses quatre jobs sur `ae550470` et
+  prouve cette observation, la suppression du dump, le répertoire vide et les
+  deux inscriptions de registre absentes ; le répertoire n'est retiré
+  qu'ensuite par `Drop`. Cette preuve reste intermédiaire et ne ferme pas #45.
+  `c8643b0` exige désormais son absence avant verdict avec
+  `remove_and_prove_absent`, mais n'a pas de run complet. Le rapport distingue
+  les sous-cas Linux déjà exécutés, les limites
+  Windows et l'enregistrement WER en défense en profondeur ;
+  il ne ferme ni #45, ni #42, ni
+  #35, ni le palier #13 ou `v0.1.0`.
 - [`v0.1.0` — bornage IPC et helper Windows](v1-bootstrap-ipc-windows.md) : run
   GitHub Actions manuel `30753216798` entièrement vert sur le candidat produit
   exact `f3fef79` ; tests Linux et Windows, Job Object et arbre de processus,

@@ -246,9 +246,29 @@ son cycle de vie est implémenté et prouvé sous Linux et Windows sur le commit
 Tauri positives sans secret, identifiant natif anti-rejeu, aucun listener et,
 sous Windows, création suspendue avec liste exacte de handles puis Job Object.
 Le [rapport du runner Windows](../lab/v1-bootstrap-ipc-windows.md) borne aussi
-les gates de packaging natif. Les dialogues et protections de secrets `#45`,
-l'accès SSH personnel `#42`, puis l'intégration complète suivie par `#35`
-restent à implémenter et prouver avant de poursuivre le reste du palier `#13`.
+les gates de packaging natif. Les dialogues et protections de secrets `#45`
+possèdent maintenant une implémentation candidate : fenêtres GTK3 et Win32
+natives, périmètre et parent liés, échéance monotone non renouvelable de 300
+secondes, tampon protégé de 4096 octets puis destruction, protections
+`mmap`/`mlock`/`MADV_DONTDUMP` sous Linux et
+`VirtualAlloc`/`VirtualLock`/Windows Error Reporting sous Windows. Leur
+[preuve native finale](../lab/v0.1.0-native-secret-consent-linux-windows.md)
+reste toutefois en attente. `30768351689` et `30768749538` sont rouges sous un
+ancien oracle qui exigeait l'absence du canari dans `LocalDumps` ; leurs
+observations caractérisent désormais cette collecte administrateur hors
+garantie. `WerRegisterExcludedMemoryBlock` reste une défense en profondeur. Le
+candidat intermédiaire `ae550470`, dont le run `30769440106` a entièrement
+réussi ses quatre jobs, exige le contrôle et le canari présents puis supprime
+le dump, prouve le répertoire vide et les deux inscriptions de registre
+absentes. Comme le répertoire n'est retiré que par `Drop` après verdict, ce run
+ne peut pas fermer #45. `c8643b0` devient le prochain candidat exact :
+`remove_and_prove_absent` doit prouver le répertoire absent avant verdict ;
+aucun run complet ne l'a encore évalué. L'accès SSH
+personnel `#42`, puis l'intégration complète suivie
+par `#35` restent aussi à implémenter et prouver avant de poursuivre le reste
+du palier `#13`. L'acceptation actuelle détruit le secret et termine par
+l'événement public `Unavailable` ; elle ne prouve ni SSH, ni `sudo`, ni `root`, ni audit ou
+succès d'amorçage.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 ### Un seul artefact, des rôles réellement isolés

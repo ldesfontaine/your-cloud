@@ -50,7 +50,8 @@ La milestone [v0.1.0](https://github.com/ldesfontaine/your-cloud/milestone/1)
 est la vue de suivi de toute la release. Elle regroupe les décisions de
 distribution bloquantes #11 et #12, les paliers #13 à #19, le suivi transversal
 [#20](https://github.com/ldesfontaine/your-cloud/issues/20), les sous-issues
-#34 à #45 déjà créées et les futures sous-issues exécutables de ces paliers. Le
+#34 à #45, les sous-issues #51 à #54 de l'accès personnel et les futures
+sous-issues exécutables de ces paliers. Le
 routage CI #10 reste hors de la milestone parce que #20 le classe comme travail
 transverse non bloquant.
 
@@ -68,17 +69,48 @@ livrer un binaire helper distinct dont le graphe exclut la Console, Tauri, Wry,
 Tao, WebKit et JavaScriptCore. Cette décision ne change pas l'ordre des issues
 et ne vaut pas à elle seule preuve du helper. Sa fondation fail-closed et ses
 gates Linux sont exécutés ; le lancement parent et le premier consentement
-GTK3 sans secret sont également prouvés dans le LAB. La saisie GTK3 et Win32 et
+GTK3 sans secret sont également prouvés dans le LAB. La saisie GTK3 et Win32,
 l'effacement des secrets, l'annulation coopérative, `mlock`,
-`MADV_DONTDUMP`, `VirtualLock` et l'exclusion Windows Error Reporting restent
-nécessaires avant de fermer #45.
+`MADV_DONTDUMP`, `VirtualLock` et l'enregistrement Windows Error Reporting en
+défense en profondeur possèdent maintenant une implémentation candidate. Les
+runs `30768351689` et `30768749538` sont rouges sous l'ancien oracle, mais
+caractérisent `LocalDumps` administrateur hors garantie avec contrôle et canari
+présents ; le
+[rapport #45](../lab/v0.1.0-native-secret-consent-linux-windows.md) conserve les
+tentatives sans fermer l'issue. `ae550470` corrige l'observation de l'oracle,
+mais reste intermédiaire : même observation, dump supprimé, répertoire prouvé
+vide et deux inscriptions de registre prouvées absentes avant verdict, puis
+retrait du répertoire seulement par `Drop`. Son run `30769440106` a réussi ses
+quatre jobs et prouve cette étape intermédiaire, mais ne ferme pas #45. Le
+prochain candidat exact `c8643b0` emploie `remove_and_prove_absent` pour exiger
+l'absence du répertoire avant verdict, sans run complet à ce stade. Seule une
+matrice native finale entièrement verte sur le futur SHA documentaire exact qui
+inclut cette correction fermera #45.
 Pour #43, la récolte Linux autonome, le Job Object Windows avec racine et vrai
 descendant, les branches hostiles avant reprise et le dispatch Tauri vivant ont
 réussi sur le candidat exact `f3fef79` dans le run manuel `30753216798` : cette
 intégration ferme #43. La garde des futurs
-descendants SSH ou privilégiés appartient encore à #42. La suite reste donc
-`#45 → #42 → #35` ; #13 et la milestone demeurent ouverts, tandis que `v0.1.0`
-reste à atteindre.
+descendants SSH ou privilégiés appartient encore à #42.
+
+#42 est maintenant une parente exécutable, découpée sans élargir sa portée :
+
+1. [#51](https://github.com/ldesfontaine/your-cloud/issues/51) ferme les bornes
+   KDF et la politique de journalisation `sudo` avant toute saisie distante ;
+2. [#52](https://github.com/ldesfontaine/your-cloud/issues/52) authentifie une
+   cible exacte par l'agent SSH personnel ;
+3. [#53](https://github.com/ldesfontaine/your-cloud/issues/53) ouvre la clé
+   OpenSSH chiffrée de repli dans la même session native ;
+4. [#54](https://github.com/ldesfontaine/your-cloud/issues/54) vérifie
+   l'élévation et termine `access_verified`.
+
+`access_verified` signifie seulement que l'adresse résolue puis figée, la clé
+d'hôte exacte, l'identité choisie et la commande fixe `/usr/bin/id -u` ont
+vérifié l'accès direct `root` ou le chemin `sudo` autorisé. Il ne signifie ni
+audit Debian, ni installation, ni mutation, ni Controller autonome, ni succès
+d'amorçage. #42 ne se ferme qu'après #51, #52, #53 et #54 ; #35 se ferme après
+#42 et l'intégration avec #43/#45. La suite est donc
+`#45 → #51 → #52 → #53 → #54 → #42 → #35` ; #13 et la milestone demeurent
+ouverts, tandis que `v0.1.0` reste à atteindre.
 
 Aucune date d'échéance arbitraire ne lui est attachée. La preuve globale #41,
 la propagation documentaire et la fermeture de #13 terminent seulement le

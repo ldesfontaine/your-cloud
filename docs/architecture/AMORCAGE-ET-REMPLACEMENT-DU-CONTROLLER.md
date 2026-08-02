@@ -2,7 +2,9 @@
 
 > Statut : contrat d'architecture décidé, partiellement implémenté et
 > partiellement prouvé. Le socle IPC et cycle de vie natif Linux/Windows de #43
-> est acquis ; le parcours d'amorçage global reste ouvert avant le premier plan
+> est acquis. Le consentement et la mémoire secrète #45 possèdent une
+> implémentation candidate, mais leur preuve finale Linux/Windows reste en
+> attente ; le parcours d'amorçage global demeure ouvert avant le premier plan
 > d'action de `v0.1.0`.
 
 Une [édition HTML autonome et visuelle](../html/amorcage-controller.html)
@@ -95,10 +97,23 @@ publication reconnue. Le gate PE analyse les tables d'imports normaux et
 retardés ; il ne prouve pas l'absence universelle de tout chargement dynamique
 de module.
 
-Ce socle ne ferme pas le contrat global. #45 doit encore compléter les dialogues
-GTK3 et Win32 pour les secrets, leur zéroïsation et leurs preuves de
-non-divulgation, ainsi que `mlock`, `MADV_DONTDUMP`, `VirtualLock` et les
-protections Windows Error Reporting dans leurs bornes documentées. #42 doit
+Ce socle ne ferme pas le contrat global. #45 possède maintenant une
+implémentation candidate des dialogues GTK3 et Win32, de la zéroïsation, de
+`mlock`, `MADV_DONTDUMP`, `VirtualLock` et de l'enregistrement Windows Error
+Reporting en défense en profondeur. Sa preuve native finale reste en attente.
+`30768351689` et `30768749538` sont rouges sous l'ancien oracle qui exigeait le
+canari absent ; ils caractérisent désormais `LocalDumps` administrateur, hors
+garantie, avec contrôle et canari présents. `ae550470` corrige cet oracle, mais
+reste intermédiaire : la fixture supprime le contenu du dump, prouve le
+répertoire vide et les deux inscriptions de registre absentes, puis ne retire
+le répertoire lui-même qu'avec son `Drop`, après le verdict. Son run
+`30769440106` a réussi ses quatre jobs et prouve ce contrat intermédiaire, mais
+ne ferme donc pas #45. Le prochain candidat exact `c8643b0` remplace ce
+nettoyage par
+`remove_and_prove_absent` afin de prouver le répertoire absent avant verdict ;
+aucun run complet ne l'a encore évalué. Le
+[rapport de consentement natif](../lab/v0.1.0-native-secret-consent-linux-windows.md)
+conserve les tentatives diagnostiques sans les transformer en preuve. #42 doit
 encore fournir l'agent SSH, la clé chiffrée, SSH, `sudo`, le repli `root`, les
 vrais descendants de ces parcours métier et leur arrêt. Aucun audit de machine,
 Controller installé, succès métier ou signature Windows publique n'est donc
@@ -114,6 +129,14 @@ dans une URL, un fichier, un journal ou une réponse IPC. La mort du parent,
 l'EOF du pipe, l'annulation ou le timeout ferment le helper et ses enfants.
 Le premier incrément fixe cette expiration à cinq minutes depuis une horloge
 monotone native ; le frontend ne peut ni choisir cette durée, ni la prolonger.
+
+L'implémentation candidate de #45 rend cette durée non renouvelable, vérifie le
+véritable parent et le pair IPC, et refuse la substitution du parent ou du
+périmètre. Elle réserve chaque secret dans un `ProtectedSecret` de 4096 octets
+au maximum, non clonable, non sérialisable et expurgé au débogage. Après
+acceptation, ce secret est détruit et l'événement terminal public reste
+`Unavailable` : aucune utilisation SSH, privilégiée ou métier
+n'est simulée avant #42.
 
 Sous Linux, la saisie emploie directement un dialogue GTK3 avec entrée masquée
 et usage `Password`. Sous Windows, elle emploie directement un dialogue Win32
@@ -170,6 +193,17 @@ implicite d'un autre format. L'ouverture est bornée et ne réécrit pas le fich
 Les octets lus, la passphrase et la clé déchiffrée sont zéroïsés sur les sorties
 contrôlées.
 
+L'exécution de #42 suit quatre contrats successifs. #51 mesure et ferme les
+bornes du KDF ainsi que la politique de journalisation `sudo` ; #52
+authentifie une cible exacte par l'agent personnel ; #53 ouvre le seul format
+de clé chiffrée ci-dessus dans la même session ; #54 vérifie l'élévation et
+termine `access_verified`. Cet état public signifie uniquement que l'adresse
+résolue puis figée, la clé d'hôte, l'identité choisie et la commande fixe
+`/usr/bin/id -u` ont vérifié l'accès direct `root` ou le chemin `sudo`
+autorisé. Il ne prouve ni audit de machine, ni installation, ni transfert
+d'autorité ou succès d'amorçage. La parente #42 se ferme après ces quatre
+preuves, puis #35 porte leur intégration avec #43 et #45.
+
 ### Élévation, arrêt et risque résiduel
 
 Avec un compte non-root, le helper tente d'abord l'action exacte avec
@@ -194,12 +228,30 @@ exige un nouveau consentement et une nouvelle mise à disposition de l'accès.
 
 Le helper zéroïse ses propres buffers sur chaque sortie contrôlée. Sous Linux,
 il meurt avec son parent, désactive les dumps de processus avec
-`PR_SET_DUMPABLE=0` et `RLIMIT_CORE=0`, puis emploie `mlock` et
-`MADV_DONTDUMP` lorsqu'ils sont disponibles. Sous Windows, le Job Object ferme
-désormais la racine et ses descendants selon le socle prouvé ci-dessus. Le
-parcours secret final doit encore employer `VirtualLock` pour garder les
-buffers sensibles hors du fichier d'échange dans sa borne documentée et
-empêcher Windows Error Reporting de les collecter lorsque l'API le permet.
+`PR_SET_DUMPABLE=0` et `RLIMIT_CORE=0`, puis emploie `mmap`, `mlock` et
+`MADV_DONTDUMP`. La fixture synthétique exige qu'un `gcore` ordinaire conserve
+un contrôle du tas mais pas le canari protégé, puis qu'un `abort` durci ne
+produise aucun core. Ces sous-cas Linux ont réussi sur des candidats
+intermédiaires, mais doivent être rejoués sur le SHA documentaire final.
+
+Sous Windows, le Job Object ferme désormais la racine et ses descendants selon
+le socle prouvé ci-dessus. L'implémentation candidate alloue avec `VirtualAlloc`,
+verrouille avec `VirtualLock` et inscrit la zone auprès de Windows Error
+Reporting avec `WerRegisterExcludedMemoryBlock`. La fixture WER doit retrouver
+un contrôle ordinaire dans un dump `MDMP` personnalisé incluant les régions
+`PAGE_READWRITE` et y retrouver aussi le canari protégé. La fixture configure
+`DumpType=0` et `CustomDumpFlags=0x321`, soit `DataSegs`, `UnloadedModules`,
+`ProcessThreadData` et `PrivateReadWriteMemory`. Elle caractérise ainsi une
+collecte administrateur capable de lire le contrôle et la zone `VirtualAlloc`,
+hors de la garantie produit. `WerRegisterExcludedMemoryBlock` reste actif en
+défense en profondeur, sans promesse contre `LocalDumps`. Après l'observation,
+le test final doit prouver avant verdict la suppression du dump, l'absence de
+son répertoire, celle de la clé `LocalDumps` et celle de l'exclusion `AeDebug`
+propres à la fixture. `ae550470` ne prouve que le répertoire vide avant verdict
+et le retire ensuite par `Drop` : son run `30769440106` a entièrement réussi
+ses quatre jobs et constitue une preuve intermédiaire utile, sans pouvoir
+fermer #45. `c8643b0` porte `remove_and_prove_absent` et devient le prochain
+candidat exact, sans run complet à ce stade.
 
 Cette destruction reste une mesure **best effort**, pas une promesse d'absence
 universelle de copie. GTK, Win32 et le système peuvent posséder des copies
@@ -602,7 +654,9 @@ LAB :
   l'IPC, les arguments, l'environnement, les descripteurs inattendus, les
   fichiers persistants ou temporaires, les journaux et les artefacts ;
 - dialogues GTK3 et Win32 réellement hors WebView, avec refus d'une cible,
-  d'une action ou d'une expiration différente de ce qui a été confirmé ;
+  d'une action ou d'une expiration différente de ce qui a été confirmé ; leur
+  implémentation candidate appartient à #45, mais la matrice finale exacte
+  reste en attente ;
 - clé d'hôte exacte, algorithmes obsolètes, autre endpoint d'agent, seconde
   signature et message hors authentification refusés par le client SSH borné ;
 - acceptation du seul format de clé chiffrée décidé et refus des clés en clair,
@@ -611,7 +665,11 @@ LAB :
   relance, d'un prompt, d'une commande ou d'une politique de journalisation
   hors contrat ;
 - zéroïsation contrôlée, protections anti-dump disponibles et limites publiées
-  après sortie, crash et dump synthétiques sous Linux et Windows ;
+  après sortie, crash et dump synthétiques ; sous Windows, `LocalDumps`
+  administrateur reste hors garantie, contrôle et canari doivent être présents,
+  puis dump, répertoire et deux inscriptions de registre doivent être absents
+  et vérifiés avant verdict ;
+  les sous-cas Linux intermédiaires ne remplacent pas le rejeu final ;
 - dépendances, licences, verrou, SBOM, imports PE et chargement éventuel de
   WebKit audités pour les deux paquets natifs et leur fonctionnement hors ligne ;
 - installation du Controller, fermeture de l'Assistant puis fonctionnement

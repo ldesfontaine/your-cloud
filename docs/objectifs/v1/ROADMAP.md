@@ -83,6 +83,20 @@ en parallèle, mais doivent être fermées avant la release `v0.1.0`. Le routage
 domaines ([`#10`](https://github.com/ldesfontaine/your-cloud/issues/10)) reste
 un chantier transverse non bloquant pour le contrat produit.
 
+Dans l'amorçage, l'accès personnel `#42` est désormais découpé en quatre
+contrats exécutables : [`#51`](https://github.com/ldesfontaine/your-cloud/issues/51)
+ferme les bornes KDF et la politique `sudo`,
+[`#52`](https://github.com/ldesfontaine/your-cloud/issues/52) authentifie une
+cible exacte par l'agent personnel,
+[`#53`](https://github.com/ldesfontaine/your-cloud/issues/53) ouvre la clé
+OpenSSH chiffrée de repli dans la même session, puis
+[`#54`](https://github.com/ldesfontaine/your-cloud/issues/54) vérifie
+l'élévation et termine l'état `access_verified`. Cet état signifie uniquement
+que l'adresse figée, la clé d'hôte, l'identité choisie et la sonde fixe
+`/usr/bin/id -u` ont vérifié un accès direct `root` ou le chemin `sudo`
+autorisé. Il ne vaut ni audit, ni installation, ni succès d'amorçage. L'ordre
+restant est donc `#45 → #51 → #52 → #53 → #54 → #42 → #35`.
+
 ## État de départ
 
 Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessous.
@@ -95,7 +109,7 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
 | `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat produit Linux/Windows `3b8f81f` | oui — fonctionnel LAB Linux ; porte native finale verte dans `30710037004`, liée au SHA exact par `#9` |
-| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | non | non |
+| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | partiel — #43 acquis ; implémentation candidate de #45 ; #42 et #35 ouverts | partiel — #43 prouvé ; preuve native finale #45 en attente |
 | Autres paliers de `v0.1.0` | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
@@ -363,8 +377,10 @@ Ce palier est suivi par l'issue `#13`. La condition de fermeture `#9` de
 `v0.0.3` est satisfaite sur le candidat produit `3b8f81f` effectivement
 fusionné : l'amorçage est donc le palier ouvert. Son contrat est décidé afin que
 l'implémentation ne réinvente pas l'autorité initiale. Le socle helper/IPC
-`#43` est prouvé ; l'ordre restant passe par `#45`, puis `#42`, puis la fermeture
-de l'intégration `#35`, avant le reste du palier `#13`.
+`#43` est prouvé. `#45` possède une implémentation candidate mais pas encore sa
+preuve native finale. L'ordre restant passe par `#45`, puis les sous-issues
+`#51 → #52 → #53 → #54`, la fermeture de leur parente `#42`, puis celle de
+l'intégration `#35`, avant le reste du palier `#13`.
 
 **Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
@@ -398,6 +414,29 @@ anti-rejeu, l'absence de listener et les gates de packaging natif. Sous Windows,
 la création suspendue, la liste exacte de handles et le Job Object bornent aussi
 les descendants et les branches d'échec. Voir le
 [rapport du runner Windows](../../lab/v1-bootstrap-ipc-windows.md).
+
+**Implémentation candidate (`#45`) :** le helper lie le véritable parent et
+son pair IPC au périmètre public immuable, fixe une échéance monotone de 300
+secondes non renouvelable et ouvre directement les fenêtres GTK3 ou Win32. Un
+`ProtectedSecret` borné à 4096 octets est détruit avant la sortie ; Linux
+emploie `mmap`, `mlock` et `MADV_DONTDUMP`, Windows `VirtualAlloc`,
+`VirtualLock` et l'enregistrement Windows Error Reporting en défense en
+profondeur. Le
+[rapport dédié](../../lab/v0.1.0-native-secret-consent-linux-windows.md)
+conserve les sous-cas Linux exécutés et les tentatives diagnostiques Windows.
+Les runs `30768351689` et `30768749538` sont rouges sous l'ancien oracle, qui
+exigeait le canari absent. Ils caractérisent désormais la frontière
+`LocalDumps` administrateur hors garantie : contrôle et canari sont présents,
+tandis que `WerRegisterExcludedMemoryBlock` reste une défense en profondeur. Le
+candidat intermédiaire `ae550470` exige cette observation, supprime le dump,
+prouve son répertoire vide et les deux inscriptions de registre absentes, mais
+ne retire le répertoire que par `Drop` après verdict. Son run `30769440106` a
+entièrement réussi ses quatre jobs et prouve cette étape intermédiaire, mais ne
+ferme pas #45. `c8643b0` devient le prochain candidat exact avec
+`remove_and_prove_absent`, qui exige le
+répertoire absent avant verdict ; aucun run complet ne l'a encore évalué. Après
+acceptation, l'événement terminal public reste `Unavailable` : cette
+frontière n'exécute ni SSH, ni `sudo`, ni `root`, ni audit ou installation.
 
 **Preuve de sortie :**
 
@@ -441,12 +480,12 @@ les descendants et les branches d'échec. Voir le
 
 Le socle `#43` ci-dessus est exécuté dans des runners isolés avec des données
 sentinelles synthétiques et aucun secret réel. La preuve de sortie globale reste
-incomplète : les dialogues et protections de secrets `#45`, l'accès SSH
-personnel `#42`, puis l'intégration
-`#35` restent à implémenter et prouver. La signature Windows synthétique valide
-la mécanique de build du candidat, pas une identité publique ; une distribution
-publique attend toujours une signature reconnue et gratuite réellement
-opérationnelle.
+incomplète : `#45` doit encore réussir sa matrice native finale ; l'accès SSH
+personnel avance ensuite par `#51`, `#52`, `#53` et `#54` avant la fermeture de
+`#42`, puis l'intégration `#35` reste à prouver. La signature Windows
+synthétique valide la mécanique de build du candidat, pas une identité
+publique ; une distribution publique attend toujours une signature reconnue et
+gratuite réellement opérationnelle.
 
 Le contrat complet est
 [Amorçage et remplacement du Controller](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
@@ -638,8 +677,15 @@ multi-VM. L'issue `#9` relie cette preuve au SHA intégré par fast-forward :
 `v0.0.3` est fermée. Le budget du projet reste nul. L'amorçage et le
 remplacement du Controller appartiennent au contrat de `v0.1.0` et restent ouverts, mais
 leur socle helper/IPC `#43` est implémenté et prouvé sous Linux et Windows sur
-`f3fef79` par le run `30753216798`. Ce résultat ne ferme ni `#35`, ni le palier
-`#13`, ni son milestone : l'ordre restant est `#45`, `#42`, `#35`, puis les
-autres issues du palier. Ansible intégré, WireGuard, OCI, téléphone, navigateur
-public, Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors
-du périmètre de code actuellement prouvé.
+`f3fef79` par le run `30753216798`. `#45` possède une implémentation candidate,
+mais les runs `30768351689` et `30768749538` sont restés rouges sous l'ancien
+oracle de dump. `ae550470` corrige cette frontière, mais ne prouve que le
+répertoire vide avant verdict et ne le retire qu'au `Drop` ; son run
+`30769440106` a réussi ses quatre jobs, mais reste une preuve intermédiaire qui
+ne ferme pas #45. `c8643b0` est le prochain candidat exact qui exige le
+répertoire absent avant verdict, sans run complet à ce stade. Ces
+résultats ne ferment ni `#35`, ni le palier `#13`, ni son milestone : l'ordre
+restant est `#45 → #51 → #52 → #53 → #54 → #42 → #35`, puis les autres issues
+du palier. Ansible intégré, WireGuard, OCI, téléphone, navigateur public,
+Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors du
+périmètre de code actuellement prouvé.

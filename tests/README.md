@@ -12,7 +12,7 @@ a été exécuté.
 | Couche | Contenu | Runner attendu | Autorité |
 |---|---|---|---|
 | porte rapide sous [`checks/`](checks/) | format, syntaxe, contrat PowerShell de nettoyage attribué par SID, chemins bornés et collecte sans faux candidat nul, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
-| matrice native sous [`checks/`](checks/) | tests frontend et Rust, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, journaux et smoke borné |
+| matrice native sous [`checks/`](checks/) | tests frontend et Rust, consentement GTK3/Win32, fixture de crash avec contrôle ordinaire et canari protégé, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, dumps synthétiques bornés puis nettoyés et, par plateforme, artefact expurgé de onze fichiers : un JSON, neuf vues et un consentement natif PNG |
 | [`lab/v0.0.1/`](lab/v0.0.1/) | préparation, déploiement, scénarios hostiles multi-VM, nettoyage et restitution P2 | topologie KVM/libvirt `v1-full` pilotée par `labctl` | `result.json` et assertions machine |
 | [`artifacts/`](artifacts/) | convention et sorties locales non versionnées des preuves | poste de pilotage après rapatriement d'un résultat LAB | résultat structuré du run exact |
 
@@ -45,6 +45,32 @@ Les contrôles sont maintenus avec le code : tout défaut corrigé reçoit le ca
 hostile proportionné dans la couche la plus petite capable de le reproduire,
 puis une preuve LAB seulement lorsque la frontière réelle est nécessaire. Une
 capture ou une page HTML ne remplace jamais une assertion machine.
+
+Pour #45, Linux vérifie qu'un `gcore` par défaut conserve un contrôle ordinaire
+mais pas le canari d'un `ProtectedSecret`, puis qu'un `abort` durci ne produit
+aucun core. Windows configure un dump WER personnalisé incluant
+`PAGE_READWRITE` avec `DumpType=0` et `CustomDumpFlags=0x321`. La fixture exige
+la signature `MDMP`, le contrôle et le canari présents : elle caractérise
+`LocalDumps` administrateur hors garantie, tandis que
+`WerRegisterExcludedMemoryBlock` reste une défense en profondeur. Elle doit
+ensuite prouver avant verdict la suppression du dump, l'absence de son
+répertoire et celle des deux inscriptions de registre. Les flags incluent
+`PAGE_READWRITE` sans
+`MiniDumpWithFullMemory` ; le contrôle et la zone `VirtualAlloc` restent donc
+observables.
+`30768351689` et `30768749538` sont rouges sous l'ancien oracle qui exigeait le
+canari absent. Le dernier panic précède le nettoyage explicite ; seuls le
+`Drop` best effort et le runner éphémère bornent alors les restes. Le candidat
+intermédiaire `ae550470` corrige l'oracle, supprime le dump et prouve le
+répertoire vide ainsi que les inscriptions absentes, mais ne retire le
+répertoire que par `Drop` après verdict. `30769440106` a entièrement réussi ses
+quatre jobs et prouve cette étape intermédiaire, sans fermer #45. `c8643b0`
+emploie
+`remove_and_prove_absent` pour prouver le répertoire absent avant verdict et
+devient le prochain candidat exact, sans run complet : le
+[rapport dédié](../docs/lab/v0.1.0-native-secret-consent-linux-windows.md)
+reste en attente d'une matrice finale entièrement verte sur le SHA documentaire
+exact. Aucun sous-cas intermédiaire ne ferme #45.
 
 Le registre détaillé reste
 [`docs/contribution/TESTS.md`](../docs/contribution/TESTS.md). Le placement, les

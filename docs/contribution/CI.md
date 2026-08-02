@@ -16,6 +16,7 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 | porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974` | états des jobs `Contrôles génériques` et `Politique Plumber` |
 | matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
 | bornage IPC #43 | porte rapide `30753208857` puis matrice manuelle `30753216798` entièrement vertes sur le candidat produit exact `f3fef79` ; Linux et Windows exécutent le helper compagnon, Windows ajoute son Job Object, son paquet, son gate PE et le dispatch Tauri vivant | états des jobs, journaux et artefact expurgé liés depuis le rapport #43 |
+| consentement et mémoire secrète #45 | aucune porte finale acceptée ; `30768351689` et `30768749538` sont rouges sous l'ancien oracle ; `30769440106` a réussi ses quatre jobs sur `ae550470` et ses trois artefacts ont été inspectés, mais ce SHA ne prouve que le répertoire WER vide avant verdict ; `c8643b0` est le prochain candidat exact, sans run complet | matrice complète entièrement verte sur le SHA documentaire exact incluant `remove_and_prove_absent`, avec observation puis absence du répertoire WER avant verdict et inspection des artefacts expurgés |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
 | exécution GitHub Actions réelle | [run final `30710037004`](https://github.com/ldesfontaine/your-cloud/actions/runs/30710037004) entièrement vert sur le candidat produit exact `3b8f81f`, avec les deux gardes et les variantes natives ; l'issue `#9` conserve le SHA, les liens et les empreintes | états des jobs, journaux et artefact de smoke du run |
@@ -68,6 +69,82 @@ prouve pas l'absence universelle de chargement dynamique. Le
 [rapport dédié](../lab/v1-bootstrap-ipc-windows.md) conserve les empreintes, le
 nettoyage et les limites. Cette porte et sa propagation ferment #43, sans fermer
 #45, #42, #35, le palier #13 ou `v0.1.0`.
+
+### Candidat de consentement natif #45 — preuve encore en attente
+
+Le helper possède maintenant une implémentation candidate des fenêtres GTK3 et
+Win32, du périmètre immuable lié au véritable parent et au pair IPC, de
+l'échéance monotone non renouvelable de 300 secondes et du tampon
+`ProtectedSecret` borné à 4096 octets. Linux emploie
+`mmap`/`mlock`/`MADV_DONTDUMP` ; Windows
+`VirtualAlloc`/`VirtualLock` et `WerRegisterExcludedMemoryBlock` en défense en
+profondeur. `LocalDumps` configuré par un administrateur reste hors garantie. Après
+acceptation, le secret est détruit et l'événement public reste `Unavailable` :
+aucune capacité SSH, `sudo`, `root` ou métier n'est simulée.
+
+Les runs manuels
+[`30764166496`](https://github.com/ldesfontaine/your-cloud/actions/runs/30764166496),
+[`30764301331`](https://github.com/ldesfontaine/your-cloud/actions/runs/30764301331),
+[`30765033336`](https://github.com/ldesfontaine/your-cloud/actions/runs/30765033336),
+[`30766208361`](https://github.com/ldesfontaine/your-cloud/actions/runs/30766208361),
+[`30767224411`](https://github.com/ldesfontaine/your-cloud/actions/runs/30767224411)
+et
+[`30767609914`](https://github.com/ldesfontaine/your-cloud/actions/runs/30767609914),
+puis
+[`30768351689`](https://github.com/ldesfontaine/your-cloud/actions/runs/30768351689)
+sont diagnostiques, jamais des preuves de fermeture. Les deux premières
+tentatives ont révélé le garde Plumber puis des erreurs de compilation ; les
+trois suivantes n'ont pas obtenu de dump WER inspectable ; la dernière s'est
+arrêtée au formatage avant le test. `30768351689` produit ensuite un `MDMP`
+contenant contrôle et canari. Il reste rouge sous l'ancien oracle, mais cette
+observation caractérise la frontière `LocalDumps` administrateur. Le
+[rapport dédié](../lab/v0.1.0-native-secret-consent-linux-windows.md) conserve
+les SHA, les causes, les sous-cas Linux exécutés et les limites exactes.
+
+Le candidat `5cceb783` remplace la configuration précédente par `DumpType=0` et
+`CustomDumpFlags=0x321`, soit un dump WER personnalisé incluant les régions
+`PAGE_READWRITE` sans `MiniDumpWithFullMemory`. Son run
+[`30768749538`](https://github.com/ldesfontaine/your-cloud/actions/runs/30768749538)
+produit un `MDMP` personnalisé stable avec le contrôle du tas et le canari
+protégé. Il reste rouge parce que l'ancien oracle exige l'inverse et le panic
+précède le nettoyage explicite ; seuls le `Drop` best effort et le runner
+éphémère bornent alors les restes. Cette présence n'est pas une garantie produit
+violée : `LocalDumps` administrateur est hors contrat et l'enregistrement WER
+reste une défense en profondeur.
+
+Le candidat intermédiaire `ae550470` corrige l'observation de l'oracle. Son run
+[`30769440106`](https://github.com/ldesfontaine/your-cloud/actions/runs/30769440106)
+a entièrement réussi ses quatre jobs entre `2026-08-02T22:08:15Z` et
+`2026-08-02T22:36:00Z` : Plumber `91553861038`, contrôles génériques
+`91553861065`, Windows `91553980937` en 26 min 27 s et Linux `91553980938` en
+15 min 24 s. Il observe le `MDMP`, le contrôle et le canari présents, puis
+prouve le dump supprimé, son répertoire vide et les inscriptions `LocalDumps`
+et `AeDebug` absentes. Le `Drop` ne retire toutefois le répertoire qu'après le
+verdict : ce succès constitue une preuve intermédiaire, pas la porte finale.
+`c8643b0` devient le prochain candidat exact : `remove_and_prove_absent` doit
+retirer le répertoire et le prouver absent avant verdict. Aucun run complet ne
+l'a encore évalué.
+
+Le workflow place la preuve de crash tôt dans chaque variante afin qu'un défaut
+de collecte ou d'exclusion n'attende pas le build des paquets. Sous Linux, le
+contrôle ordinaire doit rester visible dans un `gcore` par défaut tandis que le
+canari protégé en est absent, puis un `abort` durci ne produit aucun core. Sous
+Windows, la fixture lancée avec `CREATE_DEFAULT_ERROR_MODE` refuse
+`SEM_NOGPFAULTERRORBOX`, configure WER par exécutable, exige un dump `MDMP`
+personnalisé incluant `PAGE_READWRITE`, avec contrôle ordinaire et canari
+protégé présents. Elle caractérise ainsi l'autorité administrateur hors
+garantie, puis doit retirer et prouver absents avant verdict le dump, son
+répertoire et les deux inscriptions de registre propres au test. `ae550470` ne
+satisfait pas encore cette séquence pour le répertoire ; `c8643b0` introduit la
+preuve manquante. Aucun résultat n'est accepté si l'observation ou l'un des
+quatre nettoyages manque.
+
+Une nouvelle matrice manuelle doit réussir les deux gardes, Linux, Windows,
+paquets, dialogues, nettoyages et artefacts sur le même SHA qui inclut la
+documentation. `30769440106` est entièrement vert, mais son SHA intermédiaire
+ne peut pas fermer #45. Une matrice entièrement verte sur le futur SHA
+documentaire exact qui inclut `c8643b0` reste requise, avec ses jobs, empreintes
+et artefacts.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation
@@ -161,11 +238,14 @@ Le job matriciel `Console`, exécuté seulement sur déclenchement manuel, fixe
 Node.js `24.18.0` LTS et Rust `1.94.1`, désactive le cache automatique et lance
 au plus deux variantes en parallèle avec `fail-fast: false`. Les deux variantes
 exécutent le même verrou npm, l'audit des dépendances frontend, le contrat
-visuel, le build embarqué, le formatage Rust et les tests natifs. La variante
-Linux construit le `.deb`, l'installe, le lance sous affichage virtuel puis
-refuse tout listener TCP du processus. Elle prépare et teste aussi le helper
-compagnon et ses scénarios GTK isolés. La variante Windows exécute en plus les
-tests d'ACL et du Job Object, y compris les branches hostiles de création,
+visuel, le build embarqué et le formatage Rust. Elles exécutent ensuite tôt la
+fixture de crash secrète propre à leur plateforme, avant les tests release du
+workspace, afin qu'un dump absent ou mal expurgé arrête le candidat sans
+attendre les paquets. La variante Linux éprouve aussi le parent, le pair IPC,
+l'échéance, l'annulation et les scénarios GTK3 isolés, puis construit le `.deb`,
+l'installe, le lance sous affichage virtuel et refuse tout listener TCP du
+processus. La variante Windows exécute en plus les dialogues Win32, les tests
+d'ACL et du Job Object, y compris les branches hostiles de création,
 d'affectation et de récolte. Elle construit le `.msi` sous MSVC/WiX, vérifie que
 son image administrative possède exactement l'ensemble des deux exécutables
 installables, signe l'exécutable Console, le helper et l'installateur, puis les
@@ -183,14 +263,35 @@ Le certificat Authenticode de CI est synthétique, auto-signé, valable deux
 jours, créé dans le magasin de l'utilisateur jetable puis supprimé avec sa clé
 privée. Son horodatage RFC 3161 prouve le mécanisme de signature, pas l'identité
 publique de Your Cloud. Aucun `.deb`, `.msi`, exécutable ou certificat n'est
-archivé. L'archive Windows bornée contient seulement un rapport JSON et des
-captures PNG. Le rapport lie `github.sha`, `github.run_id`, le checkout et la
-propreté initiale du worktree ; `source_locks` conserve les SHA-256 des verrous
-npm et Cargo. `verified_artifacts` relie le `.msi`, l'exécutable signé extrait
+archivé. Les archives Linux et Windows bornées contiennent seulement un rapport
+JSON et dix captures PNG : neuf vues de l'interface et un consentement natif,
+soit exactement onze fichiers par plateforme. Le rapport Windows sérialise
+`github.sha`, `github.run_id`, `source_locks`, `verified_artifacts` et
+`cleanup`. Le JSON Linux ne sérialise aucun de ces champs : la métadonnée de
+l'artefact GitHub le relie au run, et le nettoyage est bloquant par le code de
+sortie du job. Il ne faut pas lui attribuer la structure du rapport Windows.
+
+Le run intermédiaire `30769440106` publie exactement trois artefacts inspectés :
+
+| Artefact | ID | Taille | Empreinte GitHub | Empreinte du JSON |
+|---|---:|---:|---|---|
+| smoke Windows | `8840335490` | 288462 octets | `sha256:4d88cb47143c921e9ae6bd12f07387ea92eda78b5ea1b69fa01b0bca4056d24e` | `b33189dfaab1c971222a3ccc65b5ef2532657e5ba7c7ae185be74c7a01281900` |
+| smoke Linux | `8840204853` | 296937 octets | `sha256:f2694d8ec926d92e085327ffcb76e862687160f0da9d0c326319e8545dce4936` | `ab150f2527a35633196c2e4cef15d2cb90fb8ef78c2a366dd4cbb7873f3e3303` |
+| rapport Plumber | `8840019185` | 1855 octets | `sha256:9b007bb48ff01347f42b204900d071b976fdcad6f069e84fc846eb68f44f1ba2` | `339c545d3f8bdc0e9109ef76d38a592e069d9ce4a7e570ab700beb539c39a747` |
+
+Chaque smoke contient bien un JSON et dix PNG. Les vingt captures ont été
+inspectées visuellement : elles sont cohérentes et sans secret. Le scan des
+trois archives ne retrouve ni `MDMP`, core, clé, paquet, binaire, canari ou
+sentinelle. Le JSON Windows lie le SHA et le run, consigne les verrous sources
+— avec les empreintes CRLF Windows cohérentes —, les MSI, helper et exécutable
+vérifiés, puis un nettoyage `pass`. Le JSON Linux rend `pass` et reste relié au
+run par la métadonnée GitHub.
+
+Sous Windows, `verified_artifacts` relie le `.msi`, l'exécutable signé extrait
 de son image administrative et l'exécutable installé, dont l'égalité est
 vérifiée. La sortie Cargo restaurée par Tauri après le bundling n'est pas
-confondue avec l'exécutable signé réellement placé dans le paquet. Enfin,
-`cleanup` rend
+confondue avec l'exécutable signé réellement placé dans le paquet. Enfin, le
+champ Windows `cleanup` rend
 bloquante l'absence de l'installation, du certificat et de sa clé privée, du
 compte et profil éphémères, des fichiers temporaires, des processus, du port de
 debugger WebView2 et des données applicatives. La signature publique de
