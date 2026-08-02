@@ -44,6 +44,40 @@ Une incertitude qui doit être levée avant ce découpage reçoit une issue de
 décision séparée. Elle annonce la question à trancher et ne mélange pas étude et
 implémentation.
 
+## Milestone active du palier #13
+
+Le palier d'amorçage et de remplacement du Controller utilise la milestone
+[V1 — Amorçage et remplacement du Controller](https://github.com/ldesfontaine/your-cloud/milestone/1)
+comme vue de suivi. Elle regroupe l'issue parente
+[#13](https://github.com/ldesfontaine/your-cloud/issues/13), la décision #34,
+l'issue parente #35 et ses contrats #42 à #45, les contrats exécutables #36 à
+#40 et la preuve globale #41. Le suivi transversal de toute la V1 reste porté
+par [#20](https://github.com/ldesfontaine/your-cloud/issues/20), hors de cette
+milestone.
+
+Dans #35, la décision documentaire #44 ferme d'abord le canal natif des
+secrets. Elle bloque le bornage IPC #43 et le consentement natif #45 ; leur
+intégration permet ensuite l'accès SSH personnel borné #42. La fermeture de #35
+exige ces quatre résultats et leurs preuves, dans l'ordre
+`#44 → (#43 + #45) → #42 → #35` ; une seule sous-issue verte ne suffit pas.
+Le gate ELF Linux du 2 août 2026 a activé le repli prévu par #44 : #45 doit
+livrer un binaire helper distinct dont le graphe exclut la Console, Tauri, Wry,
+Tao, WebKit et JavaScriptCore. Cette décision ne change pas l'ordre des issues
+et ne vaut pas à elle seule preuve du helper. Sa fondation fail-closed et ses
+gates Linux sont exécutés ; le lancement parent et le premier consentement
+GTK3 sans secret sont également prouvés dans le LAB. Le dialogue Win32, la
+saisie et l'effacement des secrets, l'annulation coopérative et les gates
+Windows restent nécessaires avant de fermer #45. Pour #43, la récolte Linux
+est désormais autonome et bornée côté appelant, et un nettoyage non prouvable
+ferme les relances ; l'équivalent Windows par Job Object, le dispatch Tauri
+vivant et la garde propre aux futurs descendants de #42 restent ouverts.
+
+Aucune date d'échéance arbitraire ne lui est attachée. Elle n'est fermée qu'après
+la preuve globale #41, la propagation documentaire et la fermeture de #13 ; sa
+fermeture ne prouve rien de plus que les preuves reliées par ces issues. Elle
+termine ce palier d'amorçage et permet d'ouvrir #14 ; elle ne ferme ni le suivi
+#20, ni la V1 complète.
+
 ## Convention de titre
 
 Le titre reprend la grammaire des commits sans prétendre étendre la

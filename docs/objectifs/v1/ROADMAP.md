@@ -4,12 +4,15 @@
 > LAB. Les huit paramètres de `v0.0.3` sont validés. Sa
 > [preuve fonctionnelle Linux](../../lab/v0.0.3-console-controller-linux.md), réussie une
 > première fois sur `afb31e8`, a été revalidée après review le 22 juillet 2026
-> sur le commit produit exact `02fe4f5`. La matrice native Linux/Windows a
-> réussi dans le run hébergé `30700406219` sur `9c6f14f`. `v0.0.3` est déclarée
-> fermée uniquement pour le SHA dont l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9)
-> lie un `workflow_dispatch` entièrement vert ; sans cette preuve, la branche
-> reste non fusionnable. Seul ce SHA est ensuite fusionné sans retouche de ces
-> statuts.
+> sur le commit produit exact `02fe4f5`. La porte native Linux/Windows finale a
+> ensuite réussi dans le
+> [run `30710037004`](https://github.com/ldesfontaine/your-cloud/actions/runs/30710037004)
+> sur le candidat produit exact
+> `3b8f81f8a1ab4e000da7271bbd22544999c9d0f1`. L'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9)
+> relie ce SHA, le run entièrement vert et son intégration par fast-forward :
+> `v0.0.3` est fermée pour ce candidat. Les commits documentaires ou de rangement
+> ultérieurs ne déplacent pas l'autorité de cette preuve vers un autre candidat
+> produit.
 
 Une [édition HTML autonome et visuelle](../../html/roadmap-v1.html) accompagne cette source
 Markdown.
@@ -65,10 +68,13 @@ découpée en sous-issues exécutables.
 | Rendre la responsabilité externe visible | [`#18`](https://github.com/ldesfontaine/your-cloud/issues/18) |
 | Prouver le scénario complet et les artefacts V1 | [`#19`](https://github.com/ldesfontaine/your-cloud/issues/19) |
 
-L'issue `#9` est le registre unique de la preuve finale : elle doit lier le run
-manuel entièrement vert et son SHA exact. Sa fermeture seule ne vaut pas
-preuve. Toute modification après le run invalide la condition et impose un
-nouveau `workflow_dispatch` avant fusion.
+L'issue `#9` est le registre unique de la preuve finale. Elle lie désormais le
+run manuel `30710037004`, entièrement vert, au candidat produit exact
+`3b8f81f`, fusionné par fast-forward. Sa fermeture seule n'aurait pas valu
+preuve : ce sont ce lien et les résultats du run qui ferment `v0.0.3`. Tout
+nouveau candidat modifiant le contenu couvert par la porte native exige un
+nouveau `workflow_dispatch` avant fusion ; un changement ultérieur ne reçoit
+jamais rétroactivement la preuve de ce SHA.
 
 La licence du dépôt public ([`#11`](https://github.com/ldesfontaine/your-cloud/issues/11))
 et la signature Windows publique gratuite
@@ -88,8 +94,8 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | Contrat V1 | oui | non | non |
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
-| `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat Linux/Windows présent | fermeture conditionnée à la preuve finale — fonctionnel LAB Linux et matrice historique exécutés ; fermée uniquement pour le SHA dont le run final vert est lié dans `#9` |
-| Amorçage et remplacement du Controller | oui — prochain contrat V1 après fermeture de `v0.0.3` | non | non |
+| `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat produit Linux/Windows `3b8f81f` | oui — fonctionnel LAB Linux ; porte native finale verte dans `30710037004`, liée au SHA exact par `#9` |
+| Amorçage et remplacement du Controller | oui — prochain contrat V1 ouvert après `v0.0.3` | non | non |
 | Autres paliers postérieurs de la V1 | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
@@ -209,7 +215,7 @@ donnée et les lacunes éventuelles sont déjà définis et vérifiables.
 <!-- coherence: V1-OBSERVATION:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### Incrément à fermeture conditionnée par la preuve finale : `v0.0.3` — Console cliente et Controller de lecture
+### Incrément fermé — preuves attribuées au candidat exact : `v0.0.3` — Console cliente et Controller de lecture
 
 **Résultat :** installer une Console signée fonctionnelle sur Linux et Windows,
 créer une infrastructure dans un Controller, y rattacher les deux machines et
@@ -301,11 +307,12 @@ selon le [rapport LAB](../../lab/v0.0.3-console-controller-linux.md). Après la
 preuve complète initiale, le commit produit `02fe4f5` issu de la review a
 repassé les gates, le `.deb`, le coffre, l'appairage, les deux machines, la
 panne/reprise Relay et les sept vues. L'orchestration complète reste assistée.
-Le run hébergé `30700406219` a ensuite exécuté sur `9c6f14f` les builds,
-installations et smokes natifs Linux et Windows. Il ne rejoue ni ne simule la
-topologie `v1-full`. Le palier est déclaré fermé uniquement pour le SHA dont
-l'issue `#9` lie un `workflow_dispatch` entièrement vert ; sans cette preuve,
-la branche reste non fusionnable.
+Le run historique `30700406219` a exécuté sur `9c6f14f` les builds,
+installations et smokes natifs Linux et Windows. Après le durcissement du
+workflow, la porte native finale `30710037004` a entièrement réussi sur le
+candidat produit exact `3b8f81f`. Elle ne rejoue ni ne simule la topologie
+`v1-full`. L'issue `#9` relie ce SHA et ce run puis enregistre son intégration
+par fast-forward : le palier est fermé pour ce candidat exact.
 
 **Précondition validée :** le chemin Daemon–Relay authentifié, le tampon borné
 et la représentation des données anciennes ou lacunaires ont franchi leur
@@ -352,10 +359,10 @@ HTTPS normal.
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ### Prochain palier décidé — amorçage réutilisable
 
-Ce palier ne reçoit pas encore de numéro : il ne commence qu'après satisfaction
-de la condition de fermeture `#9` de `v0.0.3` sur le SHA effectivement fusionné.
-Son contrat est néanmoins décidé afin que le développement suivant ne réinvente
-pas l'autorité initiale.
+Ce palier ne reçoit pas encore de numéro. La condition de fermeture `#9` de
+`v0.0.3` est satisfaite sur le candidat produit `3b8f81f` effectivement
+fusionné : l'amorçage est donc le prochain palier ouvert. Son contrat est décidé
+afin que l'implémentation ne réinvente pas l'autorité initiale.
 
 **Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
@@ -365,10 +372,17 @@ machines, le nouveau Controller prouve qu'il joint leurs endpoints SSH. Le même
 Assistant natif fournit `Remplacer un Controller` après une perte ou l'isolement
 d'un Controller compromis, sans dépendre de lui.
 
-L'enveloppe serveur initiale est Debian 13 `amd64`. L'installateur de Console
-embarque l'Assistant, l'artefact serveur, les définitions d'installation et
-leur manifeste d'empreintes ; aucun binaire privilégié n'est téléchargé
-dynamiquement. Le Controller réside sur une machine privée et normalement
+L'enveloppe serveur initiale est un unique paquet `.deb` Debian 13 `amd64`.
+L'installateur de Console embarque l'Assistant, ce paquet, ses définitions
+statiques et le manifeste signé qui lie version, cible, taille et empreinte.
+L'Assistant vérifie le lot avant tout privilège, garde les dépendances hors
+ligne et orchestre installation, vérification et retour à la version ou à
+l'absence antérieure. Le paquet possède seulement le binaire root-owned sous
+`/usr/lib/your-cloud` et les unités Controller, Daemon et Relay livrées
+inactives sous `/usr/lib/systemd/system` ; il ne porte ni secret, ni
+configuration propre à une machine, ni activation de rôle ou transfert
+d'autorité. Aucun binaire privilégié n'est téléchargé dynamiquement.
+Le Controller réside sur une machine privée et normalement
 allumée. La cohabitation isolée est permise pour une petite infrastructure, une
 machine ou VM dédiée est recommandée lorsque taille ou sensibilité augmentent.
 Cette cohabitation partage la panne matérielle : perdre ou isoler l'hôte peut
@@ -386,6 +400,14 @@ continuent.
 - l'audit refuse une clé d'hôte non confirmée, une cible incompatible, un rôle
   non approuvé, tout scan implicite et toute cible non joignable depuis le
   Controller choisi ;
+- le manifeste signé, la version, la cible, la taille, l'empreinte et les
+  dépendances hors ligne du `.deb` sont vérifiés avant privilège ; un échec
+  restaure l'état absent ou la version antérieure, tandis qu'un état inconnu
+  interdit tout retrait aveugle ;
+- seuls le binaire sans setuid, setgid ou capacité de fichier et les trois
+  unités statiques inactives occupent les chemins paquet root-owned décidés ;
+  configuration, secret et identité propres à une machine restent hors du
+  `.deb` ;
 - le lot serveur est installé avant la commande forcée ; l'entrée Auxiliaire
   initiale est en lecture seule et refuse toute mutation inconnue ;
 - chaque machine reçoit une identité SSH Your Cloud différente, restreinte par
@@ -578,9 +600,6 @@ la présente roadmap.
 ## Points volontairement non décidés
 
 - Les numéros et le découpage exacts des paliers postérieurs à `v0.0.3`.
-- Le format serveur exact à l'intérieur du lot Console — paquet Debian ou
-  archive signée — sans rouvrir le manifeste embarqué, Debian 13 `amd64` ni la
-  séparation des processus déjà décidés.
 - Le dispositif gratuit de signature Windows et la preuve d'éligibilité du
   projet. Le dépôt ne contient actuellement aucune licence ; son choix reste
   une décision explicite du mainteneur et ne sera pas déduit uniquement pour
@@ -599,13 +618,11 @@ la présente roadmap.
 `v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Les
 paramètres 1 à 8 de `v0.0.3` sont fermés et la preuve fonctionnelle Linux de la
 branche `console-controller` a été revalidée après review sur le commit produit
-exact `02fe4f5`. La matrice native Linux/Windows a réussi sur `9c6f14f` dans le
-run `30700406219`, sans prétendre rejouer la topologie multi-VM. Le budget du
-projet reste nul. `v0.0.3` est déclarée fermée uniquement pour le SHA dont
-l'issue `#9` lie un `workflow_dispatch` entièrement vert ; sans cette preuve,
-la branche reste non fusionnable, et toute retouche après le run impose une
-nouvelle preuve. L'amorçage, le remplacement du Controller et
-l'Auxiliaire appartiennent
+exact `02fe4f5`. La porte native Linux/Windows finale a réussi sur le candidat
+produit `3b8f81f` dans le run `30710037004`, sans prétendre rejouer la topologie
+multi-VM. L'issue `#9` relie cette preuve au SHA intégré par fast-forward :
+`v0.0.3` est fermée. Le budget du projet reste nul. L'amorçage, le remplacement
+du Controller et l'Auxiliaire appartiennent
 désormais au contrat V1 et au prochain ordre de preuve, mais ne sont encore ni
 implémentés ni prouvés. Ansible intégré, WireGuard, OCI, téléphone, navigateur
 public, Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors

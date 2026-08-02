@@ -224,11 +224,18 @@ S'il remplace la clé humaine, le chemin d'action reste verrouillé jusqu'à ce 
 l'Assistant tourne les clés publiques d'approbation avec l'accès SSH personnel ;
 le Controller ne peut pas s'autoriser lui-même.
 
-L'installateur V1 de la Console embarque l'Assistant, les artefacts serveur
-Debian 13 `amd64`, leurs définitions d'installation et un manifeste
-d'empreintes. Aucun binaire privilégié n'est téléchargé dynamiquement à
-l'amorçage. La prise en charge de `arm64` et d'autres distributions attend une
-preuve séparée. La mise à jour reste manuelle en V1.
+L'installateur V1 de la Console embarque l'Assistant, un unique paquet serveur
+`.deb` Debian 13 `amd64`, ses définitions statiques et le manifeste signé qui
+lie sa version, sa cible, sa taille et son empreinte. L'Assistant vérifie ce lot
+avant tout privilège ; le paquet n'embarque ni secret, ni configuration propre à
+une machine, ni activation de rôle ou transfert d'autorité. Il inventorie les
+fichiers immuables dans les chemins paquet bornés sous `/usr/lib`, avec les
+trois unités Controller, Daemon et Relay livrées inactives sous
+`/usr/lib/systemd/system`, tandis que l'Assistant garde l'installation hors
+ligne, la reprise et le retrait explicite des états qu'il génère. Aucun binaire privilégié
+n'est téléchargé dynamiquement à l'amorçage. La prise en charge de `arm64` et
+d'autres distributions attend une preuve séparée. La mise à jour reste manuelle
+en V1.
 
 Le contrat complet et ses preuves attendues sont fixés dans
 [Amorçage et remplacement du Controller](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).

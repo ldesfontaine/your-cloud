@@ -123,16 +123,23 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [V1 — bornage IPC et gate du helper Linux](v1-bootstrap-ipc-linux.md) :
+  contrats #43, courses de cycle de vie, build Console et inspection ELF
+  exécutés le 2 août 2026 ; WebKitGTK et JavaScriptCoreGTK sont des dépendances
+  directes du binaire Console, ce qui impose le helper compagnon distinct prévu
+  par #44. Le premier consentement GTK3 sans secret et la récolte autonome sont
+  prouvés ; le dialogue Win32, les secrets, le dispatch Tauri vivant et
+  l'équivalent Windows restent à prouver.
 - [`v0.0.3` — porte Linux Console–Controller](v0.0.3-console-controller-linux.md) :
   `.deb` signé et installé, coffre et appairage, deux Controllers séparés,
   matrice hostile depuis une seconde VM, frontière réseau privée, Relay
   indisponible, donnée ancienne, lacune, reprise, redémarrages et sept vues
   claires/sombres exécutés le 20 juillet 2026 puis parcours critique revalidé le
-  22 juillet. La matrice native Linux/Windows a depuis réussi dans GitHub
-  Actions sur `9c6f14f` ; elle reste une preuve hébergée distincte et ne modifie
-  pas les faits du rapport LAB Linux. Le palier est déclaré fermé uniquement
-  pour le SHA dont l'issue `#9` lie un `workflow_dispatch` entièrement vert ;
-  sans cette preuve, la branche reste non fusionnable.
+  22 juillet. Après une matrice historique, la porte native Linux/Windows finale
+  `30710037004` a entièrement réussi dans GitHub Actions sur le candidat produit
+  exact `3b8f81f`. Elle reste une preuve hébergée distincte et ne modifie pas les
+  faits du rapport LAB Linux. L'issue `#9` relie le run et le SHA intégré par
+  fast-forward : `v0.0.3` est fermée pour ce candidat exact.
 - [`v0.0.2` — observation authentifiée et bornée](v0.0.2-observation.md) :
   mTLS, enrôlement et révocation, profil fixe, tampon saturé avec lacune,
   reprise, redémarrages et cycle retrait-réinstallation exécutés dans

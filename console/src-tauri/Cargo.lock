@@ -5820,6 +5820,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "your-cloud-bootstrap-protocol"
+version = "0.0.3"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "your-cloud-console"
 version = "0.0.3"
 dependencies = [
@@ -5849,7 +5858,18 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "x509-parser",
+ "your-cloud-bootstrap-protocol",
  "zeroize",
+]
+
+[[package]]
+name = "your-cloud-native-bootstrap-assistant"
+version = "0.0.3"
+dependencies = [
+ "gtk",
+ "libc",
+ "serde_json",
+ "your-cloud-bootstrap-protocol",
 ]
 
 [[package]]

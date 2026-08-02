@@ -4,8 +4,8 @@
   "version": "../package.json",
   "identifier": "fr.your-cloud.console",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run build:native-assistant:dev && npm run dev",
+    "beforeBuildCommand": "npm run build:native-assistant && npm run build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },
@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/your-cloud-native-bootstrap-assistant"],
     "icon": ["icons/icon.png", "icons/icon.ico"],
     "shortDescription": "Console cliente privée Your Cloud",
     "longDescription": "Console cliente installée pour consulter une infrastructure Your Cloud privée."

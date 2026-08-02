@@ -4,13 +4,13 @@
 > preuve fonctionnelle LAB Linux exécutée, réussie puis revalidée après review**
 > sur le commit produit exact `02fe4f5`. Le
 > [rapport LAB Linux](../../lab/v0.0.3-console-controller-linux.md) conserve ses
-> preuves et limites. La matrice native Linux/Windows a également réussi dans
-> le [run hébergé `30700406219`](https://github.com/ldesfontaine/your-cloud/actions/runs/30700406219)
-> sur `9c6f14f`. Cette exécution antérieure prouve le contenu des jobs à cette
-> révision. `v0.0.3` est déclarée fermée uniquement pour le SHA dont
-> l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9) lie un
-> `workflow_dispatch` entièrement vert ; sans cette preuve, la branche reste
-> non fusionnable. Le SHA ainsi prouvé est fusionné sans retoucher ce contrat.
+> preuves et limites. Après une première matrice historique, la porte native
+> Linux/Windows finale a entièrement réussi dans le
+> [run `30710037004`](https://github.com/ldesfontaine/your-cloud/actions/runs/30710037004)
+> sur le candidat produit exact `3b8f81f`. L'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9)
+> relie le SHA, ce run et l'intégration par fast-forward : **`v0.0.3` est
+> fermée pour ce candidat**. Les changements ultérieurs ne reçoivent pas
+> rétroactivement l'autorité de cette preuve.
 
 ## Résultat utilisateur
 
@@ -1816,9 +1816,9 @@ explicite ; un incident d'implémentation ne les élargit pas silencieusement.
 Les paramètres 1 à 8 sont validés et la preuve fonctionnelle Linux de la branche
 `console-controller` a réussi dans le LAB, puis le candidat issu de la review a
 été revalidé sur le commit produit exact `02fe4f5` avec un signataire LAB
-synthétique. La matrice native Linux/Windows a réussi sur `9c6f14f` dans le run
-hébergé `30700406219`, sans infrastructure distribuée. Les preuves et limites
-réellement exécutées restent visibles. Le palier est déclaré terminé uniquement
-pour le SHA dont l'issue `#9` lie un `workflow_dispatch` entièrement vert ; sans
-ce lien, la branche reste non fusionnable. Seul ce SHA peut être fusionné sans
-retouche documentaire.
+synthétique. La matrice historique `30700406219` a réussi sur `9c6f14f`, puis la
+porte native finale a entièrement réussi sur le candidat produit exact
+`3b8f81f` dans le run `30710037004`, sans infrastructure distribuée. Les preuves
+et limites réellement exécutées restent visibles. L'issue `#9` relie le SHA, le
+run et son intégration par fast-forward : le palier est fermé pour ce candidat
+exact. Un autre candidat ne peut pas hériter de cette preuve.

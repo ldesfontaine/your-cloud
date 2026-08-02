@@ -22,11 +22,11 @@ Trois états ne doivent jamais être confondus :
 
 À ce jour, `v0.0.1` et la chaîne d'observation authentifiée et bornée de
 `v0.0.2` sont implémentées et prouvées dans le LAB. Le fonctionnel Linux de
-l'App `v0.0.3` est également implémenté et prouvé dans le LAB ; ses variantes
-natives Linux et Windows ont été exécutées dans le run hébergé `30700406219`
-sur `9c6f14f`. Le palier est déclaré fermé uniquement pour le SHA dont l'issue
-`#9` lie un `workflow_dispatch` entièrement vert ; sans cette preuve, la branche
-reste non fusionnable. L'amorçage, le chemin
+l'App `v0.0.3` est également implémenté et prouvé dans le LAB. Après une matrice
+historique, la porte native Linux/Windows finale `30710037004` a entièrement
+réussi sur le candidat produit exact `3b8f81f`. L'issue `#9` relie ce run, le SHA
+et son intégration par fast-forward : le palier est fermé pour ce candidat,
+sans attribuer sa preuve aux révisions ultérieures. L'amorçage, le chemin
 d'action et les services du reste de la V1 sont décidés mais pas implémentés.
 
 ## Distribution réellement prouvée pour `v0.0.2`
@@ -220,8 +220,11 @@ Utilisateur
                      v
 Console
 |- frontend : demandes et résultats typés, aucun secret SSH
-`- Assistant temporaire
-   |- prompt natif : secrets et consentement exact
+`- binaire compagnon signé lancé en helper éphémère
+   |- graphe autonome sans Tauri, Wry, Tao ni WebKit
+   |- garde fixe --native-bootstrap-assistant
+   |- pipes typés : périmètre public entrant, états expurgés sortants
+   |- prompt direct GTK3 ou Win32 : secret et consentement exact
    |- audit SSH en lecture seule
    |- installe et associe le Controller privé approuvé
    |- vérifie depuis lui la route SSH vers chaque cible
@@ -236,6 +239,11 @@ Controller autonome
                       `- protocole lecture seule, mutation refusée par défaut
 ```
 
+Le binaire distinct n'est pas une préférence de packaging : le gate ELF Linux
+du 2 août 2026 a trouvé WebKitGTK et JavaScriptCoreGTK dans le `DT_NEEDED` de la
+Console. Le helper possède donc son propre crate, son propre graphe et sa propre
+preuve d'absence de WebView, tout en restant livré dans la même release.
+
 Il existe deux catégories d'accès SSH d'administration des machines : l'accès
 personnel conservé par l'utilisateur et l'identité Your Cloud propre à chaque
 machine. L'authentification Console–Controller est séparée et ne devient pas une
@@ -244,6 +252,16 @@ Your Cloud. Un accès personnel `root` exige un consentement explicite pour
 l'opération exacte ; le défaut recommandé reste un compte non-root avec `sudo`
 protégé. La WebView ne reçoit ni secret, ni primitive SSH générale ; le prompt
 natif lie l'utilisation aux cibles, actions et durées affichées.
+
+Le helper embarque `russh 0.62.4` épinglé et ne reçoit qu'une capacité SSH
+immuable : clé d'hôte exacte, algorithmes autorisés, endpoint d'agent système,
+clé sélectionnée et budget fini de signatures. Linux accepte le socket Unix
+absolu de l'utilisateur courant ; Windows accepte seulement le pipe OpenSSH
+système. Le repli ouvre uniquement une clé OpenSSH chiffrée au format décidé.
+`sudo` tente l'action non interactive exacte, puis permet au plus un mot de
+passe sans PTY vers la même commande absolue. L'arrêt du parent ferme le helper
+et ses enfants ; zéroïsation et protections anti-dump réduisent l'exposition
+sans prétendre couvrir root, administrateur ou dumps noyau.
 
 Le Controller réside sur une machine privée, de confiance et normalement
 allumée. Il peut cohabiter dans une petite infrastructure si ses processus,
@@ -274,8 +292,14 @@ service colocalisé sur l'hôte perdu ------------> interruption possible
 Le code de récupération d'une Console réassocie celle-ci à un Controller encore
 vivant ; il ne remplace pas ce parcours. Sans sauvegarde de l'ancien
 Controller, l'utilisateur redéclare ses endpoints. L'installateur V1 embarque
-l'Assistant, l'artefact Debian 13 `amd64`, ses définitions et son manifeste
-d'empreintes ; il ne télécharge aucun binaire privilégié à la volée.
+l'Assistant, un unique paquet serveur `.deb` Debian 13 `amd64`, ses définitions
+statiques et le manifeste signé qui lie version, cible, taille et empreinte.
+L'Assistant vérifie ce lot avant tout privilège, puis garde configurations,
+secrets, activation et reprise hors du paquet. Le binaire root-owned vit sous
+`/usr/lib/your-cloud` et les trois unités statiques inactives sous
+`/usr/lib/systemd/system`. Le chemin `/usr/local/lib/your-cloud` des preuves
+antérieures reste historique ; aucun binaire privilégié n'est téléchargé à la
+volée.
 
 Le remplacement avance cible par cible : `ancien seul`, `chevauchement borné`,
 `nouveau seul` ou `inconnu`. Après une coupure, l'Assistant reconstruit ces

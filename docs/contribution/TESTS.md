@@ -9,9 +9,10 @@ Ce registre conserve les contrôles réalisés, les difficultés rencontrées et
 travail restant pour rejouer les vérifications sans intervention manuelle. Il
 distingue la couverture automatisée de `v0.0.1`, la preuve assistée de
 `v0.0.2`, la preuve fonctionnelle Linux assistée puis revalidée de `v0.0.3` et
-la matrice native Linux/Windows déjà exécutée. La fermeture est attribuée
-uniquement au SHA dont le run manuel entièrement vert est lié depuis
-l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9). Il prépare aussi les matrices
+la matrice native Linux/Windows déjà exécutée. La fermeture est attribuée au
+candidat produit exact `3b8f81f`, dont le run manuel `30710037004` entièrement
+vert est lié depuis l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9).
+Il prépare aussi les matrices
 d'amorçage et d'action V1 ; une ligne planifiée ne constitue jamais une preuve.
 
 ## Vocabulaire de travail
@@ -128,14 +129,15 @@ porte Linux a réellement employé ces six VM et a réussi le 20 juillet 2026 su
 `afb31e8`. Le run `linux-review-02fe4f5-20260722` a ensuite reconstruit
 `02fe4f5` depuis un checkout propre et rejoué le parcours critique installé,
 la panne/reprise Relay et les vues claires/sombres. Il n'a pas rejoué toute la
-matrice hostile initiale. Le run GitHub Actions `30700406219` a ensuite réussi
-sur `9c6f14f` les variantes natives Linux et Windows : tests, builds,
-installations, lancements et refus de listener, plus signature Authenticode
-synthétique et smoke WebView2 sous Windows. Cette preuve hébergée ne démarre
-aucune infrastructure produit et ne remplace aucune ligne fonctionnelle ou
-multi-VM du LAB. `v0.0.3` est fermée uniquement si l'issue `#9` lie un
-`workflow_dispatch` entièrement vert pour le SHA exact fusionné ; sans ce lien,
-la branche reste non fusionnable.
+matrice hostile initiale. Le run GitHub Actions historique `30700406219` a
+ensuite réussi sur `9c6f14f` les variantes natives Linux et Windows : tests,
+builds, installations, lancements et refus de listener, plus signature
+Authenticode synthétique et smoke WebView2 sous Windows. Après durcissement du
+workflow, la porte finale `30710037004` a entièrement réussi sur le candidat
+produit exact `3b8f81f`. Cette preuve hébergée ne démarre aucune infrastructure
+produit et ne remplace aucune ligne fonctionnelle ou multi-VM du LAB. L'issue
+`#9` relie le run final au SHA intégré par fast-forward : `v0.0.3` est fermée
+pour ce candidat.
 
 Le smoke Windows publie uniquement un JSON et des captures PNG. Le JSON lie le
 SHA et l'identifiant du run GitHub au checkout propre, conserve les SHA-256 des
@@ -155,9 +157,9 @@ globale de quinze secondes. Le profil est retiré par le service de profils
 Windows, autorisé comme
 `SYSTEM` par la DACL du coffre, sans `takeown`, élargissement d'ACL ni suppression
 directe privilégiée des données privées.
-Cette structure renforcée est implémentée dans le candidat courant mais n'est
-pas attribuée rétroactivement au run `30700406219` ; seule la preuve finale
-liée depuis l'issue `#9` peut l'attribuer à sa révision exacte.
+Cette structure renforcée n'est pas attribuée rétroactivement au run
+`30700406219` ; la preuve finale `30710037004`, liée depuis l'issue `#9`,
+l'attribue à sa révision exacte `3b8f81f`.
 
 Le run final tenté `30705241755` sur `46b05ce` a réussi les gardes rapides et
 la variante Linux. Sous Windows, le MSI a été construit et signé avant que le
@@ -177,7 +179,8 @@ publié. Le contrat rapide couvre désormais l'attribution positive par SID et
 chemins bornés, refuse une WebView2 d'un autre SID, un PID réutilisé et un
 chemin frère du profil, borne l'attente globale, verrouille l'ordre du nettoyage
 et interdit la suppression directe du coffre.
-Une nouvelle preuve native entièrement verte reste nécessaire avant fermeture.
+À ce stade, une nouvelle preuve native entièrement verte restait nécessaire
+avant fermeture.
 
 Le run `30708995783` sur `c302a39` a ensuite réussi les gardes, Linux et toute
 la preuve produit Windows, jusqu'au succès du smoke WebView2. Le nettoyage a
@@ -186,7 +189,14 @@ la preuve produit Windows, jusqu'au succès du smoke WebView2. Le nettoyage a
 contrat rapide exige désormais zéro candidat pour une collection étrangère, un
 seul candidat pour un mélange étranger et attribué, et interdit qu'un refus
 d'attribution émette une valeur nulle dans le pipeline. Une preuve native
-entièrement verte reste nécessaire avant fermeture.
+entièrement verte restait nécessaire avant fermeture.
+
+Le run final `30710037004` sur `3b8f81f` a ensuite réussi les deux gardes, Linux
+et Windows, y compris le drain sans résultat nul, l'attribution positive des
+processus et le nettoyage complet. Son artefact expurgé contient le rapport JSON
+et neuf PNG, sans binaire, certificat, clé privée ou secret. L'issue `#9` lie ce
+run au candidat intégré par fast-forward : la porte native et `v0.0.3` sont
+fermées pour ce SHA exact.
 
 Le contrôle statique `tests/checks/ci-workflow-policy.py`, appelé par la porte
 générique, ferme les déclencheurs et permissions du workflow, sa concurrence,
@@ -195,14 +205,14 @@ prouve la forme versionnée de cette politique, pas son exécution sur GitHub.
 
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | Automatisation rejouable complète |
 |---|---|---|---|
-| sources et artefacts | `package.json` fournit la version Console à Tauri, au SBOM et au manifeste candidat ; Cargo et le verrou npm doivent rester alignés ; même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | version divergente, identifiant d'exécution couplé à une version de livraison, artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | garde source et Linux exact prouvés ; build et signature synthétique Windows exécutés sur `9c6f14f` ; lot final accepté uniquement par la condition `#9` du SHA fusionné |
-| enveloppe Tauri | frontend React, TypeScript et Vite embarqué ; opérations natives nommées ; aucun listener sur l'appareil Console ou chargement de code distant | navigation distante, ressource active externe, appel réseau frontend, accès fichier ou shell non autorisé | Linux LAB prouvé ; installation, lancement, absence de listener et smoke WebView2 Windows exécutés sur `9c6f14f` |
+| sources et artefacts | `package.json` fournit la version Console à Tauri, au SBOM et au manifeste candidat ; Cargo et le verrou npm doivent rester alignés ; même commit et même verrou frontend pour le `.deb` Linux et le `.msi` Windows ; manifeste, SHA-256, SBOM, provenance et signatures vérifiés | version divergente, identifiant d'exécution couplé à une version de livraison, artefact modifié, signature inconnue ou invalide, commit, cible, taille ou empreinte contradictoire | garde source et Linux exact prouvés ; lot Linux/Windows final accepté dans `30710037004` sur `3b8f81f` et lié par `#9` |
+| enveloppe Tauri | frontend React, TypeScript et Vite embarqué ; opérations natives nommées ; aucun listener sur l'appareil Console ou chargement de code distant | navigation distante, ressource active externe, appel réseau frontend, accès fichier ou shell non autorisé | Linux LAB prouvé ; installation, lancement, absence de listener et smoke WebView2 Windows exécutés dans `30710037004` sur `3b8f81f` |
 | origine Console–Controller | TLS 1.3 sur l'origine exacte avec certificat serveur, identité d'appareil et session humaine attendus | HTTP, mauvais nom, CA, port, query, fragment, redirection, proxy, certificat inconnu, révoqué ou d'un autre Controller | planifié, non exécuté |
 | API métier | initialisation unique, lecture de l'infrastructure, lecture des machines et rattachement idempotent d'une machine enrôlée | méthode, route, type, `Accept`, schéma, doublon, casse, seconde valeur, taille, délai ou concurrence hors borne | planifié, non exécuté |
 | enveloppe d'erreur Console–Controller | combinaison statut/code issue de la liste fermée, `request_id` canonique et seul `429` portant `Retry-After` borné ; libellé local choisi depuis la route et le code | statut/code inconnu ou croisé, champ supplémentaire, identifiant invalide, cause interne, corps hostile ou `Retry-After` absent, non canonique ou hors borne ; réponse entière refusée | planifié, non exécuté |
 | séparation des infrastructures | Controller A ne rend et ne rattache que les machines confirmées par le Relay de A | certificat ou session de B contre A, identifiant de B dans A, `infrastructure_id` divergent et machine non enrôlée | planifié, non exécuté |
 | VM hostile sur le même réseau | l'API nominale reste disponible après chaque tentative et l'inventaire demeure identique | accès sans certificat, appel direct du Relay et croisements Controller, session, infrastructure et machine | planifié, non exécuté |
-| coffre Stronghold | même format et dérivation Argon2id sous Linux et Windows ; changement de phrase publié atomiquement après validation du nouveau coffre ; aucune permission ou API JS Stronghold ; clés Ed25519 utilisées dans le coffre et clé P-256 déchiffrée seulement dans un tampon Rust effaçable | coffre absent, déplacé, tronqué, altéré ou d'une version inconnue, sel recréé ou paramètres KDF divergents, helper par défaut, mauvaise phrase, DACL ouverte, héritée, lien dur ou point de réanalyse ; crash à chaque étape du changement de phrase laissant l'ancien coffre utilisable, compartiment A substitué dans B, accès frontend ou clé/session recherchée en clair | Linux prouvé ; tests natifs ACL Windows exécutés sur `9c6f14f` ; matrice hostile de persistance encore distincte |
+| coffre Stronghold | même format et dérivation Argon2id sous Linux et Windows ; changement de phrase publié atomiquement après validation du nouveau coffre ; aucune permission ou API JS Stronghold ; clés Ed25519 utilisées dans le coffre et clé P-256 déchiffrée seulement dans un tampon Rust effaçable | coffre absent, déplacé, tronqué, altéré ou d'une version inconnue, sel recréé ou paramètres KDF divergents, helper par défaut, mauvaise phrase, DACL ouverte, héritée, lien dur ou point de réanalyse ; crash à chaque étape du changement de phrase laissant l'ancien coffre utilisable, compartiment A substitué dans B, accès frontend ou clé/session recherchée en clair | Linux prouvé ; tests natifs ACL Windows exécutés dans `30710037004` sur `3b8f81f` ; matrice hostile de persistance encore distincte |
 | preuve humaine locale | phrase saisie puis effacée, challenge de 32 octets consommé une fois avant deux minutes et signé par la clé humaine du Controller choisi | rejeu, expiration, challenge d'un autre Controller, clé publique ou signature inconnue, phrase, clé dérivée, clé privée ou session rendue par IPC | planifié, non exécuté |
 | phrase et récupération hors ligne | six mots uniformes de la liste et du SHA-256 épinglés, code global canonique de 256 bits affiché et confirmé une fois, vecteurs HKDF identiques Linux/Windows et clés distinctes par Controller | entrée brute ou normalisée surdimensionnée, séparateur, remplissage ou bits Base32 non canoniques, liste, SPKI, sel, époque ou compartiment substitué ; secret retrouvé dans stockage Web, URL, journal, presse-papiers automatique ou capture produite par la Console/LAB | planifié, non exécuté |
 | listener temporaire `9444` | socket ouvert par l'autorité locale sur l'adresse privée exacte pour une seule fenêtre et fermé après le `PUT` qui livre le candidat, dix minutes, cinq preuves authentifiées ou redémarrage ; certificat serveur épinglé et aucune route métier | port ouvert hors fenêtre, faux nom, CA ou certificat, HTTP, proxy, route métier, `window_id`/code absent, faux, expiré ou croisé sans consommation de la transaction ; requête sans code tentant de consommer le budget ; deux VM avec le bon code dont une seule gagne ; code connu fermant la fenêtre après cinq preuves invalides, risque de déni de service rendu visible | planifié, non exécuté |
@@ -275,17 +285,34 @@ Chaque phase réaffirme ensuite l'état nominal et le nettoyage attendu.
 
 Cette matrice projette les contrats désormais décidés dans
 [l'amorçage du Controller](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
-et la [roadmap](../objectifs/v1/ROADMAP.md). Aucun de ces scénarios n'est encore
-implémenté ou exécuté. Ils doivent recevoir leurs propres contrats exécutables
-et rapports LAB lorsque leur palier s'ouvre ; ce tableau n'anticipe ni leur code
-ni un résultat vert.
+et la [roadmap](../objectifs/v1/ROADMAP.md). Le bornage IPC #43, le gate ELF qui
+choisit un helper séparé, sa fondation fail-closed, son lancement parent et le
+premier consentement GTK3 sans secret ont reçu une preuve Linux le 2 août 2026,
+conservée dans le
+[rapport LAB dédié](../lab/v1-bootstrap-ipc-linux.md). Les autres scénarios
+restent planifiés ; ce passage ne prouve ni une saisie secrète, ni son
+équivalent Windows, ni une connexion SSH.
+
+Le workflow natif reste volontairement déclenché par `workflow_dispatch`, selon
+le [contrat CI](CI.md). Il est configuré pour exécuter tout le workspace et les
+deux scénarios Xvfb, mais aucun run GitHub de ce diff local ne leur est encore
+attribué ; la preuve ci-dessous est celle du LAB exact.
+
+La décision documentaire #44 fixe le canal à construire, mais n'exécute aucun
+scénario runtime. Le bornage du processus et de son IPC appartient à #43, la
+surface de consentement native à #45, puis l'accès SSH personnel à #42. Leurs
+preuves Linux et Windows devront reprendre les lignes correspondantes ci-dessous
+avec des secrets exclusivement synthétiques.
 
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | État |
 |---|---|---|---|
-| lot Console et serveur | installateur contenant l'Assistant, l'artefact Debian 13 `amd64`, les définitions et le manifeste exact ; binaire installé avant la clé forcée ; entrée Auxiliaire initiale en lecture seule et en refus de mutation | binaire privilégié téléchargé à la volée, clé activée avant le binaire, cible, version, taille ou empreinte divergente, opération de mutation acceptée avant son contrat, `arm64` accepté sans preuve ; certificat Windows synthétique présenté comme signature publique | planifié, non exécuté |
-| secret personnel et frontend | sous les Consoles Linux et Windows, `ssh-agent` signe sans exporter la clé ; repli par clé chiffrée déverrouillée seulement en mémoire ; état détruit après succès, échec, timeout et fermeture | clé, mot de passe SSH ou `sudo` retrouvé dans le frontend, IPC non typé, Controller, fichier persistant, journal, crash dump ou artefact de test | planifié, non exécuté |
+| lot Console et serveur | installateur contenant l'Assistant, l'unique `.deb` Debian 13 `amd64`, ses définitions statiques et le manifeste signé exact ; signature, cible, version, taille, SHA-256 et dépendances hors ligne vérifiés avant privilège ; `/usr/lib/your-cloud/your-cloud` `root:root` `0755` sans setuid, setgid ni capacité et exactement trois unités `root:root` `0644` inactives sous `/usr/lib/systemd/system` ; état propre à la machine géré par l'Assistant ; binaire installé et vérifié avant la clé forcée ; retour à l'absence ou à la version antérieure avant transfert d'autorité ; entrée Auxiliaire initiale en lecture seule et en refus de mutation | paquet ou manifeste altéré, cible, version, taille ou empreinte divergente, dépendance exigeant le réseau, fichier ou unité supplémentaire, propriétaire ou mode divergent, setuid, setgid, capacité ou unité activée par l'installation, script mainteneur interactif ou activant un rôle, secret ou configuration propre à une machine dans le paquet, état à demi configuré présenté comme sain, retrait aveugle après coupure, binaire privilégié téléchargé à la volée, clé activée avant le binaire, mutation acceptée avant son contrat, `arm64` accepté sans preuve ; certificat Windows synthétique présenté comme signature publique | planifié, non exécuté |
+| helper natif et cycle de vie | binaire compagnon `your-cloud-native-bootstrap-assistant` lancé une fois par consentement avec la garde `--native-bootstrap-assistant`, graphe autonome sans Tauri, Wry, Tao, WebKit ou JavaScriptCore ; pipes anonymes typés portant seulement le périmètre public immuable et des états expurgés ; expiration native monotone fixe de 300 secondes ; fermeture des enfants après succès, refus, annulation, timeout, EOF, mort du parent et crash | durée fournie ou prolongée par le frontend, dépendance directe, transitive ou chargée dynamiquement vers WebKit/JavaScriptCore, seconde WebView, secret dans l'IPC frontend, arguments, environnement, URL, descripteur hérité inattendu, fichier temporaire, journal ou dump ; helper ou enfant survivant, état réutilisé entre deux opérations | Linux partiel prouvé : gate Console, crate autonome, framing, échéance parent absolue, watchdog, groupe de processus, FD héritable hostile, mort du parent, lancement Console, récolte autonome sans attente non bornée, refus de relance si le nettoyage n'est pas prouvable, GTK3 sans secret, Cargo, `DT_NEEDED`, transitif, mappings et SBOM ; stdin coopératif, descendants futurs, Windows, packaging et secrets restent ouverts (#43 et #45) |
+| moteur SSH et agent personnel | `russh 0.62.4` épinglé, algorithmes sur liste positive, clé d'hôte exacte ; socket Unix absolu appartenant à l'utilisateur courant sous Linux ou pipe `\\.\pipe\openssh-ssh-agent` sous Windows ; une clé et un budget fini de signatures pour l'authentification exacte | clé d'hôte inattendue, DSA, DES, compression ou `ssh-rsa` SHA-1, autre endpoint d'agent, deuxième signature, message de signature libre, TOFU, écriture de `known_hosts`, shell, PTY, SFTP, X11, redirection, transfert d'agent ou commande générale | planifié, non exécuté (#42) |
+| repli par fichier de clé | sélecteur natif ouvrant sans réécriture une clé `OPENSSH PRIVATE KEY` chiffrée bcrypt + `aes256-ctr`, Ed25519 ou RSA d'au moins 3072 bits ; octets, passphrase et clé déchiffrée zéroïsés sur sortie contrôlée | clé en clair, RSA trop courte, PKCS#1, PKCS#8, SEC1, PPK, autre KDF ou chiffrement, fichier trop grand ou remplacé pendant l'ouverture, passphrase ou clé retrouvée dans un état persistant ou un artefact | planifié, non exécuté (#42 et #45) |
 | déclaration et audit | endpoints fournis un par un, clé d'hôte confirmée, audit SSH strictement en lecture seule, Debian 13 `amd64`, rôles et ressources rendus ; chaque endpoint et sa clé d'hôte revérifiés depuis le Controller avant mutation des cibles | scan du LAN, plage ou fournisseur, clé d'hôte acceptée silencieusement, mutation pendant l'audit, cible ou rôle incompatible proposé, cible joignable depuis le laptop mais pas depuis le Controller | planifié, non exécuté |
-| consentement privilégié | fenêtre native hors WebView répétant empreintes, étape, actions et expiration ; compte non-root et `sudo` protégé proposé par défaut ; accès `root` fourni seulement pour l'opération affichée et après consentement explicite | secret livré par IPC, frontend utilisant SSH ou `ssh-agent` comme oracle, essai `root` implicite, réutilisation du consentement ou du secret après expiration, cible ou action différente de celle approuvée | planifié, non exécuté |
+| consentement privilégié | dialogue GTK3 direct sous Linux et Win32 modal `EDIT | ES_PASSWORD` sous Windows, répétant empreintes, étape, actions et expiration ; `sudo -n` tenté d'abord, puis un unique envoi sans PTY à `sudo -k -S` pour le chemin absolu autorisé ; accès `root` explicite | secret livré par IPC, cible, action ou expiration substituée, essai `root` implicite, réutilisation ou retry, prompt distant inattendu, shell ou interpolation, politique distante non bornable ou journalisation d'entrée susceptible de capturer le mot de passe | consentement GTK3 initial sans secret prouvé sous Xvfb : scope répété, refus, fermeture, expiration et autorisation sans faux succès ; Win32, secrets et privilège restent planifiés (#45 puis #42) |
+| effacement et anti-dump | buffers du helper zéroïsés ; sous Linux mort avec parent, `PR_SET_DUMPABLE=0`, `RLIMIT_CORE=0`, `mlock` et `MADV_DONTDUMP` disponibles ; sous Windows Job Object, `VirtualLock` et exclusion Windows Error Reporting disponibles ; limites observées et publiées | faux résultat « aucun secret possible » après crash, core dump ou fichier d'échange sans inspection ; descendant survivant ; copie propre au produit retrouvée après sortie contrôlée ; root/admin, accessibilité hostile ou dump noyau présentés comme couverts | planifié, non exécuté (#43, #45 et #42) |
 | placement et autonomie | Controller privé normalement allumé, cohabitation isolée sur petite infrastructure et recommandation dédiée lorsque taille ou risque augmentent ; fermeture de la Console sans arrêt du contrôle ou des services ; perte du Controller sans arrêt des services des autres hôtes et interruption colocalisée rendue visible | Controller permanent sur le laptop ou proposé par défaut sur le VPS public ; partage de compte, secret, répertoire ou budget entre rôles ; promesse de continuité d'un service placé sur l'hôte perdu | planifié, non exécuté |
 | identités SSH par machine | paire différente sur chaque machine, clé privée root-owned fournie au seul Controller par credentials systemd, clé publique vérifiée avant transfert d'autorité | même clé sur deux machines, clé d'une machine acceptée par une autre, clé privée visible à la Console ou à l'Agent, clé personnelle retirée | planifié, non exécuté |
 | commande forcée Auxiliaire | compte technique verrouillé sans mot de passe ; fichier de clés, parents et chemin absolu du binaire root-owned et non inscriptibles ; restrictions SSH et élévation exacte avec environnement réinitialisé ; plan typé sur stdin | option SSH retirée, répertoire remplaçable, binaire ou parent inscriptible, shell, PTY, SFTP, rc, X11, transfert, `environment=`, `SETENV`, règle `sudo` générale, sous-commande, argument, chemin ou opération libre | planifié, non exécuté |
@@ -337,7 +364,7 @@ preuve, mais ne constituent plus une suite exécutable contre le binaire actuel.
 | `gofmt -l` vide | automatique | automatique | automatique | sans objet | couvre les sources Go de `cmd/` et `internal/` |
 | `bash -n` sur les scripts Bash du lot | automatique | automatique | automatique | sans objet | sélection par shebang dans `tools/` et `tests/`, lots de déploiement LAB compris |
 | syntaxe du générateur Python de restitution | automatique | automatique | automatique | automatique | compilation seule de `tests/lab/v0.0.1/report/renderer.py` ; le rendu réel reste vérifié dans `lab-console` |
-| résultat structuré Plumber absent, ambigu, incomplet, sauté ou dégradé | automatique | automatique | automatique | automatique | 23 cas de frontière (20 refus, 3 acceptations), liaison au lot et refus intégré d'un tag mutable exécutés dans `lab-console` ; le workflow historique est prouvé sur `9c6f14f` et la fermeture suit la condition `#9` du SHA fusionné |
+| résultat structuré Plumber absent, ambigu, incomplet, sauté ou dégradé | automatique | automatique | automatique | automatique | 23 cas de frontière (20 refus, 3 acceptations), liaison au lot et refus intégré d'un tag mutable exécutés dans `lab-console` ; porte finale verte dans `30710037004` sur `3b8f81f`, liée par `#9` |
 | contrat `labctl list` humain et TSV | automatique | automatique | automatique | automatique | double `virsh` isolé ; le vrai inventaire reste contrôlé avant mutation |
 | `tools/check-docs` sur l'arbre complet | automatique | automatique | automatique | automatique | la cohérence sémantique reste une relecture humaine |
 | `go test -count=1 ./...` | automatique | automatique | automatique | automatique | mode `lab` sur `lab-console` root ou mode `ci` sur runner distant non privilégié |

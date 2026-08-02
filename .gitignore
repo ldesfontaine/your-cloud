@@ -9,6 +9,7 @@ build/
 /console/dist/
 /console/src-tauri/gen/
 /console/src-tauri/target/
+/console/src-tauri/binaries/
 
 # Sorties de preuve locales ; seule leur convention est versionnée.
 /tests/artifacts/*

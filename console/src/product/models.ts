@@ -142,3 +142,30 @@ export type GeneratedLocalSecrets = {
   unlock_phrase: string;
   recovery_code: string;
 };
+
+export type BootstrapMode = "create" | "replace";
+export type BootstrapAccessKind = "administrator" | "root";
+
+export type BootstrapTarget = {
+  host: string;
+  port: number;
+  username: string;
+  host_key_sha256: string;
+  access_kind: BootstrapAccessKind;
+};
+
+export type BootstrapStartInput = {
+  mode: BootstrapMode;
+  target: BootstrapTarget;
+};
+
+export type BootstrapSessionView = {
+  schema_version: 1;
+  request_id: string;
+  mode: BootstrapMode;
+  target: BootstrapTarget;
+  step: "personal_access";
+  actions: readonly ["audit_target_read_only"];
+  lifecycle: "awaiting_native_assistant";
+  expires_in_seconds: number;
+};

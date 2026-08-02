@@ -419,10 +419,10 @@ questions distinctes, hors de `v0.0.2`.
 Le système visuel, les sept vues et les couches de preuve de l'incrément
 Console–Controller sont décidés. Le fonctionnel Linux a été implémenté et
 prouvé sur `v1-full`, avec le Relay et un Daemon colocalisés sur
-`lab-machine-1`. Les variantes natives Linux et Windows ont été exécutées dans
-le run hébergé `30700406219` sur `9c6f14f`, sans topologie multi-VM simulée. Le
-palier est déclaré fermé uniquement pour le SHA dont l'issue `#9` lie un
-`workflow_dispatch` entièrement vert ; sinon la branche reste non fusionnable.
+`lab-machine-1`. Après une matrice historique, la porte native Linux/Windows
+finale `30710037004` a entièrement réussi sur le candidat produit exact
+`3b8f81f`, sans topologie multi-VM simulée. L'issue `#9` relie ce run, le SHA et
+son intégration par fast-forward : `v0.0.3` est fermée pour ce candidat exact.
 Le transport conserve atomiquement son dernier snapshot comme `indisponible`
 après panne ou restart, reprend à la demande avec un backoff
 `1/2/4/8/16/30 s` et ne transmet jamais ses 2 Mio bruts à l'API Console bornée
