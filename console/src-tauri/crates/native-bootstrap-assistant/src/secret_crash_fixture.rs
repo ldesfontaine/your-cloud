@@ -131,13 +131,26 @@ fn run_windows_wer_crash() -> io::Result<()> {
     black_box(dump_control.as_ref());
 
     unsafe {
-        RaiseException(0xe042_5943, EXCEPTION_NONCONTINUABLE, 0, std::ptr::null());
+        // Use the canonical fatal access-violation code so WER observes an ordinary application
+        // crash rather than an application-defined software exception. The arguments describe a
+        // write to the null address without actually performing undefined Rust memory access.
+        let arguments = [ACCESS_VIOLATION_WRITE, 0];
+        RaiseException(
+            EXCEPTION_ACCESS_VIOLATION,
+            EXCEPTION_NONCONTINUABLE,
+            arguments.len() as u32,
+            arguments.as_ptr(),
+        );
     }
     std::process::abort();
 }
 
 #[cfg(target_os = "windows")]
 const EXCEPTION_NONCONTINUABLE: u32 = 1;
+#[cfg(target_os = "windows")]
+const EXCEPTION_ACCESS_VIOLATION: u32 = 0xc000_0005;
+#[cfg(target_os = "windows")]
+const ACCESS_VIOLATION_WRITE: usize = 1;
 
 #[cfg(target_os = "windows")]
 #[link(name = "kernel32")]

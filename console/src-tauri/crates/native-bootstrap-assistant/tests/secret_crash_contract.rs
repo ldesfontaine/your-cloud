@@ -29,6 +29,13 @@ const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
 const KILL_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "windows")]
 const REG_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+const AEDEBUG_AUTO_EXCLUSION_KEY: &str =
+    r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug\AutoExclusionList";
+#[cfg(all(target_os = "windows", target_pointer_width = "64"))]
+const NATIVE_REGISTRY_VIEW: &str = "/reg:64";
+#[cfg(all(target_os = "windows", target_pointer_width = "32"))]
+const NATIVE_REGISTRY_VIEW: &str = "/reg:32";
 
 #[test]
 #[cfg(target_os = "linux")]
@@ -109,6 +116,7 @@ fn wer_full_user_dump_excludes_the_registered_mapping() {
         .file_name()
         .expect("fixture executable name")
         .to_os_string();
+    let mut debugger_exclusion = AutomaticDebuggerExclusion::create(&executable_name);
     let mut registry = WerLocalDumpRegistration::create(&executable_name, scratch.path());
 
     let mut fixture = spawn_fixture("--windows-wer-crash", scratch.path());
@@ -141,6 +149,7 @@ fn wer_full_user_dump_excludes_the_registered_mapping() {
     );
     fs::remove_file(&dump).expect("remove synthetic WER dump");
     registry.remove_and_prove_absent();
+    debugger_exclusion.remove_and_prove_absent();
 }
 
 fn fixture_path() -> PathBuf {
@@ -507,6 +516,100 @@ fn wait_for_stable_dump(directory: &Path, timeout: Duration) -> PathBuf {
             "WER dump was not produced in time"
         );
         thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct AutomaticDebuggerExclusion {
+    executable_name: OsString,
+    active: bool,
+}
+
+#[cfg(target_os = "windows")]
+impl AutomaticDebuggerExclusion {
+    fn create(executable_name: &std::ffi::OsStr) -> Self {
+        // LocalDumps cannot collect a crash while an automatic postmortem debugger owns it.
+        // AutoExclusionList is the application-scoped Windows mechanism for handing this one
+        // synthetic crash back to WER without mutating the runner's global debugger setting.
+        let executable_name = executable_name.to_os_string();
+        let existing = run_reg([
+            OsString::from("query"),
+            OsString::from(AEDEBUG_AUTO_EXCLUSION_KEY),
+            OsString::from("/v"),
+            executable_name.clone(),
+            OsString::from(NATIVE_REGISTRY_VIEW),
+        ]);
+        assert!(
+            !existing.success(),
+            "the fixture-specific automatic-debugger exclusion must not pre-exist"
+        );
+
+        let mut registration = Self {
+            executable_name,
+            active: false,
+        };
+        let created = run_reg([
+            OsString::from("add"),
+            OsString::from(AEDEBUG_AUTO_EXCLUSION_KEY),
+            OsString::from("/v"),
+            registration.executable_name.clone(),
+            OsString::from("/t"),
+            OsString::from("REG_DWORD"),
+            OsString::from("/d"),
+            OsString::from("1"),
+            OsString::from("/f"),
+            OsString::from(NATIVE_REGISTRY_VIEW),
+        ]);
+        assert!(created.success(), "exclude only the fixture from AeDebug");
+        registration.active = true;
+        registration
+    }
+
+    fn remove_and_prove_absent(&mut self) {
+        let removed = run_reg([
+            OsString::from("delete"),
+            OsString::from(AEDEBUG_AUTO_EXCLUSION_KEY),
+            OsString::from("/v"),
+            self.executable_name.clone(),
+            OsString::from("/f"),
+            OsString::from(NATIVE_REGISTRY_VIEW),
+        ]);
+        assert!(
+            removed.success(),
+            "remove fixture-specific automatic-debugger exclusion"
+        );
+
+        let query = run_reg([
+            OsString::from("query"),
+            OsString::from(AEDEBUG_AUTO_EXCLUSION_KEY),
+            OsString::from("/v"),
+            self.executable_name.clone(),
+            OsString::from(NATIVE_REGISTRY_VIEW),
+        ]);
+        assert!(
+            !query.success(),
+            "fixture-specific automatic-debugger exclusion must be absent after cleanup"
+        );
+        self.active = false;
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for AutomaticDebuggerExclusion {
+    fn drop(&mut self) {
+        if self.active {
+            let cleanup = try_run_reg([
+                OsString::from("delete"),
+                OsString::from(AEDEBUG_AUTO_EXCLUSION_KEY),
+                OsString::from("/v"),
+                self.executable_name.clone(),
+                OsString::from("/f"),
+                OsString::from(NATIVE_REGISTRY_VIEW),
+            ]);
+            if !matches!(cleanup, Ok(status) if status.success()) && !thread::panicking() {
+                panic!("bounded fallback could not remove the fixture-specific automatic-debugger exclusion");
+            }
+        }
     }
 }
 
