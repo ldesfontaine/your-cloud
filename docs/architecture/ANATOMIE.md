@@ -29,16 +29,17 @@ et son intégration par fast-forward : le palier est fermé pour ce candidat,
 sans attribuer sa preuve aux révisions ultérieures. L'amorçage possède désormais
 un socle helper/IPC implémenté et prouvé sous Linux et Windows sur `f3fef79`,
 dans le run `30753216798`. Le consentement et la mémoire secrète #45 possèdent
-une implémentation candidate, mais leur preuve native finale reste en attente
-après les runs rouges `30768351689` et `30768749538`. Leur ancien oracle
+une implémentation et une preuve fonctionnelle Linux/Windows après les runs
+rouges `30768351689` et `30768749538`. Leur ancien oracle
 exigeait le canari absent ; le contrat corrigé classe `LocalDumps`
 administrateur hors garantie, garde l'enregistrement WER en défense en
 profondeur et exige contrôle et canari présents puis nettoyage prouvé.
 `ae550470` ne prouve toutefois que le dump supprimé et son répertoire vide
 avant verdict ; le répertoire n'est retiré que par `Drop` ensuite. Son run
 `30769440106` a réussi ses quatre jobs et prouve cette étape intermédiaire, sans
-fermer #45. `c8643b0` devient le prochain candidat exact en exigeant le
-répertoire absent avant verdict, mais n'a pas encore de run complet. Sa
+fermer #45. `c8643b0` exige ensuite le répertoire absent avant verdict ; le run
+`30770893733` réussit les quatre jobs sur `b76ded8` et ses trois artefacts sont
+inspectés. L'issue #45 doit conserver l'ultime run du SHA documentaire. Sa
 capacité globale, le chemin d'action et
 les services du reste de `v0.1.0` restent ouverts.
 
@@ -267,7 +268,7 @@ une liste exacte de handles héritables, affecté au Job Object avant reprise, e
 les descendants ainsi que les branches d'échec sont terminés avec lui. Voir le
 [rapport du runner Windows](../lab/v1-bootstrap-ipc-windows.md).
 
-Le candidat #45 conserve ensuite le secret dans ce helper : le parent et le
+L'incrément #45 conserve ensuite le secret dans ce helper : le parent et le
 pair IPC sont vérifiés contre un périmètre immuable, la durée monotone vaut 300
 secondes et ne se renouvelle pas, puis GTK3 ou Win32 ouvre la fenêtre native.
 Le tampon `ProtectedSecret`, borné à 4096 octets, est détruit avant l'événement
@@ -276,16 +277,16 @@ créée avec `mmap`, verrouillée par `mlock` et exclue par `MADV_DONTDUMP` ; so
 Windows, elle utilise `VirtualAlloc`, `VirtualLock` et l'exclusion Windows
 Error Reporting. Le
 [rapport de consentement natif](../lab/v0.1.0-native-secret-consent-linux-windows.md)
-distingue l'implémentation, les sous-cas Linux exécutés et la preuve Windows
-encore absente. `30768351689` et `30768749538` sont rouges sous l'ancien oracle,
+distingue l'implémentation, les sous-cas Linux exécutés et la preuve Windows.
+`30768351689` et `30768749538` sont rouges sous l'ancien oracle,
 mais leurs dumps fixent la frontière `LocalDumps` administrateur : contrôle et
 canari présents, sans garantie d'exclusion. `ae550470` supprime le dump, prouve
 le répertoire vide et les deux inscriptions de registre absentes avant verdict,
 mais le répertoire lui-même ne disparaît qu'au `Drop` suivant ; son run
 `30769440106` a entièrement réussi ses quatre jobs, mais ne peut donc pas fermer
-#45. Le prochain candidat exact `c8643b0` exige avec
-`remove_and_prove_absent` que le répertoire soit absent avant verdict ; aucun
-run complet ne l'a encore évalué.
+#45. `c8643b0` exige avec `remove_and_prove_absent` que le répertoire soit
+absent avant verdict ; `30770893733` valide cette séquence dans la matrice
+complète sur `b76ded8`, avec trois artefacts inspectés.
 
 Il existe deux catégories d'accès SSH d'administration des machines : l'accès
 personnel conservé par l'utilisateur et l'identité Your Cloud propre à chaque
@@ -352,11 +353,12 @@ font confiance au nouveau Controller seul. Une suspicion de compromission
 impose une base saine et l'isolement vérifié de l'ancien hôte.
 
 Le [contrat d'amorçage et de remplacement](AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
-reste partiellement implémenté et prouvé. L'implémentation candidate `#45` doit
-encore réussir sa preuve native finale. L'accès SSH personnel avance ensuite
+reste partiellement implémenté et prouvé. La fermeture de l'issue `#45` exige
+l'ultime run de son SHA documentaire ; sa preuve fonctionnelle est acquise dans
+`30770893733`. L'accès SSH personnel avance ensuite
 par `#51`, `#52`, `#53` et `#54` avant la fermeture de `#42`, puis
 l'intégration complète `#35` reste nécessaire avant le reste du palier `#13`.
-La preuve `#43` et les sous-cas partiels de `#45` ne ferment aucune de ces
+Les preuves `#43` et `#45` ne ferment aucune de ces
 frontières, ni la milestone, ni `v0.1.0`.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 

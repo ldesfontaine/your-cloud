@@ -16,7 +16,7 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 | porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974` | états des jobs `Contrôles génériques` et `Politique Plumber` |
 | matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
 | bornage IPC #43 | porte rapide `30753208857` puis matrice manuelle `30753216798` entièrement vertes sur le candidat produit exact `f3fef79` ; Linux et Windows exécutent le helper compagnon, Windows ajoute son Job Object, son paquet, son gate PE et le dispatch Tauri vivant | états des jobs, journaux et artefact expurgé liés depuis le rapport #43 |
-| consentement et mémoire secrète #45 | aucune porte finale acceptée ; `30768351689` et `30768749538` sont rouges sous l'ancien oracle ; `30769440106` a réussi ses quatre jobs sur `ae550470` et ses trois artefacts ont été inspectés, mais ce SHA ne prouve que le répertoire WER vide avant verdict ; `c8643b0` est le prochain candidat exact, sans run complet | matrice complète entièrement verte sur le SHA documentaire exact incluant `remove_and_prove_absent`, avec observation puis absence du répertoire WER avant verdict et inspection des artefacts expurgés |
+| consentement et mémoire secrète #45 | preuve fonctionnelle acquise dans le run `30770893733`, entièrement vert sur `b76ded8` : `remove_and_prove_absent`, observation puis absence du répertoire WER avant verdict, matrice native, paquets et trois artefacts inspectés ; l'ultime run du SHA de propagation doit être enregistré dans l'issue avant fermeture | états des quatre jobs, ordre bloquant du test WER, métadonnées GitHub et inspection des artefacts expurgés |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
 | exécution GitHub Actions réelle | [run final `30710037004`](https://github.com/ldesfontaine/your-cloud/actions/runs/30710037004) entièrement vert sur le candidat produit exact `3b8f81f`, avec les deux gardes et les variantes natives ; l'issue `#9` conserve le SHA, les liens et les empreintes | états des jobs, journaux et artefact de smoke du run |
@@ -70,9 +70,9 @@ prouve pas l'absence universelle de chargement dynamique. Le
 nettoyage et les limites. Cette porte et sa propagation ferment #43, sans fermer
 #45, #42, #35, le palier #13 ou `v0.1.0`.
 
-### Candidat de consentement natif #45 — preuve encore en attente
+### Consentement natif #45 — preuve fonctionnelle acquise
 
-Le helper possède maintenant une implémentation candidate des fenêtres GTK3 et
+Le helper possède maintenant une implémentation des fenêtres GTK3 et
 Win32, du périmètre immuable lié au véritable parent et au pair IPC, de
 l'échéance monotone non renouvelable de 300 secondes et du tampon
 `ProtectedSecret` borné à 4096 octets. Linux emploie
@@ -121,9 +121,8 @@ a entièrement réussi ses quatre jobs entre `2026-08-02T22:08:15Z` et
 prouve le dump supprimé, son répertoire vide et les inscriptions `LocalDumps`
 et `AeDebug` absentes. Le `Drop` ne retire toutefois le répertoire qu'après le
 verdict : ce succès constitue une preuve intermédiaire, pas la porte finale.
-`c8643b0` devient le prochain candidat exact : `remove_and_prove_absent` doit
-retirer le répertoire et le prouver absent avant verdict. Aucun run complet ne
-l'a encore évalué.
+`c8643b0` ajoute ensuite `remove_and_prove_absent`, qui retire le répertoire et
+le prouve absent avant verdict.
 
 Le workflow place la preuve de crash tôt dans chaque variante afin qu'un défaut
 de collecte ou d'exclusion n'attende pas le build des paquets. Sous Linux, le
@@ -135,16 +134,17 @@ personnalisé incluant `PAGE_READWRITE`, avec contrôle ordinaire et canari
 protégé présents. Elle caractérise ainsi l'autorité administrateur hors
 garantie, puis doit retirer et prouver absents avant verdict le dump, son
 répertoire et les deux inscriptions de registre propres au test. `ae550470` ne
-satisfait pas encore cette séquence pour le répertoire ; `c8643b0` introduit la
-preuve manquante. Aucun résultat n'est accepté si l'observation ou l'un des
-quatre nettoyages manque.
+satisfait pas cette séquence pour le répertoire ; `c8643b0` introduit la preuve
+manquante. Le run `30770893733` réussit ce test sur `b76ded8`. Aucun résultat
+n'est accepté si l'observation ou l'un des quatre nettoyages manque.
 
-Une nouvelle matrice manuelle doit réussir les deux gardes, Linux, Windows,
-paquets, dialogues, nettoyages et artefacts sur le même SHA qui inclut la
-documentation. `30769440106` est entièrement vert, mais son SHA intermédiaire
-ne peut pas fermer #45. Une matrice entièrement verte sur le futur SHA
-documentaire exact qui inclut `c8643b0` reste requise, avec ses jobs, empreintes
-et artefacts.
+La matrice manuelle
+[`30770893733`](https://github.com/ldesfontaine/your-cloud/actions/runs/30770893733)
+réussit les deux gardes, Linux, Windows, paquets, dialogues, nettoyages et
+artefacts sur `b76ded8`, qui inclut `c8643b0` et le contrat documentaire. La
+présente propagation de ses résultats est la seule modification ultérieure ;
+l'issue `#45` doit enregistrer l'ultime run entièrement vert de ce SHA documentaire,
+sans modification suivante avant fusion.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation
@@ -286,6 +286,26 @@ sentinelle. Le JSON Windows lie le SHA et le run, consigne les verrous sources
 — avec les empreintes CRLF Windows cohérentes —, les MSI, helper et exécutable
 vérifiés, puis un nettoyage `pass`. Le JSON Linux rend `pass` et reste relié au
 run par la métadonnée GitHub.
+
+Le run fonctionnel de référence `30770893733` publie à son tour exactement
+trois artefacts inspectés :
+
+| Artefact | ID | Taille | Empreinte GitHub | Empreinte du JSON |
+|---|---:|---:|---|---|
+| smoke Windows | `8840757379` | 288424 octets | `sha256:8ee952ba6a265e4ad94289eb265cd19ab4ab5bef472f4d4d2dcbb6d56c38b973` | `a2efa0a548d131e1000b4f03b7a7a6a511f45f2ec42e39640f2148dc32a8dfe0` |
+| smoke Linux | `8840658837` | 296937 octets | `sha256:56e904626e35c06fefe4966850b307f2dbc97eb075b83831f5fa15845e4cf58f` | `ab150f2527a35633196c2e4cef15d2cb90fb8ef78c2a366dd4cbb7873f3e3303` |
+| rapport Plumber | `8840483746` | 1854 octets | `sha256:98499038c307b2d3dddeca46fc4195dbbf51b50a27cbe1a33b03609cfef95763` | `629dc3b0e73b192b92b9b89fe5d4bd9cce6ce18041cd3c8283a27511ed0c5ff2` |
+
+L'inventaire rend 23 fichiers réguliers non vides : 20 PNG et 3 JSON. Les
+vingt captures ont été décodées et inspectées, sans secret ; le scan ciblé ne
+retrouve ni clé, token, certificat, canari, sentinelle, `MDMP`, paquet ou
+binaire. Le JSON Windows lie exactement `b76ded8` et `30770893733`, les verrous
+concordent avec la matérialisation CRLF des blobs Git et le nettoyage bloquant
+rend `pass` avec les huit catégories attendues absentes. Il agrège cependant le matériel WER sous
+`temporary-security-material` : l'absence distincte du répertoire, de
+`LocalDumps` et d'`AeDebug` avant verdict est attribuée au code et au test vert,
+pas au seul artefact. Linux rend `pass` sans simuler de Controller ou de succès
+métier ; Plumber rend `A`, `100/100`, sans finding.
 
 Sous Windows, `verified_artifacts` relie le `.msi`, l'exécutable signé extrait
 de son image administrative et l'exécutable installé, dont l'égalité est

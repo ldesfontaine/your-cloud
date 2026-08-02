@@ -65,12 +65,13 @@ intermédiaire `ae550470` corrige l'oracle, supprime le dump et prouve le
 répertoire vide ainsi que les inscriptions absentes, mais ne retire le
 répertoire que par `Drop` après verdict. `30769440106` a entièrement réussi ses
 quatre jobs et prouve cette étape intermédiaire, sans fermer #45. `c8643b0`
-emploie
-`remove_and_prove_absent` pour prouver le répertoire absent avant verdict et
-devient le prochain candidat exact, sans run complet : le
+emploie ensuite `remove_and_prove_absent` pour prouver le répertoire absent
+avant verdict. Le run `30770893733` réussit les quatre jobs sur `b76ded8`, avec
+les deux inscriptions de registre absentes et trois artefacts inspectés. Le
 [rapport dédié](../docs/lab/v0.1.0-native-secret-consent-linux-windows.md)
-reste en attente d'une matrice finale entièrement verte sur le SHA documentaire
-exact. Aucun sous-cas intermédiaire ne ferme #45.
+conserve les jobs, empreintes et limites. L'issue #45 doit enregistrer l'ultime run du
+SHA de propagation documentaire avant fermeture ; #42 et #35 restent hors de
+cette preuve.
 
 Le registre détaillé reste
 [`docs/contribution/TESTS.md`](../docs/contribution/TESTS.md). Le placement, les

@@ -396,21 +396,24 @@ Job Object, ainsi que les gates de packaging natif. Voir le
 [rapport du runner Windows](../../lab/v1-bootstrap-ipc-windows.md).
 
 Cette preuve ne ferme ni l'amorçage complet, ni `#35`, ni le palier `#13`.
-`#45` possède maintenant une implémentation candidate des fenêtres GTK3 et
+`#45` possède maintenant une implémentation et une preuve fonctionnelle des
+fenêtres GTK3 et
 Win32 natives, du périmètre immuable, de l'échéance monotone non renouvelable
 de 300 secondes, du tampon protégé de 4096 octets et de son effacement, ainsi
-que des protections mémoire Linux et Windows. Sa
-[preuve native finale](../../lab/v0.1.0-native-secret-consent-linux-windows.md)
-reste en attente. `30768351689` et `30768749538` sont rouges sous l'ancien
+que des protections mémoire Linux et Windows. Son
+[rapport de preuve native](../../lab/v0.1.0-native-secret-consent-linux-windows.md)
+conserve les résultats et limites. `30768351689` et `30768749538` sont rouges
+sous l'ancien
 oracle, mais montrent que `LocalDumps` administrateur contient le contrôle et
 le canari ; cette autorité est hors garantie et l'enregistrement WER reste une
 défense en profondeur. `ae550470` exige désormais cette présence, supprime le
 dump, prouve son répertoire vide et les deux inscriptions de registre absentes,
 mais ne retire le répertoire que par `Drop` après verdict. `30769440106` a
 entièrement réussi ses quatre jobs et prouve cette étape intermédiaire, sans
-fermer #45. Le prochain candidat exact `c8643b0` exige avec
-`remove_and_prove_absent` le
-répertoire absent avant verdict ; aucun run complet ne l'a encore évalué. Après
+fermer #45. `c8643b0` exige ensuite avec `remove_and_prove_absent` le
+répertoire absent avant verdict. `30770893733` réussit ses quatre jobs sur
+`b76ded8` et publie trois artefacts inspectés. L'issue #45 doit conserver l'ultime run
+du SHA documentaire avant fermeture. Après
 acceptation,
 le secret est détruit et l'événement terminal public reste `Unavailable` jusqu'à
 `#42` ; aucun SSH, `sudo`, `root`, audit ou succès d'amorçage n'est revendiqué.

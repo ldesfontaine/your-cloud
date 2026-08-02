@@ -72,7 +72,8 @@ gates Linux sont exécutés ; le lancement parent et le premier consentement
 GTK3 sans secret sont également prouvés dans le LAB. La saisie GTK3 et Win32,
 l'effacement des secrets, l'annulation coopérative, `mlock`,
 `MADV_DONTDUMP`, `VirtualLock` et l'enregistrement Windows Error Reporting en
-défense en profondeur possèdent maintenant une implémentation candidate. Les
+défense en profondeur possèdent maintenant une implémentation et une preuve
+fonctionnelle. Les
 runs `30768351689` et `30768749538` sont rouges sous l'ancien oracle, mais
 caractérisent `LocalDumps` administrateur hors garantie avec contrôle et canari
 présents ; le
@@ -81,11 +82,13 @@ tentatives sans fermer l'issue. `ae550470` corrige l'observation de l'oracle,
 mais reste intermédiaire : même observation, dump supprimé, répertoire prouvé
 vide et deux inscriptions de registre prouvées absentes avant verdict, puis
 retrait du répertoire seulement par `Drop`. Son run `30769440106` a réussi ses
-quatre jobs et prouve cette étape intermédiaire, mais ne ferme pas #45. Le
-prochain candidat exact `c8643b0` emploie `remove_and_prove_absent` pour exiger
-l'absence du répertoire avant verdict, sans run complet à ce stade. Seule une
-matrice native finale entièrement verte sur le futur SHA documentaire exact qui
-inclut cette correction fermera #45.
+quatre jobs et prouve cette étape intermédiaire, mais ne ferme pas #45.
+`c8643b0` emploie ensuite `remove_and_prove_absent` pour exiger l'absence du
+répertoire avant verdict. Le run `30770893733` réussit les quatre jobs sur
+`b76ded8`, valide cette séquence et publie trois artefacts inspectés. L'issue
+#45 doit conserver l'ultime matrice verte du SHA de propagation documentaire ; aucune
+modification ne suit ce run avant fusion. Sa fermeture débloque #51, puis
+#52, #53 et #54 dans cet ordre.
 Pour #43, la récolte Linux autonome, le Job Object Windows avec racine et vrai
 descendant, les branches hostiles avant reprise et le dispatch Tauri vivant ont
 réussi sur le candidat exact `f3fef79` dans le run manuel `30753216798` : cette
@@ -108,9 +111,10 @@ d'hôte exacte, l'identité choisie et la commande fixe `/usr/bin/id -u` ont
 vérifié l'accès direct `root` ou le chemin `sudo` autorisé. Il ne signifie ni
 audit Debian, ni installation, ni mutation, ni Controller autonome, ni succès
 d'amorçage. #42 ne se ferme qu'après #51, #52, #53 et #54 ; #35 se ferme après
-#42 et l'intégration avec #43/#45. La suite est donc
-`#45 → #51 → #52 → #53 → #54 → #42 → #35` ; #13 et la milestone demeurent
-ouverts, tandis que `v0.1.0` reste à atteindre.
+#42 et l'intégration avec #43/#45. La séquence de fermeture du sous-palier est
+`#45 → #51 → #52 → #53 → #54 → #42 → #35`. Une fois #45 fermée, la prochaine
+issue est #51 ; #13 et la milestone demeurent ouverts jusqu'à leurs propres
+preuves, tandis que `v0.1.0` reste à atteindre.
 
 Aucune date d'échéance arbitraire ne lui est attachée. La preuve globale #41,
 la propagation documentaire et la fermeture de #13 terminent seulement le
