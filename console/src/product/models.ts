@@ -164,7 +164,7 @@ export type BootstrapSessionView = {
   request_id: string;
   mode: BootstrapMode;
   target: BootstrapTarget;
-  step: "personal_access";
+  step: "personal_access" | "root_access";
   actions: readonly ["audit_target_read_only"];
   lifecycle: "awaiting_native_assistant";
   expires_in_seconds: number;

@@ -391,6 +391,12 @@ foreach ($requiredProofFragment in @(
     '"tools\check-native-bootstrap-assistant.mjs"',
     '$installedHelperSha256 -ne $packagedHelperSha256',
     'Assert-AuthenticodeSignature $installedHelper $certificate.Thumbprint',
+    '-Operation "direct native helper parent refusal"',
+    '-AllowedExitCodes @(70)',
+    'refused native helper invocation emitted public output',
+    '"windows-native-personal-consent.png"',
+    '$proofNameDifferences',
+    'Compare-Object',
     'installed native helper remained at $installedHelper',
     '$shortcutTarget,',
     '$installedConsole.FullName,',
@@ -409,17 +415,42 @@ foreach ($requiredUiFragment in @(
     "bootstrap_status",
     "cancel_bootstrap",
     "bootstrap_busy",
-    "native_assistant_unavailable",
+    "phase: 'capture_ready'",
+    "phase: 'finished'",
+    "create_helper_running_after_native_capture",
+    "replace_helper_running_after_millis",
+    'driver.execute_async(BOOTSTRAP_IPC_PROOF_SCRIPT, ["start"])',
+    '["finish", create_request_id]',
+    "if create_request_id in serialized_proof",
     "bootstrap_request_refused",
     "sensitive-value-must-not-be-reflected",
+    "frontend-consent-must-not-be-accepted",
+    "authority_fields: authorityRejections",
+    "active_target_mutation: targetMutationCode",
     "request_ids_included_in_proof_artifact",
-    "target_included_in_public_error_or_proof_artifact",
+    "target_included_in_public_error",
+    "public_scope_machine_inspected",
+    "SendMessageTimeoutW",
+    "secret_control_machine_inspected",
+    "synthetic_target_present",
+    "secret_control_present",
     "sensitive_input_included_in_public_error_or_proof_artifact",
     "success_claimed: false"
 )) {
     if (-not $uiProofSource.Contains($requiredUiFragment)) {
         throw "live Windows Tauri bootstrap proof is incomplete at $requiredUiFragment"
     }
+}
+$startHandshakeIndex = $uiProofSource.IndexOf(
+    'driver.execute_async(BOOTSTRAP_IPC_PROOF_SCRIPT, ["start"])'
+)
+$synchronousCaptureIndex = $uiProofSource.IndexOf("capture_facts = (")
+$finishHandshakeIndex = $uiProofSource.IndexOf('["finish", create_request_id]')
+if ($uiProofSource.Contains("threading.Thread") -or
+    $startHandshakeIndex -lt 0 -or
+    $synchronousCaptureIndex -le $startHandshakeIndex -or
+    $finishHandshakeIndex -le $synchronousCaptureIndex) {
+    throw "native capture must stay synchronous between the bootstrap start and finish handshakes"
 }
 $executeAsync = [regex]::Match(
     $uiProofSource,

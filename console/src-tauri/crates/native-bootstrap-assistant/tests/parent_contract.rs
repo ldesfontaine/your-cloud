@@ -32,10 +32,12 @@ fn scope() -> AssistantScopeV1 {
         step: BootstrapStep::PersonalAccess,
         actions: [BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::ConfirmPersonalAccess,
+        issued_at_monotonic_nanos: 0,
         remaining_millis: 5_000,
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn console_parent_launches_the_exact_helper_and_refuses_to_invent_success() {
     let path = Path::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));

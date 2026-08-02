@@ -48,6 +48,7 @@ const cargoArguments = [
   target,
   "--target-dir",
   targetDirectory,
+  "--no-default-features",
   "--locked",
   "--offline",
 ];

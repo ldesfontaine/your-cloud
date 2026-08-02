@@ -13,24 +13,15 @@ pub(crate) enum ReadFrameError {
     Io,
 }
 
+/// Reads exactly the single public scope frame. Production transfers the same
+/// unbuffered reader to the stdin lease afterwards; substituting a buffered
+/// reader and probing only its underlying handle would strand prefetched bytes.
 pub(crate) fn read_scope(reader: &mut impl Read) -> Result<AssistantScopeV1, ReadFrameError> {
     let payload = read_payload(reader, MAX_ASSISTANT_SCOPE_FRAME_BYTES)?;
     serde_json::from_slice::<AssistantScopeV1>(&payload)
         .map_err(|_| ReadFrameError::Invalid)?
         .validate()
         .map_err(|_| ReadFrameError::Invalid)
-}
-
-pub(crate) fn require_eof(reader: &mut impl Read) -> Result<(), ReadFrameError> {
-    let mut extra = [0_u8; 1];
-    loop {
-        match reader.read(&mut extra) {
-            Ok(0) => return Ok(()),
-            Ok(_) => return Err(ReadFrameError::Invalid),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return Err(ReadFrameError::Io),
-        }
-    }
 }
 
 pub(crate) fn write_event(writer: &mut impl Write, event: &AssistantEventV1) -> Result<(), ()> {
@@ -96,6 +87,7 @@ mod tests {
             step: BootstrapStep::PersonalAccess,
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt: NativePromptKind::ConfirmPersonalAccess,
+            issued_at_monotonic_nanos: 1,
             remaining_millis: 1_000,
         }
     }
@@ -108,15 +100,19 @@ mod tests {
     }
 
     #[test]
-    fn reads_one_bounded_validated_scope() {
-        let mut input = Cursor::new(framed(&scope()));
+    fn reads_one_bounded_validated_scope_and_leaves_the_lease_byte() {
+        let mut bytes = framed(&scope());
+        bytes.push(0xa5);
+        let mut input = Cursor::new(bytes);
         let received = read_scope(&mut input).unwrap();
-        require_eof(&mut input).unwrap();
         assert_eq!(received.request_id, REQUEST_ID);
+        let mut lease_byte = [0_u8; 1];
+        input.read_exact(&mut lease_byte).unwrap();
+        assert_eq!(lease_byte, [0xa5]);
     }
 
     #[test]
-    fn refuses_empty_oversized_truncated_and_additional_bytes() {
+    fn refuses_empty_oversized_and_truncated_frames() {
         for input in [
             0_u32.to_be_bytes().to_vec(),
             u32::try_from(MAX_ASSISTANT_SCOPE_FRAME_BYTES + 1)
@@ -128,14 +124,8 @@ mod tests {
             assert!(read_scope(&mut Cursor::new(input)).is_err());
         }
 
-        let mut additional = framed(&scope());
-        additional.push(0);
-        let mut input = Cursor::new(additional);
-        assert!(read_scope(&mut input).is_ok());
-        assert!(matches!(
-            require_eof(&mut input),
-            Err(ReadFrameError::Invalid)
-        ));
+        // Bytes after this single scope are observed by the separate stdin lease
+        // and can never be interpreted as a second scope or an update.
     }
 
     #[test]

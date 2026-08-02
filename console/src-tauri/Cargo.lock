@@ -5824,8 +5824,10 @@ name = "your-cloud-bootstrap-protocol"
 version = "0.0.3"
 dependencies = [
  "base64 0.22.1",
+ "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

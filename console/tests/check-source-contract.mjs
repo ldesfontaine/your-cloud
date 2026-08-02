@@ -15,9 +15,18 @@ const readSourceText = async (path) =>
   normalizeSourceText(await readFile(path, "utf8"));
 const releaseCoupledIdentifier =
   /\bv\d+\.\d+\.\d+\b|\bv\d+-\d+-\d+\b|\/v\d+\.\d+\.\d+\b/iu;
+const forbiddenProtectedSecretDerive =
+  /#\[derive\([^\]]*(?:Clone|Serialize|Deserialize)[^\]]*\)\]\s*pub\(crate\) struct ProtectedSecret/u;
 
 if (normalizeSourceText("ligne 1\r\nligne 2\rligne 3\n") !== "ligne 1\nligne 2\nligne 3\n") {
   failures.push("garde interne: normalisation LF, CRLF et CR invalide");
+}
+if (
+  !forbiddenProtectedSecretDerive.test(
+    "#[derive(Debug, Clone)]\npub(crate) struct ProtectedSecret { value: Vec<u8> }",
+  )
+) {
+  failures.push("garde interne: derive interdit du secret protégé non détecté");
 }
 
 for (const hostile of [
@@ -109,6 +118,36 @@ const nativeAssistantHardening = await readSourceText(
     "hardening.rs",
   ),
 );
+const nativeAssistantHelperRuntime = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "lib.rs",
+  ),
+);
+const nativeAssistantWatchdog = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "watchdog.rs",
+  ),
+);
+const bootstrapProtocolMonotonic = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "bootstrap-protocol",
+    "src",
+    "monotonic.rs",
+  ),
+);
 const nativeAssistantWindowsJobContract = await readSourceText(
   join(
     consoleRoot,
@@ -127,6 +166,126 @@ const nativeAssistantPrompt = await readSourceText(
     "native-bootstrap-assistant",
     "src",
     "native_prompt.rs",
+  ),
+);
+const nativeAssistantWindowsPrompt = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "native_prompt_windows.rs",
+  ),
+);
+const nativeAssistantLease = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "lease.rs",
+  ),
+);
+const nativeAssistantParent = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "parent.rs",
+  ),
+);
+const nativeAssistantSecret = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "secret.rs",
+  ),
+);
+const nativeAssistantCrashFixture = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "secret_crash_fixture.rs",
+  ),
+);
+const nativeAssistantCrashContract = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "secret_crash_contract.rs",
+  ),
+);
+const nativeAssistantParentSpoofFixture = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "parent_spoof_fixture.rs",
+  ),
+);
+const nativeAssistantParentSpoofContract = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "windows_parent_spoof_contract.rs",
+  ),
+);
+const nativeAssistantLinuxProcessContract = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "process_contract.rs",
+  ),
+);
+const nativeAssistantWindowsLivePromptContract = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "windows_live_prompt_contract.rs",
+  ),
+);
+const nativeAssistantDelayedStartFixture = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "delayed_start_fixture.rs",
+  ),
+);
+const nativeAssistantDelayedStartContract = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "delayed_start_contract.rs",
   ),
 );
 const bootstrapProtocol = await readSourceText(
@@ -150,6 +309,15 @@ const candidateManifestBuilder = await readSourceText(
 );
 const continuousIntegration = await readSourceText(
   join(consoleRoot, "..", ".github", "workflows", "ci.yml"),
+);
+const linuxInstalledProof = await readSourceText(
+  join(consoleRoot, "..", "tests", "checks", "console-linux-ci"),
+);
+const windowsInstalledProof = await readSourceText(
+  join(consoleRoot, "..", "tests", "checks", "console-windows-ci.ps1"),
+);
+const installedUiProof = await readSourceText(
+  join(consoleRoot, "..", "tests", "checks", "console-windows-ui-proof.py"),
 );
 const consoleRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "lib.rs"));
 const productModels = await readSourceText(join(consoleRoot, "src", "product", "models.ts"));
@@ -193,6 +361,19 @@ if (
 ) {
   failures.push("package.json: scripts de préparation bornée du helper absents");
 }
+for (const forbiddenShippingFeature of [
+  "native-prompt-contract-test",
+  "secret-crash-contract-test",
+  "windows-parent-spoof-contract-test",
+  "windows-live-prompt-contract-test",
+  "delayed-start-contract-test",
+]) {
+  if (nativeAssistantBuild.includes(forbiddenShippingFeature)) {
+    failures.push(
+      `outillage helper: une feature de fixture entre dans le build livré (${forbiddenShippingFeature})`,
+    );
+  }
+}
 if (
   !continuousIntegration.includes(
     "cargo +1.94.1 fetch --manifest-path src-tauri/Cargo.toml --locked",
@@ -200,17 +381,324 @@ if (
   !continuousIntegration.includes("npm run build:native-assistant") ||
   !continuousIntegration.includes("xvfb-run -a env NO_AT_BRIDGE=1") ||
   !continuousIntegration.includes(
-    "native_prompt::tests::gtk_dialog_maps_consent_without_collecting_a_secret",
+    "native_prompt::tests::gtk_dialog_handles_consent_secret_and_lease_states",
+  ) ||
+  !continuousIntegration.includes(
+    "native_prompt_windows::tests::win32_dialog_handles_consent_secret_tamper_and_lease_states",
   ) ||
   !continuousIntegration.includes(
     "console_parent_keeps_the_gtk_helper_bounded_until_cancelled",
   ) ||
+  !continuousIntegration.includes(
+    "helper_closes_every_inherited_descriptor_outside_stdio",
+  ) ||
+  !continuousIntegration.includes(
+    "live_prompt_refuses_target_step_action_and_expiration_mutations",
+  ) ||
   !continuousIntegration.includes("--features windows-contract-test") ||
+  !continuousIntegration.includes("--features native-prompt-contract-test") ||
+  !continuousIntegration.includes("--features secret-crash-contract-test") ||
+  !continuousIntegration.includes("--features windows-parent-spoof-contract-test") ||
+  !continuousIntegration.includes("--features windows-live-prompt-contract-test") ||
+  !continuousIntegration.includes("--features delayed-start-contract-test") ||
+  !continuousIntegration.includes("--test process-contract") ||
+  !continuousIntegration.includes("--test parent-contract") ||
   !continuousIntegration.includes("--test windows-job-contract") ||
+  !continuousIntegration.includes("--test secret-crash-contract") ||
+  !continuousIntegration.includes("--test windows-parent-spoof-contract") ||
+  !continuousIntegration.includes("--test windows-live-prompt-contract") ||
+  !continuousIntegration.includes("--test delayed-start-contract") ||
+  !continuousIntegration.includes("declared_parent_cannot_authorize_an_attacker_owned_pipe") ||
+  !continuousIntegration.includes(
+    "live_prompt_refuses_target_step_action_and_expiration_mutations",
+  ) ||
+  !continuousIntegration.includes(
+    "delay_before_process_main_cannot_renew_the_transmitted_ttl",
+  ) ||
+  !continuousIntegration.includes("\n          gdb\n") ||
+  !continuousIntegration.includes("webkit2gtk-driver") ||
+  !continuousIntegration.includes("xdotool") ||
+  !continuousIntegration.includes("imagemagick") ||
+  !continuousIntegration.includes("console-linux-webkitgtk-smoke") ||
+  !continuousIntegration.includes(
+    "dbus-run-session -- xvfb-run -a env NO_AT_BRIDGE=1",
+  ) ||
   continuousIntegration.indexOf("npm run build:native-assistant") >
     continuousIntegration.indexOf("cargo +1.94.1 test --release --locked --workspace")
 ) {
   failures.push("ci.yml: le helper natif doit être préparé avant les tests de tout le workspace");
+}
+for (const [name, source, fragments] of [
+  [
+    "preuve Linux installée",
+    linuxInstalledProof,
+    [
+      "/usr/bin/your-cloud-native-bootstrap-assistant",
+      "installed native helper accepted a direct non-Console parent",
+      "--native-driver /usr/bin/WebKitWebDriver",
+      "--native-port 4445",
+      "--platform linux",
+      "linux-webkitgtk-smoke.json",
+      "linux-native-personal-consent.png",
+      "installed Linux proof artifact contains an unexpected entry",
+      "Linux WebDriver, Console, helper or loopback listeners remained after cleanup",
+    ],
+  ],
+  [
+    "preuve Windows installée",
+    windowsInstalledProof,
+    [
+      "direct native helper parent refusal",
+      "-AllowedExitCodes @(70)",
+      "refused native helper invocation emitted public output",
+      "windows-native-personal-consent.png",
+      "$proofNameDifferences",
+    ],
+  ],
+  [
+    "preuve UI installée",
+    installedUiProof,
+    [
+      "phase: 'capture_ready'",
+      "phase: 'finished'",
+      "create_helper_running_after_native_capture: true",
+      "replace_helper_running_after_millis: 1000",
+      'driver.execute_async(BOOTSTRAP_IPC_PROOF_SCRIPT, ["start"])',
+      '["finish", create_request_id]',
+      "if create_request_id in serialized_proof",
+      "capture_linux_native_prompt",
+      "capture_windows_native_prompt",
+      "SendMessageTimeoutW",
+      "native-personal-consent.png",
+      '"public_scope_machine_inspected": False',
+      '"secret_control_machine_inspected": False',
+      "frontend-consent-must-not-be-accepted",
+      "authority_fields: authorityRejections",
+      "active_target_mutation: targetMutationCode",
+      "sensitive_input_included_in_public_error_or_proof_artifact: false",
+    ],
+  ],
+]) {
+  for (const fragment of fragments) {
+    if (!source.includes(fragment)) {
+      failures.push(`${name}: contrat absent (${fragment})`);
+    }
+  }
+}
+
+const linuxPidTerminatorStart = linuxInstalledProof.indexOf("terminate_child_pid() {");
+const linuxPidTerminatorEnd = linuxInstalledProof.indexOf(
+  "terminate_driver_group() {",
+  linuxPidTerminatorStart,
+);
+const linuxPidTerminator =
+  linuxPidTerminatorStart >= 0 && linuxPidTerminatorEnd > linuxPidTerminatorStart
+    ? linuxInstalledProof.slice(linuxPidTerminatorStart, linuxPidTerminatorEnd)
+    : "";
+const linuxPidTerminationOrder = [
+  'validate_process_id "$process_id"',
+  'kill -TERM "$process_id"',
+  'wait_for_child_stop_bounded "$process_id"',
+  'kill -KILL "$process_id"',
+  'reap_stopped_child "$process_id"',
+].map((fragment) => linuxPidTerminator.indexOf(fragment));
+if (
+  linuxPidTerminationOrder.some((index) => index < 0) ||
+  linuxPidTerminationOrder.some(
+    (index, position) => position > 0 && index <= linuxPidTerminationOrder[position - 1],
+  )
+) {
+  failures.push(
+    "preuve Linux installée: le launcher doit suivre PID validé, TERM, borne, KILL puis reap",
+  );
+}
+
+const linuxDriverTerminatorStart = linuxInstalledProof.indexOf(
+  "terminate_driver_group() {",
+);
+const linuxDriverTerminatorEnd = linuxInstalledProof.indexOf(
+  "cleanup() {",
+  linuxDriverTerminatorStart,
+);
+const linuxDriverTerminator =
+  linuxDriverTerminatorStart >= 0 && linuxDriverTerminatorEnd > linuxDriverTerminatorStart
+    ? linuxInstalledProof.slice(linuxDriverTerminatorStart, linuxDriverTerminatorEnd)
+    : "";
+for (const expected of [
+  'validate_process_id "$process_id" "tauri-driver PID"',
+  'validate_process_id "$process_group_id" "tauri-driver PGID"',
+  '[[ "$process_id" != "$process_group_id" ]]',
+  'kill -TERM -- "-$process_group_id"',
+  'child_is_stopped_or_zombie "$process_id"',
+  'reap_stopped_child "$process_id"',
+  'kill -KILL -- "-$process_group_id"',
+  'kill -0 -- "-$process_group_id"',
+  '[[ "$group_disappeared" != true ]]',
+]) {
+  if (!linuxDriverTerminator.includes(expected)) {
+    failures.push(`preuve Linux installée: arrêt borné du driver absent (${expected})`);
+  }
+}
+const driverTermIndex = linuxDriverTerminator.indexOf(
+  'kill -TERM -- "-$process_group_id"',
+);
+const driverEarlyReapIndex = linuxDriverTerminator.indexOf(
+  'reap_stopped_child "$process_id"',
+);
+const driverKillIndex = linuxDriverTerminator.indexOf(
+  'kill -KILL -- "-$process_group_id"',
+);
+if (
+  driverTermIndex < 0 ||
+  driverEarlyReapIndex <= driverTermIndex ||
+  driverKillIndex <= driverEarlyReapIndex
+) {
+  failures.push(
+    "preuve Linux installée: le leader driver doit être reapé sous borne entre TERM et KILL éventuel",
+  );
+}
+
+const driverLaunchOrder = [
+  "setsid tauri-driver",
+  "driver_pid=$!",
+  'validate_process_id "$driver_pid" "tauri-driver PID"',
+  'ps -o pgid= -p "$driver_pid"',
+  '[[ "$observed_driver_pgid" == "$driver_pid" ]]',
+  "driver_pgid=$observed_driver_pgid",
+].map((fragment) => linuxInstalledProof.indexOf(fragment));
+driverLaunchOrder.push(
+  linuxInstalledProof.indexOf(
+    'terminate_driver_group "$driver_pid" "$driver_pgid"',
+    driverLaunchOrder.at(-1) + 1,
+  ),
+);
+if (
+  driverLaunchOrder.some((index) => index < 0) ||
+  driverLaunchOrder.some(
+    (index, position) => position > 0 && index <= driverLaunchOrder[position - 1],
+  )
+) {
+  failures.push(
+    "preuve Linux installée: le PGID setsid doit être résolu, égal au PID puis utilisé au nominal",
+  );
+}
+if (
+  /\bwait\s+"\$(?:driver_pid|launcher_pid)"/u.test(linuxInstalledProof) ||
+  /kill\s+-(?:TERM|KILL)\s+--\s+"-\$driver_pid"/u.test(linuxInstalledProof) ||
+  (linuxInstalledProof.match(/\bwait\s+"\$process_id"/gu) ?? []).length !== 1 ||
+  !linuxInstalledProof.includes('if wait "$process_id"; then') ||
+  !linuxInstalledProof.includes('[[ "$wait_status" -eq 127 ]]')
+) {
+  failures.push(
+    "preuve Linux installée: wait direct ou cible driver non validée hors primitive bornée",
+  );
+}
+
+const startHandshakeIndex = installedUiProof.indexOf(
+  'driver.execute_async(BOOTSTRAP_IPC_PROOF_SCRIPT, ["start"])',
+);
+const synchronousCaptureIndex = installedUiProof.indexOf("capture_facts = (");
+const finishHandshakeIndex = installedUiProof.indexOf('["finish", create_request_id]');
+if (
+  installedUiProof.includes("threading.Thread") ||
+  startHandshakeIndex < 0 ||
+  synchronousCaptureIndex <= startHandshakeIndex ||
+  finishHandshakeIndex <= synchronousCaptureIndex
+) {
+  failures.push(
+    "preuve UI installée: la capture native doit rester synchrone entre les handshakes start et finish",
+  );
+}
+
+const nativeVaultScriptMatch = installedUiProof.match(
+  /NATIVE_VAULT_INITIALIZATION_SCRIPT = r"""(?<body>[\s\S]*?)"""/u,
+);
+const nativeVaultScript = nativeVaultScriptMatch?.groups?.body;
+const nativeVaultInitializer = installedUiProof.match(
+  /def initialize_real_native_vault\(driver: Driver\) -> None:\n(?<body>[\s\S]*?)\n\nBOOTSTRAP_IPC_PROOF_SCRIPT/u,
+)?.groups?.body;
+for (const forbidden of [
+  "def fill_fields(",
+  "driver.fill_fields(",
+  "secrets = driver.execute(",
+  "phrase, recovery = secrets",
+  "return [...document.querySelectorAll('.yc-secret')].map((e)=>e.textContent.trim())",
+]) {
+  if (installedUiProof.includes(forbidden)) {
+    failures.push(`preuve UI installée: secret sorti de la WebView (${forbidden})`);
+  }
+}
+if (!nativeVaultScript || !nativeVaultInitializer) {
+  failures.push("preuve UI installée: initialisation encapsulée du coffre absente");
+} else {
+  for (const expected of [
+    "const secrets = await waitFor(() => {",
+    "const candidates = [...document.querySelectorAll('.yc-secret')]",
+    "/^[^ ]+(?: [^ ]+){5}$/u.test(phrase)",
+    "new TextEncoder().encode(phrase).length <= 96",
+    "/^(?:[A-Z2-7]{6}-){8}[A-Z2-7]{6}$/u.test(recovery)",
+    "setInputValue('#confirm-unlock-phrase', phrase)",
+    "setInputValue('#confirm-recovery-code', recovery)",
+    "checkbox.click()",
+    "secrets.fill('')",
+    "phrase = ''",
+    "recovery = ''",
+    "confirmButton.click()",
+    "document.querySelectorAll('.yc-secret').length === 0",
+    "Object.keys(localStorage).length === 0",
+    "Object.keys(sessionStorage).length === 0",
+    "done({ ok: true, facts })",
+    "done({ ok: false, failure: phase })",
+  ]) {
+    if (!nativeVaultScript.includes(expected)) {
+      failures.push(`preuve UI installée: coffre WebView expurgé incomplet (${expected})`);
+    }
+  }
+  const nativeVaultDoneCalls = [...nativeVaultScript.matchAll(/\bdone\((?<body>[\s\S]*?)\)/gu)]
+    .map((match) => match.groups?.body.trim());
+  if (
+    JSON.stringify(nativeVaultDoneCalls) !==
+    JSON.stringify(["{ ok: true, facts }", "{ ok: false, failure: phase }"])
+  ) {
+    failures.push(
+      "preuve UI installée: le script coffre doit exposer exactement les deux résultats expurgés",
+    );
+  }
+  if (
+    nativeVaultDoneCalls.some((call) => /\b(?:secrets|phrase|recovery)\b/u.test(call ?? ""))
+  ) {
+    failures.push("preuve UI installée: un résultat WebDriver référence une valeur secrète");
+  }
+  const installedUiProofOutsideVaultScript = installedUiProof.replace(
+    nativeVaultScriptMatch[0],
+    "",
+  );
+  if (
+    installedUiProofOutsideVaultScript.includes(".yc-secret") ||
+    installedUiProofOutsideVaultScript.includes("#confirm-unlock-phrase") ||
+    installedUiProofOutsideVaultScript.includes("#confirm-recovery-code")
+  ) {
+    failures.push(
+      "preuve UI installée: sélecteur secret présent hors du script WebView encapsulé",
+    );
+  }
+  for (const expected of [
+    "driver.execute_async(NATIVE_VAULT_INITIALIZATION_SCRIPT, timeout_seconds=90)",
+    'outcome.get("facts") == {',
+    'driver.wait("return document.querySelector(\'h1\')?.textContent ?? null;", "Infrastructures", 60)',
+  ]) {
+    if (!nativeVaultInitializer.includes(expected)) {
+      failures.push(`preuve UI installée: oracle coffre expurgé incomplet (${expected})`);
+    }
+  }
+  if (
+    /driver\.(?:execute|fill_fields)\(/u.test(nativeVaultInitializer) ||
+    /\b(?:phrase|recovery)\b/u.test(nativeVaultInitializer)
+  ) {
+    failures.push(
+      "preuve UI installée: l’orchestrateur Python ne doit lire ou réinjecter aucun secret du coffre",
+    );
+  }
 }
 
 const npmDocuments = JSON.stringify({
@@ -260,6 +748,579 @@ if (
 ) {
   failures.push("Cargo.toml helper: paquet, binaire ou dépendance protocole non bornés");
 }
+for (const expected of [
+  "native-prompt-contract-test = []",
+  'required-features = ["native-prompt-contract-test"]',
+]) {
+  if (!nativeAssistantManifest.includes(expected)) {
+    failures.push(`Cargo.toml helper: fixture de prompt non bornée (${expected})`);
+  }
+}
+if (
+  !nativeAssistantManifest.includes("secret-crash-contract-test = []") ||
+  !/\[\[bin\]\][\s\S]*?name\s*=\s*"your-cloud-secret-crash-fixture"[\s\S]*?path\s*=\s*"src\/secret_crash_fixture\.rs"[\s\S]*?required-features\s*=\s*\["secret-crash-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  ) ||
+  !/\[\[test\]\][\s\S]*?name\s*=\s*"secret-crash-contract"[\s\S]*?path\s*=\s*"tests\/secret_crash_contract\.rs"[\s\S]*?required-features\s*=\s*\["secret-crash-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  )
+) {
+  failures.push("Cargo.toml helper: fixture crash/dump test-only absente ou non bornée");
+}
+if (
+  !nativeAssistantManifest.includes(
+    'windows-parent-spoof-contract-test = ["native-prompt-contract-test"]',
+  ) ||
+  !/\[\[bin\]\][\s\S]*?name\s*=\s*"your-cloud-parent-spoof-fixture"[\s\S]*?path\s*=\s*"src\/parent_spoof_fixture\.rs"[\s\S]*?required-features\s*=\s*\["windows-parent-spoof-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  ) ||
+  !/\[\[test\]\][\s\S]*?name\s*=\s*"windows-parent-spoof-contract"[\s\S]*?path\s*=\s*"tests\/windows_parent_spoof_contract\.rs"[\s\S]*?required-features\s*=\s*\["windows-parent-spoof-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  )
+) {
+  failures.push("Cargo.toml helper: fixture hostile parent Windows absente ou non bornée");
+}
+if (
+  !nativeAssistantManifest.includes(
+    'windows-live-prompt-contract-test = ["native-prompt-contract-test"]',
+  ) ||
+  !/\[\[test\]\][\s\S]*?name\s*=\s*"windows-live-prompt-contract"[\s\S]*?path\s*=\s*"tests\/windows_live_prompt_contract\.rs"[\s\S]*?required-features\s*=\s*\["windows-live-prompt-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  )
+) {
+  failures.push("Cargo.toml helper: preuve Win32 vivante absente ou non bornée");
+}
+if (
+  !nativeAssistantManifest.includes(
+    'delayed-start-contract-test = ["native-prompt-contract-test"]',
+  ) ||
+  !/\[\[bin\]\][\s\S]*?name\s*=\s*"your-cloud-delayed-start-fixture"[\s\S]*?path\s*=\s*"src\/delayed_start_fixture\.rs"[\s\S]*?required-features\s*=\s*\["delayed-start-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  ) ||
+  !/\[\[test\]\][\s\S]*?name\s*=\s*"delayed-start-contract"[\s\S]*?path\s*=\s*"tests\/delayed_start_contract\.rs"[\s\S]*?required-features\s*=\s*\["delayed-start-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  )
+) {
+  failures.push("Cargo.toml helper: preuve delayed-start absente ou non bornée");
+}
+if (
+  !bootstrapProtocol.includes("pub issued_at_monotonic_nanos: u64") ||
+  /#\[serde\(default\)\][\s\S]{0,120}issued_at_monotonic_nanos/u.test(bootstrapProtocol) ||
+  !bootstrapProtocol.includes('.remove("issued_at_monotonic_nanos")')
+) {
+  failures.push("bootstrap-protocol: estampille monotone obligatoire absente ou optionnelle");
+}
+for (const expected of [
+  "clock_gettime",
+  "CLOCK_MONOTONIC",
+  "QueryPerformanceCounter",
+  "QueryPerformanceFrequency",
+  "u128::try_from(counter)",
+  "u128::try_from(frequency)",
+  ".checked_mul(NANOS_PER_SECOND)",
+  ".checked_div(frequency)",
+  "normalized_seconds_nanos(0, 0), Some(0)",
+  "normalized_counter_nanos(0, 10), Some(0)",
+]) {
+  if (!bootstrapProtocolMonotonic.includes(expected)) {
+    failures.push(`horloge monotone partagée: garde absente (${expected})`);
+  }
+}
+if (
+  !bootstrapProtocolManifest.includes("libc = \"=0.2.183\"") ||
+  !bootstrapProtocolManifest.includes('"Win32_System_Performance"') ||
+  !/name = "your-cloud-bootstrap-protocol"[\s\S]*?"libc"[\s\S]*?"windows-sys 0\.61\.2"/u.test(
+    cargoLock,
+  )
+) {
+  failures.push("horloge monotone partagée: dépendances Linux/Windows ou lock absents");
+}
+for (const expected of [
+  "ProtectedSecret::new()",
+  "secret.raw_mut()",
+  "std::process::id()",
+  "std::ptr::write_volatile",
+  "libc::PR_SET_DUMPABLE",
+  "libc::PR_SET_PTRACER",
+  "libc::PR_GET_DUMPABLE",
+  "libc::RLIMIT_CORE",
+  "RaiseException",
+]) {
+  if (!nativeAssistantCrashFixture.includes(expected)) {
+    failures.push(`fixture crash/dump: protection synthétique absente (${expected})`);
+  }
+}
+for (const expected of [
+  'Command::new("gcore")',
+  'file_contains(&core_path, &dump_control)',
+  'file_contains(&core_path, &protected_canary)',
+  "status.core_dumped()",
+  "LocalDumps",
+  'registration.add_dword("DumpType", "2")',
+  'registration.add_dword("DumpCount", "1")',
+  'assert_eq!(&signature, b"MDMP"',
+  "stable_since",
+  "remove_and_prove_absent",
+]) {
+  if (!nativeAssistantCrashContract.includes(expected)) {
+    failures.push(`contrat crash/dump: preuve synthétique absente (${expected})`);
+  }
+}
+if (/\.arg\(\s*"-a"\s*\)/u.test(nativeAssistantCrashContract)) {
+  failures.push("contrat crash/dump: gcore ne doit pas forcer les mappings VM_DONTDUMP");
+}
+for (const expected of [
+  "command.process_group(0);",
+  "libc::kill(-process_group, libc::SIGKILL)",
+  "libc::kill(-process_group, 0)",
+  "Some(libc::ESRCH)",
+  "REG_TIMEOUT",
+  "try_wait_bounded(REG_TIMEOUT)",
+]) {
+  if (!nativeAssistantCrashContract.includes(expected)) {
+    failures.push(`contrat crash/dump: nettoyage processus borné absent (${expected})`);
+  }
+}
+const boundedRegStart = nativeAssistantCrashContract.indexOf(
+  "fn try_run_reg<const N: usize>",
+);
+const boundedRegBody =
+  boundedRegStart >= 0 ? nativeAssistantCrashContract.slice(boundedRegStart) : "";
+if (
+  !boundedRegBody.includes('Command::new("reg.exe")') ||
+  !boundedRegBody.includes(".spawn()?") ||
+  !boundedRegBody.includes("GuardedChild::new(child).try_wait_bounded(REG_TIMEOUT)") ||
+  /\.(?:status|output)\s*\(/u.test(boundedRegBody)
+) {
+  failures.push(
+    "contrat crash/dump: reg.exe doit rester lancé, attendu et nettoyé avec une borne explicite",
+  );
+}
+if (
+  !nativeAssistantParentSpoofFixture.includes("transport_parent_contract_main()") ||
+  !nativeAssistantHelperRuntime.includes(
+    '#[cfg(feature = "windows-parent-spoof-contract-test")]',
+  ) ||
+  !nativeAssistantHelperRuntime.includes("pub fn transport_parent_contract_main() -> u8")
+) {
+  failures.push("fixture parent Windows: entrée transport test-only absente");
+}
+for (const expected of [
+  "PROC_THREAD_ATTRIBUTE_PARENT_PROCESS",
+  "PROC_THREAD_ATTRIBUTE_HANDLE_LIST",
+  "DuplicateHandle",
+  "duplicate_into_declared_parent",
+  "GetNamedPipeClientProcessId",
+  "GetCurrentProcessId",
+  "observed_parent_pid",
+  "EXIT_INTERNAL_FAILURE",
+  "stdout_bytes.is_empty()",
+  "stderr_bytes.is_empty()",
+  "TerminateJobObject",
+  "wait_bounded",
+]) {
+  if (!nativeAssistantParentSpoofContract.includes(expected)) {
+    failures.push(`contrat parent Windows hostile: preuve absente (${expected})`);
+  }
+}
+const hostileVerifierExitIndex = nativeAssistantParentSpoofContract.indexOf(
+  "process.wait_bounded(CONTRACT_TIMEOUT)",
+);
+const hostileParentCleanupIndex = nativeAssistantParentSpoofContract.indexOf(
+  'job.terminate().expect("cleanup job terminated")',
+);
+const hostileOutputReadIndex = nativeAssistantParentSpoofContract.indexOf(
+  "stdout.read_to_end(&mut stdout_bytes)",
+);
+if (
+  hostileVerifierExitIndex < 0 ||
+  hostileParentCleanupIndex < 0 ||
+  hostileOutputReadIndex < 0 ||
+  !(hostileVerifierExitIndex < hostileParentCleanupIndex &&
+    hostileParentCleanupIndex < hostileOutputReadIndex)
+) {
+  failures.push(
+    "contrat parent Windows hostile: C doit terminer puis A être fermé avant la lecture des pipes",
+  );
+}
+for (const expected of [
+  'Command::new("xdotool")',
+  '"--sync"',
+  '"--onlyvisible"',
+  '"--pid"',
+  '"getwindowpid"',
+  "collect_output_bounded(search.spawn()?, timeout)?",
+  "collect_output_bounded(owner.spawn()?, timeout)?",
+  "observed_process_id != child.id()",
+  "terminate_and_reap_bounded",
+  "child.try_wait()?",
+  "child.kill()",
+  "libc::O_NONBLOCK",
+  "PIPE_EOF_TIMEOUT",
+  "MAX_CAPTURED_OUTPUT",
+]) {
+  if (!nativeAssistantLinuxProcessContract.includes(expected)) {
+    failures.push(`contrat prompt GTK vivant: preuve bornée absente (${expected})`);
+  }
+}
+if (
+  /\.(?:wait_with_output|wait|output)\s*\(/u.test(nativeAssistantLinuxProcessContract) ||
+  nativeAssistantLinuxProcessContract.includes("thread::sleep(Duration::from_millis(250))")
+) {
+  failures.push(
+    "contrat prompt GTK vivant: attente implicite ou oracle temporel non borné présent",
+  );
+}
+const linuxLivePromptStart = nativeAssistantLinuxProcessContract.indexOf(
+  "fn live_prompt_refuses_target_step_action_and_expiration_mutations()",
+);
+const linuxLivePromptEnd = nativeAssistantLinuxProcessContract.indexOf(
+  "fn mutation_frame",
+  linuxLivePromptStart,
+);
+const linuxLivePromptBody =
+  linuxLivePromptStart >= 0 && linuxLivePromptEnd > linuxLivePromptStart
+    ? nativeAssistantLinuxProcessContract.slice(linuxLivePromptStart, linuxLivePromptEnd)
+    : "";
+const linuxLivePromptOrder = [
+  "for mutation_kind in [",
+  "let initial = scope(INITIAL_REMAINING_MILLIS)",
+  ".write_all(&frame(&initial))",
+  "wait_for_visible_x11_window(&mut child, WINDOW_TIMEOUT)",
+  ".write_all(&mutation)",
+  "collect_output_bounded(child, PROCESS_TIMEOUT)",
+].map((fragment) => linuxLivePromptBody.indexOf(fragment));
+if (
+  linuxLivePromptOrder.some((index) => index < 0) ||
+  linuxLivePromptOrder.some(
+    (index, position) => position > 0 && index <= linuxLivePromptOrder[position - 1],
+  )
+) {
+  failures.push(
+    "contrat prompt GTK vivant: scope fraîche, fenêtre, mutation, attente et sorties doivent rester ordonnées",
+  );
+}
+for (const expected of [
+  "wait_for_prompt_window(process_id, WINDOW_TIMEOUT)",
+  "EnumWindows",
+  "GetWindowThreadProcessId",
+  "IsWindowVisible",
+  "GetClassNameW",
+  "DIALOG_CLASS_NAME",
+  "const ALL: [Self; 4] = [Self::Target, Self::Step, Self::Action, Self::Expiration]",
+  '.target.host = "other-controller.example.test"',
+  "step.step = BootstrapStep::UnlockPersonalKey",
+  'action["actions"] = serde_json::json!(["install_controller"])',
+  "expiration.remaining_millis = INITIAL_REMAINING_MILLIS - 1_000",
+  "EXIT_PROTOCOL_REFUSED",
+  "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+  "TerminateJobObject",
+  "wait_bounded",
+  "terminate_and_reap",
+  "stdout_bytes.is_empty()",
+  "stderr_bytes.is_empty()",
+]) {
+  if (!nativeAssistantWindowsLivePromptContract.includes(expected)) {
+    failures.push(`contrat prompt Win32 vivant: preuve absente (${expected})`);
+  }
+}
+const windowsLivePromptStart = nativeAssistantWindowsLivePromptContract.indexOf(
+  "fn live_prompt_refuses_target_step_action_and_expiration_mutations()",
+);
+const windowsLivePromptEnd = nativeAssistantWindowsLivePromptContract.indexOf(
+  "struct Mutation",
+  windowsLivePromptStart,
+);
+const windowsLivePromptBody =
+  windowsLivePromptStart >= 0 && windowsLivePromptEnd > windowsLivePromptStart
+    ? nativeAssistantWindowsLivePromptContract.slice(
+        windowsLivePromptStart,
+        windowsLivePromptEnd,
+      )
+    : "";
+const windowsLivePromptOrder = [
+  "for mutation_kind in MutationKind::ALL",
+  "let initial_scope = scope(INITIAL_REMAINING_MILLIS)",
+  "let initial_frame = frame(&initial_scope)",
+  "let mutation = mutation_kind.derive_from(&initial_scope)",
+  ".write_all(&initial_frame)",
+  "wait_for_prompt_window(process_id, WINDOW_TIMEOUT)",
+  ".write_all(&mutation.frame)",
+  "process.wait_bounded(PROCESS_TIMEOUT)",
+  "process.read_output()",
+].map((fragment) => windowsLivePromptBody.indexOf(fragment));
+if (
+  windowsLivePromptBody.length === 0 ||
+  windowsLivePromptOrder.some((index) => index < 0) ||
+  windowsLivePromptOrder.some(
+    (index, position) => position > 0 && index <= windowsLivePromptOrder[position - 1],
+  )
+) {
+  failures.push(
+    "contrat prompt Win32 vivant: scope fraîche, frame, mutation dérivée, HWND, attente et sorties doivent rester ordonnés",
+  );
+}
+for (const expected of [
+  "READY_PATH_ENV",
+  "RELEASE_PATH_ENV",
+  "MAX_FIXTURE_WAIT",
+  ".create_new(true)",
+  "release_path.try_exists()",
+  "process_main()",
+]) {
+  if (!nativeAssistantDelayedStartFixture.includes(expected)) {
+    failures.push(`fixture delayed-start: synchronisation bornée absente (${expected})`);
+  }
+}
+const delayedFixtureOrder = [
+  ".create_new(true)",
+  "release_path.try_exists()",
+  "process_main()",
+].map((fragment) => nativeAssistantDelayedStartFixture.indexOf(fragment));
+if (
+  delayedFixtureOrder.some((index) => index < 0) ||
+  delayedFixtureOrder.some(
+    (index, position) => position > 0 && index <= delayedFixtureOrder[position - 1],
+  )
+) {
+  failures.push(
+    "fixture delayed-start: ready, attente de release et process_main doivent rester ordonnés",
+  );
+}
+for (const expected of [
+  "monotonic_nanos()",
+  "UnixStream::pair()",
+  "GetNamedPipeClientProcessId",
+  "GetCurrentProcessId",
+  ".process_group(0)",
+  "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+  "TerminateJobObject",
+  "terminate_and_reap",
+  "wait_bounded",
+  "EXIT_WATCHDOG_EXPIRED",
+  "AssistantEventKind::Expired",
+  "stderr_bytes.is_empty()",
+]) {
+  if (!nativeAssistantDelayedStartContract.includes(expected)) {
+    failures.push(`contrat delayed-start: preuve processus absente (${expected})`);
+  }
+}
+const delayedContractOrder = [
+  ".write_all(&frame(&scope(issued_at_monotonic_nanos)))",
+  "wait_for_path(&synchronization.ready, READY_TIMEOUT)",
+  "process.is_running()",
+  "wait_until_monotonic(",
+  "synchronization.release()",
+  "process.wait_bounded(POST_RELEASE_TIMEOUT)",
+  "process.read_output()",
+].map((fragment) => nativeAssistantDelayedStartContract.indexOf(fragment));
+if (
+  delayedContractOrder.some((index) => index < 0) ||
+  delayedContractOrder.some(
+    (index, position) => position > 0 && index <= delayedContractOrder[position - 1],
+  )
+) {
+  failures.push(
+    "contrat delayed-start: frame, blocage, dépassement TTL, release et événement doivent rester ordonnés",
+  );
+}
+for (const shippingSource of [nativeAssistantHelperRuntime, nativeAssistantBuild]) {
+  if (
+    shippingSource.includes("YOUR_CLOUD_DELAYED_START_READY_PATH") ||
+    shippingSource.includes("YOUR_CLOUD_DELAYED_START_RELEASE_PATH")
+  ) {
+    failures.push("contrat delayed-start: la synchronisation de fixture entre dans le runtime livré");
+  }
+}
+const transportFixtureEntryStart = nativeAssistantHelperRuntime.indexOf(
+  "pub fn transport_parent_contract_main() -> u8",
+);
+const processMainStart = nativeAssistantHelperRuntime.indexOf("pub fn process_main() -> u8");
+if (transportFixtureEntryStart < 0 || processMainStart <= transportFixtureEntryStart) {
+  failures.push("lib.rs helper: entrée fixture transport ou process_main introuvable");
+} else {
+  const transportFixtureEntry = nativeAssistantHelperRuntime.slice(
+    transportFixtureEntryStart,
+    processMainStart,
+  );
+  if (
+    !transportFixtureEntry.includes("UnbufferedStandardInput::open()") ||
+    !transportFixtureEntry.includes("parent::verify(&stdin)") ||
+    /framing::read_scope|show_prompt|Watchdog::start_at/u.test(transportFixtureEntry)
+  ) {
+    failures.push(
+      "lib.rs helper: la fixture transport doit seulement ouvrir stdin et attester son parent",
+    );
+  }
+}
+const processMainEnd = nativeAssistantHelperRuntime.indexOf("\nfn valid_arguments", processMainStart);
+const processMainBody =
+  processMainStart >= 0 && processMainEnd > processMainStart
+    ? nativeAssistantHelperRuntime.slice(processMainStart, processMainEnd)
+    : "";
+const processMainOrder = [
+  "let session_started_at = Instant::now();",
+  "hardening::apply()",
+  "Watchdog::start_at(session_started_at)",
+  "UnbufferedStandardInput::open()",
+  "parent::verify(&stdin)",
+  "framing::read_scope(&mut stdin)",
+].map((fragment) => processMainBody.indexOf(fragment));
+if (
+  processMainBody.length === 0 ||
+  processMainOrder.some((index) => index < 0) ||
+  processMainOrder.some((index, position) => position > 0 && index <= processMainOrder[position - 1])
+) {
+  failures.push(
+    "lib.rs helper: origine TTL, hardening, watchdog, transport, parent et scope sont mal ordonnés",
+  );
+}
+const parentStampIndices = [
+  ...nativeAssistantRuntime.matchAll(/scope\.issued_at_monotonic_nanos\s*=/gu),
+].map((match) => match.index);
+const parentRemainingIndices = [
+  ...nativeAssistantRuntime.matchAll(
+    /scope\.remaining_millis\s*=\s*remaining_millis\(expires_at, Instant::now\(\)\)\?;/gu,
+  ),
+].map((match) => match.index);
+const encodedScopeIndex = nativeAssistantRuntime.indexOf("let frame = encode_scope(&scope)?;");
+const writtenScopeIndex = nativeAssistantRuntime.indexOf(".write_all(&frame)", encodedScopeIndex);
+if (
+  parentStampIndices.length !== 2 ||
+  parentRemainingIndices.length !== 2 ||
+  parentStampIndices.some((stampIndex, position) => {
+    const remainingIndex = parentRemainingIndices[position];
+    const pair = nativeAssistantRuntime.slice(stampIndex, remainingIndex);
+    return stampIndex >= remainingIndex || !pair.includes("monotonic_nanos()");
+  }) ||
+  encodedScopeIndex <= parentRemainingIndices[1] ||
+  writtenScopeIndex <= encodedScopeIndex
+) {
+  failures.push(
+    "native_assistant.rs: chaque remaining doit être précédé de son estampille OS, dont la paire finale avant encodage et écriture",
+  );
+}
+const serveScopeStart = nativeAssistantHelperRuntime.indexOf("fn serve_scope(");
+const serveScopeEnd = nativeAssistantHelperRuntime.indexOf(
+  "\nfn terminal_from_prompt",
+  serveScopeStart,
+);
+const serveScopeBody =
+  serveScopeStart >= 0 && serveScopeEnd > serveScopeStart
+    ? nativeAssistantHelperRuntime.slice(serveScopeStart, serveScopeEnd)
+    : "";
+const overriddenSecretDropIndex = serveScopeBody.indexOf("drop(outcome);");
+const overriddenTerminalWriteIndex = serveScopeBody.lastIndexOf(
+  "write_terminal(writer, &scope, terminal)",
+);
+if (
+  serveScopeBody.length === 0 ||
+  !serveScopeBody.includes("Some(SessionTerminal::Expired)") ||
+  !serveScopeBody.includes("Some(SessionTerminal::Cancelled)") ||
+  overriddenSecretDropIndex < 0 ||
+  overriddenTerminalWriteIndex <= overriddenSecretDropIndex
+) {
+  failures.push(
+    "lib.rs helper: un secret supplanté par expiration ou annulation doit être détruit avant la frame terminale",
+  );
+}
+const helperTtlOrder = [
+  "let local_before = Instant::now();",
+  "let observed_at_monotonic_nanos = monotonic_nanos()",
+  "deadline_from_observation(",
+  "watchdog\n        .tighten_to(deadline)",
+  "return write_terminal(writer, &scope, SessionTerminal::Expired);",
+  "let outcome = show_prompt(",
+].map((fragment) => serveScopeBody.indexOf(fragment));
+if (
+  helperTtlOrder.some((index) => index < 0) ||
+  helperTtlOrder.some(
+    (index, position) => position > 0 && index <= helperTtlOrder[position - 1],
+  )
+) {
+  failures.push(
+    "lib.rs helper: observation locale/OS, reliquat, watchdog, expiration et prompt sont mal ordonnés",
+  );
+}
+const deadlineObservationStart = nativeAssistantHelperRuntime.indexOf(
+  "fn deadline_from_observation(",
+);
+const deadlineObservationEnd = nativeAssistantHelperRuntime.indexOf(
+  "\nfn map_read_error",
+  deadlineObservationStart,
+);
+const deadlineObservationBody =
+  deadlineObservationStart >= 0 && deadlineObservationEnd > deadlineObservationStart
+    ? nativeAssistantHelperRuntime.slice(deadlineObservationStart, deadlineObservationEnd)
+    : "";
+for (const expected of [
+  "observed_at_monotonic_nanos.checked_sub(issued_at_monotonic_nanos)?",
+  "remaining_millis.checked_mul(1_000_000)?",
+  "transmitted_nanos.saturating_sub(elapsed_nanos)",
+  "local_before.checked_add(Duration::from_nanos(remaining_nanos))",
+]) {
+  if (!deadlineObservationBody.includes(expected)) {
+    failures.push(`lib.rs helper: calcul TTL hostile absent (${expected})`);
+  }
+}
+for (const expected of [
+  "a future parent stamp must fail closed",
+  "millisecond-to-nanosecond overflow must fail closed",
+]) {
+  if (!nativeAssistantHelperRuntime.includes(expected)) {
+    failures.push(`lib.rs helper: test TTL hostile absent (${expected})`);
+  }
+}
+if (
+  !serveScopeBody.includes("monotonic_nanos().map_err(|_| SessionError::Internal)?") ||
+  !serveScopeBody.includes(".ok_or(SessionError::Protocol)?")
+) {
+  failures.push("lib.rs helper: erreur horloge, futur ou overflow doivent échouer fermés");
+}
+const delayedPromptOverrideStart = nativeAssistantHelperRuntime.indexOf(
+  '#[cfg(feature = "delayed-start-contract-test")]',
+);
+const linuxPromptStart = nativeAssistantHelperRuntime.indexOf(
+  '#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "linux"))]',
+  delayedPromptOverrideStart,
+);
+const delayedPromptOverride =
+  delayedPromptOverrideStart >= 0 && linuxPromptStart > delayedPromptOverrideStart
+    ? nativeAssistantHelperRuntime.slice(delayedPromptOverrideStart, linuxPromptStart)
+    : "";
+if (
+  !delayedPromptOverride.includes("fn show_prompt(") ||
+  !delayedPromptOverride.includes("PromptOutcome::Unavailable") ||
+  /native_prompt(?:_windows)?::prompt/u.test(delayedPromptOverride) ||
+  !nativeAssistantHelperRuntime.includes(
+    '#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "windows"))]',
+  )
+) {
+  failures.push(
+    "lib.rs helper: la preuve delayed-start doit distinguer la frontière prompt par Unavailable",
+  );
+}
+const watchdogStartAtStart = nativeAssistantWatchdog.indexOf(
+  "pub(crate) fn start_at(session_started_at: Instant)",
+);
+const watchdogStartAtEnd = nativeAssistantWatchdog.indexOf(
+  "\n    pub(crate) fn tighten_to",
+  watchdogStartAtStart,
+);
+const watchdogStartAtBody =
+  watchdogStartAtStart >= 0 && watchdogStartAtEnd > watchdogStartAtStart
+    ? nativeAssistantWatchdog.slice(watchdogStartAtStart, watchdogStartAtEnd)
+    : "";
+if (
+  !watchdogStartAtBody.includes("let deadline = session_started_at") ||
+  !watchdogStartAtBody.includes(
+    ".checked_add(Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS))",
+  ) ||
+  !watchdogStartAtBody.includes(".spawn(move || run(receiver, deadline, worker_expired))") ||
+  watchdogStartAtBody.includes("Instant::now()")
+) {
+  failures.push("watchdog.rs: la borne maximale doit dériver sans renouvellement de l’origine TTL");
+}
 if (
   /\b(?:tauri(?:-[\w-]+)?|wry(?:-[\w-]+)?|tao(?:-[\w-]+)?|webkit[\w-]*|javascriptcore[\w-]*|wpe(?:-[\w-]+)?)\b/iu.test(
     nativeAssistantManifest,
@@ -270,11 +1331,13 @@ if (
 
 for (const [source, expected] of [
   [nativeAssistantBuild, "inspectPreparedNativeAssistant"],
+  [nativeAssistantBuild, '"--no-default-features"'],
   [nativeAssistantBuild, '"--locked"'],
   [nativeAssistantBuild, '"--offline"'],
   [nativeAssistantGate, '"x86_64-unknown-linux-gnu"'],
   [nativeAssistantGate, '"x86_64-pc-windows-msvc"'],
   [nativeAssistantGate, '"readelf"'],
+  [nativeAssistantGate, '"--no-default-features"'],
   [nativeAssistantGate, "inspectPortableExecutable"],
   [nativeAssistantGate, 'format: "PE32+"'],
   [sbomBuilder, "cargoClosure"],
@@ -371,7 +1434,7 @@ for (const [source, body] of [
 
 for (const expected of [
   'export type BootstrapMode = "create" | "replace";',
-  'step: "personal_access";',
+  'step: "personal_access" | "root_access";',
   'actions: readonly ["audit_target_read_only"];',
   'lifecycle: "awaiting_native_assistant";',
 ]) {
@@ -472,6 +1535,8 @@ for (const expected of [
   "Command::new(path)",
   ".env_clear()",
   ".stdin(Stdio::piped())",
+  "UnixStream::pair()",
+  "Stdio::from(OwnedFd::from(child_input))",
   ".stdout(Stdio::piped())",
   ".stderr(Stdio::null())",
   "MAX_ASSISTANT_SCOPE_FRAME_BYTES",
@@ -583,17 +1648,89 @@ for (const forbiddenEnvironmentName of [
     );
   }
 }
+for (const expected of [
+  "Dialog::with_buttons",
+  "Entry::new()",
+  "set_visibility(false)",
+  "InputPurpose::Password",
+  "gtk_entry_get_text",
+  "ProtectedSecret::new()",
+  "entry.set_text(\"\")",
+  "ConfirmRootAccess",
+]) {
+  if (!nativeAssistantPrompt.includes(expected)) {
+    failures.push(`native_prompt.rs: garde GTK secrète absente (${expected})`);
+  }
+}
+for (const expected of [
+  "DialogBoxIndirectParamW",
+  "CreateWindowExW",
+  "ES_PASSWORD",
+  "EM_SETLIMITTEXT",
+  "GetWindowTextW",
+  "ProtectedSecret::new()",
+  "SetWindowTextW(edit",
+  "ConfirmRootAccess",
+]) {
+  if (!nativeAssistantWindowsPrompt.includes(expected)) {
+    failures.push(`native_prompt_windows.rs: garde Win32 secrète absente (${expected})`);
+  }
+}
+for (const expected of [
+  "mmap",
+  "mlock",
+  "MADV_DONTDUMP",
+  "VirtualAlloc",
+  "VirtualLock",
+  "WerRegisterExcludedMemoryBlock",
+  "volatile_zero",
+]) {
+  if (!nativeAssistantSecret.includes(expected)) {
+    failures.push(`secret.rs: protection mémoire absente (${expected})`);
+  }
+}
 if (
-  !nativeAssistantPrompt.includes("Dialog::with_buttons") ||
-  !nativeAssistantPrompt.includes("SessionTerminal::Refused") ||
-  !nativeAssistantPrompt.includes("SessionTerminal::Expired") ||
-  /\b(?:Entry|PasswordEntry|SSH_AUTH_SOCK|passphrase|password|secret)\b/u.test(
-    nativeAssistantPrompt.replaceAll("without_collecting_a_secret", ""),
-  )
+  forbiddenProtectedSecretDerive.test(nativeAssistantSecret) ||
+  !nativeAssistantSecret.includes('formatter.write_str("ProtectedSecret([REDACTED])")')
 ) {
-  failures.push(
-    "native_prompt.rs: le palier GTK doit rester un consentement terminal sans collecte secrète",
-  );
+  failures.push("secret.rs: le secret protégé devient clonable, sérialisable ou non expurgé");
+}
+for (const expected of [
+  "watch_standard_input",
+  "Ok(0) => return CANCELLED",
+  "Ok(_) => return PROTOCOL_INVALID",
+  "SO_PEERCRED",
+  "GetFileType",
+  "FILE_TYPE_PIPE",
+  "GetNamedPipeClientProcessId",
+  "authenticate_parent_process",
+  "transport_peer_rejects_clone_parent_spoof",
+]) {
+  if (!nativeAssistantLease.includes(expected)) {
+    failures.push(`lease.rs: bail d’annulation fermé absent (${expected})`);
+  }
+}
+if (
+  !nativeAssistantRuntime.includes("stdin: Option<NativeChildStdin>") ||
+  !nativeAssistantRuntime.includes("active.stdin.take()")
+) {
+  failures.push("native_assistant.rs: stdin doit rester le bail puis fermer coopérativement");
+}
+for (const expected of [
+  "/usr/bin/your-cloud-console",
+  "pidfd_open",
+  "QueryFullProcessImageNameW",
+  "FOLDERID_ProgramFiles",
+  "PROCESS_QUERY_LIMITED_INFORMATION",
+  "verify(input: &UnbufferedStandardInput)",
+  "input.authenticate_parent_process",
+]) {
+  if (!nativeAssistantParent.includes(expected)) {
+    failures.push(`parent.rs: attestation du parent installée absente (${expected})`);
+  }
+}
+if (!nativeAssistantManifest.includes('"Win32_System_Pipes"')) {
+  failures.push("Cargo.toml: primitive Win32 d’authentification du pipe absente");
 }
 if (/Command::new|std::process::Command/iu.test(consoleRuntime)) {
   failures.push("lib.rs: le lancement du helper doit rester isolé dans native_assistant.rs");

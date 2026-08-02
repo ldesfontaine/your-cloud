@@ -13,13 +13,21 @@ use std::{
 #[cfg(not(target_os = "windows"))]
 use std::process::{Child, ChildStdout, Command, Stdio};
 
+#[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
+use std::process::ChildStdin;
+
 #[cfg(target_os = "linux")]
-use std::os::unix::{io::AsRawFd, process::CommandExt};
+use std::os::unix::{
+    io::{AsRawFd, OwnedFd},
+    net::UnixStream,
+    process::CommandExt,
+};
 
 use your_cloud_bootstrap_protocol::{
-    AssistantEventKind, AssistantEventV1, AssistantScopeV1, ASSISTANT_EXIT_CANCELLED,
-    ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE, ASSISTANT_EXIT_WATCHDOG_EXPIRED,
-    MAX_ASSISTANT_EVENT_FRAME_BYTES, MAX_ASSISTANT_SCOPE_FRAME_BYTES,
+    monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1,
+    ASSISTANT_EXIT_CANCELLED, ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE,
+    ASSISTANT_EXIT_WATCHDOG_EXPIRED, MAX_ASSISTANT_EVENT_FRAME_BYTES,
+    MAX_ASSISTANT_SCOPE_FRAME_BYTES,
 };
 
 #[cfg(target_os = "windows")]
@@ -31,13 +39,19 @@ use windows::{WindowsChild as NativeChild, WindowsChildStdout as NativeChildStdo
 
 #[cfg(not(target_os = "windows"))]
 type NativeChild = Child;
+#[cfg(target_os = "linux")]
+type NativeChildStdin = UnixStream;
+#[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
+type NativeChildStdin = ChildStdin;
 #[cfg(not(target_os = "windows"))]
 type NativeChildStdout = ChildStdout;
+#[cfg(target_os = "windows")]
+type NativeChildStdin = std::fs::File;
 
 const NATIVE_ASSISTANT_BINARY: &str = "your-cloud-native-bootstrap-assistant";
 const REQUIRED_MODE_ARGUMENT: &str = "--native-bootstrap-assistant";
 const FRAME_HEADER_BYTES: usize = 4;
-const STOP_GRACE: Duration = Duration::from_millis(100);
+const STOP_GRACE: Duration = Duration::from_millis(500);
 const KILL_REAP_GRACE: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +82,7 @@ pub(crate) enum NativeAssistantPoll {
 struct NativeAssistantSession {
     request_id: String,
     child: NativeChild,
+    stdin: Option<NativeChildStdin>,
     stdout: NativeChildStdout,
     deadline: Instant,
 }
@@ -165,12 +180,21 @@ impl NativeAssistantSupervisor {
             return Err(NativeAssistantError::Busy);
         }
         validate_executable(path, expected_name, enforce_installed_policy)?;
+        // Sample the shared OS clock before the local Instant: any time between
+        // both observations is deducted twice rather than silently renewing TTL.
+        scope.issued_at_monotonic_nanos =
+            monotonic_nanos().map_err(|_| NativeAssistantError::Unavailable)?;
         scope.remaining_millis = remaining_millis(expires_at, Instant::now())?;
         let scope = scope
             .validate()
             .map_err(|_| NativeAssistantError::RequestRefused)?;
 
         let working_directory = path.parent().ok_or(NativeAssistantError::Unavailable)?;
+        #[cfg(target_os = "linux")]
+        let (child_input, parent_input) =
+            UnixStream::pair().map_err(|_| NativeAssistantError::Unavailable)?;
+        #[cfg(target_os = "linux")]
+        let mut parent_input = Some(parent_input);
         #[cfg(not(target_os = "windows"))]
         let mut child = {
             let mut command = Command::new(path);
@@ -178,9 +202,12 @@ impl NativeAssistantSupervisor {
                 .arg(REQUIRED_MODE_ARGUMENT)
                 .current_dir(working_directory)
                 .env_clear()
-                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null());
+            #[cfg(target_os = "linux")]
+            command.stdin(Stdio::from(OwnedFd::from(child_input)));
+            #[cfg(not(target_os = "linux"))]
+            command.stdin(Stdio::piped());
             configure_public_gui_environment(&mut command);
             #[cfg(target_os = "linux")]
             command.process_group(0);
@@ -195,12 +222,20 @@ impl NativeAssistantSupervisor {
         let launch = (|| {
             let mut scope = scope;
             // Recalculate from the native absolute deadline only after the child exists. Time
-            // spent validating and spawning can shorten this lease but can never renew it.
+            // spent validating and spawning can shorten this lease but can never renew it. The
+            // OS stamp is deliberately sampled first so the transmitted pair is conservative.
+            scope.issued_at_monotonic_nanos =
+                monotonic_nanos().map_err(|_| NativeAssistantError::Unavailable)?;
             scope.remaining_millis = remaining_millis(expires_at, Instant::now())?;
             let scope = scope
                 .validate()
                 .map_err(|_| NativeAssistantError::RequestRefused)?;
             let frame = encode_scope(&scope)?;
+            #[cfg(target_os = "linux")]
+            let mut stdin = parent_input
+                .take()
+                .ok_or(NativeAssistantError::Unavailable)?;
+            #[cfg(not(target_os = "linux"))]
             let mut stdin =
                 take_child_stdin(&mut child).ok_or(NativeAssistantError::Unavailable)?;
             stdin
@@ -209,15 +244,12 @@ impl NativeAssistantSupervisor {
             stdin
                 .flush()
                 .map_err(|_| NativeAssistantError::Unavailable)?;
-            // The current fail-closed helper accepts exactly one scope and EOF. A live
-            // cancellation lease replaces this close before any secret prompt is introduced.
-            drop(stdin);
             let stdout = take_child_stdout(&mut child).ok_or(NativeAssistantError::Unavailable)?;
             configure_nonblocking_stdout(&stdout)?;
-            Ok((scope.request_id, stdout))
+            Ok((scope.request_id, stdin, stdout))
         })();
 
-        let (request_id, stdout) = match launch {
+        let (request_id, stdin, stdout) = match launch {
             Ok(launch) => launch,
             Err(error) => {
                 if terminate_running_and_reap_bounded(&mut child).is_err() {
@@ -229,6 +261,7 @@ impl NativeAssistantSupervisor {
         self.active = Some(NativeAssistantSession {
             request_id,
             child,
+            stdin: Some(stdin),
             stdout,
             deadline: expires_at,
         });
@@ -248,7 +281,8 @@ impl NativeAssistantSupervisor {
         }
         if Instant::now() >= active.deadline {
             let mut expired = self.active.take().expect("active assistant checked above");
-            if terminate_running_and_reap_bounded(&mut expired.child).is_err() {
+            expired.stdin.take();
+            if stop_bounded(&mut expired.child).is_err() {
                 self.defer_cleanup(expired.child);
                 return Err(NativeAssistantError::Unavailable);
             }
@@ -258,6 +292,7 @@ impl NativeAssistantSupervisor {
             Ok(status) => status,
             Err(_) => {
                 let mut failed = self.active.take().expect("active assistant checked above");
+                failed.stdin.take();
                 if terminate_running_and_reap_bounded(&mut failed.child).is_err() {
                     self.defer_cleanup(failed.child);
                 }
@@ -288,6 +323,9 @@ impl NativeAssistantSupervisor {
             return Err(NativeAssistantError::Unavailable);
         }
         if let Some(mut active) = self.active.take() {
+            // EOF is the normal cancellation path. The bounded process-tree termination below
+            // remains a fallback when the native event loop cannot clean up cooperatively.
+            active.stdin.take();
             if stop_bounded(&mut active.child).is_err() {
                 self.defer_cleanup(active.child);
                 return Err(NativeAssistantError::Unavailable);
@@ -373,7 +411,7 @@ fn configure_public_gui_environment(command: &mut Command) {
     command.env("NO_AT_BRIDGE", "1");
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
 fn take_child_stdin(child: &mut NativeChild) -> Option<std::process::ChildStdin> {
     child.stdin.take()
 }
@@ -765,6 +803,7 @@ mod tests {
             step: BootstrapStep::PersonalAccess,
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt: NativePromptKind::ConfirmPersonalAccess,
+            issued_at_monotonic_nanos: 1,
             remaining_millis: 5_000,
         }
     }

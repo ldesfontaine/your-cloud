@@ -26,9 +26,9 @@ pub(crate) struct Watchdog {
 }
 
 impl Watchdog {
-    pub(crate) fn start() -> Result<Self, ()> {
+    pub(crate) fn start_at(session_started_at: Instant) -> Result<Self, ()> {
         let (sender, receiver) = mpsc::channel();
-        let deadline = Instant::now()
+        let deadline = session_started_at
             .checked_add(Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS))
             .ok_or(())?;
         let expired = Arc::new(AtomicBool::new(false));
@@ -121,6 +121,18 @@ mod tests {
         assert_eq!(
             earlier_deadline(current, now + Duration::from_secs(20)),
             current
+        );
+    }
+
+    #[test]
+    fn initial_deadline_includes_work_done_before_the_watchdog_starts() {
+        let session_started_at = Instant::now();
+        let after_attestation = session_started_at + Duration::from_millis(75);
+        let deadline = session_started_at + Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS);
+
+        assert_eq!(
+            deadline.duration_since(after_attestation),
+            Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS - 75)
         );
     }
 }

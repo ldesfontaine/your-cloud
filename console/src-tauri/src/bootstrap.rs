@@ -173,15 +173,18 @@ impl BootstrapState {
             self.clear();
             return Err(BootstrapError::Expired);
         }
+        let (step, prompt) = initial_native_step(target.access_kind);
         Ok(NativeAssistantLaunch {
             scope: AssistantScopeV1 {
                 schema_version: 1,
                 request_id: active_request_id,
                 mode,
                 target,
-                step: BootstrapStep::PersonalAccess,
+                step,
                 actions: [BootstrapAction::AuditTargetReadOnly],
-                prompt: NativePromptKind::ConfirmPersonalAccess,
+                prompt,
+                // The launcher replaces this safe placeholder immediately before transport.
+                issued_at_monotonic_nanos: 0,
                 remaining_millis,
             },
             expires_at,
@@ -294,7 +297,7 @@ impl BootstrapState {
             request_id: active.request_id.clone(),
             mode: active.mode,
             target: active.target.clone(),
-            step: BootstrapStep::PersonalAccess,
+            step: initial_native_step(active.target.access_kind).0,
             actions: [BootstrapAction::AuditTargetReadOnly],
             lifecycle: BootstrapLifecycle::AwaitingNativeAssistant,
             expires_in_seconds,
@@ -311,6 +314,21 @@ impl BootstrapState {
         self.active
             .as_ref()
             .is_some_and(|active| now >= active.expires_at)
+    }
+}
+
+fn initial_native_step(
+    access_kind: your_cloud_bootstrap_protocol::BootstrapAccessKind,
+) -> (BootstrapStep, NativePromptKind) {
+    match access_kind {
+        your_cloud_bootstrap_protocol::BootstrapAccessKind::Administrator => (
+            BootstrapStep::PersonalAccess,
+            NativePromptKind::ConfirmPersonalAccess,
+        ),
+        your_cloud_bootstrap_protocol::BootstrapAccessKind::Root => (
+            BootstrapStep::RootAccess,
+            NativePromptKind::ConfirmRootAccess,
+        ),
     }
 }
 
@@ -345,6 +363,17 @@ mod tests {
         BootstrapStartInput {
             mode,
             target: target(),
+        }
+    }
+
+    fn root_input(mode: BootstrapMode) -> BootstrapStartInput {
+        BootstrapStartInput {
+            mode,
+            target: BootstrapTarget {
+                username: "root".into(),
+                access_kind: BootstrapAccessKind::Root,
+                ..target()
+            },
         }
     }
 
@@ -406,8 +435,24 @@ mod tests {
         assert_eq!(scope.step, BootstrapStep::PersonalAccess);
         assert_eq!(scope.actions, [BootstrapAction::AuditTargetReadOnly]);
         assert_eq!(scope.prompt, NativePromptKind::ConfirmPersonalAccess);
+        assert_eq!(scope.issued_at_monotonic_nanos, 0);
         assert_eq!(scope.remaining_millis, 299_000);
         assert_eq!(launch.expires_at, now + BOOTSTRAP_TTL);
+    }
+
+    #[test]
+    fn root_route_requires_its_dedicated_native_confirmation() {
+        let now = Instant::now();
+        let mut state = BootstrapState::default();
+        let started = state
+            .start_at(root_input(BootstrapMode::Create), now, REQUEST_ONE.into())
+            .unwrap();
+        let launch = state.assistant_scope_at(REQUEST_ONE, now).unwrap();
+
+        assert_eq!(started.step, BootstrapStep::RootAccess);
+        assert_eq!(launch.scope.step, BootstrapStep::RootAccess);
+        assert_eq!(launch.scope.prompt, NativePromptKind::ConfirmRootAccess);
+        assert_eq!(launch.scope.target.access_kind, BootstrapAccessKind::Root);
     }
 
     #[test]

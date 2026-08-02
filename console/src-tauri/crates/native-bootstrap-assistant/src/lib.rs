@@ -1,7 +1,12 @@
 mod framing;
 mod hardening;
+mod lease;
 #[cfg(target_os = "linux")]
 mod native_prompt;
+#[cfg(target_os = "windows")]
+mod native_prompt_windows;
+mod parent;
+mod secret;
 mod watchdog;
 
 use std::{
@@ -11,11 +16,12 @@ use std::{
 };
 
 use framing::ReadFrameError;
+use lease::{LeaseResolution, LeaseState, UnbufferedStandardInput};
 use your_cloud_bootstrap_protocol::{
-    AssistantEventKind, AssistantEventV1, AssistantScopeV1, ASSISTANT_EXIT_CANCELLED,
-    ASSISTANT_EXIT_INTERNAL_FAILURE, ASSISTANT_EXIT_INVALID_INVOCATION, ASSISTANT_EXIT_IO_FAILURE,
-    ASSISTANT_EXIT_PROTOCOL_REFUSED, ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE,
-    ASSISTANT_EXIT_WATCHDOG_EXPIRED,
+    monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1,
+    ASSISTANT_EXIT_CANCELLED, ASSISTANT_EXIT_INTERNAL_FAILURE, ASSISTANT_EXIT_INVALID_INVOCATION,
+    ASSISTANT_EXIT_IO_FAILURE, ASSISTANT_EXIT_PROTOCOL_REFUSED, ASSISTANT_EXIT_REFUSED,
+    ASSISTANT_EXIT_UNAVAILABLE, ASSISTANT_EXIT_WATCHDOG_EXPIRED,
 };
 
 pub const REQUIRED_MODE_ARGUMENT: &str = "--native-bootstrap-assistant";
@@ -28,26 +34,63 @@ pub const EXIT_INTERNAL_FAILURE: u8 = ASSISTANT_EXIT_INTERNAL_FAILURE;
 pub const EXIT_IO_FAILURE: u8 = ASSISTANT_EXIT_IO_FAILURE;
 pub const EXIT_WATCHDOG_EXPIRED: u8 = ASSISTANT_EXIT_WATCHDOG_EXPIRED;
 
+/// Feature-only entry point for the hostile declared-parent process contract.
+/// It deliberately performs no prompt or protocol read: the only observable
+/// decision is whether the inherited transport belongs to the declared parent.
+#[cfg(feature = "windows-parent-spoof-contract-test")]
+#[doc(hidden)]
+pub fn transport_parent_contract_main() -> u8 {
+    let stdin = match UnbufferedStandardInput::open() {
+        Ok(stdin) => stdin,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+    match parent::verify(&stdin) {
+        Ok(_parent) => 0,
+        Err(()) => EXIT_INTERNAL_FAILURE,
+    }
+}
+
 pub fn process_main() -> u8 {
+    // This origin precedes every local operation: hardening, parent attestation and
+    // protocol reading all consume, and can never renew, the Console-provided TTL.
+    let session_started_at = Instant::now();
     if hardening::apply().is_err() {
         return EXIT_INTERNAL_FAILURE;
     }
     std::panic::set_hook(Box::new(|_| {}));
 
+    let watchdog = match watchdog::Watchdog::start_at(session_started_at) {
+        Ok(watchdog) => watchdog,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+
     if !valid_arguments(std::env::args_os()) {
         return EXIT_INVALID_INVOCATION;
     }
 
-    let watchdog = match watchdog::Watchdog::start() {
-        Ok(watchdog) => watchdog,
+    let mut stdin = match UnbufferedStandardInput::open() {
+        Ok(stdin) => stdin,
         Err(()) => return EXIT_INTERNAL_FAILURE,
     };
-    let stdin = io::stdin();
+    let _parent = match parent::verify(&stdin) {
+        Ok(parent) => parent,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+
     let stdout = io::stdout();
-    let mut reader = stdin.lock();
+    let scope = match framing::read_scope(&mut stdin).map_err(map_read_error) {
+        Ok(scope) => scope,
+        Err(SessionError::Protocol) => return EXIT_PROTOCOL_REFUSED,
+        Err(SessionError::Io) => return EXIT_IO_FAILURE,
+        Err(SessionError::Internal) => return EXIT_INTERNAL_FAILURE,
+    };
+    let lease = match LeaseState::watch_standard_input(stdin) {
+        Ok(lease) => lease,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
     let mut writer = stdout.lock();
 
-    match serve_once(&mut reader, &mut writer, &watchdog) {
+    match serve_scope(scope, &mut writer, &watchdog, lease) {
         Ok(terminal) => terminal.exit_code(),
         Err(SessionError::Protocol) => EXIT_PROTOCOL_REFUSED,
         Err(SessionError::Io) => EXIT_IO_FAILURE,
@@ -77,6 +120,15 @@ pub(crate) enum SessionTerminal {
     Unavailable,
 }
 
+pub(crate) enum PromptOutcome {
+    Consent,
+    Secret(secret::ProtectedSecret),
+    Refused,
+    Cancelled,
+    Expired,
+    Unavailable,
+}
+
 impl SessionTerminal {
     fn event(self) -> AssistantEventKind {
         match self {
@@ -97,16 +149,23 @@ impl SessionTerminal {
     }
 }
 
-fn serve_once(
-    reader: &mut impl io::Read,
+fn serve_scope(
+    scope: AssistantScopeV1,
     writer: &mut impl io::Write,
     watchdog: &watchdog::Watchdog,
+    lease: LeaseState,
 ) -> Result<SessionTerminal, SessionError> {
-    // Receiving and parsing the parent's frame consumes, and never renews, its remaining TTL.
-    let session_started_at = Instant::now();
-    let scope = framing::read_scope(reader).map_err(map_read_error)?;
-    let deadline = deadline_from_start(session_started_at, scope.remaining_millis)
-        .ok_or(SessionError::Protocol)?;
+    // Map the parent's boot-relative issuance onto this process's Instant. Sampling the local
+    // Instant first makes any time until the OS observation conservative rather than renewable.
+    let local_before = Instant::now();
+    let observed_at_monotonic_nanos = monotonic_nanos().map_err(|_| SessionError::Internal)?;
+    let deadline = deadline_from_observation(
+        local_before,
+        observed_at_monotonic_nanos,
+        scope.issued_at_monotonic_nanos,
+        scope.remaining_millis,
+    )
+    .ok_or(SessionError::Protocol)?;
     watchdog
         .tighten_to(deadline)
         .map_err(|_| SessionError::Internal)?;
@@ -114,18 +173,42 @@ fn serve_once(
         return write_terminal(writer, &scope, SessionTerminal::Expired);
     }
 
-    framing::require_eof(reader).map_err(map_read_error)?;
-    if Instant::now() >= deadline {
-        return write_terminal(writer, &scope, SessionTerminal::Expired);
+    let outcome = show_prompt(&scope, deadline, watchdog.expiration_flag(), lease.clone());
+    let lease_resolution = lease.close_and_resolve();
+    if lease_resolution == LeaseResolution::ProtocolInvalid {
+        return Err(SessionError::Protocol);
     }
-
-    let terminal = show_prompt(&scope, deadline, watchdog.expiration_flag());
-    let terminal = if Instant::now() >= deadline {
-        SessionTerminal::Expired
+    let overriding_terminal = if Instant::now() >= deadline {
+        Some(SessionTerminal::Expired)
+    } else if lease_resolution == LeaseResolution::Cancelled {
+        Some(SessionTerminal::Cancelled)
     } else {
-        terminal
+        None
+    };
+    let terminal = match overriding_terminal {
+        Some(terminal) => {
+            // A secret accepted just before the deadline or parent lease wins must be
+            // zeroized before even the expurgated Expired/Cancelled frame is written.
+            drop(outcome);
+            terminal
+        }
+        None => terminal_from_prompt(outcome),
     };
     write_terminal(writer, &scope, terminal)
+}
+
+fn terminal_from_prompt(outcome: PromptOutcome) -> SessionTerminal {
+    match outcome {
+        PromptOutcome::Consent => SessionTerminal::Unavailable,
+        PromptOutcome::Secret(secret) => {
+            drop(secret);
+            SessionTerminal::Unavailable
+        }
+        PromptOutcome::Refused => SessionTerminal::Refused,
+        PromptOutcome::Cancelled => SessionTerminal::Cancelled,
+        PromptOutcome::Expired => SessionTerminal::Expired,
+        PromptOutcome::Unavailable => SessionTerminal::Unavailable,
+    }
 }
 
 fn write_terminal(
@@ -144,26 +227,62 @@ fn write_terminal(
     Ok(terminal)
 }
 
-#[cfg(target_os = "linux")]
-fn show_prompt(
-    scope: &AssistantScopeV1,
-    deadline: Instant,
-    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> SessionTerminal {
-    native_prompt::confirm_personal_access(scope, deadline, expired)
-}
-
-#[cfg(not(target_os = "linux"))]
+/// The delayed-start process proof needs a non-graphical marker for crossing
+/// the prompt boundary: reaching this function returns Unavailable, whereas
+/// consuming the transmitted TTL correctly returns Expired before this point.
+#[cfg(feature = "delayed-start-contract-test")]
 fn show_prompt(
     _scope: &AssistantScopeV1,
     _deadline: Instant,
     _expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> SessionTerminal {
-    SessionTerminal::Unavailable
+    _lease: LeaseState,
+) -> PromptOutcome {
+    PromptOutcome::Unavailable
 }
 
-fn deadline_from_start(started_at: Instant, remaining_millis: u64) -> Option<Instant> {
-    started_at.checked_add(Duration::from_millis(remaining_millis))
+#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "linux"))]
+fn show_prompt(
+    scope: &AssistantScopeV1,
+    deadline: Instant,
+    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: LeaseState,
+) -> PromptOutcome {
+    native_prompt::prompt(scope, deadline, expired, lease)
+}
+
+#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "windows"))]
+fn show_prompt(
+    scope: &AssistantScopeV1,
+    deadline: Instant,
+    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: LeaseState,
+) -> PromptOutcome {
+    native_prompt_windows::prompt(scope, deadline, expired, lease)
+}
+
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    not(any(target_os = "linux", target_os = "windows"))
+))]
+fn show_prompt(
+    _scope: &AssistantScopeV1,
+    _deadline: Instant,
+    _expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    _lease: LeaseState,
+) -> PromptOutcome {
+    PromptOutcome::Unavailable
+}
+
+fn deadline_from_observation(
+    local_before: Instant,
+    observed_at_monotonic_nanos: u64,
+    issued_at_monotonic_nanos: u64,
+    remaining_millis: u64,
+) -> Option<Instant> {
+    let elapsed_nanos = observed_at_monotonic_nanos.checked_sub(issued_at_monotonic_nanos)?;
+    let transmitted_nanos = remaining_millis.checked_mul(1_000_000)?;
+    let remaining_nanos = transmitted_nanos.saturating_sub(elapsed_nanos);
+    local_before.checked_add(Duration::from_nanos(remaining_nanos))
 }
 
 fn map_read_error(error: ReadFrameError) -> SessionError {
@@ -197,15 +316,48 @@ mod tests {
     }
 
     #[test]
-    fn ipc_read_time_is_deducted_instead_of_extending_the_deadline() {
-        let started_at = Instant::now();
-        let after_slow_read = started_at + Duration::from_millis(90);
-        let deadline = deadline_from_start(started_at, 100).unwrap();
+    fn shared_monotonic_stamp_deducts_delay_and_rejects_hostile_values() {
+        let local_before = Instant::now();
+        let issued = 10_000_000_000;
 
-        assert_eq!(deadline, started_at + Duration::from_millis(100));
         assert_eq!(
-            deadline.duration_since(after_slow_read),
-            Duration::from_millis(10)
+            deadline_from_observation(local_before, issued + 40_000_000, issued, 100),
+            Some(local_before + Duration::from_millis(60))
         );
+        assert_eq!(
+            deadline_from_observation(local_before, issued + 100_000_000, issued, 100),
+            Some(local_before)
+        );
+        assert_eq!(
+            deadline_from_observation(local_before, issued - 1, issued, 100),
+            None,
+            "a future parent stamp must fail closed"
+        );
+        assert_eq!(
+            deadline_from_observation(local_before, issued, issued, u64::MAX),
+            None,
+            "millisecond-to-nanosecond overflow must fail closed"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn a_protected_secret_can_only_produce_an_expurgated_terminal_kind() {
+        let mut secret = secret::ProtectedSecret::new().expect("protected allocation");
+        secret
+            .copy_from(b"synthetic-canary")
+            .expect("bounded synthetic input");
+
+        let terminal = terminal_from_prompt(PromptOutcome::Secret(secret));
+        assert_eq!(terminal, SessionTerminal::Unavailable);
+        let event = AssistantEventV1 {
+            schema_version: 1,
+            request_id: "00112233445566778899aabbccddeeff".into(),
+            event: terminal.event(),
+        };
+        let payload = serde_json::to_vec(&event).expect("expurgated event");
+        assert!(!payload
+            .windows(b"synthetic-canary".len())
+            .any(|window| window == b"synthetic-canary"));
     }
 }

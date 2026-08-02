@@ -130,6 +130,7 @@ export function inspectNativeAssistantCargoGraph(cargoManifest, target) {
       "--format",
       "{p}",
       "--no-dedupe",
+      "--no-default-features",
       "--locked",
       "--offline",
     ],

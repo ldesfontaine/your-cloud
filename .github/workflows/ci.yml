@@ -83,6 +83,10 @@ jobs:
           xvfb
           dbus-x11
           lsof
+          webkit2gtk-driver
+          xdotool
+          imagemagick
+          gdb
 
       - name: Installer et vérifier le frontend
         working-directory: console
@@ -110,6 +114,79 @@ jobs:
         working-directory: console/src-tauri
         run: cargo +1.94.1 test --release --locked --workspace
 
+      - name: Prouver le crash et le dump synthétiques du secret natif
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features secret-crash-contract-test
+          --test secret-crash-contract
+          -- --test-threads=1
+
+      - name: Tester le contrat processus du helper Linux
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features native-prompt-contract-test
+          --test process-contract
+          -- --test-threads=1
+
+      - name: Refuser le renouvellement TTL avant process_main
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features delayed-start-contract-test
+          --test delayed-start-contract
+          delay_before_process_main_cannot_renew_the_transmitted_ttl
+          -- --exact --test-threads=1
+
+      - name: Tester le lancement du helper par le parent Linux
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features native-prompt-contract-test
+          --test parent-contract
+          console_parent_launches_the_exact_helper_and_refuses_to_invent_success
+          -- --exact --test-threads=1
+
+      - name: Tester l’annulation coopérative du parent Windows
+        if: runner.os == 'Windows'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features native-prompt-contract-test
+          --test parent-contract
+          console_parent_closes_one_job_before_reusing_the_boundary
+          -- --exact --test-threads=1
+
+      - name: Refuser le parent Windows déclaré avec un transport attaquant
+        if: runner.os == 'Windows'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features windows-parent-spoof-contract-test
+          --test windows-parent-spoof-contract
+          declared_parent_cannot_authorize_an_attacker_owned_pipe
+          -- --exact --test-threads=1
+
+      - name: Refuser les mutations d’un dialogue Win32 vivant
+        if: runner.os == 'Windows'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features windows-live-prompt-contract-test
+          --test windows-live-prompt-contract
+          live_prompt_refuses_target_step_action_and_expiration_mutations
+          -- --exact --test-threads=1
+
       - name: Prouver les handles et échecs suspendus Windows
         if: runner.os == 'Windows'
         working-directory: console/src-tauri
@@ -126,7 +203,43 @@ jobs:
           xvfb-run -a env NO_AT_BRIDGE=1
           cargo +1.94.1 test --release --locked
           --package your-cloud-native-bootstrap-assistant
-          native_prompt::tests::gtk_dialog_maps_consent_without_collecting_a_secret
+          native_prompt::tests::gtk_dialog_handles_consent_secret_and_lease_states
+          -- --ignored --exact --test-threads=1
+
+      - name: Tester l’expiration coopérative GTK3 isolée
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          xvfb-run -a env NO_AT_BRIDGE=1
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features native-prompt-contract-test
+          --test process-contract
+          watchdog_expires_a_live_prompt_before_the_forced_fallback
+          -- --ignored --exact --test-threads=1
+
+      - name: Prouver la fermeture des descripteurs hérités sous GTK3
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          xvfb-run -a env NO_AT_BRIDGE=1
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features native-prompt-contract-test
+          --test process-contract
+          helper_closes_every_inherited_descriptor_outside_stdio
+          -- --ignored --exact --test-threads=1
+
+      - name: Refuser les mutations d’une fenêtre GTK3 vivante
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          xvfb-run -a env NO_AT_BRIDGE=1
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features native-prompt-contract-test
+          --test process-contract
+          live_prompt_refuses_target_step_action_and_expiration_mutations
           -- --ignored --exact --test-threads=1
 
       - name: Tester le lancement GTK3 par le parent
@@ -136,16 +249,28 @@ jobs:
           xvfb-run -a env NO_AT_BRIDGE=1
           cargo +1.94.1 test --release --locked
           --package your-cloud-native-bootstrap-assistant
+          --features native-prompt-contract-test
+          --test parent-contract
           console_parent_keeps_the_gtk_helper_bounded_until_cancelled
           -- --ignored --exact --test-threads=1
 
-      - name: Installer le pilote Tauri Windows borné
+      - name: Tester les dialogues Win32 isolés
         if: runner.os == 'Windows'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          native_prompt_windows::tests::win32_dialog_handles_consent_secret_tamper_and_lease_states
+          -- --ignored --exact --test-threads=1
+
+      - name: Installer le pilote Tauri borné
         run: cargo +1.94.1 install tauri-driver --version 2.0.6 --locked
 
       - name: Construire, installer et lancer le .deb
         if: runner.os == 'Linux'
-        run: ./tests/checks/console-linux-ci
+        run: >-
+          dbus-run-session -- xvfb-run -a env NO_AT_BRIDGE=1
+          ./tests/checks/console-linux-ci
 
       - name: Construire, signer, installer et lancer le .msi
         if: runner.os == 'Windows'
@@ -158,6 +283,15 @@ jobs:
         with:
           name: console-windows-webview2-smoke
           path: ${{ runner.temp }}/your-cloud-windows-webview2-smoke
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Archiver le smoke WebKitGTK Linux
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: console-linux-webkitgtk-smoke
+          path: ${{ runner.temp }}/your-cloud-linux-webkitgtk-smoke
           if-no-files-found: error
           retention-days: 7
 

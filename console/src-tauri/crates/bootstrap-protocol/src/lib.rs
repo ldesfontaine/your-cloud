@@ -1,3 +1,5 @@
+mod monotonic;
+
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -5,6 +7,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     str::FromStr,
 };
+
+pub use monotonic::{monotonic_nanos, MonotonicClockError};
 
 pub const REQUEST_ID_BYTES: usize = 16;
 pub const MAX_HOST_BYTES: usize = 253;
@@ -72,6 +76,9 @@ pub struct BootstrapStartInput {
 #[serde(rename_all = "snake_case")]
 pub enum BootstrapStep {
     PersonalAccess,
+    UnlockPersonalKey,
+    PrivilegeEscalation,
+    RootAccess,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -117,6 +124,7 @@ pub struct AssistantScopeV1 {
     pub step: BootstrapStep,
     pub actions: [BootstrapAction; 1],
     pub prompt: NativePromptKind,
+    pub issued_at_monotonic_nanos: u64,
     pub remaining_millis: u64,
 }
 
@@ -125,7 +133,7 @@ impl AssistantScopeV1 {
         if self.schema_version != 1
             || !canonical_request_id(&self.request_id)
             || !(1..=MAX_ASSISTANT_REMAINING_MILLIS).contains(&self.remaining_millis)
-            || !prompt_matches_access(self.prompt, self.target.access_kind)
+            || !prompt_matches_scope(self.prompt, self.step, self.target.access_kind)
         {
             return Err(ProtocolError::InvalidInput);
         }
@@ -177,12 +185,31 @@ pub fn canonical_request_id(request_id: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn prompt_matches_access(prompt: NativePromptKind, access_kind: BootstrapAccessKind) -> bool {
-    match prompt {
-        NativePromptKind::ConfirmRootAccess => access_kind == BootstrapAccessKind::Root,
-        NativePromptKind::SudoPassword => access_kind == BootstrapAccessKind::Administrator,
-        NativePromptKind::ConfirmPersonalAccess | NativePromptKind::KeyPassphrase => true,
-    }
+fn prompt_matches_scope(
+    prompt: NativePromptKind,
+    step: BootstrapStep,
+    access_kind: BootstrapAccessKind,
+) -> bool {
+    matches!(
+        (prompt, step, access_kind),
+        (
+            NativePromptKind::ConfirmPersonalAccess,
+            BootstrapStep::PersonalAccess,
+            BootstrapAccessKind::Administrator
+        ) | (
+            NativePromptKind::KeyPassphrase,
+            BootstrapStep::UnlockPersonalKey,
+            BootstrapAccessKind::Administrator | BootstrapAccessKind::Root
+        ) | (
+            NativePromptKind::SudoPassword,
+            BootstrapStep::PrivilegeEscalation,
+            BootstrapAccessKind::Administrator
+        ) | (
+            NativePromptKind::ConfirmRootAccess,
+            BootstrapStep::RootAccess,
+            BootstrapAccessKind::Root
+        )
+    )
 }
 
 fn canonical_host(host: &str) -> Result<String, ProtocolError> {
@@ -307,14 +334,21 @@ mod tests {
     }
 
     fn scope(prompt: NativePromptKind, access_kind: BootstrapAccessKind) -> AssistantScopeV1 {
+        let step = match prompt {
+            NativePromptKind::ConfirmPersonalAccess => BootstrapStep::PersonalAccess,
+            NativePromptKind::KeyPassphrase => BootstrapStep::UnlockPersonalKey,
+            NativePromptKind::SudoPassword => BootstrapStep::PrivilegeEscalation,
+            NativePromptKind::ConfirmRootAccess => BootstrapStep::RootAccess,
+        };
         AssistantScopeV1 {
             schema_version: 1,
             request_id: REQUEST_ID.into(),
             mode: BootstrapMode::Create,
             target: target(access_kind),
-            step: BootstrapStep::PersonalAccess,
+            step,
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt,
+            issued_at_monotonic_nanos: 1,
             remaining_millis: MAX_ASSISTANT_REMAINING_MILLIS,
         }
     }
@@ -365,10 +399,6 @@ mod tests {
                 BootstrapAccessKind::Administrator,
             ),
             (
-                NativePromptKind::ConfirmPersonalAccess,
-                BootstrapAccessKind::Root,
-            ),
-            (
                 NativePromptKind::KeyPassphrase,
                 BootstrapAccessKind::Administrator,
             ),
@@ -386,6 +416,10 @@ mod tests {
         }
 
         for (prompt, access_kind) in [
+            (
+                NativePromptKind::ConfirmPersonalAccess,
+                BootstrapAccessKind::Root,
+            ),
             (NativePromptKind::SudoPassword, BootstrapAccessKind::Root),
             (
                 NativePromptKind::ConfirmRootAccess,
@@ -397,10 +431,29 @@ mod tests {
                 Err(ProtocolError::InvalidInput)
             );
         }
+
+        let mut mismatched_step = scope(
+            NativePromptKind::SudoPassword,
+            BootstrapAccessKind::Administrator,
+        );
+        mismatched_step.step = BootstrapStep::PersonalAccess;
+        assert_eq!(mismatched_step.validate(), Err(ProtocolError::InvalidInput));
     }
 
     #[test]
     fn assistant_wire_variants_are_fixed() {
+        for (step, wire_name) in [
+            (BootstrapStep::PersonalAccess, "personal_access"),
+            (BootstrapStep::UnlockPersonalKey, "unlock_personal_key"),
+            (BootstrapStep::PrivilegeEscalation, "privilege_escalation"),
+            (BootstrapStep::RootAccess, "root_access"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(step).unwrap(),
+                serde_json::json!(wire_name)
+            );
+        }
+
         for (prompt, wire_name) in [
             (
                 NativePromptKind::ConfirmPersonalAccess,
@@ -494,5 +547,16 @@ mod tests {
         .unwrap();
         document["secret"] = serde_json::json!("forbidden");
         assert!(serde_json::from_value::<AssistantScopeV1>(document).is_err());
+
+        let mut missing_stamp = serde_json::to_value(scope(
+            NativePromptKind::ConfirmPersonalAccess,
+            BootstrapAccessKind::Administrator,
+        ))
+        .unwrap();
+        missing_stamp
+            .as_object_mut()
+            .unwrap()
+            .remove("issued_at_monotonic_nanos");
+        assert!(serde_json::from_value::<AssistantScopeV1>(missing_stamp).is_err());
     }
 }

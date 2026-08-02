@@ -855,6 +855,26 @@ try {
         throw "installed native helper differs from the helper packaged in the MSI"
     }
 
+    $directHelperOutput = Join-Path $temporaryRoot "direct-helper.stdout.log"
+    $directHelperError = Join-Path $temporaryRoot "direct-helper.stderr.log"
+    $directHelper = Start-Process `
+        -FilePath $installedHelper `
+        -ArgumentList @("--native-bootstrap-assistant") `
+        -NoNewWindow `
+        -PassThru `
+        -RedirectStandardOutput $directHelperOutput `
+        -RedirectStandardError $directHelperError
+    Wait-BoundedProcess `
+        -Process $directHelper `
+        -TimeoutSeconds 30 `
+        -Operation "direct native helper parent refusal" `
+        -AllowedExitCodes @(70)
+    if ((Get-Item -LiteralPath $directHelperOutput).Length -ne 0 -or
+        (Get-Item -LiteralPath $directHelperError).Length -ne 0) {
+        throw "refused native helper invocation emitted public output"
+    }
+    Write-Host "CI Windows: installed helper refused a direct non-Console parent"
+
     Write-Host "CI Windows: preparing the bounded WebView2 driver"
     if (-not [Environment]::Is64BitOperatingSystem) {
         throw "the Windows proof requires the x64 WebView2 Runtime"
@@ -1640,11 +1660,31 @@ $temporaryProofReport = "$proofReportPath.tmp"
 Move-Item -LiteralPath $temporaryProofReport -Destination $proofReportPath -Force
 
 $proofFiles = @(Get-ChildItem -LiteralPath $uiSmokeRoot -Recurse -File -Force)
+$expectedProofFileNames = @(
+    "windows-local-access-1280x800.png",
+    "windows-local-access-640x560.png",
+    "windows-local-access-640x560-text-200.png",
+    "windows-infrastructures-1280x800.png",
+    "windows-infrastructures-640x560.png",
+    "windows-infrastructures-640x560-text-200.png",
+    "windows-association-1280x800.png",
+    "windows-association-640x560.png",
+    "windows-association-640x560-text-200.png",
+    "windows-native-personal-consent.png",
+    "windows-webview2-smoke.json"
+) | Sort-Object
+$observedProofFileNames = @($proofFiles | ForEach-Object { $_.Name } | Sort-Object)
 $unexpectedProofFiles = @($proofFiles | Where-Object {
-    $_.Extension.ToLowerInvariant() -notin @(".json", ".png")
+    $_.DirectoryName -ne $uiSmokeRoot -or $_.Length -le 0
 })
+$proofNameDifferences = @(
+    Compare-Object `
+        -ReferenceObject $expectedProofFileNames `
+        -DifferenceObject $observedProofFileNames
+)
 $proofReports = @($proofFiles | Where-Object { $_.Extension -eq ".json" })
 if ($unexpectedProofFiles.Count -ne 0 -or
+    $proofNameDifferences.Count -ne 0 -or
     $proofReports.Count -ne 1 -or
     $proofReports[0].FullName -ne $proofReportPath) {
     throw "Windows proof artifact contains an unexpected file"
