@@ -131,34 +131,27 @@ fn run_windows_wer_crash() -> io::Result<()> {
     black_box(dump_control.as_ref());
 
     unsafe {
-        // Use the canonical fatal access-violation code so WER observes an ordinary application
-        // crash rather than an application-defined software exception. The arguments describe a
-        // write to the null address without actually performing undefined Rust memory access.
-        let arguments = [ACCESS_VIOLATION_WRITE, 0];
-        RaiseException(
-            EXCEPTION_ACCESS_VIOLATION,
-            EXCEPTION_NONCONTINUABLE,
-            arguments.len() as u32,
-            arguments.as_ptr(),
+        // RaiseFailFastException bypasses application handlers and explicitly enters Windows
+        // Error Reporting without relying on undefined Rust memory access. The generated address
+        // keeps the synthetic crash attributable to this exact call site.
+        RaiseFailFastException(
+            std::ptr::null(),
+            std::ptr::null(),
+            FAIL_FAST_GENERATE_EXCEPTION_ADDRESS,
         );
     }
     std::process::abort();
 }
 
 #[cfg(target_os = "windows")]
-const EXCEPTION_NONCONTINUABLE: u32 = 1;
-#[cfg(target_os = "windows")]
-const EXCEPTION_ACCESS_VIOLATION: u32 = 0xc000_0005;
-#[cfg(target_os = "windows")]
-const ACCESS_VIOLATION_WRITE: usize = 1;
+const FAIL_FAST_GENERATE_EXCEPTION_ADDRESS: u32 = 1;
 
 #[cfg(target_os = "windows")]
 #[link(name = "kernel32")]
 extern "system" {
-    fn RaiseException(
-        exception_code: u32,
-        exception_flags: u32,
-        number_of_arguments: u32,
-        arguments: *const usize,
+    fn RaiseFailFastException(
+        exception_record: *const std::ffi::c_void,
+        context_record: *const std::ffi::c_void,
+        flags: u32,
     );
 }

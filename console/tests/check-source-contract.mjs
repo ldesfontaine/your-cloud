@@ -844,7 +844,8 @@ for (const expected of [
   "libc::PR_SET_PTRACER",
   "libc::PR_GET_DUMPABLE",
   "libc::RLIMIT_CORE",
-  "RaiseException",
+  "RaiseFailFastException",
+  "FAIL_FAST_GENERATE_EXCEPTION_ADDRESS",
 ]) {
   if (!nativeAssistantCrashFixture.includes(expected)) {
     failures.push(`fixture crash/dump: protection synthétique absente (${expected})`);

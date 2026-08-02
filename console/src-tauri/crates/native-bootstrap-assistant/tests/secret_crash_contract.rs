@@ -129,7 +129,7 @@ fn wer_full_user_dump_excludes_the_registered_mapping() {
     let status = fixture.wait_bounded(FIXTURE_TIMEOUT);
     assert!(
         !status.success(),
-        "the WER fixture must terminate abnormally"
+        "the WER fail-fast fixture must terminate abnormally"
     );
     assert_no_canary_output(&mut stdout, &mut stderr, &protected_canary, &dump_control);
 

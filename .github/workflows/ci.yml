@@ -110,10 +110,6 @@ jobs:
         working-directory: console/src-tauri
         run: cargo +1.94.1 fmt --check
 
-      - name: Tester le noyau natif
-        working-directory: console/src-tauri
-        run: cargo +1.94.1 test --release --locked --workspace
-
       - name: Prouver le crash et le dump synthétiques du secret natif
         working-directory: console/src-tauri
         run: >-
@@ -122,6 +118,10 @@ jobs:
           --features secret-crash-contract-test
           --test secret-crash-contract
           -- --test-threads=1
+
+      - name: Tester le noyau natif
+        working-directory: console/src-tauri
+        run: cargo +1.94.1 test --release --locked --workspace
 
       - name: Tester le contrat processus du helper Linux
         if: runner.os == 'Linux'
