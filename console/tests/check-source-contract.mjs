@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   nativeAssistantCargoPackageIsForbidden,
   nativeAssistantElfLibraryIsForbidden,
+  nativeAssistantPeLibraryIsForbidden,
 } from "../tools/lib/native-bootstrap-assistant.mjs";
 
 const consoleRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -67,6 +68,21 @@ for (const allowedLibrary of ["libgtk-3.so.0", "libgdk-3.so.0", "libadwaita-1.so
     failures.push(`garde interne: bibliothèque GTK légitime refusée (${allowedLibrary})`);
   }
 }
+for (const forbiddenLibrary of [
+  "WebView2Loader.dll",
+  "WebKit2.dll",
+  "JavaScriptCore.dll",
+  "WPEBackend.dll",
+]) {
+  if (!nativeAssistantPeLibraryIsForbidden(forbiddenLibrary)) {
+    failures.push(`garde interne: bibliothèque PE interdite non détectée (${forbiddenLibrary})`);
+  }
+}
+for (const allowedLibrary of ["KERNEL32.dll", "USER32.dll", "ADVAPI32.dll"]) {
+  if (nativeAssistantPeLibraryIsForbidden(allowedLibrary)) {
+    failures.push(`garde interne: bibliothèque Win32 légitime refusée (${allowedLibrary})`);
+  }
+}
 const packageDocument = JSON.parse(await readFile(join(consoleRoot, "package.json"), "utf8"));
 const packageLock = JSON.parse(await readFile(join(consoleRoot, "package-lock.json"), "utf8"));
 const tauriConfig = JSON.parse(
@@ -79,6 +95,29 @@ const bootstrapRuntime = await readSourceText(
 );
 const nativeAssistantRuntime = await readSourceText(
   join(consoleRoot, "src-tauri", "src", "native_assistant.rs"),
+);
+const nativeAssistantWindows = await readSourceText(
+  join(consoleRoot, "src-tauri", "src", "native_assistant", "windows.rs"),
+);
+const nativeAssistantHardening = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "hardening.rs",
+  ),
+);
+const nativeAssistantWindowsJobContract = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "windows_job_contract.rs",
+  ),
 );
 const nativeAssistantPrompt = await readSourceText(
   join(
@@ -166,6 +205,8 @@ if (
   !continuousIntegration.includes(
     "console_parent_keeps_the_gtk_helper_bounded_until_cancelled",
   ) ||
+  !continuousIntegration.includes("--features windows-contract-test") ||
+  !continuousIntegration.includes("--test windows-job-contract") ||
   continuousIntegration.indexOf("npm run build:native-assistant") >
     continuousIntegration.indexOf("cargo +1.94.1 test --release --locked --workspace")
 ) {
@@ -234,6 +275,8 @@ for (const [source, expected] of [
   [nativeAssistantGate, '"x86_64-unknown-linux-gnu"'],
   [nativeAssistantGate, '"x86_64-pc-windows-msvc"'],
   [nativeAssistantGate, '"readelf"'],
+  [nativeAssistantGate, "inspectPortableExecutable"],
+  [nativeAssistantGate, 'format: "PE32+"'],
   [sbomBuilder, "cargoClosure"],
   [candidateManifestBuilder, "helper_source_tree_sha256"],
 ]) {
@@ -445,6 +488,68 @@ for (const expected of [
     failures.push(`native_assistant.rs: garde de lancement parent absente (${expected})`);
   }
 }
+for (const expected of [
+  "CreateProcessW",
+  "PROC_THREAD_ATTRIBUTE_HANDLE_LIST",
+  "CREATE_SUSPENDED",
+  "CREATE_UNICODE_ENVIRONMENT",
+  "EXTENDED_STARTUPINFO_PRESENT",
+  "CREATE_NO_WINDOW",
+  "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+  "AssignProcessToJobObject",
+  "IsProcessInJob",
+  "ResumeThread",
+  "TerminateJobObject",
+  "QueryInformationJobObject",
+  "ActiveProcesses",
+  "WINDOWS_CLEANUP_UNPROVEN",
+]) {
+  if (!nativeAssistantWindows.includes(expected)) {
+    failures.push(`native_assistant/windows.rs: garde Win32 absente (${expected})`);
+  }
+}
+for (const expected of [
+  "active_processes()",
+  "terminate_tree()",
+  "root and its descendant must both belong to the private Job",
+  "Job termination must leave no descendant",
+  "hostile inheritable handle must be absent from the helper",
+  "must no longer be inheritable",
+  "WindowsSpawnFault::AfterCreate",
+  "every later launch must remain refused after cleanup is unproven",
+]) {
+  if (!nativeAssistantWindowsJobContract.includes(expected)) {
+    failures.push(`windows_job_contract.rs: preuve Job hostile absente (${expected})`);
+  }
+}
+const assignToJobIndex = nativeAssistantWindows.indexOf("AssignProcessToJobObject(");
+const verifyJobIndex = nativeAssistantWindows.indexOf("IsProcessInJob(");
+const resumeThreadIndex = nativeAssistantWindows.indexOf("ResumeThread(");
+if (
+  assignToJobIndex < 0 ||
+  verifyJobIndex < 0 ||
+  resumeThreadIndex < 0 ||
+  !(assignToJobIndex < verifyJobIndex && verifyJobIndex < resumeThreadIndex)
+) {
+  failures.push(
+    "native_assistant/windows.rs: l’ordre assignation Job, vérification puis reprise doit rester explicite",
+  );
+}
+if (nativeAssistantWindows.includes("CREATE_BREAKAWAY_FROM_JOB")) {
+  failures.push("native_assistant/windows.rs: CREATE_BREAKAWAY_FROM_JOB est interdit");
+}
+for (const expected of [
+  "GetStdHandle",
+  "SetHandleInformation",
+  "HANDLE_FLAG_INHERIT",
+  "STD_INPUT_HANDLE",
+  "STD_OUTPUT_HANDLE",
+  "STD_ERROR_HANDLE",
+]) {
+  if (!nativeAssistantHardening.includes(expected)) {
+    failures.push(`hardening.rs: garde des handles standard Windows absente (${expected})`);
+  }
+}
 if (/\.wait\s*\(/u.test(nativeAssistantRuntime)) {
   failures.push(
     "native_assistant.rs: la recolte du helper ne doit jamais attendre sans echeance",
@@ -469,7 +574,10 @@ for (const forbiddenEnvironmentName of [
   "GTK_PATH",
   "SSH_AUTH_SOCK",
 ]) {
-  if (nativeAssistantRuntime.includes(`"${forbiddenEnvironmentName}"`)) {
+  if (
+    nativeAssistantRuntime.includes(`"${forbiddenEnvironmentName}"`) ||
+    nativeAssistantWindows.includes(`"${forbiddenEnvironmentName}"`)
+  ) {
     failures.push(
       `native_assistant.rs: variable non autorisée transmise trop tôt (${forbiddenEnvironmentName})`,
     );

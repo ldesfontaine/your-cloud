@@ -67,6 +67,42 @@ fn console_parent_launches_the_exact_helper_and_refuses_to_invent_success() {
     }
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn console_parent_closes_one_job_before_reusing_the_boundary() {
+    let path = Path::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
+    let expected_name = path.file_name().unwrap();
+    let mut supervisor = NativeAssistantSupervisor::default();
+    supervisor
+        .start_with_path(
+            path,
+            expected_name,
+            scope(),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+
+    supervisor.cancel(REQUEST_ID).unwrap();
+    assert_eq!(
+        supervisor.poll(REQUEST_ID),
+        Err(NativeAssistantError::RequestRefused)
+    );
+
+    let mut second_scope = scope();
+    second_scope.request_id = "ffeeddccbbaa99887766554433221100".into();
+    supervisor
+        .start_with_path(
+            path,
+            expected_name,
+            second_scope,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+    supervisor
+        .cancel("ffeeddccbbaa99887766554433221100")
+        .unwrap();
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "requires isolated Xvfb"]

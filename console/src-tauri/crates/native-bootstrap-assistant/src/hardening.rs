@@ -41,9 +41,32 @@ fn stable_parent(parent_before: libc::pid_t, parent_after: libc::pid_t) -> bool 
     parent_before > 1 && parent_before == parent_after
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub(crate) fn apply() -> Result<(), HardeningError> {
-    // Windows process containment and anti-dump protections belong to the next native UI lot.
+    use windows_sys::Win32::{
+        Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE},
+        System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
+    };
+
+    // The parent supplies exactly these anonymous-pipe endpoints. Removing their
+    // inherit flag before reading the protocol prevents a future child from
+    // prolonging the session by retaining one of those endpoints.
+    for standard_handle in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        let handle = unsafe { GetStdHandle(standard_handle) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(HardeningError);
+        }
+        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+            return Err(HardeningError);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub(crate) fn apply() -> Result<(), HardeningError> {
+    // Unsupported targets never reach a prepared release artifact.
     Ok(())
 }
 
