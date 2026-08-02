@@ -1,0 +1,20 @@
+[package]
+name = "your-cloud-native-bootstrap-assistant"
+version = "0.0.3"
+description = "Assistant natif ephemere d'amorcage Your Cloud"
+authors = ["Lucas Desfontaine"]
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[[bin]]
+name = "your-cloud-native-bootstrap-assistant"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "=1.0.149"
+your-cloud-bootstrap-protocol = { version = "=0.0.3", path = "../bootstrap-protocol" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "=0.18.2", default-features = false }
+libc = "=0.2.183"

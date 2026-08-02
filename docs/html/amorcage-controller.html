@@ -30,6 +30,34 @@
     </div>
     <p class="handoff"><strong>Résultat attendu :</strong> fermer la Console ou éteindre le laptop n’arrête ni le Controller, ni l’administration future, ni les services déjà déployés.</p>
 
+    <h2>Le secret reste dans un helper natif hors WebView</h2>
+    <div class="grid">
+      <article class="card">
+        <h3>Un processus par consentement</h3>
+        <p>La Console lance le binaire compagnon signé <code>your-cloud-native-bootstrap-assistant</code> avec la garde fixe <code>--native-bootstrap-assistant</code>. Son graphe autonome exclut Tauri, Wry, Tao, WebKit et JavaScriptCore. Des pipes anonymes typés livrent seulement le périmètre public immuable au helper et rendent au parent des états expurgés. L'expiration vaut cinq minutes sur une horloge native monotone et ne peut pas être prolongée par le frontend.</p>
+        <ul>
+          <li>aucun secret dans l’IPC frontend, les arguments, l’environnement, une URL, un fichier ou un journal ;</li>
+          <li>aucune réutilisation entre deux opérations ;</li>
+          <li>EOF, annulation, timeout ou mort du parent ferment le helper et ses enfants.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h3>Saisie système directe</h3>
+        <p>Linux emploie un dialogue GTK3 avec entrée masquée et usage <code>Password</code>. Windows emploie un dialogue Win32 modal avec contrôle <code>EDIT | ES_PASSWORD</code>. La surface répète les empreintes, l’étape, l’action et l’expiration avant toute saisie.</p>
+      </article>
+      <article class="card">
+        <h3>Capacité SSH fermée</h3>
+        <p><code>russh 0.62.4</code> est épinglé avec <code>ring</code> et <code>rsa</code>. La clé d’hôte doit correspondre exactement au périmètre ; DSA, DES, compression et <code>ssh-rsa</code> SHA-1 sont refusés, comme shell, PTY, SFTP, X11, redirections et commande générale.</p>
+        <p>L’agent accepté est uniquement le socket Unix absolu possédé par l’utilisateur sous Linux ou <code>\\.\pipe\openssh-ssh-agent</code> sous Windows. Une seule clé et un budget fini de signatures servent uniquement à l’authentification affichée.</p>
+      </article>
+      <article class="card warning">
+        <h3>Repli et élévation bornés</h3>
+        <p>Le repli accepte seulement une clé <code>OPENSSH PRIVATE KEY</code> chiffrée avec bcrypt et <code>aes256-ctr</code>, Ed25519 ou RSA d’au moins 3072 bits. <code>sudo -n</code> est tenté d’abord ; un mot de passe éventuel passe une seule fois, sans PTY ni relance, vers la commande absolue autorisée.</p>
+        <p>Les buffers propres au helper sont zéroïsés ; les protections anti-dump restent best effort. Root, administrateur, accessibilité hostile, copies internes des widgets et dumps noyau restent hors garantie.</p>
+      </article>
+    </div>
+    <p class="boundary"><strong>Gate structurel exécuté :</strong> le binaire Console construit dans le LAB le 2 août 2026 déclare directement <code>libwebkit2gtk-4.1.so.0</code> et <code>libjavascriptcoregtk-4.1.so.0</code> dans <code>DT_NEEDED</code>. Le helper séparé est donc obligatoire, avec empreinte, graphe, SBOM et signature propres dans la même release. Les bindings Rust GTK3 <code>0.18.2</code>, peu maintenus, restent épinglés et audités avec le verrou, la licence du composant système et le paquet réel ; un risque non maîtrisable impose une autre surface native avant release.</p>
+
     <h2>Deux catégories SSH, pas une troisième autorité</h2>
     <div class="authorities">
       <article class="authority user">

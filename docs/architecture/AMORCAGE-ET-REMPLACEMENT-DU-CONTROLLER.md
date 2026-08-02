@@ -36,6 +36,44 @@ mais reste distinct du frontend. Il est lancé seulement pour `Créer une
 infrastructure` ou `Remplacer un Controller`, ne fournit aucun service réseau
 permanent et ne conserve aucune clé SSH personnelle après l'opération.
 
+### Processus et canal natif
+
+La Console lance le binaire compagnon distinct
+`your-cloud-native-bootstrap-assistant` avec l'unique garde fixe
+`--native-bootstrap-assistant`. Il est versionné, livré et signé avec la
+Console, mais son graphe de production ne dépend ni de la Console, ni de Tauri,
+Wry, Tao, WebKitGTK ou JavaScriptCoreGTK. Chaque consentement crée un nouveau
+processus helper éphémère ; aucun helper, état secret ou enfant n'est réutilisé
+entre deux opérations. Le cœur résout seulement ce nom fixe depuis
+l'installation vérifiée et n'enregistre aucun plugin ou appel shell général
+auprès du frontend.
+
+Ce découpage est désormais obligatoire. Le gate ELF exécuté dans le LAB le 2
+août 2026 a montré que le binaire Console déclare directement
+`libwebkit2gtk-4.1.so.0` et `libjavascriptcoregtk-4.1.so.0` dans `DT_NEEDED` :
+un branchement avant `main` dans ce même exécutable ne peut donc pas constituer
+une absence de WebKit. La mesure, ses préconditions et ses limites sont
+conservées dans le
+[rapport IPC et gate helper Linux](../lab/v1-bootstrap-ipc-linux.md).
+
+Le parent et le helper communiquent uniquement par des pipes anonymes, typés et
+bornés. Le parent fournit un périmètre public immuable : identifiant de demande,
+parcours, endpoints, clés d'hôte attendues, étape, action exacte et expiration.
+Le helper ne rend que des états expurgés. Il ne renvoie jamais au parent le
+secret saisi, une clé privée, un contenu d'agent ou une primitive de signature.
+Un secret n'entre ni dans les arguments ou l'environnement du processus, ni
+dans une URL, un fichier, un journal ou une réponse IPC. La mort du parent,
+l'EOF du pipe, l'annulation ou le timeout ferment le helper et ses enfants.
+Le premier incrément fixe cette expiration à cinq minutes depuis une horloge
+monotone native ; le frontend ne peut ni choisir cette durée, ni la prolonger.
+
+Sous Linux, la saisie emploie directement un dialogue GTK3 avec entrée masquée
+et usage `Password`. Sous Windows, elle emploie directement un dialogue Win32
+modal et un contrôle `EDIT` avec le style `ES_PASSWORD`. Ces deux surfaces sont
+créées par le helper, sans HTML, JavaScript, Tauri ou WebView. Elles répètent les
+empreintes des machines, l'étape, les actions et l'expiration exactes avant de
+recueillir la passphrase, le mot de passe `sudo` ou le consentement `root`.
+
 Le frontend transmet uniquement des demandes typées et affiche les cibles, les
 constats et les changements. Il ne reçoit jamais :
 
@@ -45,13 +83,6 @@ constats et les changements. Il ne reçoit jamais :
 - une identité d'administration Your Cloud ;
 - un shell, un playbook, un inventaire ou des arguments libres.
 
-La saisie d'une passphrase de clé ou d'un mot de passe `sudo`, comme le
-consentement à employer `root`, appartient à une fenêtre du cœur natif distincte
-de la WebView. Cette fenêtre répète les empreintes des machines, l'étape, les
-actions et l'expiration exactes. Le secret rejoint directement la mémoire de
-l'Assistant ; le frontend ne peut ni le fournir par IPC, ni marquer lui-même
-l'étape comme approuvée.
-
 Une demande du frontend peut seulement ouvrir ce parcours nommé. Elle ne donne
 pas accès à une primitive SSH ou de signature générale. Après la confirmation
 native, l'Assistant borne l'utilisation de `ssh-agent` à la connexion SSH exacte
@@ -59,11 +90,48 @@ vers les hôtes affichés et refuse toute cible, action ou durée différente. U
 nouvel hôte, une nouvelle étape privilégiée ou une expiration impose une
 nouvelle confirmation native.
 
-L'Assistant préfère un agent SSH déjà déverrouillé : il lui demande de signer
-sans extraire la clé privée. En solution de repli, il peut ouvrir une clé
-chiffrée choisie par l'utilisateur et la déchiffrer uniquement dans sa mémoire
-pendant l'opération. Le secret ne rejoint ni le frontend, ni le Controller, ni
-un journal. La fermeture, l'échec ou le timeout détruisent cet état temporaire.
+### Moteur SSH et accès personnel
+
+Le helper embarque le client Rust `russh` épinglé exactement ainsi :
+
+```toml
+russh = { version = "=0.62.4", default-features = false, features = ["ring", "rsa"] }
+```
+
+Ses algorithmes sont choisis par une liste positive. DSA, DES, la compression
+et la signature RSA `ssh-rsa` fondée sur SHA-1 sont refusés. La clé d'hôte est
+comparée exactement à celle du périmètre approuvé : le client ne décide jamais
+la confiance au premier contact (`TOFU`) et n'écrit pas implicitement dans
+`known_hosts`. Il n'expose ni shell, ni PTY, ni redirection, ni SFTP, X11,
+transfert d'agent ou commande générale.
+
+L'Assistant préfère un agent SSH déjà déverrouillé et lui demande de signer sans
+extraire la clé privée. Sous Linux, il accepte seulement le chemin absolu lu une
+fois depuis `SSH_AUTH_SOCK`, vérifié comme socket Unix appartenant à
+l'utilisateur courant. Sous Windows, la V1 accepte seulement le pipe OpenSSH
+`\\.\pipe\openssh-ssh-agent`. Une seule clé est sélectionnée et un budget fini
+de signatures est limité à l'authentification SSH de cette opération ; une
+deuxième signature ou un message hors de cette capacité est refusé. Les logs du
+client d'agent restent désactivés afin qu'aucun tampon de protocole n'y entre.
+
+En solution de repli, le sélecteur natif ouvre seulement une clé au format
+`OPENSSH PRIVATE KEY` réellement chiffrée par bcrypt et `aes256-ctr`. Ed25519
+est accepté ; RSA ne l'est qu'à partir de 3072 bits pour compatibilité. Les clés
+en clair et les formats PKCS#1, PKCS#8, SEC1 et PPK sont refusés, sans détection
+implicite d'un autre format. L'ouverture est bornée et ne réécrit pas le fichier.
+Les octets lus, la passphrase et la clé déchiffrée sont zéroïsés sur les sorties
+contrôlées.
+
+### Élévation, arrêt et risque résiduel
+
+Avec un compte non-root, le helper tente d'abord l'action exacte avec
+`sudo -n -- <chemin absolu autorisé>`. Si `sudo` exige une authentification, le
+mot de passe est recueilli dans le dialogue natif puis envoyé une seule fois,
+sans PTY, sur l'entrée chiffrée de la session SSH vers une commande fixe
+`sudo -k -S -p <sentinelle> -- <chemin absolu autorisé>`. Il n'existe ni relance
+automatique, ni shell, ni interpolation de commande. L'opération est refusée si
+la politique distante ne permet pas d'établir cette capacité exacte ou si sa
+journalisation d'entrée peut capturer le secret.
 
 L'utilisateur peut fournir :
 
@@ -76,11 +144,56 @@ L'accès `root` n'est jamais tenté implicitement. La Console nomme les machines
 les actions et la durée avant de le demander. Chaque nouvelle utilisation
 exige un nouveau consentement et une nouvelle mise à disposition de l'accès.
 
+Le helper zéroïse ses propres buffers sur chaque sortie contrôlée. Sous Linux,
+il meurt avec son parent, désactive les dumps de processus avec
+`PR_SET_DUMPABLE=0` et `RLIMIT_CORE=0`, puis emploie `mlock` et
+`MADV_DONTDUMP` lorsqu'ils sont disponibles. Sous Windows, un Job Object ferme
+les descendants lorsque le parent disparaît, `VirtualLock` garde les buffers
+sensibles hors du fichier d'échange dans sa borne documentée et Windows Error
+Reporting est empêché d'y collecter les buffers lorsque l'API le permet.
+
+Cette destruction reste une mesure **best effort**, pas une promesse d'absence
+universelle de copie. GTK, Win32 et le système peuvent posséder des copies
+internes ; `root`, un administrateur local ou distant, `SeDebugPrivilege`, une
+IME ou couche d'accessibilité hostile, les dumps noyau et une machine déjà
+compromise restent hors de la garantie.
+
+### Justification et alternatives
+
+Ce choix garde une release et un installateur cohérents, mais assume deux
+exécutables afin de séparer réellement le secret du processus WebView et de
+donner au helper seulement la capacité SSH exacte approuvée. Les deux binaires
+ont chacun leur empreinte, leur graphe, leur SBOM et leur vérification de
+signature ; sous Windows, le helper doit porter la même identité Authenticode
+que la Console. La vérification du verrou de dépendances, des licences, des
+imports natifs et du fonctionnement hors ligne appartient à la preuve de chaîne
+d'approvisionnement ; ce design ne suffit pas à déclarer une conformité OWASP
+ou NIS2.
+
+Un second `WebviewWindow` reste un WebView ; une fenêtre Tauri/Tao brute ne
+fournit pas le widget secret et conserve le secret dans le processus Console ;
+Slint ajoute un second event loop et une surface de dépendances, licence et
+paquet disproportionnée ; l'exécutable `ssh` externe laisse varier version,
+configuration et commandes ; `libssh2` ajoute une chaîne C/OpenSSL. Ces options
+ne sont pas retenues pour la V1. Le même exécutable Tauri utilisé comme helper
+est également écarté : la preuve ELF montre que WebKit et JavaScriptCore sont
+chargés par sa liaison native avant que le code Rust puisse sélectionner un
+mode.
+
+Les bindings Rust GTK3 `0.18.2` sont déjà présents dans le graphe Tauri mais ne
+constituent plus une base activement développée. Leur épinglage évite un nouveau
+graphe implicite sans supprimer ce risque de maintenance : le verrou, les avis
+de sécurité, la licence LGPL du composant système et le contenu réel du paquet
+restent contrôlés à chaque candidat. Une incompatibilité ou un avis non
+maîtrisable impose une autre surface native avant release.
+
 Your Cloud ne supprime ni la clé personnelle de l'utilisateur, ni son compte,
 ni son droit d'administration. Cet accès reste le chemin indépendant qui
 permettra de remplacer le Controller. La vérification de la clé d'hôte SSH est
-explicite : empreinte fournie par une source de confiance ou premier contact
-affiché et confirmé, jamais acceptation silencieuse.
+explicite : l'empreinte vient d'une source de confiance ou d'une étape
+d'observation séparée, affichée et confirmée avant la construction du périmètre.
+Le client qui authentifie ne transforme jamais lui-même un premier contact en
+confiance et n'accepte aucune clé silencieusement.
 
 ## Audit puis proposition
 
@@ -424,10 +537,26 @@ Le palier d'amorçage ne sera prouvé qu'après avoir montré dans le LAB :
 - audit sans mutation et absence de scan ;
 - refus d'une clé d'hôte non confirmée, d'une cible incompatible et d'un rôle
   non approuvé ;
-- absence de clé ou mot de passe personnel dans le frontend, le Controller, les
-  fichiers persistants et les journaux ;
-- prompts et consentements natifs sous Linux et Windows, avec refus d'une cible,
+- binaire helper distinct dont le graphe, le `DT_NEEDED`, les dépendances
+  transitives et les mappings vivants excluent Tauri, Wry, Tao, WebKit et
+  JavaScriptCore, un processus par consentement et aucun descendant après
+  annulation, timeout, EOF, mort du parent ou crash ;
+- absence de clé ou mot de passe personnel dans le frontend, le Controller,
+  l'IPC, les arguments, l'environnement, les descripteurs inattendus, les
+  fichiers persistants ou temporaires, les journaux et les artefacts ;
+- dialogues GTK3 et Win32 réellement hors WebView, avec refus d'une cible,
   d'une action ou d'une expiration différente de ce qui a été confirmé ;
+- clé d'hôte exacte, algorithmes obsolètes, autre endpoint d'agent, seconde
+  signature et message hors authentification refusés par le client SSH borné ;
+- acceptation du seul format de clé chiffrée décidé et refus des clés en clair,
+  formats implicites, RSA trop courte et fichiers hostiles ;
+- `sudo -n` nominal, unique envoi sans PTY si nécessaire, puis refus d'une
+  relance, d'un prompt, d'une commande ou d'une politique de journalisation
+  hors contrat ;
+- zéroïsation contrôlée, protections anti-dump disponibles et limites publiées
+  après sortie, crash et dump synthétiques sous Linux et Windows ;
+- dépendances, licences, verrou, SBOM, imports PE et chargement éventuel de
+  WebKit audités pour les deux paquets natifs et leur fonctionnement hors ligne ;
 - installation du Controller, fermeture de l'Assistant puis fonctionnement
   lorsque la Console et le laptop sont arrêtés ;
 - refus avant mutation lorsqu'une cible n'est pas joignable en SSH depuis le

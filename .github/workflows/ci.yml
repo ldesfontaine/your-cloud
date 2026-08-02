@@ -96,13 +96,39 @@ jobs:
         working-directory: console
         run: npm test && npm run build
 
+      - name: Préparer et inspecter le helper natif
+        working-directory: console
+        run: |
+          cargo +1.94.1 fetch --manifest-path src-tauri/Cargo.toml --locked
+          npm run build:native-assistant
+
       - name: Vérifier le formatage Rust
         working-directory: console/src-tauri
         run: cargo +1.94.1 fmt --check
 
       - name: Tester le noyau natif
         working-directory: console/src-tauri
-        run: cargo +1.94.1 test --release --locked
+        run: cargo +1.94.1 test --release --locked --workspace
+
+      - name: Tester le consentement GTK3 isolé
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          xvfb-run -a env NO_AT_BRIDGE=1
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          native_prompt::tests::gtk_dialog_maps_consent_without_collecting_a_secret
+          -- --ignored --exact --test-threads=1
+
+      - name: Tester le lancement GTK3 par le parent
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          xvfb-run -a env NO_AT_BRIDGE=1
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          console_parent_keeps_the_gtk_helper_bounded_until_cancelled
+          -- --ignored --exact --test-threads=1
 
       - name: Installer le pilote Tauri Windows borné
         if: runner.os == 'Windows'

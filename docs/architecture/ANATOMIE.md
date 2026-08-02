@@ -220,8 +220,11 @@ Utilisateur
                      v
 Console
 |- frontend : demandes et résultats typés, aucun secret SSH
-`- Assistant temporaire
-   |- prompt natif : secrets et consentement exact
+`- binaire compagnon signé lancé en helper éphémère
+   |- graphe autonome sans Tauri, Wry, Tao ni WebKit
+   |- garde fixe --native-bootstrap-assistant
+   |- pipes typés : périmètre public entrant, états expurgés sortants
+   |- prompt direct GTK3 ou Win32 : secret et consentement exact
    |- audit SSH en lecture seule
    |- installe et associe le Controller privé approuvé
    |- vérifie depuis lui la route SSH vers chaque cible
@@ -236,6 +239,11 @@ Controller autonome
                       `- protocole lecture seule, mutation refusée par défaut
 ```
 
+Le binaire distinct n'est pas une préférence de packaging : le gate ELF Linux
+du 2 août 2026 a trouvé WebKitGTK et JavaScriptCoreGTK dans le `DT_NEEDED` de la
+Console. Le helper possède donc son propre crate, son propre graphe et sa propre
+preuve d'absence de WebView, tout en restant livré dans la même release.
+
 Il existe deux catégories d'accès SSH d'administration des machines : l'accès
 personnel conservé par l'utilisateur et l'identité Your Cloud propre à chaque
 machine. L'authentification Console–Controller est séparée et ne devient pas une
@@ -244,6 +252,16 @@ Your Cloud. Un accès personnel `root` exige un consentement explicite pour
 l'opération exacte ; le défaut recommandé reste un compte non-root avec `sudo`
 protégé. La WebView ne reçoit ni secret, ni primitive SSH générale ; le prompt
 natif lie l'utilisation aux cibles, actions et durées affichées.
+
+Le helper embarque `russh 0.62.4` épinglé et ne reçoit qu'une capacité SSH
+immuable : clé d'hôte exacte, algorithmes autorisés, endpoint d'agent système,
+clé sélectionnée et budget fini de signatures. Linux accepte le socket Unix
+absolu de l'utilisateur courant ; Windows accepte seulement le pipe OpenSSH
+système. Le repli ouvre uniquement une clé OpenSSH chiffrée au format décidé.
+`sudo` tente l'action non interactive exacte, puis permet au plus un mot de
+passe sans PTY vers la même commande absolue. L'arrêt du parent ferme le helper
+et ses enfants ; zéroïsation et protections anti-dump réduisent l'exposition
+sans prétendre couvrir root, administrateur ou dumps noyau.
 
 Le Controller réside sur une machine privée, de confiance et normalement
 allumée. Il peut cohabiter dans une petite infrastructure si ses processus,

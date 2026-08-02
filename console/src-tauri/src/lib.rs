@@ -1,19 +1,27 @@
+mod bootstrap;
+mod native_assistant;
 mod network;
 mod vault;
 #[cfg(windows)]
 mod windows_security;
 
+use bootstrap::BootstrapState;
+use native_assistant::{NativeAssistantPoll, NativeAssistantSupervisor};
 use network::{InfrastructureView, MachineMutationView, MachinesView, NetworkState, PairingInput};
 use serde::Serialize;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex,
 };
-use tauri::{Manager, State};
+use tauri::{
+    ipc::{InvokeBody, Request},
+    Manager, State,
+};
 use vault::{
     AssociationSummary, ConsoleCore, ConsoleStatus, GeneratedLocalSecrets, PreparedPhraseChange,
     PreparedRecoveryRotation, RecoveryRotationProgress,
 };
+use your_cloud_bootstrap_protocol::{BootstrapSessionView, BootstrapStartInput};
 use zeroize::Zeroizing;
 
 #[derive(Debug, Serialize)]
@@ -37,8 +45,81 @@ impl From<network::NetworkError> for CommandError {
     }
 }
 
+impl From<bootstrap::BootstrapError> for CommandError {
+    fn from(value: bootstrap::BootstrapError) -> Self {
+        Self {
+            code: value.public_code(),
+        }
+    }
+}
+
+impl From<native_assistant::NativeAssistantError> for CommandError {
+    fn from(value: native_assistant::NativeAssistantError) -> Self {
+        Self {
+            code: value.public_code(),
+        }
+    }
+}
+
+struct ConsoleLocalState {
+    core: ConsoleCore,
+    bootstrap: BootstrapState,
+    native_assistant: NativeAssistantSupervisor,
+}
+
+impl ConsoleLocalState {
+    fn start_bootstrap(
+        &mut self,
+        input: BootstrapStartInput,
+    ) -> Result<BootstrapSessionView, CommandError> {
+        if self.core.status()?.lock_state != "unlocked" {
+            return Err(vault::VaultError::Locked.into());
+        }
+        let started = self.bootstrap.start(input)?;
+        if let Err(error) = self.native_assistant.stop_active() {
+            self.bootstrap.clear();
+            return Err(error.into());
+        }
+        let launch = match self.bootstrap.assistant_scope(&started.request_id) {
+            Ok(launch) => launch,
+            Err(error) => {
+                self.bootstrap.clear();
+                return Err(error.into());
+            }
+        };
+        if let Err(error) = self.native_assistant.start(launch.scope, launch.expires_at) {
+            self.bootstrap.clear();
+            return Err(error.into());
+        }
+        Ok(started)
+    }
+
+    #[cfg(test)]
+    fn start_bootstrap_state_only(
+        &mut self,
+        input: BootstrapStartInput,
+    ) -> Result<BootstrapSessionView, CommandError> {
+        if self.core.status()?.lock_state != "unlocked" {
+            return Err(vault::VaultError::Locked.into());
+        }
+        self.bootstrap.start(input).map_err(Into::into)
+    }
+
+    fn lock(&mut self) -> Result<(), native_assistant::NativeAssistantError> {
+        self.core.lock();
+        let stopped = self.native_assistant.stop_active();
+        self.bootstrap.clear();
+        stopped
+    }
+
+    fn close(&mut self) {
+        let _ = self.native_assistant.stop_active();
+        self.bootstrap.close();
+    }
+}
+
 struct ConsoleRuntime {
-    core: Mutex<ConsoleCore>,
+    local: Mutex<ConsoleLocalState>,
     network: Mutex<NetworkState>,
     request_generation: AtomicU64,
 }
@@ -47,10 +128,19 @@ fn with_core<T>(
     state: &State<'_, ConsoleRuntime>,
     operation: impl FnOnce(&mut ConsoleCore) -> Result<T, vault::VaultError>,
 ) -> Result<T, CommandError> {
-    let mut core = state.core.lock().map_err(|_| CommandError {
+    let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
     })?;
-    operation(&mut core).map_err(Into::into)
+    operation(&mut local.core).map_err(Into::into)
+}
+
+fn json_request_body<'a>(request: &'a Request<'_>) -> Result<&'a serde_json::Value, CommandError> {
+    match request.body() {
+        InvokeBody::Json(value) => Ok(value),
+        InvokeBody::Raw(_) => Err(CommandError {
+            code: "bootstrap_request_refused",
+        }),
+    }
 }
 
 #[tauri::command]
@@ -119,16 +209,87 @@ fn confirm_phrase_change(
 }
 
 #[tauri::command]
-fn lock_console(state: State<'_, ConsoleRuntime>) -> Result<(), CommandError> {
-    state.request_generation.fetch_add(1, Ordering::SeqCst);
-    let mut network = state.network.lock().map_err(|_| CommandError {
+fn start_bootstrap(
+    request: Request<'_>,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<BootstrapSessionView, CommandError> {
+    let input = bootstrap::parse_start_envelope(json_request_body(&request)?)?;
+    let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
     })?;
-    network.clear_sessions();
-    with_core(&state, |core| {
-        core.lock();
-        Ok(())
-    })
+    local.start_bootstrap(input)
+}
+
+#[tauri::command]
+fn bootstrap_status(
+    request: Request<'_>,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<BootstrapSessionView, CommandError> {
+    let request_id = bootstrap::parse_request_envelope(json_request_body(&request)?)?;
+    let mut local = state.local.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    let view = match local.bootstrap.status(&request_id) {
+        Ok(view) => view,
+        Err(error @ bootstrap::BootstrapError::Expired) => {
+            local.native_assistant.stop_active()?;
+            return Err(error.into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    match local.native_assistant.poll(&request_id) {
+        Ok(NativeAssistantPoll::Running) => Ok(view),
+        Ok(NativeAssistantPoll::Unavailable) => {
+            local.bootstrap.clear();
+            Err(native_assistant::NativeAssistantError::Unavailable.into())
+        }
+        Err(error) => {
+            let _ = local.native_assistant.stop_active();
+            local.bootstrap.clear();
+            Err(error.into())
+        }
+    }
+}
+
+#[tauri::command]
+fn cancel_bootstrap(
+    request: Request<'_>,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<(), CommandError> {
+    let request_id = bootstrap::parse_request_envelope(json_request_body(&request)?)?;
+    let mut local = state.local.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    match local.bootstrap.status(&request_id) {
+        Ok(_) => {}
+        Err(error @ bootstrap::BootstrapError::Expired) => {
+            local.native_assistant.stop_active()?;
+            return Err(error.into());
+        }
+        Err(error) => return Err(error.into()),
+    }
+    local.native_assistant.cancel(&request_id)?;
+    local.bootstrap.cancel(&request_id).map_err(Into::into)
+}
+
+#[tauri::command]
+fn lock_console(state: State<'_, ConsoleRuntime>) -> Result<(), CommandError> {
+    state.request_generation.fetch_add(1, Ordering::SeqCst);
+    let local_result = match state.local.lock() {
+        Ok(mut local) => local.lock().map_err(CommandError::from),
+        Err(_) => Err(CommandError {
+            code: "console_unavailable",
+        }),
+    };
+    let network_result = state
+        .network
+        .lock()
+        .map_err(|_| CommandError {
+            code: "console_unavailable",
+        })
+        .map(|mut network| network.clear_sessions());
+    local_result?;
+    network_result
 }
 
 #[tauri::command]
@@ -150,21 +311,26 @@ fn pair_controller(
         if state.request_generation.load(Ordering::SeqCst) != generation {
             return Err(network::NetworkError::Cancelled);
         }
-        let mut core = state
-            .core
+        let mut local = state
+            .local
             .lock()
             .map_err(|_| network::NetworkError::ConsoleUnavailable)?;
-        core.store_association(candidate, replacing)
+        local
+            .core
+            .store_association(candidate, replacing)
             .map(|_| ())
             .map_err(|_| network::NetworkError::ConsoleUnavailable)
     })?;
     if state.request_generation.load(Ordering::SeqCst) != generation {
         return Err(network::NetworkError::Cancelled.into());
     }
-    let mut core = state.core.lock().map_err(|_| CommandError {
+    let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
     })?;
-    core.store_association(active, true).map_err(Into::into)
+    local
+        .core
+        .store_association(active, true)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -237,11 +403,13 @@ fn rotate_device(
             if state.request_generation.load(Ordering::SeqCst) != generation {
                 return Err(network::NetworkError::Cancelled);
             }
-            let mut core = state
-                .core
+            let mut local = state
+                .local
                 .lock()
                 .map_err(|_| network::NetworkError::ConsoleUnavailable)?;
-            core.store_association(candidate, true)
+            local
+                .core
+                .store_association(candidate, true)
                 .map(|_| ())
                 .map_err(|_| network::NetworkError::ConsoleUnavailable)
         },
@@ -397,10 +565,10 @@ fn active_association(
     if state.request_generation.load(Ordering::SeqCst) != generation {
         return Err(network::NetworkError::Cancelled.into());
     }
-    let mut core = state.core.lock().map_err(|_| CommandError {
+    let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
     })?;
-    core.store_association(active.clone(), true)?;
+    local.core.store_association(active.clone(), true)?;
     Ok(active)
 }
 
@@ -410,11 +578,30 @@ pub fn run() {
         .setup(|app| {
             let state_directory = app.path().app_data_dir()?.join("native-vault");
             app.manage(ConsoleRuntime {
-                core: Mutex::new(ConsoleCore::new(state_directory)),
+                local: Mutex::new(ConsoleLocalState {
+                    core: ConsoleCore::new(state_directory),
+                    bootstrap: BootstrapState::default(),
+                    native_assistant: NativeAssistantSupervisor::default(),
+                }),
                 network: Mutex::new(NetworkState::new()),
                 request_generation: AtomicU64::new(0),
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != "main"
+                || !matches!(
+                    event,
+                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                )
+            {
+                return;
+            }
+            if let Some(state) = window.try_state::<ConsoleRuntime>() {
+                if let Ok(mut local) = state.local.lock() {
+                    local.close();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             console_status,
@@ -424,6 +611,9 @@ pub fn run() {
             unlock_console,
             prepare_phrase_change,
             confirm_phrase_change,
+            start_bootstrap,
+            bootstrap_status,
+            cancel_bootstrap,
             lock_console,
             cancel_pending_requests,
             pair_controller,
@@ -440,4 +630,118 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Your Cloud Console runtime failed");
+}
+
+#[cfg(test)]
+mod bootstrap_lifecycle_tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+    use your_cloud_bootstrap_protocol::{BootstrapAccessKind, BootstrapMode, BootstrapTarget};
+
+    const HOST_KEY: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn input() -> BootstrapStartInput {
+        BootstrapStartInput {
+            mode: BootstrapMode::Create,
+            target: BootstrapTarget {
+                host: "controller.example.test".into(),
+                port: 22,
+                username: "infra_admin".into(),
+                host_key_sha256: HOST_KEY.into(),
+                access_kind: BootstrapAccessKind::Administrator,
+            },
+        }
+    }
+
+    fn unlocked_local_state() -> (tempfile::TempDir, ConsoleLocalState) {
+        let directory = tempfile::tempdir().unwrap();
+        let mut core = ConsoleCore::new(directory.path().join("vault"));
+        let generated = core.prepare().unwrap();
+        core.confirm_initialization(
+            &generated.generation_id,
+            generated.unlock_phrase,
+            generated.recovery_code,
+            true,
+        )
+        .unwrap();
+        (
+            directory,
+            ConsoleLocalState {
+                core,
+                bootstrap: BootstrapState::default(),
+                native_assistant: NativeAssistantSupervisor::default(),
+            },
+        )
+    }
+
+    #[test]
+    fn concurrent_lock_and_start_leave_no_bootstrap_request() {
+        let (_directory, local) = unlocked_local_state();
+        let local = Arc::new(Mutex::new(local));
+        let barrier = Arc::new(Barrier::new(2));
+
+        let start_local = Arc::clone(&local);
+        let start_barrier = Arc::clone(&barrier);
+        let start = std::thread::spawn(move || {
+            start_barrier.wait();
+            start_local
+                .lock()
+                .unwrap()
+                .start_bootstrap_state_only(input())
+                .ok()
+        });
+        let lock_local = Arc::clone(&local);
+        let lock_barrier = Arc::clone(&barrier);
+        let lock = std::thread::spawn(move || {
+            lock_barrier.wait();
+            lock_local.lock().unwrap().lock().unwrap();
+        });
+
+        let started = start.join().unwrap();
+        lock.join().unwrap();
+        let mut local = local.lock().unwrap();
+        assert_eq!(local.core.status().unwrap().lock_state, "locked");
+        if let Some(started) = started {
+            assert!(local.bootstrap.status(&started.request_id).is_err());
+        }
+        assert_eq!(
+            local.start_bootstrap_state_only(input()).unwrap_err().code,
+            "console_locked"
+        );
+    }
+
+    #[test]
+    fn concurrent_close_and_start_leave_a_terminal_bootstrap_state() {
+        let (_directory, local) = unlocked_local_state();
+        let local = Arc::new(Mutex::new(local));
+        let barrier = Arc::new(Barrier::new(2));
+
+        let start_local = Arc::clone(&local);
+        let start_barrier = Arc::clone(&barrier);
+        let start = std::thread::spawn(move || {
+            start_barrier.wait();
+            start_local
+                .lock()
+                .unwrap()
+                .start_bootstrap_state_only(input())
+                .ok()
+        });
+        let close_local = Arc::clone(&local);
+        let close_barrier = Arc::clone(&barrier);
+        let close = std::thread::spawn(move || {
+            close_barrier.wait();
+            close_local.lock().unwrap().close();
+        });
+
+        let started = start.join().unwrap();
+        close.join().unwrap();
+        let mut local = local.lock().unwrap();
+        if let Some(started) = started {
+            assert!(local.bootstrap.status(&started.request_id).is_err());
+        }
+        assert_eq!(
+            local.start_bootstrap_state_only(input()).unwrap_err().code,
+            "bootstrap_request_refused"
+        );
+    }
 }

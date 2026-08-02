@@ -123,6 +123,13 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [V1 — bornage IPC et gate du helper Linux](v1-bootstrap-ipc-linux.md) :
+  contrats #43, courses de cycle de vie, build Console et inspection ELF
+  exécutés le 2 août 2026 ; WebKitGTK et JavaScriptCoreGTK sont des dépendances
+  directes du binaire Console, ce qui impose le helper compagnon distinct prévu
+  par #44. Le premier consentement GTK3 sans secret et la récolte autonome sont
+  prouvés ; le dialogue Win32, les secrets, le dispatch Tauri vivant et
+  l'équivalent Windows restent à prouver.
 - [`v0.0.3` — porte Linux Console–Controller](v0.0.3-console-controller-linux.md) :
   `.deb` signé et installé, coffre et appairage, deux Controllers séparés,
   matrice hostile depuis une seconde VM, frontière réseau privée, Relay

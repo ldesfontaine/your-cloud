@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AssociationSummary,
+  BootstrapSessionView,
+  BootstrapStartInput,
   ConsoleStatus,
   GeneratedLocalSecrets,
   InfrastructureView,
@@ -20,7 +22,11 @@ export type NativeErrorCode =
   | "association_failed"
   | "session_expired"
   | "controller_unavailable"
-  | "response_refused";
+  | "response_refused"
+  | "bootstrap_busy"
+  | "bootstrap_expired"
+  | "bootstrap_request_refused"
+  | "native_assistant_unavailable";
 
 export class NativeOperationError extends Error {
   readonly code: NativeErrorCode;
@@ -41,6 +47,10 @@ const knownErrorCodes = new Set<NativeErrorCode>([
   "session_expired",
   "controller_unavailable",
   "response_refused",
+  "bootstrap_busy",
+  "bootstrap_expired",
+  "bootstrap_request_refused",
+  "native_assistant_unavailable",
 ]);
 
 function toNativeError(value: unknown): NativeOperationError {
@@ -89,6 +99,12 @@ export const nativeConsole = {
       currentPhrase,
       newPhrase,
     }),
+  startBootstrap: (input: BootstrapStartInput) =>
+    namedOperation<BootstrapSessionView>("start_bootstrap", { input }),
+  bootstrapStatus: (requestId: string) =>
+    namedOperation<BootstrapSessionView>("bootstrap_status", { requestId }),
+  cancelBootstrap: (requestId: string) =>
+    namedOperation<void>("cancel_bootstrap", { requestId }),
   lock: () => namedOperation<void>("lock_console"),
   cancelPendingRequests: () => namedOperation<void>("cancel_pending_requests"),
   pair: (input: PairingInput) => namedOperation<AssociationSummary>("pair_controller", { input }),
@@ -141,6 +157,14 @@ export function localErrorMessage(code: NativeErrorCode): string {
       return "La liaison privée avec cette infrastructure est indisponible.";
     case "response_refused":
       return "La réponse reçue ne respecte pas le contrat de sécurité.";
+    case "bootstrap_busy":
+      return "Un parcours d’amorçage est déjà actif.";
+    case "bootstrap_expired":
+      return "Le parcours d’amorçage a expiré et doit être recommencé.";
+    case "bootstrap_request_refused":
+      return "Le parcours d’amorçage demandé n’est plus utilisable.";
+    case "native_assistant_unavailable":
+      return "L’assistant natif d’amorçage est indisponible.";
     case "console_unavailable":
       return "La Console ne peut pas terminer cette opération.";
   }
