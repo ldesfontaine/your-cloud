@@ -169,9 +169,7 @@ fn spawn_fixture(mode: &str, working_directory: &Path) -> GuardedChild {
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_DEFAULT_ERROR_MODE);
 
-    let child = command
-        .spawn()
-        .expect("spawn secret crash fixture");
+    let child = command.spawn().expect("spawn secret crash fixture");
     GuardedChild::new(child)
 }
 
