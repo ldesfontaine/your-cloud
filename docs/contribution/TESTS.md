@@ -13,7 +13,7 @@ la matrice native Linux/Windows déjà exécutée. La fermeture est attribuée a
 candidat produit exact `3b8f81f`, dont le run manuel `30710037004` entièrement
 vert est lié depuis l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9).
 Il prépare aussi les matrices
-d'amorçage et d'action V1 ; une ligne planifiée ne constitue jamais une preuve.
+d'amorçage et d'action de `v0.1.0` ; une ligne planifiée ne constitue jamais une preuve.
 
 Le bornage IPC #43 possède désormais sa propre porte exacte : le run manuel
 [`30753216798`](https://github.com/ldesfontaine/your-cloud/actions/runs/30753216798)
@@ -290,7 +290,7 @@ atteint la frontière applicative depuis l'IP exacte de `lab-coordinateur`, mais
 sans le bon certificat, afin de prouver que le filtre IP ne remplace pas mTLS.
 Chaque phase réaffirme ensuite l'état nominal et le nettoyage attendu.
 
-## Matrice V1 planifiée — amorçage et première action
+## Matrice `v0.1.0` planifiée — amorçage et première action
 
 Cette matrice projette les contrats désormais décidés dans
 [l'amorçage du Controller](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
@@ -333,7 +333,7 @@ avec des secrets exclusivement synthétiques.
 | remplacement du Controller | choix explicite, nouvelle association Console, Agents compatibles réutilisés, lecteur Relay limité au nouveau Controller, nouvelle époque et toutes identités exposées tournées avant retrait des seules anciennes identités marquées | remplacement automatique sur panne ambiguë, Controller compromis non isolé ou hôte non assaini, ancien lecteur/session/clé encore actif, Controller sain écrasé, clé personnelle ou inconnue retirée, ancienne identité retirée avant preuve de la nouvelle | planifié, non exécuté |
 | plan et sonde OCI | plan et rollback exacts approuvés, registre et digest épinglés, sonde locale Podman rootless/Quadlet ; premier passage `changed=true`, nouveau plan demandant le même état `changed=false`, retrait absent `changed=false` | plan altéré, expiré ou rejoué, digest flottant, registre, volume, port, privilège, système d'init ou cgroup hors contrat ; dérive corrigée silencieusement ou réécriture/redémarrage inutile | planifié, non exécuté |
 | échec, reprise et rollback | échec contrôlé tentant le rollback approuvé et borné ; échec du rollback rendu partiel ; injection d'une coupure à chaque étape d'amorçage, de rotation et d'action ; reconstruction des états `ancien seul`, `chevauchement borné`, `nouveau seul`, `inconnu` avant nouvelle décision | rollback non approuvé ou touchant une ressource externe, retrait dans un état inconnu, rejeu automatique, succès global inventé après coupure, continuation autonome non contractée | planifié, non exécuté |
-| ressources et échelle V1 | CPU, mémoire, processus et disque bornés avec le mécanisme disponible ; destinations, listeners, tailles, concurrences, délais et débits réseau mesurés sur petite machine ; cohabitation puis placement dédié ; scénarios à 1, 2 et 64 machines | dépassement silencieux, OOM ou saturation réseau masqués, limite systemd fictive, 65e machine acceptée dans le format courant, borne de 64 présentée comme limite définitive du produit | planifié, non exécuté |
+| ressources et échelle de `v0.1.0` | CPU, mémoire, processus et disque bornés avec le mécanisme disponible ; destinations, listeners, tailles, concurrences, délais et débits réseau mesurés sur petite machine ; cohabitation puis placement dédié ; scénarios à 1, 2 et 64 machines | dépassement silencieux, OOM ou saturation réseau masqués, limite systemd fictive, 65e machine acceptée dans le format courant, borne de 64 présentée comme limite définitive du produit | planifié, non exécuté |
 
 ## Matrice exécutée de `v0.0.2` — orchestration assistée
 
@@ -551,7 +551,7 @@ Deux notions sont utiles avant de lire le tableau :
 | avant d'intercaler l'App, un proxy ou un cache | réponse `QUERY` cacheable | `Cache-Control: no-store` ajouté | en-tête vérifié dans les tests Go, chaque requête saine du pilote et la matrice vivante ; aucun proxy réel dans ce palier |
 | avant d'élargir le contrat HTTP | parties query d'URI ignorées | `RawQuery` et `ForceQuery` refusés sur les deux routes | paramètres et `?` vide vérifiés au niveau Go et HTTP vivant |
 | avant de donner une valeur opérationnelle au seuil d'âge | conversion UTC prématurée | temps brut conservé pour le calcul, UTC réservé au rendu | recul contrôlé de l'émetteur et saut contrôlé du Relay, fraîcheur monotone et restauration ont réussi dans la référence post-réorganisation |
-| avant toute destination autre que le LAB figé | origine Daemon insuffisamment stricte | package et point d'entrée refusent utilisateur, chemin, query, fragment et toute origine autre que l'origine LAB exacte | cas hostiles Go ; la V1 définira son propre endpoint authentifié |
+| avant toute destination autre que le LAB figé | origine Daemon insuffisamment stricte | package et point d'entrée refusent utilisateur, chemin, query, fragment et toute origine autre que l'origine LAB exacte | cas hostiles Go ; `v0.1.0` définira son propre endpoint authentifié |
 | avant une fonction de mise à jour ou de rollback | installation ou remplacement partiel du lot | staging, restauration des fichiers, états systemd et rôles précédents | `/bin/false` injecté sur état absent puis installé ; absence ou ancienne empreinte et rôles parallèles sont restaurés automatiquement |
 | prochaine révision des tests HTTP | méthodes croisées non nommées | `GET /v0/machines`, `POST /v0/machines` et `QUERY /v0/presence` couverts | tests Go et pilote vivant |
 | lors de l'automatisation des retraits | la garde `stop_and_disable` est dupliquée dans `disable-relay` et `remove-agent` | les deux copies ont passé les scénarios LAB actuels | extraire seulement lorsque le pilote sait prouver les deux appelants, afin d'éviter leur divergence sans créer une bibliothèque shell prématurée |

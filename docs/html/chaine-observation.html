@@ -61,7 +61,7 @@
         <article class="card wide"><span class="tag">goroutine 2</span><h3>Publisher</h3><ol><li>prend la plus ancienne attente ;</li><li>POST vers le Relay exact ;</li><li>vérifie l'accusé durable ;</li><li>retire seulement cette séquence.</li></ol></article>
       </div>
       <p class="note">Ce ne sont pas deux services ni le futur worker d'automatisation : ce sont deux fonctions concurrentes dans le même PID. Le <code>context</code> les arrête ensemble et le <code>WaitGroup</code> attend leur sortie.</p>
-      <p class="note"><strong>Frontière V1 décidée, non implémentée et non prouvée :</strong> le futur chemin d'action de cette version n'ajoute aucun ordre au Daemon ni au Relay. Une identité SSH Your Cloud propre à la machine et une commande forcée lanceront <code>your-cloud aux</code> comme processus ponctuel séparé. Cette carte n'ajoutera ses fonctions et fichiers qu'après leur présence réelle dans le code.</p>
+      <p class="note"><strong>Frontière de <code>v0.1.0</code> décidée, non implémentée et non prouvée :</strong> le futur chemin d'action de cette version n'ajoute aucun ordre au Daemon ni au Relay. Une identité SSH Your Cloud propre à la machine et une commande forcée lanceront <code>your-cloud aux</code> comme processus ponctuel séparé. Cette carte n'ajoutera ses fonctions et fichiers qu'après leur présence réelle dans le code.</p>
     </section>
     <!-- coherence: AGENT-AUTHORITY:end -->
 

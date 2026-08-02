@@ -12,7 +12,7 @@ Personne qui représente, observe ou fait évoluer son infrastructure depuis You
 Groupe logique dans lequel l'utilisateur rassemble des machines et les services qui y sont placés.
 
 **Machine**:
-Hôte Linux physique ou virtuel déjà installé et accessible à Your Cloud jusqu'à la V1.
+Hôte Linux physique ou virtuel déjà installé et accessible à Your Cloud jusqu'à `v0.1.0`.
 
 **Machine enrôlée**:
 Machine dont l'identité a été explicitement approuvée pour rejoindre une infrastructure Your Cloud.
@@ -148,11 +148,11 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
 - Deux **Machines enrôlées** ne reçoivent aucune autorisation mutuelle générale :
   chaque communication reste limitée à un besoin déclaré.
 - Un **Service** est placé sur au moins une **Machine**.
-- Chaque **Machine** gérée par la V1 reçoit un **Agent** dont le **Daemon** ne
+- Chaque **Machine** gérée par `v0.1.0` reçoit un **Agent** dont le **Daemon** ne
   fait encore qu'observer.
 - Les **Daemons** transmettent leurs observations au **Relay**.
 - Une machine n'active pas nécessairement le rôle **Relay**, mais la chaîne
-  d'observation V1 exige un Relay explicitement provisionné pour l'infrastructure.
+  d'observation de `v0.1.0` exige un Relay explicitement provisionné pour l'infrastructure.
 - Un **Daemon** connaît uniquement son **Relay** approuvé. Il ne connaît aucun
   **Controller** et ne reçoit aucune action de sa part.
 - L'**Utilisateur** agit dans une **Console**. La Console contacte le
@@ -201,7 +201,7 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
 
 ## Flagged ambiguities
 
-- « Gérer une machine » signifie jusqu'à la V1 l'observer et y appliquer des
+- « Gérer une machine » signifie jusqu'à `v0.1.0` l'observer et y appliquer des
   déploiements approuvés. Cela ne signifie pas encore créer la VM ou installer
   son système d'exploitation.
 - « Ne jamais diffuser l'IP du LAN » signifie ne pas la publier comme

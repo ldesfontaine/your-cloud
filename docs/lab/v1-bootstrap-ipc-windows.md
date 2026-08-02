@@ -1,4 +1,4 @@
-# V1 — bornage IPC et helper Windows
+# `v0.1.0` — bornage IPC et helper Windows
 
 ## Statut
 
@@ -11,7 +11,7 @@ documentaire relie la preuve au contrat et ferme l'issue.
 
 Cette preuve ne ferme ni le consentement et la manipulation des secrets #45,
 ni l'accès SSH personnel #42, ni leur parente #35. Elle ne ferme donc ni le
-palier #13, ni sa milestone, ni la V1. La suite reste `#45 → #42 → #35` avant
+palier #13, ni sa milestone, ni `v0.1.0`. La suite reste `#45 → #42 → #35` avant
 les contrats exécutables et la preuve globale du palier.
 
 ## Candidat et exécutions

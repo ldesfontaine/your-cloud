@@ -1,4 +1,4 @@
-# V1 — bornage IPC et gate du helper Linux
+# `v0.1.0` — bornage IPC et gate du helper Linux
 
 ## Statut
 
@@ -267,7 +267,7 @@ préserver la frontière exacte du snapshot et du LAB décrits dans ce document.
 
 ## Décision propagée
 
-Le helper V1 devient un crate et un binaire compagnon autonomes
+Le helper de `v0.1.0` devient un crate et un binaire compagnon autonomes
 `your-cloud-native-bootstrap-assistant`, livrés dans la même release mais sans
 dépendance à la Console, Tauri, Wry, Tao, WebKit ou JavaScriptCore. Sa fermeture
 exigera le graphe Cargo, le `DT_NEEDED`, les dépendances transitives et

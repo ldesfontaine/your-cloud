@@ -162,4 +162,4 @@ historique, base de données, App, Auxiliaire, Ansible métier, conteneur, servi
 utilisateur, WireGuard et tout détail d'un palier suivant restent absents.
 `v0.0.1` compare les octets par SHA-256, mais ne revendique pas encore signature,
 SBOM ou provenance de release : ces garanties restent exigées avant la preuve
-finale V1.
+finale de `v0.1.0`.

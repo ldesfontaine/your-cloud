@@ -20,8 +20,8 @@ sources.
 | `CONTEXT.md` | Le vocabulaire et les relations du domaine, sans choix d'implémentation |
 | `docs/README.md` | La carte de navigation, jamais une décision produit |
 | `docs/projet/CAP.md` | La destination à long terme et les contraintes durables |
-| `docs/objectifs/v1/README.md` | Ce qui doit être vrai pour déclarer la V1 atteinte |
-| `docs/objectifs/v1/ROADMAP.md` | L'ordre des preuves jusqu'à la V1 et le prochain incrément détaillé |
+| `docs/objectifs/v1/README.md` | Ce qui doit être vrai pour déclarer la version `v0.1.0` atteinte |
+| `docs/objectifs/v1/ROADMAP.md` | L'ordre des preuves jusqu'à `v0.1.0` et le prochain incrément détaillé |
 | `docs/contribution/QUALITE.md` | Les règles de conception, développement et validation |
 | `docs/contribution/CI.md` | Les déclenchements, permissions, placements et limites des contrôles GitHub Actions |
 | `docs/contribution/TESTS.md` | Le registre des contrôles, incidents et écarts à automatiser, jamais une preuve par lui-même |

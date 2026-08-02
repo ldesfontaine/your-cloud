@@ -1,4 +1,4 @@
-# Roadmap V1
+# Roadmap vers `v0.1.0`
 
 > Statut : `v0.0.1` et `v0.0.2` sont décidées, implémentées et prouvées dans le
 > LAB. Les huit paramètres de `v0.0.3` sont validés. Sa
@@ -20,9 +20,9 @@ Markdown.
 ## Rôle de cette roadmap
 
 Le [cap du projet](../../projet/CAP.md) décrit la destination à long terme et
-l'[objectif V1](README.md) fixe la première ligne d'arrivée. Cette roadmap
+l'[objectif v0.1.0](README.md) fixe la première ligne d'arrivée. Cette roadmap
 ne remplace aucun des deux : elle ordonne seulement les preuves nécessaires
-pour atteindre la V1.
+pour atteindre `v0.1.0`.
 
 Il n'existe volontairement pas de roadmap globale découpant aujourd'hui toutes
 les versions futures. Les idées postérieures restent dans le cap et seront
@@ -46,14 +46,14 @@ cadrées lorsqu'elles deviendront le prochain objectif réel.
   signalée et fermée avant d'exposer le composant ou de lui donner une autorité
   supplémentaire.
 - Une nouvelle capacité ne peut pas entrer par simple modification de roadmap :
-  si elle change la ligne d'arrivée, le contrat V1 doit être rediscuté et
+  si elle change la ligne d'arrivée, le contrat de `v0.1.0` doit être rediscuté et
   revalidé d'abord.
 
 ## Suivi d'exécution par issues
 
 Chaque palier ou étape décidé possède désormais une issue GitHub. La présente
 roadmap reste l'autorité de l'ordre et du contrat ; l'issue suit l'exécution,
-les dépendances et les preuves. L'[issue V1 #20](https://github.com/ldesfontaine/your-cloud/issues/20)
+les dépendances et les preuves. L'[issue de suivi #20 pour v0.1.0](https://github.com/ldesfontaine/your-cloud/issues/20)
 relie l'ensemble. Avant d'implémenter un palier macroscopique, son issue est
 découpée en sous-issues exécutables.
 
@@ -66,7 +66,7 @@ découpée en sous-issues exécutables.
 | Limiter le passage privé au service approuvé | [`#16`](https://github.com/ldesfontaine/your-cloud/issues/16) |
 | Prouver le profil privé Vaultwarden optionnel | [`#17`](https://github.com/ldesfontaine/your-cloud/issues/17) |
 | Rendre la responsabilité externe visible | [`#18`](https://github.com/ldesfontaine/your-cloud/issues/18) |
-| Prouver le scénario complet et les artefacts V1 | [`#19`](https://github.com/ldesfontaine/your-cloud/issues/19) |
+| Prouver le scénario complet et les artefacts de `v0.1.0` | [`#19`](https://github.com/ldesfontaine/your-cloud/issues/19) |
 
 L'issue `#9` est le registre unique de la preuve finale. Elle lie désormais le
 run manuel `30710037004`, entièrement vert, au candidat produit exact
@@ -79,7 +79,7 @@ jamais rétroactivement la preuve de ce SHA.
 La licence du dépôt public ([`#11`](https://github.com/ldesfontaine/your-cloud/issues/11))
 et la signature Windows publique gratuite
 ([`#12`](https://github.com/ldesfontaine/your-cloud/issues/12)) peuvent avancer
-en parallèle, mais doivent être fermées avant la release V1. Le routage CI par
+en parallèle, mais doivent être fermées avant la release `v0.1.0`. Le routage CI par
 domaines ([`#10`](https://github.com/ldesfontaine/your-cloud/issues/10)) reste
 un chantier transverse non bloquant pour le contrat produit.
 
@@ -91,36 +91,36 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | Élément | Décidé | Implémenté | Prouvé |
 |---|---:|---:|---:|
 | Cap global | oui | sans objet | sans objet |
-| Contrat V1 | oui | non | non |
+| Contrat de `v0.1.0` | oui | non | non |
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
 | `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat produit Linux/Windows `3b8f81f` | oui — fonctionnel LAB Linux ; porte native finale verte dans `30710037004`, liée au SHA exact par `#9` |
-| Amorçage et remplacement du Controller | oui — prochain contrat V1 ouvert après `v0.0.3` | non | non |
-| Autres paliers postérieurs de la V1 | proposés, à relire | non | non |
+| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | non | non |
+| Autres paliers de `v0.1.0` | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
 
 Cette table sert d'index de contrôle. Elle ne transforme pas les décisions
 postérieures en backlog et ne leur attribue aucune version : elle empêche
-simplement la roadmap V1 d'oublier la direction déjà validée.
+simplement la roadmap de `v0.1.0` d'oublier la direction déjà validée.
 
-| Sujet | Avant la fin de la V1 | Direction conservée après la V1 | Source détaillée |
+| Sujet | Avant la fin de `v0.1.0` | Direction conservée après `v0.1.0` | Source détaillée |
 |---|---|---|---|
 | Produit | Représenter l'infrastructure de référence, observer deux machines et déployer deux profils de service explicitement sélectionnés depuis une interface qui montre les opérations réelles | Étendre progressivement l'observation, les opérations et les plateformes sans retirer les parcours externes ni imposer cette topologie | [Cap](../../projet/CAP.md) |
 | Machines | Partir de machines Linux déjà installées | Provisionner plus tard par des intégrations OpenStack et Terraform/OpenTofu explicites | [Cap](../../projet/CAP.md) |
 | Amorçage | Assistant natif temporaire ; secrets hors WebView, endpoints déclarés sans scan, route SSH vérifiée depuis le Controller, artefact avant accès forcé, état temporaire détruit après transfert et accès utilisateur conservé | Réutiliser le parcours pour remplacer toutes les autorités du Controller sans ajouter une troisième autorité SSH ; sauvegarder son état reste un sujet séparé | [Contrat d'amorçage](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) |
 | Agent | Un exécutable `your-cloud` identique par version sur chaque machine ; Daemon actif après enrôlement, Relay refusé sans activation et Auxiliaire lancé seulement pour un plan approuvé | Conserver un cycle de vie unique avec des capacités optionnelles explicitement activées et des processus isolés | [Glossaire](../../../CONTEXT.md) et [cap](../../projet/CAP.md) |
 | Daemon | Processus permanent Go, non-root, sans port entrant ; collecteurs nommés, tampon borné et communications sortantes vers son Relay approuvé | Rester consacré à l'observation, sans connaître le Controller ni transporter de plan ; le chemin d'action reste distinct | [Cap](../../projet/CAP.md) |
-| Relay | Mode du même exécutable, activé seulement sur le VPS candidat ; processus, compte, identité, secrets et stockage séparés du Daemon ; aucun ordre retour | Rester une frontière d'observation explicitement provisionnée : le Controller peut obtenir son dernier état d'observation validé, mais le Relay ne porte ni utilisateur, ni inventaire métier, ni statut d'interface, ni canal d'action | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
+| Relay | Mode du même exécutable, activé seulement sur le VPS candidat ; processus, compte, identité, secrets et stockage séparés du Daemon ; aucun ordre retour | Rester une frontière d'observation explicitement provisionnée : le Controller peut obtenir son dernier état d'observation validé, mais le Relay ne porte ni utilisateur, ni inventaire métier, ni statut d'interface, ni canal d'action | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
 | Auxiliaire local | Mode ponctuel du même artefact, lancé par commande SSH forcée root-owned pour une enveloppe signée ; aucun listener, accès réseau général ou shell | Garder cette autorité pour les opérations Linux locales et utiliser une API ou un runner isolé pour les autres plateformes | [Cap](../../projet/CAP.md) |
-| Chemin d'action | Plan et rollback exacts → confirmation et signature natives → transport Controller → clé publique, époque et anti-rejeu local → Auxiliaire → vérification | Garder le même plan approuvé mais choisir l'autorité adaptée : Auxiliaire pour Linux local, API OpenStack, runner IaC isolé ou API K3s | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
-| App | Console cliente installée et signée sur Linux et Windows, frontend embarqué sans serveur local ; Controller backend d'une infrastructure sans frontend | Controller privé derrière WireGuard, clé de pair et identité distinctes par appareil administrateur, authentification humaine et fournisseur central d'identité facultatif ; téléphone puis navigateur public seulement comme modes futurs séparés | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
-| Chiffrement et identités | mTLS séparés pour l'observation, identité SSH par machine, approbation signée et anti-rejeu local, HTTPS pour le Web ; l'accès SSH personnel reste indépendant | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif V1](README.md) |
-| Exposition des services | Scénario LAB de référence avec Traefik sur le VPS, file provider sans socket de moteur et deux profils optionnels sur la même IP et `443` ; BentoPDF local et Vaultwarden atteint uniquement par WireGuard | Accepter d'autres placements pris en charge ou externes et représenter plus tard une vraie DMZ seulement si des frontières réseau indépendantes sont appliquées et vérifiées | [Objectif V1](README.md) et [cap](../../projet/CAP.md) |
-| Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif V1](README.md) |
-| Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif V1](README.md) |
+| Chemin d'action | Plan et rollback exacts → confirmation et signature natives → transport Controller → clé publique, époque et anti-rejeu local → Auxiliaire → vérification | Garder le même plan approuvé mais choisir l'autorité adaptée : Auxiliaire pour Linux local, API OpenStack, runner IaC isolé ou API K3s | [Cap](../../projet/CAP.md) et [objectif v0.1.0](README.md) |
+| App | Console cliente installée et signée sur Linux et Windows, frontend embarqué sans serveur local ; Controller backend d'une infrastructure sans frontend | Controller privé derrière WireGuard, clé de pair et identité distinctes par appareil administrateur, authentification humaine et fournisseur central d'identité facultatif ; téléphone puis navigateur public seulement comme modes futurs séparés | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
+| Chiffrement et identités | mTLS séparés pour l'observation, identité SSH par machine, approbation signée et anti-rejeu local, HTTPS pour le Web ; l'accès SSH personnel reste indépendant | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif v0.1.0](README.md) |
+| Exposition des services | Scénario LAB de référence avec Traefik sur le VPS, file provider sans socket de moteur et deux profils optionnels sur la même IP et `443` ; BentoPDF local et Vaultwarden atteint uniquement par WireGuard | Accepter d'autres placements pris en charge ou externes et représenter plus tard une vraie DMZ seulement si des frontières réseau indépendantes sont appliquées et vérifiées | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
+| Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif v0.1.0](README.md) |
+| Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif v0.1.0](README.md) |
 | Sécurité et preuves | Justification OWASP et NIS2 proportionnée, refus hostiles, secrets synthétiques, artefacts épinglés, rapport visuel et aucune revendication de conformité | Conserver le moindre privilège, les mises à jour séparées, la révocation, les SBOM, la provenance et les risques résiduels visibles | [Qualité](../../contribution/QUALITE.md) et [cap](../../projet/CAP.md) |
-| Premier jalon post-V1 | Hors V1 | `v1.0.1` : petit parcours SSO OpenID Connect pour Vaultwarden ; fournisseur, placement et récupération seront cadrés seulement après la preuve V1 | [Cap](../../projet/CAP.md) |
+| Premier jalon après `v0.1.0` | Hors de `v0.1.0` | `v0.1.1` : petit parcours SSO OpenID Connect pour Vaultwarden ; fournisseur, placement et récupération seront cadrés seulement après la preuve de `v0.1.0` | [Cap](../../projet/CAP.md) |
 
 ## Incrément prouvé : `v0.0.1`
 
@@ -349,7 +349,7 @@ La preuve s'exécute dans le LAB et les runners isolés, jamais sur le laptop de
 développement. WireGuard, téléphone, navigateur public, SSO obligatoire et
 passerelle Web restent hors de `v0.0.3`. La cible finale conserve l'API du
 Controller privée derrière WireGuard avec une clé de pair révocable par appareil
-administrateur. Un futur palier post-V1 devra rendre cette liaison manipulable
+administrateur. Un futur palier postérieur à `v0.1.0` devra rendre cette liaison manipulable
 depuis la Console par une opération nommée, bornée au Controller, avec
 déverrouillage, timeout et déconnexion explicite sans exposer la clé au
 frontend ; son mécanisme reste ouvert. Les services publics gardent leur accès
@@ -555,10 +555,10 @@ silencieusement, ni présenté comme géré ; l'App annonce clairement ce qu'ell
 peut ni mettre à jour, ni restaurer, ni supprimer.
 <!-- coherence: OWNERSHIP-MODES:end -->
 
-### Preuve complète de la V1
+### Preuve complète de `v0.1.0`
 
 **Résultat :** rejouer depuis une base LAB propre le scénario complet de
-l'[objectif V1](README.md), puis produire les artefacts et preuves de
+l'[objectif v0.1.0](README.md), puis produire les artefacts et preuves de
 release.
 
 **Preuve de sortie :** deux machines observées, deux véritables services
@@ -569,13 +569,13 @@ propre, refus hostiles réseau et autorisation, secrets expurgés, versions
 épinglées, SBOM, provenance et rapport visuel. La preuve confirme que les
 profils peuvent être sélectionnés ; elle n'en fait pas des installations par
 défaut. Une signature Windows synthétique ne suffit pas à une distribution
-publique. Toute capacité non prouvée reste annoncée comme telle et bloque la V1.
+publique. Toute capacité non prouvée reste annoncée comme telle et bloque `v0.1.0`.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
-## Frontières d'autorité conservées au-delà de la V1
+## Frontières d'autorité conservées au-delà de `v0.1.0`
 
 La roadmap s'arrête à la preuve complète précédente. Les frontières suivantes
-s'appliquent déjà au chemin V1 et empêchent une future roadmap de repartir
+s'appliquent déjà au chemin de `v0.1.0` et empêchent une future roadmap de repartir
 d'une architecture contradictoire :
 
 - l'Agent reste une installation unique ; son Daemon permanent non-root et son
@@ -587,28 +587,28 @@ d'une architecture contradictoire :
 - le chemin des plans reste séparé du Daemon et du Relay d'observation.
   L'Auxiliaire revérifie indépendamment origine, cible, empreinte, approbation,
   expiration, anti-rejeu et limites sémantiques locales ;
-- une coupure rend le résultat inconnu ; la V1 n'ajoute ni rejeu aveugle, ni
+- une coupure rend le résultat inconnu ; `v0.1.0` n'ajoute ni rejeu aveugle, ni
   journal local permettant une continuation autonome ;
 - une action OpenStack, Terraform/OpenTofu, Ansible ou K3s utilise l'API ou le
   runner adapté au lieu de détourner artificiellement l'Agent d'une machine ;
 - Ansible reste un outil du mode externe et une intégration future possible,
-  pas une dépendance du Controller ou des machines V1 ;
+  pas une dépendance du Controller ou des machines de `v0.1.0` ;
 - le Controller final reste privé derrière WireGuard, chaque appareil
   administrateur est enrôlé séparément et l'authentification humaine reste
   nécessaire ; une passerelle Web publique demeure une option distincte ;
 - la découverte assistée reste locale aux machines enrôlées, en lecture seule,
   et ne transforme jamais un appareil voisin en élément de confiance ;
 - une vraie DMZ n'est revendiquée qu'après preuve de frontières filtrantes
-  indépendantes ; le VPS de la V1 reste seulement une zone d'exposition durcie.
+  indépendantes ; le VPS de `v0.1.0` reste seulement une zone d'exposition durcie.
 
 Cette section ne planifie ni OpenStack, ni Terraform/OpenTofu, ni K3s, ni
 runner Ansible, ni découverte assistée, ni haute disponibilité. Elle fixe leurs
 frontières avant leur futur cadrage.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
-Le seul jalon déjà noté après cette limite est la demande d'une `v1.0.1` pour un
+Le seul jalon déjà noté après cette limite est la demande d'une `v0.1.1` pour un
 petit parcours SSO OpenID Connect de Vaultwarden. Son fournisseur, son placement
-et sa récupération seront cadrés après la preuve V1 ; ils ne font pas partie de
+et sa récupération seront cadrés après la preuve de `v0.1.0` ; ils ne font pas partie de
 la présente roadmap.
 
 ## Points volontairement non décidés
@@ -618,12 +618,12 @@ la présente roadmap.
   projet. Le dépôt ne contient actuellement aucune licence ; son choix reste
   une décision explicite du mainteneur et ne sera pas déduit uniquement pour
   obtenir une signature.
-- Windows Hello, passkeys, FIDO2 et SSO/OIDC restent post-V1 ; la phrase, le
+- Windows Hello, passkeys, FIDO2 et SSO/OIDC restent postérieurs à `v0.1.0` ; la phrase, le
   coffre, l'appairage, les certificats, sessions, rotations, révocations et la
-  récupération locale de la V1 sont décidés et ne sont plus des points ouverts.
+  récupération locale de `v0.1.0` sont décidés et ne sont plus des points ouverts.
 - Le placement et le protocole d'une éventuelle passerelle Web publique après la
-  V1 ; le Controller privé derrière WireGuard et le SSO facultatif sont décidés.
-- Le fournisseur, le placement et la récupération du SSO `v1.0.1` de
+  `v0.1.0` ; le Controller privé derrière WireGuard et le SSO facultatif sont décidés.
+- Le fournisseur, le placement et la récupération du SSO `v0.1.1` de
   Vaultwarden ; ce jalon de service ne rend pas le SSO obligatoire pour le
   Controller.
 
@@ -636,7 +636,7 @@ exact `02fe4f5`. La porte native Linux/Windows finale a réussi sur le candidat
 produit `3b8f81f` dans le run `30710037004`, sans prétendre rejouer la topologie
 multi-VM. L'issue `#9` relie cette preuve au SHA intégré par fast-forward :
 `v0.0.3` est fermée. Le budget du projet reste nul. L'amorçage et le
-remplacement du Controller appartiennent au contrat V1 et restent ouverts, mais
+remplacement du Controller appartiennent au contrat de `v0.1.0` et restent ouverts, mais
 leur socle helper/IPC `#43` est implémenté et prouvé sous Linux et Windows sur
 `f3fef79` par le run `30753216798`. Ce résultat ne ferme ni `#35`, ni le palier
 `#13`, ni son milestone : l'ordre restant est `#45`, `#42`, `#35`, puis les

@@ -150,12 +150,12 @@
       <article class="machine refused"><h3>Pas proposé par défaut</h3><small>Laptop ou VPS public du Relay</small><p>Le laptop n’est pas permanent ; la zone exposée n’est pas la place naturelle du Controller.</p></article>
     </div>
     <div class="resource-list" aria-label="Budgets de ressources séparés"><span>CPU</span><span>Mémoire</span><span>Processus</span><span>Disque</span><span>Réseau</span></div>
-    <p class="boundary">Les machines peuvent être lentes ou hétérogènes. CPU, mémoire, processus et disque sont bornés par systemd, cgroup v2 et quotas disponibles ; le réseau par les listeners, destinations, tailles, concurrences, délais et débits propres au rôle, jamais par systemd générique. L’Assistant refuse un placement insuffisant avec sa cause. La borne de 64 machines appartient à la V1 et à ses preuves, pas à la promesse générale du produit.</p>
+    <p class="boundary">Les machines peuvent être lentes ou hétérogènes. CPU, mémoire, processus et disque sont bornés par systemd, cgroup v2 et quotas disponibles ; le réseau par les listeners, destinations, tailles, concurrences, délais et débits propres au rôle, jamais par systemd générique. L’Assistant refuse un placement insuffisant avec sa cause. La borne de 64 machines appartient à <code>v0.1.0</code> et à ses preuves, pas à la promesse générale du produit.</p>
 
     <h2>Un lot vérifiable, pas un téléchargement root improvisé</h2>
     <div class="facts">
       <article class="bundle">
-        <h3>Bundle Console V1</h3>
+        <h3>Bundle Console <code>v0.1.0</code></h3>
         <ul>
           <li>Assistant natif temporaire ;</li>
           <li>unique paquet serveur <code>.deb</code> Debian 13 <code>amd64</code> ;</li>
@@ -167,7 +167,7 @@
       </article>
       <article class="card warning">
         <h3>Bornes de distribution</h3>
-        <p>Un <code>.deb</code> isolé ne prouve ni son authenticité, ni un rollback global. L’Assistant restaure l’absence ou la version antérieure avant transfert ; tout état inconnu interdit un retrait aveugle. Mise à jour manuelle en V1. <code>arm64</code> attend une preuve LAB dédiée. Une signature Windows synthétique ne vaut pas distribution publique reconnue.</p>
+        <p>Un <code>.deb</code> isolé ne prouve ni son authenticité, ni un rollback global. L’Assistant restaure l’absence ou la version antérieure avant transfert ; tout état inconnu interdit un retrait aveugle. Mise à jour manuelle dans <code>v0.1.0</code>. <code>arm64</code> attend une preuve LAB dédiée. Une signature Windows synthétique ne vaut pas distribution publique reconnue.</p>
       </article>
     </div>
     <p class="boundary"><strong>Choix de sécurité :</strong> le paquet Debian évite de réimplémenter sous <code>root</code> l’extraction, l’inventaire, les permissions et le retrait d’une archive. Ses scripts éventuels restent minimaux et n’activent aucun rôle. Retirer le paquet n’efface jamais implicitement configurations, secrets ou identités.</p>
@@ -183,7 +183,7 @@
         <p>Joignabilité depuis le Controller, entrée Auxiliaire en lecture seule, remplacement de toutes les autorités, états partiels honnêtes et ancienne base compromise isolée.</p>
       </article>
     </div>
-    <p class="boundary"><strong>Limite V1 :</strong> pas de bascule automatique, troisième autorité SSH, scan de récupération, conservation de la clé personnelle, reprise autonome d’une action interrompue ou Ansible obligatoire. Une coupure pendant une mutation donne un <code>résultat inconnu</code> : observer d’abord, ne jamais rejouer aveuglément.</p>
+    <p class="boundary"><strong>Limites de <code>v0.1.0</code> :</strong> pas de bascule automatique, troisième autorité SSH, scan de récupération, conservation de la clé personnelle, reprise autonome d’une action interrompue ou Ansible obligatoire. Une coupure pendant une mutation donne un <code>résultat inconnu</code> : observer d’abord, ne jamais rejouer aveuglément.</p>
     <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
     <footer>Source canonique : <a href="../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md">AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md</a> · <a href="index.html">Index visuel</a></footer>
