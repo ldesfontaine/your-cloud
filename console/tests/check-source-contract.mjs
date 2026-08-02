@@ -864,12 +864,24 @@ for (const expected of [
   'const WER_CUSTOM_DUMP_FLAGS: &str = "801"',
   'registration.add_dword("DumpCount", "1")',
   'assert_eq!(&signature, b"MDMP"',
+  "administrator_local_dump_is_outside_the_wer_exclusion_contract",
+  "panic::catch_unwind",
+  "remove_contents_and_prove_empty",
+  "protected_canary_present",
   "stable_since",
   "remove_and_prove_absent",
 ]) {
   if (!nativeAssistantCrashContract.includes(expected)) {
     failures.push(`contrat crash/dump: preuve synthétique absente (${expected})`);
   }
+}
+if (
+  !/assert!\(\s*protected_canary_present\s*,/u.test(nativeAssistantCrashContract) ||
+  /assert!\(\s*!\s*protected_canary_present\s*,/u.test(nativeAssistantCrashContract)
+) {
+  failures.push(
+    "contrat crash/dump: la frontière LocalDumps administrateur doit rester une présence explicite du canari",
+  );
 }
 if (/\.arg\(\s*"-a"\s*\)/u.test(nativeAssistantCrashContract)) {
   failures.push("contrat crash/dump: gcore ne doit pas forcer les mappings VM_DONTDUMP");

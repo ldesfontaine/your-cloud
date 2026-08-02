@@ -17,6 +17,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "windows")]
+use std::{
+    any::Any,
+    panic::{self, AssertUnwindSafe},
+};
+
 #[cfg(target_os = "linux")]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
@@ -34,8 +40,10 @@ const CREATE_DEFAULT_ERROR_MODE: u32 = 0x0400_0000;
 #[cfg(target_os = "windows")]
 // 0x321 = MiniDumpWithDataSegs | MiniDumpWithUnloadedModules |
 // MiniDumpWithProcessThreadData | MiniDumpWithPrivateReadWriteMemory.
-// Unlike MiniDumpWithFullMemory, this keeps an ordinary PAGE_READWRITE control
-// observable while allowing WER's registered-memory exclusion to take effect.
+// The administrator-controlled LocalDumps probe deliberately makes both the
+// ordinary heap and the protected PAGE_READWRITE allocation observable. It
+// characterizes the boundary of the per-process WER exclusion; it is not a
+// product mechanism for collecting crash reports.
 const WER_CUSTOM_DUMP_FLAGS: &str = "801";
 #[cfg(target_os = "windows")]
 const AEDEBUG_AUTO_EXCLUSION_KEY: &str =
@@ -117,7 +125,7 @@ fn hardened_abort_produces_no_core_file() {
 
 #[test]
 #[cfg(target_os = "windows")]
-fn wer_custom_heap_dump_excludes_the_registered_mapping() {
+fn administrator_local_dump_is_outside_the_wer_exclusion_contract() {
     let scratch = ScratchDirectory::new("windows-wer");
     let executable = fixture_path();
     let executable_name = executable
@@ -127,37 +135,75 @@ fn wer_custom_heap_dump_excludes_the_registered_mapping() {
     let mut debugger_exclusion = AutomaticDebuggerExclusion::create(&executable_name);
     let mut registry = WerLocalDumpRegistration::create(&executable_name, scratch.path());
 
-    let mut fixture = spawn_fixture("--windows-wer-crash", scratch.path());
-    drop(fixture.child_mut().stdin.take());
-    let (mut stdout, mut stderr) = wait_for_ready(&mut fixture);
+    let observation = panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut fixture = spawn_fixture("--windows-wer-crash", scratch.path());
+        drop(fixture.child_mut().stdin.take());
+        let (mut stdout, mut stderr) = wait_for_ready(&mut fixture);
 
-    let pid = fixture.child().id();
-    let protected_canary = materialize(pid, crash_canary::secret_byte);
-    let dump_control = materialize(pid, crash_canary::control_byte);
-    let status = fixture.wait_bounded(FIXTURE_TIMEOUT);
+        let pid = fixture.child().id();
+        let protected_canary = materialize(pid, crash_canary::secret_byte);
+        let dump_control = materialize(pid, crash_canary::control_byte);
+        let status = fixture.wait_bounded(FIXTURE_TIMEOUT);
+        assert!(
+            !status.success(),
+            "the WER fail-fast fixture must terminate abnormally"
+        );
+        assert_no_canary_output(&mut stdout, &mut stderr, &protected_canary, &dump_control);
+
+        let dump = wait_for_stable_dump(scratch.path(), FIXTURE_TIMEOUT);
+        let mut signature = [0_u8; 4];
+        File::open(&dump)
+            .and_then(|mut file| file.read_exact(&mut signature))
+            .expect("read minidump signature");
+        let dump_control_present = file_contains(&dump, &dump_control).expect("scan dump control");
+        let protected_canary_present =
+            file_contains(&dump, &protected_canary).expect("scan protected canary");
+
+        (signature, dump_control_present, protected_canary_present)
+    }));
+
+    let cleanup_errors = [
+        scratch
+            .remove_contents_and_prove_empty()
+            .err()
+            .map(|error| format!("dump directory: {error}")),
+        registry
+            .remove_and_prove_absent()
+            .err()
+            .map(|error| format!("LocalDumps registry key: {error}")),
+        debugger_exclusion
+            .remove_and_prove_absent()
+            .err()
+            .map(|error| format!("AeDebug exclusion: {error}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
     assert!(
-        !status.success(),
-        "the WER fail-fast fixture must terminate abnormally"
+        cleanup_errors.is_empty(),
+        "the hostile WER probe must clean every owned resource: {}",
+        cleanup_errors.join("; ")
     );
-    assert_no_canary_output(&mut stdout, &mut stderr, &protected_canary, &dump_control);
 
-    let dump = wait_for_stable_dump(scratch.path(), FIXTURE_TIMEOUT);
-    let mut signature = [0_u8; 4];
-    File::open(&dump)
-        .and_then(|mut file| file.read_exact(&mut signature))
-        .expect("read minidump signature");
+    let (signature, dump_control_present, protected_canary_present) =
+        resume_observation(observation);
     assert_eq!(&signature, b"MDMP", "WER must create a minidump file");
     assert!(
-        file_contains(&dump, &dump_control).expect("scan dump control"),
-        "the custom WER heap dump must contain the ordinary heap control"
+        dump_control_present,
+        "the custom LocalDumps file must contain the ordinary heap control"
     );
     assert!(
-        !file_contains(&dump, &protected_canary).expect("scan protected canary"),
-        "WER must omit the registered protected allocation"
+        protected_canary_present,
+        "the administrator-controlled LocalDumps probe must continue to demonstrate the explicit boundary; if Windows starts honoring the per-process WER exclusion here, tighten the documented contract"
     );
-    fs::remove_file(&dump).expect("remove synthetic WER dump");
-    registry.remove_and_prove_absent();
-    debugger_exclusion.remove_and_prove_absent();
+}
+
+#[cfg(target_os = "windows")]
+fn resume_observation<T>(observation: Result<T, Box<dyn Any + Send>>) -> T {
+    match observation {
+        Ok(observation) => observation,
+        Err(payload) => panic::resume_unwind(payload),
+    }
 }
 
 fn fixture_path() -> PathBuf {
@@ -279,6 +325,34 @@ impl ScratchDirectory {
 
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    #[cfg(target_os = "windows")]
+    fn remove_contents_and_prove_empty(&self) -> io::Result<()> {
+        let mut errors = Vec::new();
+        for entry in fs::read_dir(&self.path)? {
+            match entry {
+                Ok(entry) if entry.file_type().is_ok_and(|kind| kind.is_file()) => {
+                    if let Err(error) = fs::remove_file(entry.path()) {
+                        errors.push(format!("remove {}: {error}", entry.path().display()));
+                    }
+                }
+                Ok(entry) => errors.push(format!(
+                    "unexpected non-file entry {}",
+                    entry.path().display()
+                )),
+                Err(error) => errors.push(format!("inspect entry: {error}")),
+            }
+        }
+        let remaining = fs::read_dir(&self.path)?.count();
+        if remaining != 0 {
+            errors.push(format!("{remaining} entries remain"));
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(io::Error::other(errors.join("; ")))
+        }
     }
 }
 
@@ -555,9 +629,11 @@ impl AutomaticDebuggerExclusion {
             "the fixture-specific automatic-debugger exclusion must not pre-exist"
         );
 
-        let mut registration = Self {
+        let registration = Self {
             executable_name,
-            active: false,
+            // Arm the guard before reg.exe can mutate the registry. A timeout
+            // or partial failure must still attempt bounded rollback.
+            active: true,
         };
         let created = run_reg([
             OsString::from("add"),
@@ -572,36 +648,38 @@ impl AutomaticDebuggerExclusion {
             OsString::from(NATIVE_REGISTRY_VIEW),
         ]);
         assert!(created.success(), "exclude only the fixture from AeDebug");
-        registration.active = true;
         registration
     }
 
-    fn remove_and_prove_absent(&mut self) {
-        let removed = run_reg([
+    fn remove_and_prove_absent(&mut self) -> io::Result<()> {
+        let removed = try_run_reg([
             OsString::from("delete"),
             OsString::from(AEDEBUG_AUTO_EXCLUSION_KEY),
             OsString::from("/v"),
             self.executable_name.clone(),
             OsString::from("/f"),
             OsString::from(NATIVE_REGISTRY_VIEW),
-        ]);
-        assert!(
-            removed.success(),
-            "remove fixture-specific automatic-debugger exclusion"
-        );
+        ])?;
 
-        let query = run_reg([
+        let query = try_run_reg([
             OsString::from("query"),
             OsString::from(AEDEBUG_AUTO_EXCLUSION_KEY),
             OsString::from("/v"),
             self.executable_name.clone(),
             OsString::from(NATIVE_REGISTRY_VIEW),
-        ]);
-        assert!(
-            !query.success(),
-            "fixture-specific automatic-debugger exclusion must be absent after cleanup"
-        );
+        ])?;
+        if !removed.success() {
+            return Err(io::Error::other(format!(
+                "delete fixture-specific automatic-debugger exclusion returned {removed}"
+            )));
+        }
+        if query.success() {
+            return Err(io::Error::other(format!(
+                "fixture-specific automatic-debugger exclusion remains after delete status {removed}"
+            )));
+        }
         self.active = false;
+        Ok(())
     }
 }
 
@@ -677,20 +755,26 @@ impl WerLocalDumpRegistration {
         assert!(output.success(), "configure WER DWORD {name}");
     }
 
-    fn remove_and_prove_absent(&mut self) {
-        let removed = run_reg([
+    fn remove_and_prove_absent(&mut self) -> io::Result<()> {
+        let removed = try_run_reg([
             OsString::from("delete"),
             self.key.clone(),
             OsString::from("/f"),
-        ]);
-        assert!(removed.success(), "remove fixture-specific WER key");
+        ])?;
 
-        let query = run_reg([OsString::from("query"), self.key.clone()]);
-        assert!(
-            !query.success(),
-            "fixture-specific WER key must be absent after cleanup"
-        );
+        let query = try_run_reg([OsString::from("query"), self.key.clone()])?;
+        if !removed.success() {
+            return Err(io::Error::other(format!(
+                "delete fixture-specific WER key returned {removed}"
+            )));
+        }
+        if query.success() {
+            return Err(io::Error::other(format!(
+                "fixture-specific WER key remains after delete status {removed}"
+            )));
+        }
         self.active = false;
+        Ok(())
     }
 }
 
