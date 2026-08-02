@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 use windows_sys::Win32::{
     Foundation::{GetLastError, SetLastError, HWND, LPARAM, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
@@ -15,10 +17,9 @@ use windows_sys::Win32::{
         Input::KeyboardAndMouse::{GetFocus, SetFocus},
         WindowsAndMessaging::{
             CreateWindowExW, DialogBoxIndirectParamW, EndDialog, GetClassNameW, GetWindowLongPtrW,
-            GetWindowTextLengthW, GetWindowTextW, KillTimer, MapDialogRect, PostMessageW,
-            SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowTextW, BN_CLICKED,
-            BS_DEFPUSHBUTTON, BS_PUSHBUTTON, DC_HASDEFID, DM_GETDEFID, DM_SETDEFID, DS_CENTER,
-            DS_MODALFRAME, DWLP_USER, EM_GETLIMITTEXT, EM_SETLIMITTEXT, ES_AUTOHSCROLL,
+            GetWindowTextLengthW, GetWindowTextW, KillTimer, MapDialogRect, SendMessageW, SetTimer,
+            SetWindowLongPtrW, SetWindowTextW, BN_CLICKED, BS_DEFPUSHBUTTON, BS_PUSHBUTTON,
+            DC_HASDEFID, DM_GETDEFID, DM_SETDEFID, DS_CENTER, DS_MODALFRAME, ES_AUTOHSCROLL,
             ES_PASSWORD, GWL_STYLE, IDCANCEL, IDOK, WM_CLOSE, WM_COMMAND, WM_DESTROY,
             WM_INITDIALOG, WM_TIMER, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_POPUP,
             WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
@@ -35,6 +36,13 @@ use crate::{secret::ProtectedSecret, LeaseState, PromptOutcome};
 const TIMER_INTERVAL: Duration = Duration::from_millis(25);
 const TIMER_ID: usize = 1;
 const MAX_SECRET_UNITS: usize = 1_024;
+// Winuser.h defines DWLP_USER after two pointer-sized dialog slots. windows-sys 0.61.2 does not
+// project that architecture-dependent macro.
+const DWLP_USER: i32 = (size_of::<isize>() * 2) as i32;
+// These stable edit-control messages live behind Win32_UI_Controls in windows-sys 0.61.2. Keep
+// this helper's narrower feature set while using the exact Winuser.h message identifiers.
+const EM_GETLIMITTEXT: u32 = 0x00d5;
+const EM_SETLIMITTEXT: u32 = 0x00c5;
 const MAX_PUBLIC_LINE_CHARACTERS: usize = 72;
 const SCOPE_LINE_HEIGHT_DLU: i32 = 13;
 const SCOPE_VERTICAL_PADDING_DLU: i32 = 4;
@@ -83,7 +91,7 @@ struct EmptyDialogTemplate([u16; 12]);
 
 impl EmptyDialogTemplate {
     fn new(height: u16) -> Self {
-        let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER;
+        let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME as u32 | DS_CENTER as u32;
         let mut words = [0_u16; 12];
         put_u32(&mut words, 0, style);
         put_u32(&mut words, 2, 0); // dwExtendedStyle
@@ -594,7 +602,12 @@ unsafe fn initialize_dialog(dialog: HWND, state: &mut DialogState) -> bool {
             dialog,
             EDIT_CLASS.as_ptr(),
             wide_empty().as_ptr(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL | ES_PASSWORD,
+            WS_CHILD
+                | WS_VISIBLE
+                | WS_TABSTOP
+                | WS_BORDER
+                | ES_AUTOHSCROLL as u32
+                | ES_PASSWORD as u32,
             WS_EX_CLIENTEDGE,
             SECRET_EDIT_CONTROL_ID,
             DialogRect::new(12, state.layout.secret_edit_y, 316, 17),
@@ -616,7 +629,7 @@ unsafe fn initialize_dialog(dialog: HWND, state: &mut DialogState) -> bool {
         dialog,
         BUTTON_CLASS.as_ptr(),
         state.refuse_text.as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
         0,
         REFUSE_CONTROL_ID,
         DialogRect::new(166, state.layout.button_y, 78, 22),
@@ -625,7 +638,7 @@ unsafe fn initialize_dialog(dialog: HWND, state: &mut DialogState) -> bool {
         dialog,
         BUTTON_CLASS.as_ptr(),
         state.accept_text.as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON as u32,
         0,
         IDOK,
         DialogRect::new(250, state.layout.button_y, 78, 22),
@@ -847,7 +860,7 @@ unsafe fn secret_control_is_intact(edit: HWND) -> bool {
         return false;
     }
     let style = GetWindowLongPtrW(edit, GWL_STYLE) as u32;
-    style & ES_PASSWORD != 0
+    style & ES_PASSWORD as u32 != 0
         && SendMessageW(edit, EM_GETLIMITTEXT, 0, 0) == MAX_SECRET_UNITS as isize
         && GetWindowTextLengthW(edit) <= MAX_SECRET_UNITS as i32
 }

@@ -421,7 +421,8 @@ mod windows {
 
     impl ComGuard {
         fn new() -> Result<Self, ()> {
-            let result = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED) };
+            let result =
+                unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
             (result >= 0).then_some(Self).ok_or(())
         }
     }
@@ -437,7 +438,7 @@ mod windows {
         let result = unsafe {
             SHGetKnownFolderPath(
                 &FOLDERID_ProgramFiles,
-                KF_FLAG_DEFAULT,
+                KF_FLAG_DEFAULT as u32,
                 std::ptr::null_mut(),
                 &mut raw,
             )

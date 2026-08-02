@@ -590,7 +590,7 @@ mod tests {
         ));
 
         let entry = new_secret_entry();
-        assert!(!entry.visibility());
+        assert!(!gtk::prelude::EntryExt::is_visible(&entry));
         assert_eq!(entry.input_purpose(), InputPurpose::Password);
         assert_eq!(entry.max_length(), MAX_SECRET_CHARACTERS);
         entry.set_text("synthetic-canary");

@@ -684,10 +684,16 @@ mod tests {
         assert_eq!(observed[3], i64::from(attacker_pid));
         assert_ne!(observed[3], observed[2]);
         assert_eq!(observed[4], 0);
-        assert!(attacker_status.is_some_and(libc::WIFEXITED));
-        assert_eq!(attacker_status.map(libc::WEXITSTATUS), Some(0));
-        assert!(helper_status.is_some_and(libc::WIFEXITED));
-        assert_eq!(helper_status.map(libc::WEXITSTATUS), Some(0));
+        assert!(attacker_status.is_some_and(|status| libc::WIFEXITED(status)));
+        assert_eq!(
+            attacker_status.map(|status| libc::WEXITSTATUS(status)),
+            Some(0)
+        );
+        assert!(helper_status.is_some_and(|status| libc::WIFEXITED(status)));
+        assert_eq!(
+            helper_status.map(|status| libc::WEXITSTATUS(status)),
+            Some(0)
+        );
         assert_eq!(unmapped, 0);
     }
 
