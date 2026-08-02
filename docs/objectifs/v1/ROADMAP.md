@@ -357,12 +357,14 @@ HTTPS normal.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
-### Prochain palier décidé — amorçage réutilisable
+### Palier ouvert — amorçage réutilisable
 
-Ce palier ne reçoit pas encore de numéro. La condition de fermeture `#9` de
+Ce palier est suivi par l'issue `#13`. La condition de fermeture `#9` de
 `v0.0.3` est satisfaite sur le candidat produit `3b8f81f` effectivement
-fusionné : l'amorçage est donc le prochain palier ouvert. Son contrat est décidé
-afin que l'implémentation ne réinvente pas l'autorité initiale.
+fusionné : l'amorçage est donc le palier ouvert. Son contrat est décidé afin que
+l'implémentation ne réinvente pas l'autorité initiale. Le socle helper/IPC
+`#43` est prouvé ; l'ordre restant passe par `#45`, puis `#42`, puis la fermeture
+de l'intégration `#35`, avant le reste du palier `#13`.
 
 **Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
@@ -388,6 +390,14 @@ machine ou VM dédiée est recommandée lorsque taille ou sensibilité augmenten
 Cette cohabitation partage la panne matérielle : perdre ou isoler l'hôte peut
 interrompre ses services locaux, tandis que les services des autres hôtes
 continuent.
+
+**Socle déjà prouvé (`#43`) :** sur le commit `f3fef79`, le run
+`30753216798` a exécuté sous Linux et Windows les modes `create` et `replace`,
+les commandes Tauri positives sans champ secret, l'identifiant natif
+anti-rejeu, l'absence de listener et les gates de packaging natif. Sous Windows,
+la création suspendue, la liste exacte de handles et le Job Object bornent aussi
+les descendants et les branches d'échec. Voir le
+[rapport du runner Windows](../../lab/v1-bootstrap-ipc-windows.md).
 
 **Preuve de sortie :**
 
@@ -429,10 +439,14 @@ continuent.
   remplace la clé humaine, l'action reste verrouillée jusqu'à une rotation via
   l'accès personnel.
 
-Ces preuves sont exécutées dans le LAB avec des secrets synthétiques. Elles ne
-sont encore ni implémentées ni exécutées. La signature Windows synthétique peut
-valider la mécanique de build, mais une distribution publique attend une
-signature reconnue et gratuite réellement opérationnelle.
+Le socle `#43` ci-dessus est exécuté dans des runners isolés avec des données
+sentinelles synthétiques et aucun secret réel. La preuve de sortie globale reste
+incomplète : les dialogues et protections de secrets `#45`, l'accès SSH
+personnel `#42`, puis l'intégration
+`#35` restent à implémenter et prouver. La signature Windows synthétique valide
+la mécanique de build du candidat, pas une identité publique ; une distribution
+publique attend toujours une signature reconnue et gratuite réellement
+opérationnelle.
 
 Le contrat complet est
 [Amorçage et remplacement du Controller](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
@@ -621,9 +635,11 @@ branche `console-controller` a été revalidée après review sur le commit prod
 exact `02fe4f5`. La porte native Linux/Windows finale a réussi sur le candidat
 produit `3b8f81f` dans le run `30710037004`, sans prétendre rejouer la topologie
 multi-VM. L'issue `#9` relie cette preuve au SHA intégré par fast-forward :
-`v0.0.3` est fermée. Le budget du projet reste nul. L'amorçage, le remplacement
-du Controller et l'Auxiliaire appartiennent
-désormais au contrat V1 et au prochain ordre de preuve, mais ne sont encore ni
-implémentés ni prouvés. Ansible intégré, WireGuard, OCI, téléphone, navigateur
+`v0.0.3` est fermée. Le budget du projet reste nul. L'amorçage et le
+remplacement du Controller appartiennent au contrat V1 et restent ouverts, mais
+leur socle helper/IPC `#43` est implémenté et prouvé sous Linux et Windows sur
+`f3fef79` par le run `30753216798`. Ce résultat ne ferme ni `#35`, ni le palier
+`#13`, ni son milestone : l'ordre restant est `#45`, `#42`, `#35`, puis les
+autres issues du palier. Ansible intégré, WireGuard, OCI, téléphone, navigateur
 public, Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors
-du périmètre de code actuel `v0.0.3`.
+du périmètre de code actuellement prouvé.

@@ -2,18 +2,25 @@
 
 ## Statut
 
-Preuve Linux partielle exécutée puis étendue le 2 août 2026. Le bornage natif
-#43 compile et ses scénarios d'état sont verts dans le LAB. Le gate ELF invalide
-le helper dans le même exécutable Tauri et le binaire compagnon distinct prévu
-par #44 possède une fondation fail-closed séparée de WebKit. L'extension prouve
-désormais le lancement par le parent Console, son arrêt borné et le premier
-dialogue GTK3 de consentement, sans champ secret et sans succès d'amorçage
-inventé. Une revue finale a en outre remplacé toute récolte bloquante par un
-worker créé avant le helper : l'appel Console reste borné, la récolte continue
-sans nouvelle action et un résultat non prouvable interdit tout nouveau
-lancement. Ce rapport ne ferme ni #43, faute d'équivalent Windows et de dispatch
-Tauri vivant, ni #45, dont Win32, la saisie secrète, l'annulation coopérative et
-les protections mémoire restent à construire.
+Preuve Linux partielle exécutée puis étendue le 2 août 2026. À la révision de ce
+passage, le bornage natif #43 compilait et ses scénarios d'état étaient verts
+dans le LAB, mais l'absence d'équivalent Windows et de dispatch Tauri vivant
+interdisait encore sa fermeture. Le gate ELF invalide le helper dans le même
+exécutable Tauri et le binaire compagnon distinct prévu par #44 possède une
+fondation fail-closed séparée de WebKit. L'extension prouve le lancement par le
+parent Console, son arrêt borné et le premier dialogue GTK3 de consentement,
+sans champ secret et sans succès d'amorçage inventé. Une revue finale a en outre
+remplacé toute récolte bloquante par un worker créé avant le helper : l'appel
+Console reste borné, la récolte continue sans nouvelle action et un résultat
+non prouvable interdit tout nouveau lancement.
+
+La [preuve native Linux/Windows suivante](v1-bootstrap-ipc-windows.md), exécutée
+sur le candidat exact `f3fef79`, apporte le Job Object, les branches hostiles
+Windows, le paquet MSI et le dispatch Tauri vivant qui manquaient à #43. Les
+constats ci-dessous restent ceux de ce passage LAB Linux et ne sont pas réécrits
+rétroactivement. #45 reste ouverte pour Win32, les secrets, l'annulation
+coopérative et les protections mémoire ; #42 reste ouverte pour la connexion
+SSH et ses vrais descendants.
 
 ## Candidat et placement
 
@@ -221,7 +228,11 @@ Le gabarit minimal recréé pour le correctif final possédait Xvfb mais pas
   parent ne dépendent plus des `default-members` du crate Console. Cette
   configuration source n'est pas présentée comme un run GitHub exécuté.
 
-## Ce que la preuve n'établit pas
+## Ce que ce passage Linux n'établit pas
+
+Les manques propres à #43 cités dans cette liste ont depuis été traités par le
+[rapport natif suivant](v1-bootstrap-ipc-windows.md). Ils restent ici pour
+préserver la frontière exacte du snapshot et du LAB décrits dans ce document.
 
 - le dispatch vivant d'un appel hostile depuis une vraie WebView Tauri ;
 - l'équivalence du contrat et des courses sur un runner Windows ;

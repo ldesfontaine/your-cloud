@@ -386,8 +386,19 @@ réellement opérationnelle.
 
 Le contrat détaillé se trouve dans
 [Amorçage et remplacement du Controller](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
-Cette capacité est décidée pour la V1, mais elle n'est encore ni implémentée ni
-prouvée.
+Cette capacité reste partielle. Le socle `#43` du helper, de l'IPC et de son
+cycle de vie est implémenté et prouvé sous Linux et Windows sur le commit
+`f3fef79`, dans le run `30753216798`. Les parcours `create` et `replace`
+exposent uniquement des commandes Tauri positives sans secret, protégées par un
+identifiant natif anti-rejeu ; le helper n'ouvre aucun listener. Sous Windows,
+la preuve couvre aussi la création suspendue, la liste exacte de handles et le
+Job Object, ainsi que les gates de packaging natif. Voir le
+[rapport du runner Windows](../../lab/v1-bootstrap-ipc-windows.md).
+
+Cette preuve ne ferme ni l'amorçage complet, ni `#35`, ni le palier `#13`. Les
+dialogues et protections de secrets `#45`, l'accès SSH personnel `#42`, puis
+l'intégration complète suivie par `#35` restent à implémenter et prouver avant
+la suite du palier.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 ## Quatre chemins différents

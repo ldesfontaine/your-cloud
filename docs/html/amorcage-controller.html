@@ -17,9 +17,32 @@
     <p class="lead">La Console lance un Assistant natif temporaire, utilise l’accès SSH déjà détenu par l’utilisateur, installe le premier Controller, puis lui transfère l’administration opérationnelle. Le même parcours permet plus tard de remplacer explicitement un Controller perdu.</p>
     <div class="statebar" aria-label="État du contrat">
       <span class="pill decided">Contrat décidé</span>
-      <span class="pill pending">Non implémenté</span>
-      <span class="pill pending">Non prouvé</span>
+      <span class="pill pending">Partiellement implémenté</span>
+      <span class="pill pending">Partiellement prouvé</span>
     </div>
+
+    <h2>Socle Windows #43 : borné et prouvé</h2>
+    <div class="grid">
+      <article class="card">
+        <h3>Processus confiné avant exécution</h3>
+        <p>Le helper distinct est livré avec la Console ; les deux exécutables installables sont signés par la même identité Authenticode synthétique. Windows crée le helper suspendu avec les seules poignées d’entrée-sortie exactes dans <code>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</code>, l’assigne à un Job Object, vérifie son appartenance, puis reprend son thread.</p>
+        <p>Le Job suit les descendants. Une session n’est considérée nettoyée qu’après la fin de la racine et la preuve que le Job est vide ; annulation et échec arrêtent l’arbre entier. Si l’absence des processus ne peut pas être prouvée, tout nouveau lancement est refusé pour le processus Console courant.</p>
+      </article>
+      <article class="card">
+        <h3>IPC WebView/Tauri vivant</h3>
+        <p>Les seuls modes sont <code>create</code> et <code>replace</code>, via <code>start_bootstrap</code>, <code>bootstrap_status</code> et <code>cancel_bootstrap</code>. Les schémas positifs n’ont aucun champ secret et le frontend ne fixe ni étape, ni action, ni échéance, ni succès.</p>
+        <p>L’identifiant natif n’est pas rejouable ; demandes forgée, concurrente et rejouée sont refusées. Annulation, expiration et fermeture sont terminales. Il n’existe aucune primitive SSH, agent ou signature générale et les erreurs publiques sont limitées à un code.</p>
+      </article>
+      <article class="card warning">
+        <h3>Portée exacte du paquet</h3>
+        <p>La preuve MSI couvre l’image administrative et l’ensemble de ses fichiers exécutables installables. La signature Authenticode synthétique prouve la mécanique, pas une identité publique. Le gate PE inspecte les imports normaux et retardés, sans exclure universellement tout chargement dynamique.</p>
+      </article>
+      <article class="card warning">
+        <h3>Le parcours global reste ouvert</h3>
+        <p>#45 doit encore compléter les dialogues GTK3 et Win32 pour les secrets, leur zéroïsation et les protections <code>mlock</code>, <code>MADV_DONTDUMP</code>, <code>VirtualLock</code> et Windows Error Reporting dans leurs bornes documentées. #42 doit fermer agent, clé chiffrée, SSH, <code>sudo</code>, repli <code>root</code>, vrais descendants de ces parcours métier et leur arrêt. Aucun audit, Controller installé, succès métier ou signature Windows publique n’est revendiqué.</p>
+      </article>
+    </div>
+    <p class="boundary"><strong>Preuve exacte :</strong> consulter le <a href="../lab/v1-bootstrap-ipc-windows.md">rapport IPC, paquet et confinement Windows</a>. Il ferme seulement le socle #43 ; le contrat d’amorçage reste partiellement implémenté et prouvé.</p>
 
     <h2>Un parcours borné, sans dépendance permanente au laptop</h2>
     <div class="journey" aria-label="Parcours de création d'une infrastructure">
@@ -30,7 +53,7 @@
     </div>
     <p class="handoff"><strong>Résultat attendu :</strong> fermer la Console ou éteindre le laptop n’arrête ni le Controller, ni l’administration future, ni les services déjà déployés.</p>
 
-    <h2>Le secret reste dans un helper natif hors WebView</h2>
+    <h2>Le secret devra rester dans un helper natif hors WebView</h2>
     <div class="grid">
       <article class="card">
         <h3>Un processus par consentement</h3>
@@ -42,11 +65,11 @@
         </ul>
       </article>
       <article class="card">
-        <h3>Saisie système directe</h3>
-        <p>Linux emploie un dialogue GTK3 avec entrée masquée et usage <code>Password</code>. Windows emploie un dialogue Win32 modal avec contrôle <code>EDIT | ES_PASSWORD</code>. La surface répète les empreintes, l’étape, l’action et l’expiration avant toute saisie.</p>
+        <h3>Saisie système directe · #45</h3>
+        <p>Le consentement GTK3 public sans secret existe déjà sous Linux, mais son entrée masquée et son usage <code>Password</code> restent à fermer. Sous Windows, le dialogue Win32 modal avec contrôle <code>EDIT | ES_PASSWORD</code> reste à construire. La zéroïsation et les protections anti-dump propres aux deux plateformes font partie de la même preuve. La surface devra répéter les empreintes, l’étape, l’action et l’expiration avant toute saisie.</p>
       </article>
       <article class="card">
-        <h3>Capacité SSH fermée</h3>
+        <h3>Capacité SSH fermée · #42</h3>
         <p><code>russh 0.62.4</code> est épinglé avec <code>ring</code> et <code>rsa</code>. La clé d’hôte doit correspondre exactement au périmètre ; DSA, DES, compression et <code>ssh-rsa</code> SHA-1 sont refusés, comme shell, PTY, SFTP, X11, redirections et commande générale.</p>
         <p>L’agent accepté est uniquement le socket Unix absolu possédé par l’utilisateur sous Linux ou <code>\\.\pipe\openssh-ssh-agent</code> sous Windows. Une seule clé et un budget fini de signatures servent uniquement à l’authentification affichée.</p>
       </article>
@@ -149,7 +172,7 @@
     </div>
     <p class="boundary"><strong>Choix de sécurité :</strong> le paquet Debian évite de réimplémenter sous <code>root</code> l’extraction, l’inventaire, les permissions et le retrait d’une archive. Ses scripts éventuels restent minimaux et n’activent aucun rôle. Retirer le paquet n’efface jamais implicitement configurations, secrets ou identités.</p>
 
-    <h2>Ce qui devra être prouvé</h2>
+    <h2>Ce qui reste à prouver</h2>
     <div class="grid">
       <article class="card">
         <h3>Secrets et autorités</h3>

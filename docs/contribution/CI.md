@@ -15,6 +15,7 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 |---|---|---|
 | porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974` | états des jobs `Contrôles génériques` et `Politique Plumber` |
 | matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
+| bornage IPC #43 | porte rapide `30753208857` puis matrice manuelle `30753216798` entièrement vertes sur le candidat produit exact `f3fef79` ; Linux et Windows exécutent le helper compagnon, Windows ajoute son Job Object, son paquet, son gate PE et le dispatch Tauri vivant | états des jobs, journaux et artefact expurgé liés depuis le rapport #43 |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
 | exécution GitHub Actions réelle | [run final `30710037004`](https://github.com/ldesfontaine/your-cloud/actions/runs/30710037004) entièrement vert sur le candidat produit exact `3b8f81f`, avec les deux gardes et les variantes natives ; l'issue `#9` conserve le SHA, les liens et les empreintes | états des jobs, journaux et artefact de smoke du run |
@@ -29,6 +30,44 @@ son intégration par fast-forward. Les deux gardes rapides et les variantes
 natives Linux et Windows ont réussi : `v0.0.3` est fermée pour ce candidat.
 Tout nouveau candidat modifiant le contenu couvert par cette porte exige son
 propre run ; aucun changement ultérieur n'hérite de cette preuve.
+
+### Preuve exacte du bornage IPC #43
+
+La porte rapide
+[`30753208857`](https://github.com/ldesfontaine/your-cloud/actions/runs/30753208857)
+puis le run manuel
+[`30753216798`](https://github.com/ldesfontaine/your-cloud/actions/runs/30753216798)
+ont entièrement réussi sur le candidat produit exact
+`f3fef79b74a5e3115fb5fe93f21c6380ad116582`. Le run manuel relie les jobs
+[`Contrôles génériques` `91510826593`](https://github.com/ldesfontaine/your-cloud/actions/runs/30753216798/job/91510826593),
+[`Politique Plumber` `91510826335`](https://github.com/ldesfontaine/your-cloud/actions/runs/30753216798/job/91510826335),
+[`Windows` `91510938793`](https://github.com/ldesfontaine/your-cloud/actions/runs/30753216798/job/91510938793)
+et
+[`Linux` `91510938804`](https://github.com/ldesfontaine/your-cloud/actions/runs/30753216798/job/91510938804),
+tous verts.
+
+La variante Linux a réussi les tests, les scénarios GTK isolés, le build,
+l'installation du `.deb` et l'absence de listener. La variante Windows a
+réussi les branches hostiles du Job Object avant reprise et après vraie
+terminaison, la récolte d'une racine et d'un descendant, le `.msi`, son image
+administrative contenant exactement les deux exécutables installables, le gate
+PE et l'IPC Tauri vivant. Les trois commandes `start_bootstrap`,
+`bootstrap_status` et `cancel_bootstrap` exercent `create` et `replace` ; les
+identifiants forgés, la concurrence, les champs inconnus ou sensibles et les
+rejeux sont refusés avec des erreurs publiques réduites à leur code. Aucun
+succès métier n'est inventé et aucun listener TCP produit ne subsiste.
+
+L'artefact `console-windows-webview2-smoke` d'identifiant `8835381252` contient
+uniquement un JSON et neuf PNG. Son digest vaut
+`sha256:2e9db85120dbc86a5b7dd278630a4bbe064637173b35c15d92c8d68298345cdb`
+et le JSON vaut
+`ee2f2345ceae81efabf8d748f043ed4992a419750804a34439bd4931e3447088`.
+Le certificat synthétique prouve la mécanique Authenticode, pas une identité
+publique. Le gate PE analyse les tables d'imports normales et différées ; il ne
+prouve pas l'absence universelle de chargement dynamique. Le
+[rapport dédié](../lab/v1-bootstrap-ipc-windows.md) conserve les empreintes, le
+nettoyage et les limites. Cette porte et sa propagation ferment #43, sans fermer
+#45, #42, #35, le palier #13 ou la V1.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation
@@ -124,10 +163,16 @@ au plus deux variantes en parallèle avec `fail-fast: false`. Les deux variantes
 exécutent le même verrou npm, l'audit des dépendances frontend, le contrat
 visuel, le build embarqué, le formatage Rust et les tests natifs. La variante
 Linux construit le `.deb`, l'installe, le lance sous affichage virtuel puis
-refuse tout listener TCP du processus. La variante Windows exécute en plus les
-tests d'ACL sur Windows, construit le `.msi` sous MSVC/WiX, signe l'exécutable
-et l'installateur, les vérifie, installe, lance et refuse tout listener du
-processus ou de ses descendants.
+refuse tout listener TCP du processus. Elle prépare et teste aussi le helper
+compagnon et ses scénarios GTK isolés. La variante Windows exécute en plus les
+tests d'ACL et du Job Object, y compris les branches hostiles de création,
+d'affectation et de récolte. Elle construit le `.msi` sous MSVC/WiX, vérifie que
+son image administrative possède exactement l'ensemble des deux exécutables
+installables, signe l'exécutable Console, le helper et l'installateur, puis les
+vérifie, installe et lance. Son gate PE inspecte les imports normaux et différés
+du helper installé exact. Enfin, le pilote WebView2 appelle réellement les trois
+commandes Tauri d'amorçage et refuse tout listener du processus ou de ses
+descendants au lancement normal.
 
 Cette matrice prouve les différences natives des deux plateformes. Elle ne
 démarre aucun Controller, Relay ou Daemon, ne crée aucune fausse topologie et
