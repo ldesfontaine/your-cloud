@@ -276,7 +276,7 @@ aucun contrôle sélectionné sauté et exactement trois définitions de jobs de
 sécurité évaluées.
 Le rapport doit aussi correspondre à l'identité source attendue, au dépôt
 `ldesfontaine/your-cloud`, au hash canonique de `.plumber.yaml`, à trois jobs,
-un workflow et huit références d'action. Un rapport propre mais ancien ne peut
+un workflow et neuf références d'action. Un rapport propre mais ancien ne peut
 donc pas satisfaire ce garde.
 Les futures clés racine restent acceptées afin qu'une extension compatible du
 rapport ne devienne pas un faux échec.

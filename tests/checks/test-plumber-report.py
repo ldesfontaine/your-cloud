@@ -60,7 +60,7 @@ class PlumberReportTests(unittest.TestCase):
             "weakenedJobs": 0,
         }
         report["authorizedActionSourcesResult"]["metrics"] = {
-            "actionRefsTotal": 8,
+            "actionRefsTotal": 9,
             "actionRefsUnauthorized": 0,
         }
         report["permissionsResult"]["metrics"] = {
