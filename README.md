@@ -18,9 +18,9 @@ présence ne prouve aucune capacité du produit.
   lecture selon le sujet.
 - [Cap du projet](docs/projet/CAP.md) : la destination à long terme et les
   limites durables.
-- [Objectif V1](docs/objectifs/v1/README.md) : la première ligne d'arrivée
+- [Objectif `v0.1.0`](docs/objectifs/v1/README.md) : la première ligne d'arrivée
   concrète.
-- [Roadmap V1](docs/objectifs/v1/ROADMAP.md) : l'ordre des preuves nécessaires
+- [Roadmap `v0.1.0`](docs/objectifs/v1/ROADMAP.md) : l'ordre des preuves nécessaires
   pour atteindre cette ligne d'arrivée, sans planifier les versions postérieures.
 - [Contexte](CONTEXT.md) : le petit glossaire commun.
 - [Qualité du code](docs/contribution/QUALITE.md) : les règles appliquées à
@@ -32,7 +32,7 @@ présence ne prouve aucune capacité du produit.
   développement.
 - [Amorçage et remplacement du Controller](docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) :
   l'autorité SSH initiale, l'approbation des actions, son transfert et le
-  parcours de remplacement décidé pour la V1.
+  parcours de remplacement décidé pour `v0.1.0`.
 - [Documentation visuelle](docs/html/index.html) : l'entrée vers toutes les
   éditions HTML.
 - [LAB](docs/lab/README.md) : le contrôleur et ses gardes.

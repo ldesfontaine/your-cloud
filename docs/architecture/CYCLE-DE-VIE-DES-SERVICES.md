@@ -12,7 +12,8 @@ déclaration, placement, plan et approbation explicites.
 
 ## Deux ordres à ne pas confondre
 
-La roadmap V1 décrit **l'ordre de construction du produit**. Elle peut prouver
+La roadmap de `v0.1.0` décrit **l'ordre de construction du produit**. Elle peut
+prouver
 le profil BentoPDF sur le VPS de référence avant d'introduire WireGuard, car ce
 premier service permet de comprendre séparément le déploiement OCI, Traefik et
 HTTPS. Cette séquence de preuve ne devient pas l'ordre obligatoire d'une
@@ -73,7 +74,7 @@ exige un nouveau plan.
 Une coupure au milieu d'une mutation ne déclenche aucun rejeu aveugle. Le
 Controller marque `résultat inconnu`, la Console l'affiche, puis le Controller
 observe le système par un chemin indépendant et propose seulement les actions
-compatibles avec l'état réellement constaté. La V1 ne promet ni rollback, ni
+compatibles avec l'état réellement constaté. `v0.1.0` ne promet ni rollback, ni
 continuation autonome lorsque l'Auxiliaire n'est plus joignable. La séquence
 consommée avant mutation reste refusée après redémarrage : reprendre exige
 toujours une nouvelle approbation.

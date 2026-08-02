@@ -29,7 +29,7 @@ et son intégration par fast-forward : le palier est fermé pour ce candidat,
 sans attribuer sa preuve aux révisions ultérieures. L'amorçage possède désormais
 un socle helper/IPC implémenté et prouvé sous Linux et Windows sur `f3fef79`,
 dans le run `30753216798`. Sa capacité globale, le chemin d'action et les
-services du reste de la V1 restent ouverts.
+services du reste de `v0.1.0` restent ouverts.
 
 ## Distribution réellement prouvée pour `v0.0.2`
 
@@ -49,7 +49,7 @@ localement, le mode Relay refuse avant toute écoute. Le
 lacune, reprise et cycle de retrait-réinstallation.
 
 <!-- coherence: V1-NETWORK:start -->
-## Topologie de référence pour la preuve V1
+## Topologie de référence pour la preuve de `v0.1.0`
 
 ```text
                             INTERNET
@@ -87,7 +87,7 @@ lacune, reprise et cycle de retrait-réinstallation.
        +--------------------------------------------------+
 ```
 
-Cette topologie rend la preuve V1 déterministe ; elle ne prescrit pas
+Cette topologie rend la preuve de `v0.1.0` déterministe ; elle ne prescrit pas
 l'infrastructure réelle d'un utilisateur. BentoPDF et Vaultwarden sont deux
 profils de service sélectionnés explicitement dans le LAB, jamais des composants
 installés par défaut. Une infrastructure peut ne choisir aucun de ces profils ;
@@ -99,7 +99,7 @@ La Console, le Controller et le Relay restent hors du chemin emprunté par le
 trafic Web vers les services : la panne de leurs processus ne doit pas arrêter
 un service hébergé sur une autre machine. La perte d'un hôte interrompt
 cependant les services qui y cohabitent. Le Controller porte l'autorité d'une
-seule infrastructure. La V1 prouve une Console installée, un Controller et une
+seule infrastructure. `v0.1.0` prouve une Console installée, un Controller et une
 infrastructure ; les associations futures à plusieurs Controllers isolent
 identités d'appareil et sessions.
 
@@ -145,7 +145,7 @@ un coffre Tauri Stronghold commun à Linux et Windows, déverrouillé par une
 phrase secrète locale dérivée avec Argon2id. Le frontend voit brièvement cette
 saisie puis l'efface ; les clés dérivées, clés privées, contenus du coffre et
 sessions restent hors de son autorité. Windows Hello, passkeys, FIDO2 et
-SSO/OIDC restent post-V1.
+SSO/OIDC restent postérieurs à `v0.1.0`.
 
 La phrase contient six mots français aléatoires. Un appairage ou une
 récupération n'ouvre `9444` sur l'adresse privée du Controller que pendant une
@@ -194,7 +194,8 @@ restent obligatoires après l'accès réseau ; SSO/OIDC est facultatif. La Conso
 devra masquer la configuration WireGuard derrière une opération de connexion
 nommée, déverrouiller uniquement la clé de l'infrastructure choisie et fermer la
 liaison au timeout ou à la demande. Cette direction ne choisit pas encore le
-mécanisme système ou intégré et reste post-V1, donc hors de `v0.0.3`. Une
+mécanisme système ou intégré et reste postérieur à `v0.1.0`, donc hors de
+`v0.0.3`. Une
 passerelle Web publique et un frontend navigateur pourront être étudiés comme un
 mode futur distinct, sans autorité d'administration ni secret de machine. Les
 services publiés conservent leur propre accès HTTPS sans WireGuard.
@@ -302,9 +303,9 @@ service colocalisé sur l'hôte perdu ------------> interruption possible
 
 Le code de récupération d'une Console réassocie celle-ci à un Controller encore
 vivant ; il ne remplace pas ce parcours. Sans sauvegarde de l'ancien
-Controller, l'utilisateur redéclare ses endpoints. L'installateur V1 embarque
-l'Assistant, un unique paquet serveur `.deb` Debian 13 `amd64`, ses définitions
-statiques et le manifeste signé qui lie version, cible, taille et empreinte.
+Controller, l'utilisateur redéclare ses endpoints. L'installateur de `v0.1.0`
+embarque l'Assistant, un unique paquet serveur `.deb` Debian 13 `amd64`, ses
+définitions statiques et le manifeste signé qui lie version, cible, taille et empreinte.
 L'Assistant vérifie ce lot avant tout privilège, puis garde configurations,
 secrets, activation et reprise hors du paquet. Le binaire root-owned vit sous
 `/usr/lib/your-cloud` et les trois unités statiques inactives sous
@@ -322,8 +323,8 @@ impose une base saine et l'isolement vérifié de l'ancien hôte.
 Le [contrat d'amorçage et de remplacement](AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
 reste partiellement implémenté et prouvé. Les dialogues et protections de
 secrets `#45`, l'accès SSH personnel `#42`, puis l'intégration complète `#35`
-restent nécessaires avant le reste du palier `#13` ; aucune de ces frontières,
-ni le milestone, ni la V1 ne sont fermés par la preuve `#43`.
+restent nécessaires avant le reste du palier `#13`. La preuve `#43` ne ferme
+aucune de ces frontières, ni le milestone, ni `v0.1.0`.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 <!-- coherence: SERVICE-LIFECYCLE:start -->
@@ -373,7 +374,7 @@ Le contrat et ses scénarios sont détaillés dans le
 <!-- coherence: AGENT-AUTHORITY:start -->
 ## Observer et agir sont deux chemins
 
-En V1, une action demandée dans l'interface suit ce chemin :
+Dans `v0.1.0`, une action demandée dans l'interface suit ce chemin :
 
 ```text
 Utilisateur -> Console -> plan lisible -> confirmation native -> signature
@@ -425,8 +426,8 @@ liste positive locale. Une opération OCI peut seulement faire utiliser par
 Podman rootless le registre autorisé et le digest exact annoncés dans le plan.
 Une machine d'observation ne l'active pas. Le Daemon et le Relay restent
 consacrés aux observations. Ansible reste disponible comme outil externe de
-l'utilisateur ; il n'appartient pas au cœur V1. Le Controller ne possède pas la
-clé humaine de la Console et ne peut donc pas forger seul une approbation.
+l'utilisateur ; il n'appartient pas au cœur de `v0.1.0`. Le Controller ne
+possède pas la clé humaine de la Console et ne peut donc pas forger seul une approbation.
 
 Les autres cibles utilisent leur propre autorité plutôt que ce chemin local :
 
@@ -438,8 +439,8 @@ Plan approuvé
 `- cluster K3s --------------------> adaptateur API K3s
 ```
 
-Les adaptateurs OpenStack, IaC et K3s restent hors V1. Le chemin local par
-l'Auxiliaire appartient en revanche à son contrat : le plan inclut un rollback
+Les adaptateurs OpenStack, IaC et K3s restent hors de `v0.1.0`. Le chemin local
+par l'Auxiliaire appartient en revanche à son contrat : le plan inclut un rollback
 exact ; la première mutation rend `changed=true`, le même état sans dérive rend
 `changed=false` sans réécriture ni redémarrage, et une dérive exige un nouveau
 plan. Un échec contrôlé tente le rollback approuvé tant que l'Auxiliaire garde
@@ -529,7 +530,7 @@ Pour cela, il doit interroger l'API Docker, souvent au moyen du socket
 `/var/run/docker.sock`. Cette API possède une autorité importante sur le moteur
 et peut devenir un chemin vers l'hôte si le proxy exposé est compromis.
 
-La V1 utilise donc le **file provider** :
+`v0.1.0` utilise donc le **file provider** :
 
 1. l'utilisateur demande une publication dans l'App ;
 2. Your Cloud calcule une route précise ;
@@ -558,7 +559,7 @@ sécurité.
 ports et les limites. À partir de cette fiche, systemd sait démarrer, arrêter,
 redémarrer et observer le conteneur comme un service Linux ordinaire.
 
-Podman rootless avec Quadlet est retenu pour la V1. Le flux sera :
+Podman rootless avec Quadlet est retenu pour `v0.1.0`. Le flux sera :
 
 ```text
 Plan Your Cloud -> Auxiliaire -> fichier Quadlet -> systemd -> Podman -> conteneur

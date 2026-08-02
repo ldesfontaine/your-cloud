@@ -67,7 +67,7 @@ publique. Le gate PE analyse les tables d'imports normales et différées ; il n
 prouve pas l'absence universelle de chargement dynamique. Le
 [rapport dédié](../lab/v1-bootstrap-ipc-windows.md) conserve les empreintes, le
 nettoyage et les limites. Cette porte et sa propagation ferment #43, sans fermer
-#45, #42, #35, le palier #13 ou la V1.
+#45, #42, #35, le palier #13 ou `v0.1.0`.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation

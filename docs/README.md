@@ -10,8 +10,8 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 |---|---|
 | Comprendre les termes du produit | [`CONTEXT.md`](../CONTEXT.md) |
 | Comprendre la destination à long terme | [`projet/CAP.md`](projet/CAP.md) |
-| Savoir ce qui doit être vrai pour la V1 | [`objectifs/v1/README.md`](objectifs/v1/README.md) |
-| Voir l'ordre des preuves jusqu'à la V1 | [`objectifs/v1/ROADMAP.md`](objectifs/v1/ROADMAP.md) |
+| Savoir ce qui doit être vrai pour `v0.1.0` | [`objectifs/v1/README.md`](objectifs/v1/README.md) |
+| Voir l'ordre des preuves jusqu'à `v0.1.0` | [`objectifs/v1/ROADMAP.md`](objectifs/v1/ROADMAP.md) |
 | Cadrer la Console cliente et le Controller de lecture `v0.0.3` | [`objectifs/v1/CONTRAT-V0.0.3.md`](objectifs/v1/CONTRAT-V0.0.3.md) |
 | Comprendre les machines, composants et flux | [`architecture/ANATOMIE.md`](architecture/ANATOMIE.md) |
 | Comprendre l'amorçage et le remplacement du Controller | [`architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`](architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) |
@@ -33,7 +33,7 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 docs/
 |- projet/          cap et cohérence des sources
 |- objectifs/
-|  `- v1/           ligne d'arrivée et roadmap de la V1
+|  `- v1/           ligne d'arrivée et roadmap de v0.1.0
 |- architecture/    placements, autorités et futurs sujets techniques
 |- contribution/    manière de travailler et qualité
 |- lab/             règles et preuves réellement exécutées

@@ -144,7 +144,7 @@ seul le Controller retrouve sa portée dans son état serveur et peut l'invalide
 Une **phrase secrète locale** est une phrase connue de l'humain qui déverrouille
 la Console sans être envoyée au Controller. Linux et Windows emploient le même
 profil : ni Windows Hello, ni passkey, ni clé FIDO2, ni SSO/OIDC n'est requis ou
-implémenté dans la V1. Ces profils pourront être étudiés après la V1 sans entrer
+implémenté dans `v0.1.0`. Ces profils pourront être étudiés après `v0.1.0` sans entrer
 dans le contrat actuel.
 
 Le cœur Rust conserve, dans un coffre Tauri Stronghold chiffré et authentifié,
@@ -274,7 +274,7 @@ ne conserve que ce sel, cette époque et la clé publique résultante. Le code e
 la clé privée dérivée ne quittent jamais la Console et sont effacés de la
 mémoire native après l'opération.
 
-La clé publique de cette autorité TLS reste immuable pendant la V1 ; un
+La clé publique de cette autorité TLS reste immuable pendant `v0.1.0` ; un
 certificat serveur feuille peut tourner sous elle. Son remplacement exige une
 réinitialisation locale explicite et un nouvel appairage, jamais une poursuite
 automatique avec une autre SPKI.
@@ -538,7 +538,7 @@ augmente le rayon d'incident même si les clés dérivées sont séparées et si
 fenêtre ouverte par l'autorité locale reste nécessaire. La durée de 180 jours laisse aussi une fenêtre
 résiduelle entre compromission et révocation. La compromission du Controller ou
 de son autorité de délivrance permet de fabriquer des identités, et celle d'une
-Console déverrouillée vise les clés actives. La V1 prouve des contrôles bornés
+Console déverrouillée vise les clés actives. `v0.1.0` prouve des contrôles bornés
 contre ces scénarios. L'application ne peut pas exclure une capture par le
 système d'exploitation, une méthode de saisie, une API d'accessibilité ou les
 copies mémoire transitoires de l'IPC lorsque la phrase ou un code est affiché.
@@ -1763,7 +1763,7 @@ plugin libre, scan LAN, renouvellement automatique ou élection de Relay.
 
 La cible ultérieure où la Console déverrouille et ferme elle-même une liaison
 privée bornée au Controller est conservée dans le [cap du projet](../../projet/CAP.md).
-Elle appartient à un palier post-V1 et
+Elle appartient à un palier postérieur à `v0.1.0` et
 ne fournit ici ni dépendance, ni abstraction anticipée, ni exception à cette
 exclusion.
 

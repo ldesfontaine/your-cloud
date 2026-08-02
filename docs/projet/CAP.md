@@ -81,24 +81,25 @@ traverse jamais le frontend. La fermeture locale n'est pas une révocation du
 pair : révocation, rotation et retrait d'un appareil restent des opérations
 distinctes.
 
-Deux familles techniques restent à comparer avant ce palier post-V1 : piloter
+Deux familles techniques restent à comparer avant ce palier postérieur à
+`v0.1.0` : piloter
 un tunnel fourni par le système, avec une autorité privilégiée minimale, ou
 intégrer une pile WireGuard en espace utilisateur qui ne transporte que le
 client du Controller. Un coffre portable de liaison protégé par phrase secrète,
-distinct du coffre Stronghold de la V1, reste également ouvert ; il devra
+distinct du coffre Stronghold de `v0.1.0`, reste également ouvert ; il devra
 utiliser une dérivation mémoire-dure et un
 chiffrement authentifié, puis rendre visible le risque résiduel d'attaque hors
 ligne. Aucun
 choix n'autorise une route libre, un shell réseau ou une confiance implicite
 envers les autres machines.
 
-Pour toute la V1, la Console protège ses clés d'appareil et humaines dans un
+Pour `v0.1.0`, la Console protège ses clés d'appareil et humaines dans un
 coffre Tauri Stronghold commun à Linux et Windows, déverrouillé par une phrase
 secrète locale dérivée avec Argon2id. Chaque Controller garde des clés et une
 autorisation distinctes. Le frontend voit brièvement la phrase saisie puis
 l'efface ; il ne reçoit jamais la clé dérivée, une clé privée, le contenu du
 coffre ou une session. Le matériel de récupération reste conservé hors ligne.
-Dans la V1, la phrase quotidienne contient six mots aléatoires et le code global
+Dans `v0.1.0`, la phrase quotidienne contient six mots aléatoires et le code global
 de récupération contient 256 bits ; ce dernier dérive une clé différente par
 Controller et n'est jamais sauvegardé par la Console. L'appairage et la
 récupération passent par un listener TLS ouvert par l'autorité locale sur
@@ -108,22 +109,22 @@ huit heures au maximum, restent liés à un seul Controller ; leur rotation ou
 révocation ne donne jamais autorité sur une autre association.
 Dans `v0.0.3` seulement, chaque Controller possède exactement un humain et un
 appareil Console actifs ; cette cardinalité n'est pas étendue silencieusement
-au reste de la V1.
-Windows Hello, passkeys, clés FIDO2 et SSO/OIDC pourront être étudiés après la
-V1 ; aucun ne constitue une dépendance ou une autorisation implicite sur
+aux paliers restants de `v0.1.0`.
+Windows Hello, passkeys, clés FIDO2 et SSO/OIDC pourront être étudiés après
+`v0.1.0` ; aucun ne constitue une dépendance ou une autorisation implicite sur
 plusieurs infrastructures.
 
 Un futur accès par navigateur pourra ajouter un frontend distribué et une
 passerelle publique facultative reliée au Controller privé par un canal dédié.
-Ce mode ne fait pas partie de la V1. La passerelle ne
+Ce mode ne fait pas partie de `v0.1.0`. La passerelle ne
 détiendra aucune autorité d'administration ni secret de machine, mais gardera des
 pouvoirs sur le routage et la disponibilité, voire sur TLS ou la transmission
 d'identité selon son contrat. Ces pouvoirs devront être bornés ; l'absence de
 pouvoir d'usurpation exigera une authentification de bout en bout réellement
 prouvée. Elle ne devient pas le chemin requis.
 
-La V1 introduit d'abord une Console installable sur Linux et Windows depuis le
-même frontend et un Controller backend dans l'environnement d'administration.
+`v0.1.0` introduit d'abord une Console installable sur Linux et Windows depuis
+le même frontend et un Controller backend dans l'environnement d'administration.
 Le téléphone reste une cible du même contrat visuel et réseau, mais son
 empaquetage, son stockage sécurisé, sa signature et sa distribution sont prouvés
 dans un incrément ultérieur. La preuve `v0.0.3` s'exécute dans le LAB ou un runner
@@ -224,8 +225,8 @@ S'il remplace la clé humaine, le chemin d'action reste verrouillé jusqu'à ce 
 l'Assistant tourne les clés publiques d'approbation avec l'accès SSH personnel ;
 le Controller ne peut pas s'autoriser lui-même.
 
-L'installateur V1 de la Console embarque l'Assistant, un unique paquet serveur
-`.deb` Debian 13 `amd64`, ses définitions statiques et le manifeste signé qui
+L'installateur de la Console pour `v0.1.0` embarque l'Assistant, un unique paquet
+serveur `.deb` Debian 13 `amd64`, ses définitions statiques et le manifeste signé qui
 lie sa version, sa cible, sa taille et son empreinte. L'Assistant vérifie ce lot
 avant tout privilège ; le paquet n'embarque ni secret, ni configuration propre à
 une machine, ni activation de rôle ou transfert d'autorité. Il inventorie les
@@ -235,7 +236,7 @@ trois unités Controller, Daemon et Relay livrées inactives sous
 ligne, la reprise et le retrait explicite des états qu'il génère. Aucun binaire privilégié
 n'est téléchargé dynamiquement à l'amorçage. La prise en charge de `arm64` et
 d'autres distributions attend une preuve séparée. La mise à jour reste manuelle
-en V1.
+dans `v0.1.0`.
 
 Le contrat complet et ses preuves attendues sont fixés dans
 [Amorçage et remplacement du Controller](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
@@ -271,7 +272,7 @@ présence :
   candidate, mais son démarrage refuse toute machine qui n'a pas reçu au
   préalable une configuration et une identité Relay explicitement
   provisionnées. Cette capacité est optionnelle sur chaque Agent, mais la chaîne
-  d'observation V1 provisionne exactement un Relay ;
+  d'observation de `v0.1.0` provisionne exactement un Relay ;
 - un **Auxiliaire local** optionnel peut être activé uniquement pour une machine
   placée en mode géré. Il n'est pas permanent, n'écoute aucun port, est lancé
   pour un plan précis, applique une opération nommée avec les seuls privilèges
@@ -280,7 +281,7 @@ présence :
 Une machine ordinaire lance donc seulement `your-cloud daemon`. Une candidate
 Relay explicitement provisionnée peut lancer simultanément `your-cloud daemon`
 et `your-cloud relay` depuis les mêmes octets, sous deux comptes différents.
-Dans la V1, `your-cloud aux` devient un troisième processus ponctuel. Le
+Dans `v0.1.0`, `your-cloud aux` devient un troisième processus ponctuel. Le
 Controller l'invoque par une identité SSH propre à la machine et une commande
 forcée pour un plan exact. Après confirmation native, le cœur de la Console
 signe l'enveloppe canonique du plan et de son rollback avec la clé humaine de
@@ -366,7 +367,8 @@ Quel que soit l'adaptateur, le parcours final conserve les mêmes garanties :
 
 Une action possède des états honnêtes : en attente, en cours, réussie, échouée
 ou résultat inconnu. Une coupure ne déclenche aucun rejeu aveugle d'une mutation
-non idempotente et ne permet pas de promettre un rollback autonome en V1. Après
+non idempotente et ne permet pas de promettre un rollback autonome dans
+`v0.1.0`. Après
 reconnexion, le Controller observe l'état réel puis prépare un nouveau plan.
 L'expiration et l'anti-rejeu survivent aux redémarrages grâce à l'époque et à la
 séquence consommée dans l'état root-owned minimal de chaque cible. Cet état
@@ -386,8 +388,8 @@ autorité de mise à jour distincte.
 | Option | Conclusion |
 |---|---|
 | Daemon unique fonctionnant en root | Plus simple, mais sa compromission donnerait une autorité générale : refusé |
-| Ansible dans le cœur V1 | Bon moteur externe de convergence, mais ajoute un second langage et une autorité générale au premier parcours : conservé comme outil utilisateur et intégration future éventuelle, pas comme dépendance du produit V1 |
-| SSH restreint vers l'Auxiliaire | Transport simple pour les machines Linux déjà déclarées, sans ordre par le Daemon ni shell général : cible V1 retenue |
+| Ansible dans le cœur de `v0.1.0` | Bon moteur externe de convergence, mais ajoute un second langage et une autorité générale au premier parcours : conservé comme outil utilisateur et intégration future éventuelle, pas comme dépendance de `v0.1.0` |
+| SSH restreint vers l'Auxiliaire | Transport simple pour les machines Linux déjà déclarées, sans ordre par le Daemon ni shell général : cible retenue pour `v0.1.0` |
 | Binaires indépendants pour Daemon et Relay | Isolation visible, mais versions, signatures, SBOM et mises à jour peuvent dériver : écarté |
 | Exécutable unique lancé comme un seul processus multi-rôle | Distribution simple, mais mémoire, compte, secrets, crash et surface réseau partagés : refusé |
 | Exécutable unique, processus et comptes séparés | Une version et une chaîne d'approvisionnement, avec des frontières d'exécution par rôle : cible retenue |
@@ -473,9 +475,9 @@ Cloud à NIS2.
   réellement besoin ; elle ne réutilise pas implicitement les autorités
   d'amorçage et d'action déjà bornées.
 
-### Cohérence avec la V1
+### Cohérence avec `v0.1.0`
 
-La V1 constitue une première marche cohérente, pas une implémentation anticipée
+`v0.1.0` constitue une première marche cohérente, pas une implémentation anticipée
 de toute cette cible. Son exécutable commun fournit `daemon`, `relay` et
 `aux`, lancés comme des processus séparés. Elle prouve le parcours utilisateur
 stable — plan exact avec rollback exact, approbation liée au contenu,
@@ -484,7 +486,7 @@ et vérification — par une identité SSH distincte sur chaque machine. Son Dae
 reste strictement limité à l'observation, son Relay ne transporte aucune action
 et son Auxiliaire n'est ni permanent, ni un listener, ni un shell général.
 
-Le contrat V1 n'exige aucun adaptateur OpenStack ou K3s ni runner IaC.
+Le contrat de `v0.1.0` n'exige aucun adaptateur OpenStack ou K3s ni runner IaC.
 Ansible reste utilisable par l'utilisateur en mode externe ; une intégration
 isolée pourra être étudiée après stabilisation sans changer le plan que
 l'utilisateur comprend et approuve.
@@ -526,7 +528,8 @@ compréhensibles.
 <!-- coherence: V1-NETWORK:start -->
 ## Zone d'exposition et vraie DMZ
 
-Le VPS public du scénario de référence V1 constitue une zone d'exposition
+Le VPS public du scénario de référence de `v0.1.0` constitue une zone
+d'exposition
 durcie, pas à lui seul une DMZ. Une vraie DMZ nécessite une séparation réseau vérifiable : le trafic
 Internet entre par une frontière filtrante, les composants exposés résident
 dans un segment dédié, puis une seconde politique limite leurs accès vers les
@@ -634,7 +637,7 @@ aucune autorisation envers les autres appareils.
   accès réseau général et ne fournit jamais de commande ou de script libre. Une
   opération OCI peut autoriser uniquement un registre et un digest exacts,
   visibles dans le plan.
-- Le transport V1 des plans d'action reste séparé du Relay d'observation.
+- Le transport des plans d'action de `v0.1.0` reste séparé du Relay d'observation.
   Le cœur natif signe une approbation liée au contenu exact, au rollback, à la
   cible, à l'époque et à la séquence ; l'Auxiliaire la vérifie contre son état
   root-owned. Une action inconnue, expirée, rejouée ou insuffisamment autorisée
@@ -659,8 +662,9 @@ aucune autorisation envers les autres appareils.
 
 ## Manière de construire
 
-Le [contrat V1](../objectifs/v1/README.md) fixe une ligne d'arrivée globale. La
-[roadmap V1](../objectifs/v1/ROADMAP.md) ne détaille que le chemin jusqu'à cette V1. Le cap
+Le [contrat `v0.1.0`](../objectifs/v1/README.md) fixe une ligne d'arrivée
+globale. La [roadmap `v0.1.0`](../objectifs/v1/ROADMAP.md) ne détaille que le
+chemin jusqu'à `v0.1.0`. Le cap
 présent n'est pas une roadmap globale : les capacités postérieures sont cadrées
 au moment où elles deviennent le prochain objectif réel.
 

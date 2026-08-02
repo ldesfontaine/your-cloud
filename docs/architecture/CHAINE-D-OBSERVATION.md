@@ -46,7 +46,8 @@ de vie :
 ## Placement des capacités
 
 Cette section décrit les processus réellement présents dans `v0.0.2` et dans la
-porte de lecture `v0.0.3`. L'Auxiliaire appartient désormais au contrat V1,
+porte de lecture `v0.0.3`. L'Auxiliaire appartient désormais au contrat de
+`v0.1.0`,
 mais il n'est encore ni implémenté ni prouvé et ne doit pas être inventé dans
 la chaîne actuelle.
 
@@ -229,7 +230,8 @@ enveloppes en attente, prochaine séquence et nombre de lacunes.
 refuse un chemin, un sujet ou un format libre. Elle ne montre ni clé privée ni
 valeurs de santé collectées.
 
-Le prochain chemin V1 n'ajoute aucun ordre à ces rôles : une identité SSH propre
+Le chemin prévu pour `v0.1.0` n'ajoute aucun ordre à ces rôles : une identité
+SSH propre
 à la machine et une commande forcée lanceront `your-cloud aux` comme processus
 ponctuel séparé. Le Daemon et le Relay resteront non privilégiés et consacrés à
 l'observation. Cette cartographie n'ajoutera l'Auxiliaire à ses fonctions et
@@ -277,7 +279,7 @@ phrase secrète locale dérivée avec Argon2id. Il conserve des clés d'appareil
 humaines distinctes par Controller. Le cœur natif signe la preuve humaine ; le
 Controller refuse les challenges rejoués, expirés ou liés à une autre origine.
 Le frontend ne reçoit aucune clé ni session. Windows Hello, passkeys, FIDO2 et
-SSO/OIDC restent post-V1.
+SSO/OIDC restent postérieurs à `v0.1.0`.
 
 La phrase contient six mots français aléatoires. L'autorité locale du Controller
 ouvre `9444` dix minutes au plus pour un appairage ou une récupération épinglé,
@@ -330,10 +332,12 @@ ce pouvoir. Une VM hostile située sur le même réseau LAB doit prouver d'abord
 refus IP, puis dans une phase isolée le refus mTLS et applicatif, avant de
 réaffirmer l'ingestion, la lecture saine et l'inventaire inchangé.
 
-La future liaison WireGuard post-V1 Console–Controller reste un chemin d'accès distinct
+La future liaison WireGuard Console–Controller, postérieure à `v0.1.0`, reste
+un chemin d'accès distinct
 de cette chaîne d'observation. La Console devra la présenter comme une opération
 de connexion bornée à l'infrastructure choisie, avec déverrouillage et fermeture
-explicites, sans transporter la clé par le Relay ni ajouter ce mécanisme à la V1
+explicites, sans transporter la clé par le Relay ni ajouter ce mécanisme à
+`v0.1.0`
 ou à `v0.0.3`.
 
 | Sujet | Relay | Controller |

@@ -123,14 +123,14 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
-- [V1 — bornage IPC et helper Windows](v1-bootstrap-ipc-windows.md) : run
+- [`v0.1.0` — bornage IPC et helper Windows](v1-bootstrap-ipc-windows.md) : run
   GitHub Actions manuel `30753216798` entièrement vert sur le candidat produit
   exact `f3fef79` ; tests Linux et Windows, Job Object et arbre de processus,
   branches hostiles avant reprise, `.deb`, `.msi`, gates ELF/PE, installation,
   dispatch Tauri vivant depuis WebView2, refus forge/concurrence/rejeu, absence
   de listener et nettoyage exécutés le 2 août 2026. Cette intégration ferme
-  #43 ; elle ne ferme ni #45, ni #42, ni #35, ni le palier #13 ou la V1.
-- [V1 — bornage IPC et gate du helper Linux](v1-bootstrap-ipc-linux.md) :
+  #43 ; elle ne ferme ni #45, ni #42, ni #35, ni le palier #13 ou `v0.1.0`.
+- [`v0.1.0` — bornage IPC et gate du helper Linux](v1-bootstrap-ipc-linux.md) :
   passage LAB Linux historique du 2 août 2026 ; WebKitGTK et JavaScriptCoreGTK
   sont des dépendances directes du binaire Console, ce qui impose le helper
   compagnon distinct prévu par #44. Le premier consentement GTK3 sans secret et

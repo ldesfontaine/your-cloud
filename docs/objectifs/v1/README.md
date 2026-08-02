@@ -1,4 +1,4 @@
-# Objectif V1
+# Objectif `v0.1.0`
 
 > Statut : contrat fonctionnel validé pour le découpage de la roadmap. Les
 > paramètres d'implémentation encore inconnus seront mesurés au palier concerné
@@ -9,7 +9,7 @@ Markdown.
 
 ## Résultat attendu
 
-La V1 se ferme contre un scénario LAB de référence, pas contre une
+`v0.1.0` se ferme contre un scénario LAB de référence, pas contre une
 infrastructure imposée aux utilisateurs. Depuis la Console, un utilisateur y
 demande au Controller de représenter une infrastructure à partir de deux
 machines Linux déjà installées :
@@ -29,7 +29,7 @@ passage privé, les restrictions réseau, le point d'entrée HTTPS et la route v
 le service après approbation.
 
 Atteindre ce scénario de manière reproductible, compréhensible et vérifiée
-constitue la ligne d'arrivée fonctionnelle de la V1.
+constitue la ligne d'arrivée fonctionnelle de `v0.1.0`.
 
 Ce placement sert à prouver les capacités génériques d'observer des machines déjà
 installées, de déployer un service web OCI public et de publier un service privé
@@ -70,7 +70,7 @@ les VM nécessaires à la preuve.
 ### Profils de référence BentoPDF et Vaultwarden
 
 BentoPDF et Vaultwarden sont des charges de référence déterministes pour la
-preuve V1. Ils ne sont ni des composants de Your Cloud, ni des installations
+preuve de `v0.1.0`. Ils ne sont ni des composants de Your Cloud, ni des installations
 par défaut. Chaque profil doit être déclaré, placé, planifié puis approuvé avant
 la moindre création de ressource.
 
@@ -115,11 +115,11 @@ autorité :
   bornée pendant l'amorçage décrit plus bas ;
 - le **Controller** est le backend d'une seule infrastructure. À terme, il porte
   son inventaire, ses utilisateurs et rôles, ses décisions d'enrôlement, ses
-  plans, son état attendu et son audit. En V1, il coordonne l'Auxiliaire par un
+  plans, son état attendu et son audit. Dans `v0.1.0`, il coordonne l'Auxiliaire par un
   chemin SSH d'administration distinct pour chaque machine. Il expose une API
   privée authentifiée mais ne sert aucun frontend.
 
-La V1 prouve une Console installée, un Controller et une infrastructure. La
+`v0.1.0` prouve une Console installée, un Controller et une infrastructure. La
 Console peut conserver plusieurs associations approuvées, une par Controller.
 L'utilisateur n'a pas à mémoriser leurs adresses, mais l'application connaît et
 vérifie l'identité de chaque Controller. Sa distribution signée, ses identités
@@ -226,7 +226,7 @@ libellé, reste l'autorité visible.
 
 La borne de 64 machines limite l'état et les preuves de cette version ; elle
 n'est pas une limite générale du produit. Son relèvement exige des mesures et
-des formats adaptés plutôt qu'une promesse non éprouvée dans la V1.
+des formats adaptés plutôt qu'une promesse non éprouvée dans `v0.1.0`.
 
 La preuve de cette application, ses builds et ses tests restent dans le LAB ou
 un runner isolé. Le laptop de développement continue de servir uniquement à
@@ -249,28 +249,28 @@ dont les propriétés sont prouvées ; sa valeur brute n'est jamais exposée au
 frontend. Fermer la liaison ne révoque pas le pair côté infrastructure :
 révocation et rotation restent des opérations distinctes et visibles.
 
-Le mécanisme exact reste à contracter dans un palier post-V1 : tunnel géré par le
+Le mécanisme exact reste à contracter dans un palier postérieur à `v0.1.0` : tunnel géré par le
 système ou pile WireGuard intégrée et limitée au seul client Controller. Un
-coffre portable de liaison, distinct du coffre Stronghold de la V1, reste aussi
-une option post-V1, pas une décision. S'il est retenu, la phrase ne devient
+coffre portable de liaison, distinct du coffre Stronghold de `v0.1.0`, reste aussi
+une option postérieure à `v0.1.0`, pas une décision. S'il est retenu, la phrase ne devient
 jamais directement une clé
 WireGuard : une fonction de dérivation mémoire-dure produit une clé d'enveloppe
 pour un chiffrement authentifié. Le risque d'essais hors ligne, la récupération,
 le changement de phrase et l'effacement en mémoire devront être mesurés et
-prouvés. Aucun de ces mécanismes n'appartient à la V1 ni à `v0.0.3`.
+prouvés. Aucun de ces mécanismes n'appartient à `v0.1.0` ni à `v0.0.3`.
 
 WireGuard authentifie la possession de la clé du pair ; il ne prouve ni
 l'intégrité de l'appareil ni l'identité de l'humain. La Console possède donc une
 identité d'appareil distincte et le Controller exige une authentification humaine
-forte avant d'émettre une session courte liée à cet appareil. Pour toute la V1,
+forte avant d'émettre une session courte liée à cet appareil. Dans `v0.1.0`,
 une phrase secrète locale déverrouille le coffre Stronghold commun à Linux et
 Windows ; le Controller vérifie une signature humaine distincte de mTLS.
-Windows Hello, passkeys, FIDO2 et SSO/OIDC restent post-V1. Les effets d'une
+Windows Hello, passkeys, FIDO2 et SSO/OIDC restent postérieurs à `v0.1.0`. Les effets d'une
 future identité externe et sa récupération locale privée seront contractés à ce
 moment.
 
 Un futur accès par navigateur constituerait un mode distinct avec son propre
-frontend distribué et, si nécessaire, une passerelle publique. Il reste hors V1,
+frontend distribué et, si nécessaire, une passerelle publique. Il reste hors de `v0.1.0`,
 facultatif et sans autorité d'administration ni secret de machine. Ses pouvoirs
 résiduels sur le routage, la disponibilité, TLS, l'intégrité du code livré et la
 transmission d'identité devront être bornés.
@@ -280,7 +280,7 @@ transmission d'identité devront être bornés.
 ## Amorçage et remplacement du Controller
 
 Le premier Controller n'existe pas encore pour installer sa propre autorité.
-La V1 fournit donc dans l'installation de la Console un **Assistant
+`v0.1.0` fournit donc dans l'installation de la Console un **Assistant
 d'amorçage** natif, temporaire et distinct du frontend. Le parcours utilisateur
 reste simple :
 
@@ -304,7 +304,7 @@ Passphrase, mot de passe et consentement passent par une fenêtre du cœur natif
 qui répète cibles, actions et expiration ; la WebView ne peut ni les fournir,
 ni les valider, ni appeler librement SSH ou `ssh-agent`.
 
-L'audit ne scanne pas le LAN. Pour la V1 serveur, il accepte Debian 13
+L'audit ne scanne pas le LAN. Pour le serveur de `v0.1.0`, il accepte Debian 13
 `amd64` ; systemd et cgroup v2 sont en plus requis pour héberger un service OCI
 géré. Il confirme les clés d'hôte, les rôles existants et les ressources avant
 de proposer un Controller sur une machine privée, de confiance et normalement
@@ -321,7 +321,7 @@ quota disponible. Ses destinations, listeners, tailles, concurrences, délais
 et débits bornent séparément le réseau. L'audit rend ces coûts et ressources
 disponibles. La preuve couvre une petite machine et les inventaires de 1, 2 et
 64 machines. Un placement réellement insuffisant est refusé avec sa cause ; la
-borne de 64 appartient à la V1 et ne constitue pas un plafond général du
+borne de 64 appartient à `v0.1.0` et ne constitue pas un plafond général du
 produit.
 
 Il existe exactement deux catégories d'accès SSH d'administration des machines :
@@ -369,7 +369,7 @@ Controller vivant ; il ne restaure pas un Controller détruit. Si cette
 récupération remplace la clé humaine, les actions restent verrouillées jusqu'à
 ce que l'Assistant tourne les ancres publiques avec l'accès SSH personnel.
 
-L'installateur V1 embarque l'Assistant et un unique paquet serveur `.deb`
+L'installateur de `v0.1.0` embarque l'Assistant et un unique paquet serveur `.deb`
 Debian 13 `amd64`, avec ses définitions statiques et le manifeste signé qui lie
 sa version, sa cible, sa taille et son empreinte. Cette vérification précède tout
 privilège. Le paquet possède seulement le binaire root-owned sous
@@ -417,7 +417,7 @@ l'observation ne doit pas arrêter, par elle-même, les services hébergés sur
 d'autres machines ; la perte d'un hôte reste une panne de ses services
 colocalisés.
 
-### Comment l'interface agit réellement en V1
+### Comment l'interface agit réellement dans `v0.1.0`
 
 Quand l'utilisateur demande un déploiement ou une modification prise en charge :
 
@@ -434,24 +434,24 @@ Quand l'utilisateur demande un déploiement ou une modification prise en charge 
    nouvelles observations du Daemon obtenues auprès du Relay.
 
 Le Daemon ne reçoit donc jamais le clic de l'utilisateur et n'exécute aucune
-commande. La V1 automatise les seules opérations prévues par son contrat ; elle
+commande. `v0.1.0` automatise les seules opérations prévues par son contrat ; elle
 ne promet pas encore une console d'administration générale.
 
 La Console communique uniquement avec les Controllers qui lui ont été
-explicitement associés. Dans le LAB V1, le Controller vit dans l'environnement
+explicitement associés. Dans le LAB de `v0.1.0`, le Controller vit dans l'environnement
 d'administration et possède un chemin réseau explicitement autorisé vers SSH,
-sans exposition publique du port de la machine du LAN. La V1 ne prétend pas
+sans exposition publique du port de la machine du LAN. `v0.1.0` ne prétend pas
 encore qu'une Console installée n'importe où peut traverser seule n'importe quel
 NAT.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 ### Compatibilité avec la cible finale
 
-La V1 et la cible à long terme conservent le même contrat utilisateur :
+`v0.1.0` et la cible à long terme conservent le même contrat utilisateur :
 demander une action, comprendre le plan, approuver son contenu exact, appliquer
 par une autorité adaptée puis vérifier le résultat.
 
-La V1 distribue un seul exécutable `your-cloud` sur les deux machines. Sur la
+`v0.1.0` distribue un seul exécutable `your-cloud` sur les deux machines. Sur la
 machine du LAN, systemd lance `your-cloud daemon`. Sur le VPS, systemd lance en
 parallèle `your-cloud daemon` et `your-cloud relay` depuis ce même fichier, mais
 sous des comptes, configurations, identités, secrets et budgets distincts. Le
@@ -474,14 +474,14 @@ une opération OCI peut faire demander à Podman rootless uniquement un registre
 autorisé et un digest exact déjà visibles dans le plan.
 
 Ce chemin SSH d'action reste totalement séparé du Daemon et du Relay
-d'observation. Ansible ne fait pas partie du runtime ou du cœur produit V1 :
+d'observation. Ansible ne fait pas partie du runtime ou du cœur produit de `v0.1.0` :
 l'utilisateur peut continuer à l'employer en mode externe et une intégration
 isolée pourra être étudiée après stabilisation. OpenStack, Terraform, OpenTofu
 et K3s utiliseront leurs API ou un runner isolé lorsque cette autorité est plus
 adaptée. Cette cible est détaillée dans le
 [cap du projet](../../projet/CAP.md).
 
-Les contraintes V1 sont :
+Les contraintes de `v0.1.0` sont :
 
 - le plan compris et approuvé est le document exact reçu par l'Auxiliaire ;
 - l'approbation couvre aussi le rollback exact, borné aux seules ressources
@@ -519,14 +519,14 @@ Les contraintes V1 sont :
 
 Seules les machines explicitement enrôlées peuvent devenir des pairs du passage
 privé. L'enrôlement prouve une identité ; il n'autorise pas une machine à parler
-librement à toutes les autres. La V1 n'est donc pas un réseau maillé de confiance
+librement à toutes les autres. `v0.1.0` n'est donc pas un réseau maillé de confiance
 mais un ensemble de flux minimaux approuvés.
 
 Chaque donnée Your Cloud qui traverse le réseau privé entre deux machines
 enrôlées est chiffrée et authentifiée avant de quitter sa machine, avec le
 mécanisme adapté au chemin :
 
-| Flux | Protection retenue pour la V1 |
+| Flux | Protection retenue pour `v0.1.0` |
 |---|---|
 | Paquets privés entre machines enrôlées | WireGuard, pairs nommés et routes bornées |
 | Daemon vers Relay | mTLS avec une identité propre à chaque Daemon, y compris au-dessus de WireGuard lorsque le Relay est distant |
@@ -539,7 +539,7 @@ mécanisme adapté au chemin :
 WireGuard et mTLS ne sont pas deux synonymes. WireGuard chiffre et authentifie
 les paquets entre machines ; mTLS identifie les composants Your Cloud qui
 échangent des données applicatives. SSH protège le chemin d'administration et
-HTTPS protège les accès Web. Après la V1, l'accès d'un appareil administrateur
+HTTPS protège les accès Web. Après `v0.1.0`, l'accès d'un appareil administrateur
 au Controller utilisera aussi un passage WireGuard borné, sans remplacer
 l'authentification de l'humain dans le Controller. Ajouter mTLS indistinctement
 à tous les services tiers n'apporterait pas automatiquement une meilleure
@@ -583,7 +583,7 @@ Il ne constitue pas à lui seul une preuve de conformité.
 <!-- coherence: OWNERSHIP-MODES:start -->
 ## Deux modes de responsabilité
 
-La V1 distingue explicitement qui possède le droit de modifier chaque service
+`v0.1.0` distingue explicitement qui possède le droit de modifier chaque service
 et chaque passage réseau.
 
 ### Mode géré
@@ -604,7 +604,7 @@ de découverte ne modifie silencieusement le réseau.
 
 La disponibilité d'un profil de service dans l'App ne déploie rien. Une
 instance n'existe qu'après déclaration, placement, plan et approbation
-explicites ; les profils BentoPDF et Vaultwarden de la preuve V1 ne sont donc
+explicites ; les profils BentoPDF et Vaultwarden de la preuve de `v0.1.0` ne sont donc
 requis dans aucune infrastructure utilisateur.
 
 ### Mode externe
@@ -623,7 +623,7 @@ L'App affiche alors :
 - les limites : aucune promesse de mise à jour, de rollback, de suppression ou
   de moindre privilège lorsque ces propriétés ne sont pas prouvées.
 
-La V1 ne découvre pas arbitrairement tous les services et tunnels existants.
+`v0.1.0` ne découvre pas arbitrairement tous les services et tunnels existants.
 Elle exige une déclaration explicite. Une future reprise en **Mode géré** devra
 commencer par un audit, un diff et une approbation ; elle n'est jamais implicite.
 <!-- coherence: OWNERSHIP-MODES:end -->
@@ -670,7 +670,7 @@ commencer par un audit, un diff et une approbation ; elle n'est jamais implicite
   privé.
 
 Le VPS voit nécessairement l'adresse source utilisée par la connexion sortante.
-La V1 ne promet donc pas qu'elle soit inconnue du VPS ; elle promet qu'elle
+`v0.1.0` ne promet donc pas qu'elle soit inconnue du VPS ; elle promet qu'elle
 n'est ni publiée comme destination, ni rendue directement joignable par une
 ouverture créée par Your Cloud.
 
@@ -702,7 +702,7 @@ révocation. Your Cloud porte ces responsabilités supplémentaires.
 
 ## Point d'entrée HTTPS retenu
 
-Dans son scénario de référence, la V1 utilise **Traefik** sur le VPS pour
+Dans son scénario de référence, `v0.1.0` utilise **Traefik** sur le VPS pour
 terminer HTTPS et router les noms publics vers BentoPDF et Vaultwarden. Ce
 choix rend la preuve déterministe sans imposer ce proxy, ces services ou ce
 placement à une infrastructure utilisateur.
@@ -711,7 +711,7 @@ Your Cloud reste l'autorité déclarative des publications : il génère une
 configuration dynamique Traefik en YAML avec le `file provider`, la présente
 dans le plan, la fait déposer atomiquement par l'Auxiliaire du VPS puis vérifie
 le résultat. Traefik ne découvre pas seul les conteneurs et ne reçoit pas le
-socket Docker dans la V1. La configuration vise explicitement BentoPDF sur le
+socket Docker dans `v0.1.0`. La configuration vise explicitement BentoPDF sur le
 VPS et Vaultwarden par son adresse WireGuard et son port autorisé.
 
 Contraintes de sécurité :
@@ -758,10 +758,10 @@ sûr et réduction du risque de NIS2, sans constituer une conformité à lui seu
 ## Méthode de déploiement
 
 Le Controller orchestre et vérifie les changements ; l'Auxiliaire applique sur
-sa propre machine les opérations locales typées. La V1 n'en fait pas un format
+sa propre machine les opérations locales typées. `v0.1.0` n'en fait pas un format
 universel des services : elle implémente un premier parcours officiel fondé sur
 des **images OCI**. Ansible reste un outil externe de l'utilisateur, pas une
-dépendance du produit ou du runtime V1.
+dépendance du produit ou du runtime de `v0.1.0`.
 
 Lorsqu'un profil BentoPDF ou Vaultwarden est explicitement sélectionné, il est
 référencé par un nom lisible, une version précise et le digest du manifeste
@@ -809,7 +809,7 @@ seul une conformité.
 
 ## Moteur OCI retenu
 
-La V1 exécute les images OCI avec **Podman en mode rootless** et les décrit par
+`v0.1.0` exécute les images OCI avec **Podman en mode rootless** et les décrit par
 des unités **Quadlet** gérées par systemd.
 
 Ce parcours géré exige donc **systemd et cgroup v2 sur la machine qui héberge le
@@ -817,9 +817,9 @@ service OCI**. L'App vérifie ces deux prérequis avant de proposer le plan. Si
 l'un manque, elle refuse le déploiement géré avec une explication précise :
 Quadlet ne bascule pas automatiquement vers OpenRC, runit ou un script maison.
 Un service installé par l'utilisateur peut rester représenté en mode externe.
-Aucun adaptateur pour un autre système d'init n'est planifié dans la V1.
+Aucun adaptateur pour un autre système d'init n'est planifié dans `v0.1.0`.
 
-Cette limite concerne le déploiement OCI géré. L'enveloppe serveur V1 est
+Cette limite concerne le déploiement OCI géré. L'enveloppe serveur de `v0.1.0` est
 bornée à Debian 13 `amd64` ; une autre architecture ou distribution n'est
 annoncée qu'après une preuve dédiée.
 
@@ -842,7 +842,7 @@ services.
   un conteneur, configuration manuelle non reproductible et dérive invisible.
 - **Alternative considérée** : Docker rootless peut aussi réduire les
   privilèges et reste valide en mode externe, mais Podman rend le chemin sans
-  démon central et l'intégration systemd déclarative naturels pour cette V1.
+  démon central et l'intégration systemd déclarative naturels pour `v0.1.0`.
 - **Moindre privilège** : un compte système rootless distinct exécute chaque
   famille de service ; aucun conteneur privilégié, aucun socket de moteur monté,
   aucune capacité, volume, port ou communication implicite.
@@ -879,11 +879,11 @@ d'évaluation de l'efficacité sans constituer une conformité à elle seule.
 
 Lors du premier incrément qui utilisera Podman et Quadlet, le rapport HTML
 expliquera avant exécution chaque champ retenu, le risque qu'il traite, son
-effet visible et le test qui le prouve. La V1 ne considérera pas ce parcours
+effet visible et le test qui le prouve. `v0.1.0` ne considérera pas ce parcours
 terminé tant que la relation entre la fiche Quadlet, le conteneur et le service
 systemd réellement observés ne sera pas compréhensible.
 
-Un déploiement V1 est au minimum versionné, relançable, vérifié après
+Un déploiement de `v0.1.0` est au minimum versionné, relançable, vérifié après
 application et désinstallable. Les scripts opaques et non idempotents ne
 constituent pas le parcours normal.
 
@@ -891,7 +891,7 @@ constituent pas le parcours normal.
 
 Deux services temporaires de type `hello-world` pourront servir de sondes dans
 les micro-versions qui construisent le déploiement, le passage privé et le
-routage. Ils ne compteront pas comme les deux véritables services de la V1.
+routage. Ils ne compteront pas comme les deux véritables services de `v0.1.0`.
 
 La preuve finale doit couvrir deux capacités génériques : un service web OCI
 public et un service privé persistant publié par un point d'entrée séparé. Pour
@@ -906,7 +906,7 @@ rester déterministe, le LAB utilise les deux profils de référence suivants :
   la sauvegarde, la restauration, le redémarrage, la fermeture des inscriptions
   et l'absence d'accès latéral au LAN.
 
-Cette cible de preuve est validée pour la V1. La preuve devra montrer que les
+Cette cible de preuve est validée pour `v0.1.0`. La preuve devra montrer que les
 deux profils peuvent être proposés puis sélectionnés explicitement ; aucun ne
 deviendra une obligation pour l'infrastructure réelle. Les sondes `hello-world`
 restent uniquement des outils de construction intermédiaires et ne satisfont
@@ -964,7 +964,7 @@ passage privé borné le rend joignable. Un futur remplacement automatique reste
 un contrat séparé : il devra limiter les candidates, prouver la panne,
 redistribuer l'endpoint authentifié, annoncer la perte d'état éventuelle et
 empêcher deux Relay de devenir simultanément responsables. Son mécanisme n'est
-pas choisi par la V1 actuelle.
+pas choisi dans la version `v0.1.0`.
 
 Sans Relay disponible, une commande exécutée **localement sur la machine** peut
 afficher le dernier état et la santé du tampon. Cette consultation utilisera un
@@ -1013,7 +1013,7 @@ Le Daemon refuse :
 
 ### Extension future sans backdoor
 
-La V1 commence avec un petit ensemble de collecteurs intégrés et audités. De
+`v0.1.0` commence avec un petit ensemble de collecteurs intégrés et audités. De
 nouvelles observations pourront être ajoutées dans les versions suivantes sans
 changer ce modèle de sécurité : chaque collecteur possède un identifiant, une
 version, un schéma de sortie, un manifeste de privilèges et des tests hostiles.
@@ -1055,7 +1055,7 @@ constituer à elle seule une déclaration de conformité.
 
 ## Premier incrément déjà retenu
 
-La `v0.0.1` ne construit pas toute la V1. Sa preuve finale doit montrer,
+La `v0.0.1` ne construit pas toute la version `v0.1.0`. Sa preuve finale doit montrer,
 uniquement dans le LAB :
 
 - un seul exécutable Go `your-cloud`, identique sur les deux machines ;
@@ -1074,7 +1074,7 @@ de mTLS dans cette première étape. Le réseau non sécurisé de ce prototype r
 strictement confiné au LAB. Chaque version suivante ferme une limite explicite
 avant d'ajouter une nouvelle capacité.
 
-## Preuve de V1 dans le LAB
+## Preuve de `v0.1.0` dans le LAB
 
 Le LAB simulera au minimum :
 
@@ -1099,7 +1099,7 @@ flux latéral n'a été déclaré et approuvé. Cette preuve porte sur les compo
 et environnements gérés par Your Cloud ; elle ne prétend pas transformer à elle
 seule tout le système Linux en pare-feu général du domicile.
 
-## Hors du contrat V1 actuel
+## Hors du contrat actuel de `v0.1.0`
 
 - Créer les VM ou installer leur système d'exploitation.
 - Piloter OpenStack, Terraform, OpenTofu ou un fournisseur cloud.
@@ -1111,27 +1111,27 @@ seule tout le système Linux en pare-feu général du domicile.
 - Reprendre automatiquement une action interrompue dont le résultat est
   inconnu.
 - Fournir depuis l'interface des opérations générales sur la machine au-delà des
-  déploiements, passages et routes précisément pris en charge par la V1.
+  déploiements, passages et routes précisément pris en charge par `v0.1.0`.
 - Fournir un catalogue générique acceptant arbitrairement tout service.
 - Découvrir automatiquement les services et passages existants ou les adopter
-  en gestion. La V1 repose sur leur déclaration explicite et leur vérification
+  en gestion. `v0.1.0` repose sur leur déclaration explicite et leur vérification
   en lecture seule lorsqu'un adaptateur existe.
 - Scanner une plage réseau ou inventorier les appareils voisins du LAN.
-- Exiger K3s standalone ou un cluster K3s pour déclarer la V1 atteinte.
+- Exiger K3s standalone ou un cluster K3s pour atteindre `v0.1.0`.
 - Fournir une haute disponibilité complète ou masquer les pannes.
 - Déployer un fournisseur d'identité et activer le SSO de Vaultwarden.
 
-Ces capacités restent hors V1. Elles pourront venir ensuite ; leur ajout à la
-V1 exigerait une modification explicite et une nouvelle validation du contrat,
+Ces capacités restent hors de `v0.1.0`. Elles pourront venir ensuite ; leur ajout à
+`v0.1.0` exigerait une modification explicite et une nouvelle validation du contrat,
 jamais un simple changement de roadmap.
 
-## Premier jalon demandé après la V1
+## Premier jalon demandé après `v0.1.0`
 
-La `v1.0.1` ajoutera au profil optionnel Vaultwarden un petit parcours SSO au
+La `v0.1.1` ajoutera au profil optionnel Vaultwarden un petit parcours SSO au
 moyen d'un fournisseur d'identité compatible OpenID Connect. Le fournisseur,
 son placement et son mode de récupération seront choisis seulement lors du
 cadrage de ce jalon ; cette note n'installe aucun de ces services par défaut,
-ne les impose pas à la V1 et ne préconçoit pas encore sa solution.
+ne les impose pas à `v0.1.0` et ne préconçoit pas encore sa solution.
 
 ## Paramètres fixés au bon incrément
 
@@ -1140,7 +1140,7 @@ ne les impose pas à la V1 et ne préconçoit pas encore sa solution.
 sont prouvées pour ce profil et cet environnement ; elles ne constituent pas un
 plafond de charge de production et ne préjugent pas des profils futurs.
 
-Le contrat suffisant pour découper la V1 est le suivant :
+Le contrat suffisant pour découper `v0.1.0` est le suivant :
 
 - `v0.0.1` ne conserve que le signal de présence décrit plus haut ;
 - `v0.0.2` ajoute la santé bornée de la machine et les limites mesurées ci-dessus ;

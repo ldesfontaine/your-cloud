@@ -3,7 +3,7 @@
 > Statut : contrat d'architecture décidé, partiellement implémenté et
 > partiellement prouvé. Le socle IPC et cycle de vie natif Linux/Windows de #43
 > est acquis ; le parcours d'amorçage global reste ouvert avant le premier plan
-> d'action V1.
+> d'action de `v0.1.0`.
 
 Une [édition HTML autonome et visuelle](../html/amorcage-controller.html)
 accompagne cette source Markdown.
@@ -156,7 +156,7 @@ transfert d'agent ou commande générale.
 L'Assistant préfère un agent SSH déjà déverrouillé et lui demande de signer sans
 extraire la clé privée. Sous Linux, il accepte seulement le chemin absolu lu une
 fois depuis `SSH_AUTH_SOCK`, vérifié comme socket Unix appartenant à
-l'utilisateur courant. Sous Windows, la V1 accepte seulement le pipe OpenSSH
+l'utilisateur courant. Sous Windows, `v0.1.0` accepte seulement le pipe OpenSSH
 `\\.\pipe\openssh-ssh-agent`. Une seule clé est sélectionnée et un budget fini
 de signatures est limité à l'authentification SSH de cette opération ; une
 deuxième signature ou un message hors de cette capacité est refusé. Les logs du
@@ -224,7 +224,7 @@ fournit pas le widget secret et conserve le secret dans le processus Console ;
 Slint ajoute un second event loop et une surface de dépendances, licence et
 paquet disproportionnée ; l'exécutable `ssh` externe laisse varier version,
 configuration et commandes ; `libssh2` ajoute une chaîne C/OpenSSL. Ces options
-ne sont pas retenues pour la V1. Le même exécutable Tauri utilisé comme helper
+ne sont pas retenues pour `v0.1.0`. Le même exécutable Tauri utilisé comme helper
 est également écarté : la preuve ELF montre que WebKit et JavaScriptCore sont
 chargés par sa liaison native avant que le code Rust puisse sélectionner un
 mode.
@@ -255,8 +255,8 @@ minimum :
 
 - l'identité et la clé d'hôte observées ;
 - la distribution et l'architecture ;
-- la présence de Debian 13 `amd64`, seule cible serveur prise en charge par la
-  V1 ;
+- la présence de Debian 13 `amd64`, seule cible serveur prise en charge par
+  `v0.1.0` ;
 - systemd et cgroup v2 lorsque la machine doit héberger un service OCI géré ;
 - les ressources utiles au placement ;
 - une installation Your Cloud existante et ses rôles actifs ;
@@ -309,10 +309,10 @@ peut encore proposer un rôle plus léger, une cohabitation différente ou une
 machine dédiée sans modifier silencieusement les choix de l'utilisateur.
 
 La borne actuelle de 64 machines appartient au format et aux preuves du
-Controller de cette version. Elle permet une V1 finie et vérifiable ; elle
-n'est pas une limite générale de Your Cloud. Les relèvements futurs partiront
-de mesures de l'inventaire, de l'observation et des actions concurrentes avant
-d'introduire pagination, partitionnement ou plusieurs Controllers. La V1 ne
+Controller de cette version. Elle permet une version `v0.1.0` finie et
+vérifiable ; elle n'est pas une limite générale de Your Cloud. Les relèvements
+futurs partiront de mesures de l'inventaire, de l'observation et des actions concurrentes avant
+d'introduire pagination, partitionnement ou plusieurs Controllers. `v0.1.0` ne
 préconçoit pas ces mécanismes, mais ne présente jamais 64 comme un plafond
 durable du produit.
 
@@ -503,8 +503,8 @@ santé du Controller.
 
 ## Distribution bornée
 
-L'installateur de Console V1 contient l'Assistant et un unique paquet serveur
-`.deb` pour Debian 13 `amd64`. Ce paquet livre le binaire Go `your-cloud` et ses
+L'installateur de la Console pour `v0.1.0` contient l'Assistant et un unique
+paquet serveur `.deb` pour Debian 13 `amd64`. Ce paquet livre le binaire Go `your-cloud` et ses
 définitions d'installation statiques. Il ne porte ni configuration propre à une
 machine, ni secret, ni identité, ni activation de rôle, ni transfert d'autorité :
 ces effets restent des opérations typées de l'Assistant après approbation. Les
@@ -520,7 +520,7 @@ seules unités livrées sont `your-cloud-controller.service`,
 `/usr/lib/systemd/system`, `root:root` en `0644`. Leur installation ne les
 active ni ne les démarre. Les chemins historiques `/usr/local/lib/your-cloud`
 et `/etc/systemd/system` des preuves antérieures restent des faits de ces
-paliers, pas les chemins du paquet V1.
+paliers, pas les chemins du paquet de `v0.1.0`.
 
 Le manifeste signé du lot Console relie la version, la cible, la taille et le
 SHA-256 exact du `.deb`. L'Assistant vérifie cette signature et ces valeurs avant
@@ -542,8 +542,8 @@ règles d'état partiel machine par machine s'appliquent. Retirer le paquet
 n'efface jamais implicitement configurations, secrets ou identités : leur
 retrait appartient à une opération explicite qui connaît l'autorité active.
 
-Le paquet Debian est retenu plutôt qu'une archive signée parce que la cible V1
-est exclusivement Debian et que réimplémenter extraction privilégiée,
+Le paquet Debian est retenu plutôt qu'une archive signée parce que la cible
+`v0.1.0` est exclusivement Debian et que réimplémenter extraction privilégiée,
 inventaire, permissions, mise à niveau et retrait élargirait inutilement la
 surface root de l'Assistant. Ce choix applique moindre privilège, séparation des
 responsabilités et défense en profondeur, et contribue aux mesures de chaîne
@@ -552,7 +552,7 @@ l'authenticité du lot sans le manifeste signé, ni un rollback transactionnel d
 toute l'infrastructure, ni une conformité OWASP ou NIS2 à lui seul.
 
 Cette enveloppe rend le parcours initial et le remplacement reproductibles avec
-le même lot. La mise à jour reste manuelle en V1. Une architecture ou
+le même lot. La mise à jour reste manuelle dans `v0.1.0`. Une architecture ou
 distribution supplémentaire n'est annoncée comme prise en charge qu'après une
 preuve LAB dédiée ; `arm64` reste le premier incrément de portabilité envisagé
 après stabilisation.
@@ -562,7 +562,7 @@ d'installation. La distribution Windows publique reste bloquée tant qu'une
 identité de signature reconnue et gratuite n'est pas réellement opérationnelle ;
 le projet ne transforme pas un certificat de test en promesse publique.
 
-## Limites V1
+## Limites de `v0.1.0`
 
 La première version ne fournit :
 

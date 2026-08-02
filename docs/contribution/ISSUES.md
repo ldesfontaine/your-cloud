@@ -2,7 +2,7 @@
 
 ## Rôle des issues
 
-La roadmap V1 reste la source canonique de l'ordre des preuves et des limites du
+La roadmap de `v0.1.0` reste la source canonique de l'ordre des preuves et des limites du
 produit. Une issue GitHub est un **contrat d'exécution** : elle transforme une
 partie suffisamment décidée de cette roadmap en travail borné, attribuable et
 vérifiable. Fermer une issue ne modifie pas à lui seul l'état documenté,
@@ -14,10 +14,10 @@ ni à décider silencieusement le produit, ni à dupliquer toute la roadmap.
 
 ## Niveau de découpage
 
-Le suivi jusqu'à la V1 utilise cette hiérarchie :
+Le suivi jusqu'à `v0.1.0` utilise cette hiérarchie :
 
-1. la [roadmap V1](../objectifs/v1/ROADMAP.md) fixe l'ordre canonique ;
-2. l'[issue de suivi V1](https://github.com/ldesfontaine/your-cloud/issues/20)
+1. la [roadmap de v0.1.0](../objectifs/v1/ROADMAP.md) fixe l'ordre canonique ;
+2. l'[issue de suivi de v0.1.0](https://github.com/ldesfontaine/your-cloud/issues/20)
    relie les paliers qui contribuent réellement à cette ligne d'arrivée ;
 3. chaque palier ou étape décidé possède une issue de suivi ;
 4. une issue parente représente ce palier lorsqu'il exige plusieurs
@@ -47,11 +47,11 @@ implémentation.
 ## Milestone active du palier #13
 
 Le palier d'amorçage et de remplacement du Controller utilise la milestone
-[V1 — Amorçage et remplacement du Controller](https://github.com/ldesfontaine/your-cloud/milestone/1)
+[v0.1.0 — Amorçage et remplacement du Controller](https://github.com/ldesfontaine/your-cloud/milestone/1)
 comme vue de suivi. Elle regroupe l'issue parente
 [#13](https://github.com/ldesfontaine/your-cloud/issues/13), la décision #34,
 l'issue parente #35 et ses contrats #42 à #45, les contrats exécutables #36 à
-#40 et la preuve globale #41. Le suivi transversal de toute la V1 reste porté
+#40 et la preuve globale #41. Le suivi transversal de toute la version `v0.1.0` reste porté
 par [#20](https://github.com/ldesfontaine/your-cloud/issues/20), hors de cette
 milestone.
 
@@ -74,13 +74,14 @@ descendant, les branches hostiles avant reprise et le dispatch Tauri vivant ont
 réussi sur le candidat exact `f3fef79` dans le run manuel `30753216798` : cette
 intégration ferme #43. La garde des futurs
 descendants SSH ou privilégiés appartient encore à #42. La suite reste donc
-`#45 → #42 → #35` ; #13, la milestone et la V1 demeurent ouverts.
+`#45 → #42 → #35` ; #13 et la milestone demeurent ouverts, tandis que `v0.1.0`
+reste à atteindre.
 
 Aucune date d'échéance arbitraire ne lui est attachée. Elle n'est fermée qu'après
 la preuve globale #41, la propagation documentaire et la fermeture de #13 ; sa
 fermeture ne prouve rien de plus que les preuves reliées par ces issues. Elle
 termine ce palier d'amorçage et permet d'ouvrir #14 ; elle ne ferme ni le suivi
-#20, ni la V1 complète.
+#20, ni la version `v0.1.0` complète.
 
 ## Convention de titre
 
@@ -110,7 +111,7 @@ Exemples :
 ```text
 ci(console): router les contrôles selon les chemins modifiés
 test(windows): prouver le lancement du MSI sans listener local
-docs(v1): propager le contrat d'amorçage dans la roadmap
+docs(v0.1.0): propager le contrat d'amorçage dans la roadmap
 ```
 
 ## Contenu obligatoire

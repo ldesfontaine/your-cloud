@@ -151,14 +151,14 @@ Références de départ :
   Après un échec contrôlé, le tenter tant que l'Auxiliaire garde la maîtrise ;
   annoncer un état partiel s'il échoue.
 - Après une coupure, rendre `résultat inconnu`, ne rien rejouer et observer
-  avant tout nouveau plan. La V1 n'ajoute ni historique local général, ni
+  avant tout nouveau plan. `v0.1.0` n'ajoute ni historique local général, ni
   continuation autonome de l'Auxiliaire ; seul l'état anti-rejeu minimal
   persiste.
 
 ## Ansible externe ou futur
 
-- Ansible n'est ni une dépendance du Controller, ni le runtime d'action de la
-  V1. L'utilisateur peut conserver ses playbooks en mode externe.
+- Ansible n'est ni une dépendance du Controller, ni le runtime d'action de
+  `v0.1.0`. L'utilisateur peut conserver ses playbooks en mode externe.
 - Une intégration future exige son propre contrat et un runner isolé ; elle
   n'est pas préconçue dans le cœur ou l'Auxiliaire actuel.
 - Lorsqu'un playbook existe pour le LAB, un parcours externe ou une future

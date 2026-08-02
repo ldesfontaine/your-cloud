@@ -5,7 +5,7 @@
 > dans le [rapport LAB](../../lab/v0.0.2-observation.md).
 
 Ce contrat ouvre uniquement le palier « observation authentifiée et bornée »
-de la [roadmap V1](ROADMAP.md). Il transforme cette intention en comportements
+de la [roadmap de v0.1.0](ROADMAP.md). Il transforme cette intention en comportements
 mesurables sans introduire l'App ni un chemin d'action vers les machines.
 
 ## Résultat observable

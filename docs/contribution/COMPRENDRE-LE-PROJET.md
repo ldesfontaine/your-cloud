@@ -32,7 +32,7 @@ source du sujet.
 |---|---|---|
 | Que signifie un terme ou une relation ? | [`CONTEXT.md`](../../CONTEXT.md) | Fixer le vocabulaire sans en déduire une implémentation |
 | Quelle est la destination durable ? | [`projet/CAP.md`](../projet/CAP.md) | Distinguer le cap des limites d'un palier courant |
-| Qu'est-ce qui ferme la V1 ? | [`objectifs/v1/README.md`](../objectifs/v1/README.md) | Lire les conditions de réussite avant la liste des travaux |
+| Qu'est-ce qui ferme `v0.1.0` ? | [`objectifs/v1/README.md`](../objectifs/v1/README.md) | Lire les conditions de réussite avant la liste des travaux |
 | Dans quel ordre avancer ? | [`objectifs/v1/ROADMAP.md`](../objectifs/v1/ROADMAP.md) | Identifier le palier ouvert, ses dépendances et son état décidé, implémenté ou prouvé |
 | Quel comportement exact doit être livré ? | Le contrat du palier sous `docs/objectifs/` | Borner entrées, sorties, refus et preuve avant le code |
 | Où vivent les composants et autorités ? | [`architecture/ANATOMIE.md`](../architecture/ANATOMIE.md), puis la fiche d'architecture concernée | Vérifier les frontières et les flux sans inventer une autorité |
@@ -96,14 +96,14 @@ en affirmation plus forte.
 
 ## Exemple : évolution de la CI et du suivi des travaux
 
-Pour évaluer un graphe GitHub Actions et faire évoluer le suivi V1 par issues,
+Pour évaluer un graphe GitHub Actions et faire évoluer le suivi de `v0.1.0` par issues,
 le jeu de lecture minimal est :
 
 1. Git et le diff, pour préserver le travail en cours ;
 2. la carte documentaire et les règles de contribution ;
 3. `CI.md` et `.github/workflows/ci.yml`, pour comparer l'image au découpage
    réellement implémenté et à ses gardes ;
-4. la roadmap V1, pour ne pas confondre ordre produit et file d'exécution ;
+4. la roadmap de `v0.1.0`, pour ne pas confondre ordre produit et file d'exécution ;
 5. `COHERENCE.md`, pour savoir où propager la pratique validée ;
 6. les sources officielles GitHub utiles, car les comportements des relances,
    checks requis et issues évoluent hors du dépôt.
