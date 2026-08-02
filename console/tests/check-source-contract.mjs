@@ -9,8 +9,15 @@ import {
 
 const consoleRoot = fileURLToPath(new URL("..", import.meta.url));
 const failures = [];
+const normalizeSourceText = (source) => source.replace(/\r\n?/gu, "\n");
+const readSourceText = async (path) =>
+  normalizeSourceText(await readFile(path, "utf8"));
 const releaseCoupledIdentifier =
   /\bv\d+\.\d+\.\d+\b|\bv\d+-\d+-\d+\b|\/v\d+\.\d+\.\d+\b/iu;
+
+if (normalizeSourceText("ligne 1\r\nligne 2\rligne 3\n") !== "ligne 1\nligne 2\nligne 3\n") {
+  failures.push("garde interne: normalisation LF, CRLF et CR invalide");
+}
 
 for (const hostile of [
   "https://controller.example.v0-0-3.your-cloud.test",
@@ -65,17 +72,15 @@ const packageLock = JSON.parse(await readFile(join(consoleRoot, "package-lock.js
 const tauriConfig = JSON.parse(
   await readFile(join(consoleRoot, "src-tauri", "tauri.conf.json"), "utf8"),
 );
-const cargoManifest = await readFile(join(consoleRoot, "src-tauri", "Cargo.toml"), "utf8");
-const cargoLock = await readFile(join(consoleRoot, "src-tauri", "Cargo.lock"), "utf8");
-const bootstrapRuntime = await readFile(
+const cargoManifest = await readSourceText(join(consoleRoot, "src-tauri", "Cargo.toml"));
+const cargoLock = await readSourceText(join(consoleRoot, "src-tauri", "Cargo.lock"));
+const bootstrapRuntime = await readSourceText(
   join(consoleRoot, "src-tauri", "src", "bootstrap.rs"),
-  "utf8",
 );
-const nativeAssistantRuntime = await readFile(
+const nativeAssistantRuntime = await readSourceText(
   join(consoleRoot, "src-tauri", "src", "native_assistant.rs"),
-  "utf8",
 );
-const nativeAssistantPrompt = await readFile(
+const nativeAssistantPrompt = await readSourceText(
   join(
     consoleRoot,
     "src-tauri",
@@ -84,40 +89,32 @@ const nativeAssistantPrompt = await readFile(
     "src",
     "native_prompt.rs",
   ),
-  "utf8",
 );
-const bootstrapProtocol = await readFile(
+const bootstrapProtocol = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "lib.rs"),
-  "utf8",
 );
-const bootstrapProtocolManifest = await readFile(
+const bootstrapProtocolManifest = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "Cargo.toml"),
-  "utf8",
 );
-const nativeAssistantManifest = await readFile(
+const nativeAssistantManifest = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "native-bootstrap-assistant", "Cargo.toml"),
-  "utf8",
 );
-const nativeAssistantBuild = await readFile(
+const nativeAssistantBuild = await readSourceText(
   join(consoleRoot, "tools", "prepare-native-bootstrap-assistant.mjs"),
-  "utf8",
 );
-const nativeAssistantGate = await readFile(
+const nativeAssistantGate = await readSourceText(
   join(consoleRoot, "tools", "lib", "native-bootstrap-assistant.mjs"),
-  "utf8",
 );
-const sbomBuilder = await readFile(join(consoleRoot, "tools", "build-sbom.mjs"), "utf8");
-const candidateManifestBuilder = await readFile(
+const sbomBuilder = await readSourceText(join(consoleRoot, "tools", "build-sbom.mjs"));
+const candidateManifestBuilder = await readSourceText(
   join(consoleRoot, "tools", "build-linux-candidate-manifest.mjs"),
-  "utf8",
 );
-const continuousIntegration = await readFile(
+const continuousIntegration = await readSourceText(
   join(consoleRoot, "..", ".github", "workflows", "ci.yml"),
-  "utf8",
 );
-const consoleRuntime = await readFile(join(consoleRoot, "src-tauri", "src", "lib.rs"), "utf8");
-const productModels = await readFile(join(consoleRoot, "src", "product", "models.ts"), "utf8");
-const nativeOperations = await readFile(join(consoleRoot, "src", "product", "native.ts"), "utf8");
+const consoleRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "lib.rs"));
+const productModels = await readSourceText(join(consoleRoot, "src", "product", "models.ts"));
+const nativeOperations = await readSourceText(join(consoleRoot, "src", "product", "native.ts"));
 const cargoVersion = cargoManifest.match(/^version\s*=\s*"([^"]+)"$/mu)?.[1];
 
 if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(packageDocument.version)) {
