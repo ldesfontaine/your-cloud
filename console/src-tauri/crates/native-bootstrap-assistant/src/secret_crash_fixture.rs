@@ -124,6 +124,11 @@ fn run_linux_controlled_crash() -> io::Result<()> {
 
 #[cfg(target_os = "windows")]
 fn run_windows_wer_crash() -> io::Result<()> {
+    if unsafe { GetErrorMode() } & SEM_NOGPFAULTERRORBOX != 0 {
+        return Err(io::Error::other(
+            "inherited process error mode disables Windows Error Reporting",
+        ));
+    }
     hardening::apply().map_err(|_| io::Error::other("hardening failed"))?;
     let (secret, dump_control) = protected_payload()?;
     announce_ready()?;
@@ -145,10 +150,13 @@ fn run_windows_wer_crash() -> io::Result<()> {
 
 #[cfg(target_os = "windows")]
 const FAIL_FAST_GENERATE_EXCEPTION_ADDRESS: u32 = 1;
+#[cfg(target_os = "windows")]
+const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
 
 #[cfg(target_os = "windows")]
 #[link(name = "kernel32")]
 extern "system" {
+    fn GetErrorMode() -> u32;
     fn RaiseFailFastException(
         exception_record: *const std::ffi::c_void,
         context_record: *const std::ffi::c_void,

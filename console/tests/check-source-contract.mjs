@@ -846,12 +846,14 @@ for (const expected of [
   "libc::RLIMIT_CORE",
   "RaiseFailFastException",
   "FAIL_FAST_GENERATE_EXCEPTION_ADDRESS",
+  "SEM_NOGPFAULTERRORBOX",
 ]) {
   if (!nativeAssistantCrashFixture.includes(expected)) {
     failures.push(`fixture crash/dump: protection synthétique absente (${expected})`);
   }
 }
 for (const expected of [
+  "CREATE_DEFAULT_ERROR_MODE",
   'Command::new("gcore")',
   'file_contains(&core_path, &dump_control)',
   'file_contains(&core_path, &protected_canary)',

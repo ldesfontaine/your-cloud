@@ -21,7 +21,7 @@ use std::{
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 #[cfg(target_os = "windows")]
-use std::ffi::OsString;
+use std::{ffi::OsString, os::windows::process::CommandExt};
 
 static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const FIXTURE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -29,6 +29,8 @@ const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
 const KILL_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "windows")]
 const REG_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+const CREATE_DEFAULT_ERROR_MODE: u32 = 0x0400_0000;
 #[cfg(target_os = "windows")]
 const AEDEBUG_AUTO_EXCLUSION_KEY: &str =
     r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug\AutoExclusionList";
@@ -157,12 +159,17 @@ fn fixture_path() -> PathBuf {
 }
 
 fn spawn_fixture(mode: &str, working_directory: &Path) -> GuardedChild {
-    let child = Command::new(fixture_path())
+    let mut command = Command::new(fixture_path());
+    command
         .arg(mode)
         .current_dir(working_directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_DEFAULT_ERROR_MODE);
+
+    let child = command
         .spawn()
         .expect("spawn secret crash fixture");
     GuardedChild::new(child)
