@@ -341,11 +341,53 @@ santé du Controller.
 
 ## Distribution bornée
 
-L'installateur de Console V1 contient l'Assistant, le binaire Go `your-cloud`
-pour Debian 13 `amd64`, les définitions d'installation et un manifeste reliant
-version, cible, taille et empreinte. L'Assistant sélectionne l'artefact après
-l'audit puis revérifie le manifeste avant toute installation privilégiée. Il ne
-télécharge aucun plugin ou binaire root à la demande.
+L'installateur de Console V1 contient l'Assistant et un unique paquet serveur
+`.deb` pour Debian 13 `amd64`. Ce paquet livre le binaire Go `your-cloud` et ses
+définitions d'installation statiques. Il ne porte ni configuration propre à une
+machine, ni secret, ni identité, ni activation de rôle, ni transfert d'autorité :
+ces effets restent des opérations typées de l'Assistant après approbation. Les
+éventuels scripts mainteneur du paquet restent minimaux, non interactifs et
+idempotents ; ils ne téléchargent rien, ne génèrent aucun secret, n'activent
+aucun rôle et ne suppriment aucun état persistant.
+
+L'ensemble possédé par le paquet est fermé : le répertoire
+`/usr/lib/your-cloud` et le binaire `/usr/lib/your-cloud/your-cloud` sont
+`root:root` en `0755`, sans bit setuid, setgid ni capacité de fichier ; les
+seules unités livrées sont `your-cloud-controller.service`,
+`your-cloud-daemon.service` et `your-cloud-relay.service` sous
+`/usr/lib/systemd/system`, `root:root` en `0644`. Leur installation ne les
+active ni ne les démarre. Les chemins historiques `/usr/local/lib/your-cloud`
+et `/etc/systemd/system` des preuves antérieures restent des faits de ces
+paliers, pas les chemins du paquet V1.
+
+Le manifeste signé du lot Console relie la version, la cible, la taille et le
+SHA-256 exact du `.deb`. L'Assistant vérifie cette signature et ces valeurs avant
+toute opération privilégiée : un paquet `.deb` isolé n'est pas traité comme une
+preuve d'authenticité. Ses dépendances forment un ensemble hors ligne fermé :
+elles appartiennent au socle Debian 13 exigé ou sont embarquées et authentifiées
+dans le lot, sans résolution réseau pendant l'amorçage. `dpkg` inventorie les
+fichiers immuables, leurs propriétaires et leurs permissions ; chaque fichier
+généré par l'Assistant reste inventorié et géré séparément par celui-ci.
+
+Avant un changement, l'Assistant distingue l'absence du paquet, une version
+antérieure exacte et un état ambigu. Il conserve le `.deb` précédent et l'état
+géré nécessaire au retour, installe le candidat, puis vérifie fichiers, unités
+et processus avant d'activer les rôles approuvés ou de transférer l'autorité. Un
+échec contrôlé avant ce transfert restaure la version antérieure ou l'absence
+initiale. Un paquet à demi configuré, une coupure ou un état inconnu restent
+visibles et interdisent tout retrait ou rejeu aveugle. Après transfert, les
+règles d'état partiel machine par machine s'appliquent. Retirer le paquet
+n'efface jamais implicitement configurations, secrets ou identités : leur
+retrait appartient à une opération explicite qui connaît l'autorité active.
+
+Le paquet Debian est retenu plutôt qu'une archive signée parce que la cible V1
+est exclusivement Debian et que réimplémenter extraction privilégiée,
+inventaire, permissions, mise à niveau et retrait élargirait inutilement la
+surface root de l'Assistant. Ce choix applique moindre privilège, séparation des
+responsabilités et défense en profondeur, et contribue aux mesures de chaîne
+d'approvisionnement et de continuité attendues par le projet. Il ne garantit ni
+l'authenticité du lot sans le manifeste signé, ni un rollback transactionnel de
+toute l'infrastructure, ni une conformité OWASP ou NIS2 à lui seul.
 
 Cette enveloppe rend le parcours initial et le remplacement reproductibles avec
 le même lot. La mise à jour reste manuelle en V1. Une architecture ou

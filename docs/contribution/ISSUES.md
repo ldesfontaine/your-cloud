@@ -44,6 +44,22 @@ Une incertitude qui doit être levée avant ce découpage reçoit une issue de
 décision séparée. Elle annonce la question à trancher et ne mélange pas étude et
 implémentation.
 
+## Milestone active du palier #13
+
+Le palier d'amorçage et de remplacement du Controller utilise la milestone
+[V1 — Amorçage et remplacement du Controller](https://github.com/ldesfontaine/your-cloud/milestone/1)
+comme vue de suivi. Elle regroupe l'issue parente
+[#13](https://github.com/ldesfontaine/your-cloud/issues/13), la décision #34,
+les contrats exécutables #35 à #40 et la preuve globale #41. Le suivi transversal
+de toute la V1 reste porté par [#20](https://github.com/ldesfontaine/your-cloud/issues/20),
+hors de cette milestone.
+
+Aucune date d'échéance arbitraire ne lui est attachée. Elle n'est fermée qu'après
+la preuve globale #41, la propagation documentaire et la fermeture de #13 ; sa
+fermeture ne prouve rien de plus que les preuves reliées par ces issues. Elle
+termine ce palier d'amorçage et permet d'ouvrir #14 ; elle ne ferme ni le suivi
+#20, ni la V1 complète.
+
 ## Convention de titre
 
 Le titre reprend la grammaire des commits sans prétendre étendre la

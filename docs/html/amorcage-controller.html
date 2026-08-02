@@ -107,16 +107,19 @@
         <h3>Bundle Console V1</h3>
         <ul>
           <li>Assistant natif temporaire ;</li>
-          <li>binaire Go <code>your-cloud</code> pour Debian 13 <code>amd64</code> ;</li>
-          <li>définitions d’installation ;</li>
-          <li>manifeste avec version, cible, taille et empreinte.</li>
+          <li>unique paquet serveur <code>.deb</code> Debian 13 <code>amd64</code> ;</li>
+          <li>binaire <code>/usr/lib/your-cloud/your-cloud</code> <code>root:root 0755</code>, sans setuid, setgid ni capacité ;</li>
+          <li>unités Controller, Daemon et Relay <code>root:root 0644</code>, livrées inactives sous <code>/usr/lib/systemd/system</code> ;</li>
+          <li>manifeste signé avec version, cible, taille et SHA-256.</li>
         </ul>
+        <p>L’Assistant vérifie le manifeste, le paquet et ses dépendances hors ligne avant tout privilège. Le paquet reste limité à ces fichiers immuables ; configurations, identités et transfert d’autorité sont gérés séparément.</p>
       </article>
       <article class="card warning">
         <h3>Bornes de distribution</h3>
-        <p>Mise à jour manuelle en V1. <code>arm64</code> attend une preuve LAB dédiée. Une signature Windows synthétique ne vaut pas distribution publique reconnue.</p>
+        <p>Un <code>.deb</code> isolé ne prouve ni son authenticité, ni un rollback global. L’Assistant restaure l’absence ou la version antérieure avant transfert ; tout état inconnu interdit un retrait aveugle. Mise à jour manuelle en V1. <code>arm64</code> attend une preuve LAB dédiée. Une signature Windows synthétique ne vaut pas distribution publique reconnue.</p>
       </article>
     </div>
+    <p class="boundary"><strong>Choix de sécurité :</strong> le paquet Debian évite de réimplémenter sous <code>root</code> l’extraction, l’inventaire, les permissions et le retrait d’une archive. Ses scripts éventuels restent minimaux et n’activent aucun rôle. Retirer le paquet n’efface jamais implicitement configurations, secrets ou identités.</p>
 
     <h2>Ce qui devra être prouvé</h2>
     <div class="grid">

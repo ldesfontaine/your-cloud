@@ -166,11 +166,11 @@ propres, seconde Console hostile, deux Controllers synthétiquement séparés,
 deux Daemons et un Relay colocalisé avec l'un d'eux. Une matrice native manuelle
 construit, installe et lance ensuite le même candidat exact sur des runners
 Linux et Windows jetables ; elle n'y crée ni Controller, ni Relay, ni Daemon ou
-topologie simulée. Ces couches restent complémentaires. `v0.0.3` est déclarée
-fermée uniquement pour le SHA dont l'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9)
-lie un `workflow_dispatch` entièrement vert. Sans cette preuve, la branche
-reste non fusionnable ; seul le SHA prouvé est ensuite fusionné, sans retouche
-documentaire.
+topologie simulée. Ces couches restent complémentaires. La porte native finale
+a entièrement réussi dans le run `30710037004` sur le candidat produit exact
+`3b8f81f`. L'[issue `#9`](https://github.com/ldesfontaine/your-cloud/issues/9)
+relie ce SHA, le run et son intégration par fast-forward : `v0.0.3` est fermée
+pour ce candidat, sans attribuer cette preuve aux changements ultérieurs.
 
 Chaque association approuve une origine HTTPS TLS 1.3 exacte. L'enveloppe
 présente une identité d'appareil mTLS puis une session humaine opaque, toutes
@@ -369,13 +369,20 @@ Controller vivant ; il ne restaure pas un Controller détruit. Si cette
 récupération remplace la clé humaine, les actions restent verrouillées jusqu'à
 ce que l'Assistant tourne les ancres publiques avec l'accès SSH personnel.
 
-L'installateur V1 embarque l'Assistant, l'artefact serveur Debian 13 `amd64`,
-les définitions d'installation et leur manifeste d'empreintes. Il ne télécharge
-aucun binaire privilégié à la volée. `arm64` attend une preuve séparée et les
-mises à jour restent manuelles. Les builds Windows emploient un certificat
-synthétique pour tester la mécanique ; une distribution publique Windows reste
-bloquée tant qu'une signature reconnue et gratuite n'est pas réellement
-opérationnelle.
+L'installateur V1 embarque l'Assistant et un unique paquet serveur `.deb`
+Debian 13 `amd64`, avec ses définitions statiques et le manifeste signé qui lie
+sa version, sa cible, sa taille et son empreinte. Cette vérification précède tout
+privilège. Le paquet possède seulement le binaire root-owned sous
+`/usr/lib/your-cloud` et les unités statiques Controller, Daemon et Relay,
+livrées inactives sous `/usr/lib/systemd/system` ; il ne porte ni secret, ni
+configuration propre à une machine, ni activation de rôle ou transfert
+d'autorité. L'Assistant orchestre hors ligne l'installation, la vérification,
+le retour à la version ou à l'absence antérieure et le retrait explicite. Aucun
+binaire privilégié n'est téléchargé à la volée. `arm64` attend une preuve
+séparée et les mises à jour restent manuelles. Les builds Windows emploient un
+certificat synthétique pour tester la mécanique ; une distribution publique
+Windows reste bloquée tant qu'une signature reconnue et gratuite n'est pas
+réellement opérationnelle.
 
 Le contrat détaillé se trouve dans
 [Amorçage et remplacement du Controller](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
