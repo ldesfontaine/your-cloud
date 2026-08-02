@@ -44,16 +44,19 @@ Une incertitude qui doit être levée avant ce découpage reçoit une issue de
 décision séparée. Elle annonce la question à trancher et ne mélange pas étude et
 implémentation.
 
-## Milestone active du palier #13
+## Milestone active de `v0.1.0`
 
-Le palier d'amorçage et de remplacement du Controller utilise la milestone
-[v0.1.0 — Amorçage et remplacement du Controller](https://github.com/ldesfontaine/your-cloud/milestone/1)
-comme vue de suivi. Elle regroupe l'issue parente
-[#13](https://github.com/ldesfontaine/your-cloud/issues/13), la décision #34,
-l'issue parente #35 et ses contrats #42 à #45, les contrats exécutables #36 à
-#40 et la preuve globale #41. Le suivi transversal de toute la version `v0.1.0` reste porté
-par [#20](https://github.com/ldesfontaine/your-cloud/issues/20), hors de cette
-milestone.
+La milestone [v0.1.0](https://github.com/ldesfontaine/your-cloud/milestone/1)
+est la vue de suivi de toute la release. Elle regroupe les décisions de
+distribution bloquantes #11 et #12, les paliers #13 à #19, le suivi transversal
+[#20](https://github.com/ldesfontaine/your-cloud/issues/20), les sous-issues
+#34 à #45 déjà créées et les futures sous-issues exécutables de ces paliers. Le
+routage CI #10 reste hors de la milestone parce que #20 le classe comme travail
+transverse non bloquant.
+
+Terminer cette milestone signifie que chacun de ces contrats est réellement
+satisfait et fermé avec ses preuves et sa propagation documentaire. Sa simple
+fermeture administrative ne constitue pas une preuve supplémentaire.
 
 Dans #35, la décision documentaire #44 ferme d'abord le canal natif des
 secrets. Elle bloque le bornage IPC #43 et le consentement natif #45 ; leur
@@ -77,11 +80,13 @@ descendants SSH ou privilégiés appartient encore à #42. La suite reste donc
 `#45 → #42 → #35` ; #13 et la milestone demeurent ouverts, tandis que `v0.1.0`
 reste à atteindre.
 
-Aucune date d'échéance arbitraire ne lui est attachée. Elle n'est fermée qu'après
-la preuve globale #41, la propagation documentaire et la fermeture de #13 ; sa
-fermeture ne prouve rien de plus que les preuves reliées par ces issues. Elle
-termine ce palier d'amorçage et permet d'ouvrir #14 ; elle ne ferme ni le suivi
-#20, ni la version `v0.1.0` complète.
+Aucune date d'échéance arbitraire ne lui est attachée. La preuve globale #41,
+la propagation documentaire et la fermeture de #13 terminent seulement le
+palier d'amorçage et permettent d'ouvrir #14. La milestone reste ouverte jusqu'à
+la preuve finale #19, la fermeture des décisions #11 et #12, la propagation de
+l'état final et la fermeture du suivi #20. Une fois toutes ses issues réellement
+fermées, son achèvement devient équivalent à la ligne d'arrivée de `v0.1.0`,
+sans remplacer les preuves qui la justifient.
 
 ## Convention de titre
 
