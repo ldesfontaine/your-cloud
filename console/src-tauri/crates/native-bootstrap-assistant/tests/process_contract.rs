@@ -1,12 +1,18 @@
 use std::{
-    io::{Read, Write},
+    io::{self, Read, Write},
     process::{Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
 #[cfg(target_os = "linux")]
-use std::fs;
+use std::{
+    fs::File,
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::process::CommandExt,
+    },
+};
 
 use your_cloud_bootstrap_protocol::{
     AssistantEventKind, AssistantEventV1, AssistantScopeV1, BootstrapAccessKind, BootstrapAction,
@@ -149,38 +155,89 @@ fn watchdog_closes_a_parent_that_keeps_stdin_open() {
 #[test]
 fn helper_closes_every_inherited_descriptor_outside_stdio() {
     let mut inherited = [-1; 2];
-    // SAFETY: storage is valid for both pipe descriptors and every descriptor is closed below.
-    assert_eq!(unsafe { libc::pipe(inherited.as_mut_ptr()) }, 0);
-    for descriptor in inherited {
-        // SAFETY: descriptor was returned by pipe and remains open here. Explicitly clearing
-        // CLOEXEC makes this a hostile inherited descriptor rather than a vacuous assertion.
-        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-        assert!(flags >= 0);
-        assert_eq!(
-            unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) },
-            0
-        );
+    // SAFETY: storage is valid for both descriptors. O_CLOEXEC prevents concurrent test
+    // processes from inheriting either endpoint before the intended child is forked.
+    assert_eq!(
+        unsafe { libc::pipe2(inherited.as_mut_ptr(), libc::O_CLOEXEC) },
+        0
+    );
+    // SAFETY: pipe2 returned two unique owned descriptors.
+    let mut reader = unsafe { File::from_raw_fd(inherited[0]) };
+    // SAFETY: pipe2 returned two unique owned descriptors.
+    let writer = unsafe { OwnedFd::from_raw_fd(inherited[1]) };
+
+    let writer_descriptor = writer.as_raw_fd();
+    // SAFETY: writer remains owned and open until after spawn.
+    let writer_flags = unsafe { libc::fcntl(writer_descriptor, libc::F_GETFD) };
+    assert!(writer_flags >= 0);
+    let mut helper = command();
+    // SAFETY: fcntl is async-signal-safe. Only the forked child clears CLOEXEC on its copy, so
+    // exactly this helper receives the hostile descriptor while parallel tests remain isolated.
+    unsafe {
+        helper.pre_exec(move || {
+            if libc::fcntl(
+                writer_descriptor,
+                libc::F_SETFD,
+                writer_flags & !libc::FD_CLOEXEC,
+            ) < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
-    let mut child = command().spawn().unwrap();
-    for descriptor in inherited {
-        // SAFETY: these are the parent copies of the two pipe descriptors created above.
-        assert_eq!(unsafe { libc::close(descriptor) }, 0);
-    }
+    let mut child = helper.spawn().unwrap();
+    drop(writer);
     let mut child_input = child.stdin.take().unwrap();
     child_input.write_all(&frame(&scope(1_000))).unwrap();
     child_input.flush().unwrap();
-    thread::sleep(Duration::from_millis(25));
 
-    let mut descriptors = fs::read_dir(format!("/proc/{}/fd", child.id()))
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .collect::<Vec<_>>();
-    descriptors.sort();
-    assert_eq!(descriptors, ["0", "1", "2"]);
+    // A closed inherited writer is observable as EOF without inspecting /proc/<pid>/fd. That
+    // inspection is deliberately denied to the same user after PR_SET_DUMPABLE=0.
+    // SAFETY: reader remains owned for the whole flag update.
+    let reader_flags = unsafe { libc::fcntl(reader.as_raw_fd(), libc::F_GETFL) };
+    assert!(reader_flags >= 0);
+    // SAFETY: reader remains owned for the whole flag update.
+    assert_eq!(
+        unsafe {
+            libc::fcntl(
+                reader.as_raw_fd(),
+                libc::F_SETFL,
+                reader_flags | libc::O_NONBLOCK,
+            )
+        },
+        0
+    );
+    let inherited_writer_closed = read_eof_bounded(&mut reader, Duration::from_secs(1));
+    let child_was_still_running = matches!(child.try_wait(), Ok(None));
 
-    child.kill().unwrap();
-    child.wait().unwrap();
+    let _ = child.kill();
+    let reaped = child.wait();
     drop(child_input);
+
+    assert_eq!(inherited_writer_closed.unwrap(), true);
+    assert!(child_was_still_running);
+    assert!(reaped.is_ok());
+}
+
+#[cfg(target_os = "linux")]
+fn read_eof_bounded(reader: &mut File, timeout: Duration) -> io::Result<bool> {
+    let deadline = Instant::now() + timeout;
+    let mut byte = [0_u8; 1];
+    loop {
+        match reader.read(&mut byte) {
+            Ok(0) => return Ok(true),
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error)
+                if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn wait_bounded(child: &mut std::process::Child, timeout: Duration) -> ExitStatus {
