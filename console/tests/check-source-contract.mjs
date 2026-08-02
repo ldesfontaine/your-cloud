@@ -866,7 +866,6 @@ for (const expected of [
   'assert_eq!(&signature, b"MDMP"',
   "administrator_local_dump_is_outside_the_wer_exclusion_contract",
   "panic::catch_unwind",
-  "remove_contents_and_prove_empty",
   "protected_canary_present",
   "stable_since",
   "remove_and_prove_absent",
@@ -881,6 +880,11 @@ if (
 ) {
   failures.push(
     "contrat crash/dump: la frontière LocalDumps administrateur doit rester une présence explicite du canari",
+  );
+}
+if (!/scratch\s*\.remove_and_prove_absent\(\)/u.test(nativeAssistantCrashContract)) {
+  failures.push(
+    "contrat crash/dump: le répertoire LocalDumps doit être supprimé et prouvé absent avant verdict",
   );
 }
 if (/\.arg\(\s*"-a"\s*\)/u.test(nativeAssistantCrashContract)) {

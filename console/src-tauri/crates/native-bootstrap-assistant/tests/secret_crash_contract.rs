@@ -164,7 +164,7 @@ fn administrator_local_dump_is_outside_the_wer_exclusion_contract() {
 
     let cleanup_errors = [
         scratch
-            .remove_contents_and_prove_empty()
+            .remove_and_prove_absent()
             .err()
             .map(|error| format!("dump directory: {error}")),
         registry
@@ -328,7 +328,7 @@ impl ScratchDirectory {
     }
 
     #[cfg(target_os = "windows")]
-    fn remove_contents_and_prove_empty(&self) -> io::Result<()> {
+    fn remove_and_prove_absent(&self) -> io::Result<()> {
         let mut errors = Vec::new();
         for entry in fs::read_dir(&self.path)? {
             match entry {
@@ -347,6 +347,17 @@ impl ScratchDirectory {
         let remaining = fs::read_dir(&self.path)?.count();
         if remaining != 0 {
             errors.push(format!("{remaining} entries remain"));
+        }
+        if let Err(error) = fs::remove_dir(&self.path) {
+            errors.push(format!("remove directory {}: {error}", self.path.display()));
+        }
+        match fs::symlink_metadata(&self.path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(_) => errors.push(format!("directory {} remains", self.path.display())),
+            Err(error) => errors.push(format!(
+                "prove directory {} absent: {error}",
+                self.path.display()
+            )),
         }
         if errors.is_empty() {
             Ok(())
