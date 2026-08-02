@@ -4,11 +4,14 @@ use std::{
     fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdout, Command, ExitStatus, Stdio},
+    process::ExitStatus,
     sync::mpsc::{self, Receiver, Sender, TryRecvError},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(not(target_os = "windows"))]
+use std::process::{Child, ChildStdout, Command, Stdio};
 
 #[cfg(target_os = "linux")]
 use std::os::unix::{io::AsRawFd, process::CommandExt};
@@ -18,6 +21,18 @@ use your_cloud_bootstrap_protocol::{
     ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE, ASSISTANT_EXIT_WATCHDOG_EXPIRED,
     MAX_ASSISTANT_EVENT_FRAME_BYTES, MAX_ASSISTANT_SCOPE_FRAME_BYTES,
 };
+
+#[cfg(target_os = "windows")]
+#[path = "native_assistant/windows.rs"]
+mod windows;
+
+#[cfg(target_os = "windows")]
+use windows::{WindowsChild as NativeChild, WindowsChildStdout as NativeChildStdout};
+
+#[cfg(not(target_os = "windows"))]
+type NativeChild = Child;
+#[cfg(not(target_os = "windows"))]
+type NativeChildStdout = ChildStdout;
 
 const NATIVE_ASSISTANT_BINARY: &str = "your-cloud-native-bootstrap-assistant";
 const REQUIRED_MODE_ARGUMENT: &str = "--native-bootstrap-assistant";
@@ -52,8 +67,8 @@ pub(crate) enum NativeAssistantPoll {
 
 struct NativeAssistantSession {
     request_id: String,
-    child: Child,
-    stdout: ChildStdout,
+    child: NativeChild,
+    stdout: NativeChildStdout,
     deadline: Instant,
 }
 
@@ -64,14 +79,14 @@ enum CleanupOutcome {
 }
 
 struct CleanupWorker {
-    submit: Sender<Child>,
+    submit: Sender<NativeChild>,
     outcomes: Receiver<CleanupOutcome>,
     handle: thread::JoinHandle<()>,
 }
 
 impl CleanupWorker {
     fn spawn() -> Option<Self> {
-        let (submit, tasks) = mpsc::channel::<Child>();
+        let (submit, tasks) = mpsc::channel::<NativeChild>();
         let (results, outcomes) = mpsc::channel::<CleanupOutcome>();
         let handle = thread::Builder::new()
             .name("native-assistant-reaper".into())
@@ -96,7 +111,7 @@ pub(crate) struct NativeAssistantSupervisor {
     cleanup_worker: Option<CleanupWorker>,
     cleanup_pending: bool,
     cleanup_unproven: bool,
-    stranded_cleanup: Option<Child>,
+    stranded_cleanup: Option<NativeChild>,
 }
 
 impl Default for NativeAssistantSupervisor {
@@ -156,20 +171,26 @@ impl NativeAssistantSupervisor {
             .map_err(|_| NativeAssistantError::RequestRefused)?;
 
         let working_directory = path.parent().ok_or(NativeAssistantError::Unavailable)?;
-        let mut command = Command::new(path);
-        command
-            .arg(REQUIRED_MODE_ARGUMENT)
-            .current_dir(working_directory)
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        configure_public_gui_environment(&mut command);
-        #[cfg(target_os = "linux")]
-        command.process_group(0);
-        let mut child = command
-            .spawn()
-            .map_err(|_| NativeAssistantError::Unavailable)?;
+        #[cfg(not(target_os = "windows"))]
+        let mut child = {
+            let mut command = Command::new(path);
+            command
+                .arg(REQUIRED_MODE_ARGUMENT)
+                .current_dir(working_directory)
+                .env_clear()
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            configure_public_gui_environment(&mut command);
+            #[cfg(target_os = "linux")]
+            command.process_group(0);
+            command
+                .spawn()
+                .map_err(|_| NativeAssistantError::Unavailable)?
+        };
+        #[cfg(target_os = "windows")]
+        let mut child =
+            windows::spawn_native_assistant(path, working_directory, REQUIRED_MODE_ARGUMENT)?;
 
         let launch = (|| {
             let mut scope = scope;
@@ -180,10 +201,8 @@ impl NativeAssistantSupervisor {
                 .validate()
                 .map_err(|_| NativeAssistantError::RequestRefused)?;
             let frame = encode_scope(&scope)?;
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or(NativeAssistantError::Unavailable)?;
+            let mut stdin =
+                take_child_stdin(&mut child).ok_or(NativeAssistantError::Unavailable)?;
             stdin
                 .write_all(&frame)
                 .map_err(|_| NativeAssistantError::Unavailable)?;
@@ -193,10 +212,7 @@ impl NativeAssistantSupervisor {
             // The current fail-closed helper accepts exactly one scope and EOF. A live
             // cancellation lease replaces this close before any secret prompt is introduced.
             drop(stdin);
-            let stdout = child
-                .stdout
-                .take()
-                .ok_or(NativeAssistantError::Unavailable)?;
+            let stdout = take_child_stdout(&mut child).ok_or(NativeAssistantError::Unavailable)?;
             configure_nonblocking_stdout(&stdout)?;
             Ok((scope.request_id, stdout))
         })();
@@ -238,7 +254,7 @@ impl NativeAssistantSupervisor {
             }
             return Err(NativeAssistantError::Expired);
         }
-        let status = match active.child.try_wait() {
+        let status = match child_try_wait(&mut active.child) {
             Ok(status) => status,
             Err(_) => {
                 let mut failed = self.active.take().expect("active assistant checked above");
@@ -280,7 +296,7 @@ impl NativeAssistantSupervisor {
         Ok(())
     }
 
-    fn defer_cleanup(&mut self, child: Child) {
+    fn defer_cleanup(&mut self, child: NativeChild) {
         debug_assert!(!self.cleanup_pending);
         let Some(worker) = self.cleanup_worker.as_ref() else {
             self.stranded_cleanup = Some(child);
@@ -339,6 +355,7 @@ fn remaining_millis(deadline: Instant, now: Instant) -> Result<u64, NativeAssist
     Ok(millis)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn configure_public_gui_environment(command: &mut Command) {
     for name in [
         "DISPLAY",
@@ -354,6 +371,36 @@ fn configure_public_gui_environment(command: &mut Command) {
         }
     }
     command.env("NO_AT_BRIDGE", "1");
+}
+
+#[cfg(not(target_os = "windows"))]
+fn take_child_stdin(child: &mut NativeChild) -> Option<std::process::ChildStdin> {
+    child.stdin.take()
+}
+
+#[cfg(target_os = "windows")]
+fn take_child_stdin(child: &mut NativeChild) -> Option<std::fs::File> {
+    child.take_stdin()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn take_child_stdout(child: &mut NativeChild) -> Option<NativeChildStdout> {
+    child.stdout.take()
+}
+
+#[cfg(target_os = "windows")]
+fn take_child_stdout(child: &mut NativeChild) -> Option<NativeChildStdout> {
+    child.take_stdout()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn child_try_wait(child: &mut NativeChild) -> io::Result<Option<ExitStatus>> {
+    child.try_wait()
+}
+
+#[cfg(target_os = "windows")]
+fn child_try_wait(child: &mut NativeChild) -> io::Result<Option<ExitStatus>> {
+    child.try_wait()
 }
 
 #[cfg(target_os = "linux")]
@@ -372,7 +419,7 @@ fn configure_nonblocking_stdout(stdout: &ChildStdout) -> Result<(), NativeAssist
 }
 
 #[cfg(not(target_os = "linux"))]
-fn configure_nonblocking_stdout(_stdout: &ChildStdout) -> Result<(), NativeAssistantError> {
+fn configure_nonblocking_stdout(_stdout: &NativeChildStdout) -> Result<(), NativeAssistantError> {
     Ok(())
 }
 
@@ -481,10 +528,10 @@ fn read_exact(reader: &mut impl Read, mut buffer: &mut [u8]) -> Result<(), Nativ
     Ok(())
 }
 
-fn stop_bounded(child: &mut Child) -> Result<(), NativeAssistantError> {
+fn stop_bounded(child: &mut NativeChild) -> Result<(), NativeAssistantError> {
     let deadline = Instant::now() + STOP_GRACE;
     loop {
-        match child.try_wait() {
+        match child_try_wait(child) {
             Ok(Some(_)) => {
                 return Ok(());
             }
@@ -496,16 +543,15 @@ fn stop_bounded(child: &mut Child) -> Result<(), NativeAssistantError> {
     terminate_running_and_reap_bounded(child)
 }
 
-fn terminate_running_and_reap_bounded(child: &mut Child) -> Result<(), NativeAssistantError> {
-    match child.try_wait() {
+fn terminate_running_and_reap_bounded(child: &mut NativeChild) -> Result<(), NativeAssistantError> {
+    match child_try_wait(child) {
         Ok(Some(_)) => return Ok(()),
-        Ok(None) => signal_process_group(child),
+        Ok(None) => terminate_child_tree(child)?,
         Err(_) => return Err(NativeAssistantError::Unavailable),
     }
-    let _ = child.kill();
     let deadline = Instant::now() + KILL_REAP_GRACE;
     loop {
-        match child.try_wait() {
+        match child_try_wait(child) {
             Ok(Some(_)) => return Ok(()),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
             Ok(None) | Err(_) => return Err(NativeAssistantError::Unavailable),
@@ -513,18 +559,33 @@ fn terminate_running_and_reap_bounded(child: &mut Child) -> Result<(), NativeAss
     }
 }
 
-fn reap_until_terminal(mut child: Child) -> CleanupOutcome {
+fn reap_until_terminal(mut child: NativeChild) -> CleanupOutcome {
     loop {
-        match child.try_wait() {
+        match child_try_wait(&mut child) {
             Ok(Some(_)) => return CleanupOutcome::Reaped,
             Ok(None) => {
-                signal_process_group(&mut child);
-                let _ = child.kill();
+                if terminate_child_tree(&mut child).is_err() {
+                    return CleanupOutcome::Unproven;
+                }
             }
             Err(_) => return CleanupOutcome::Unproven,
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn terminate_child_tree(child: &mut NativeChild) -> Result<(), NativeAssistantError> {
+    signal_process_group(child);
+    let _ = child.kill();
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_child_tree(child: &mut NativeChild) -> Result<(), NativeAssistantError> {
+    child
+        .terminate_tree()
+        .map_err(|_| NativeAssistantError::Unavailable)
 }
 
 #[cfg(target_os = "linux")]
@@ -536,8 +597,8 @@ fn signal_process_group(child: &mut Child) {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-fn signal_process_group(_child: &mut Child) {}
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+fn signal_process_group(_child: &mut NativeChild) {}
 
 fn validate_executable(
     path: &Path,
@@ -553,7 +614,9 @@ fn validate_executable(
     }
     #[cfg(target_os = "linux")]
     validate_linux_metadata(path, &metadata, enforce_installed_policy)?;
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    validate_windows_metadata(path, &metadata, enforce_installed_policy)?;
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let _ = enforce_installed_policy;
     Ok(())
 }
@@ -590,6 +653,44 @@ fn validate_linux_metadata(
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn validate_windows_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+    enforce_installed_policy: bool,
+) -> Result<(), NativeAssistantError> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(NativeAssistantError::Unavailable);
+    }
+    let directory = path.parent().ok_or(NativeAssistantError::Unavailable)?;
+    let directory_metadata =
+        fs::symlink_metadata(directory).map_err(|_| NativeAssistantError::Unavailable)?;
+    if !directory_metadata.is_dir()
+        || directory_metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    {
+        return Err(NativeAssistantError::Unavailable);
+    }
+    if !enforce_installed_policy {
+        return Ok(());
+    }
+
+    #[cfg(debug_assertions)]
+    let expected_directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    #[cfg(not(debug_assertions))]
+    let expected_directory = env::current_exe()
+        .map_err(|_| NativeAssistantError::Unavailable)?
+        .parent()
+        .ok_or(NativeAssistantError::Unavailable)?
+        .to_path_buf();
+    if directory != expected_directory {
+        return Err(NativeAssistantError::Unavailable);
+    }
+    Ok(())
+}
+
 #[cfg(all(target_os = "linux", debug_assertions, target_arch = "x86_64"))]
 fn installed_native_assistant() -> Result<(PathBuf, OsString), NativeAssistantError> {
     let name = OsString::from(format!(
@@ -607,9 +708,33 @@ fn installed_native_assistant() -> Result<(PathBuf, OsString), NativeAssistantEr
     Ok((PathBuf::from("/usr/bin").join(&name), name))
 }
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg(all(target_os = "windows", debug_assertions, target_arch = "x86_64"))]
 fn installed_native_assistant() -> Result<(PathBuf, OsString), NativeAssistantError> {
-    // Windows remains closed until the parent can attach the process atomically to a Job Object.
+    let name = OsString::from(format!(
+        "{NATIVE_ASSISTANT_BINARY}-x86_64-pc-windows-msvc.exe"
+    ));
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(&name);
+    Ok((path, name))
+}
+
+#[cfg(all(target_os = "windows", not(debug_assertions), target_arch = "x86_64"))]
+fn installed_native_assistant() -> Result<(PathBuf, OsString), NativeAssistantError> {
+    let name = OsString::from(format!("{NATIVE_ASSISTANT_BINARY}.exe"));
+    let directory = env::current_exe()
+        .map_err(|_| NativeAssistantError::Unavailable)?
+        .parent()
+        .ok_or(NativeAssistantError::Unavailable)?
+        .to_path_buf();
+    Ok((directory.join(&name), name))
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "windows", target_arch = "x86_64")
+)))]
+fn installed_native_assistant() -> Result<(PathBuf, OsString), NativeAssistantError> {
     Err(NativeAssistantError::Unavailable)
 }
 

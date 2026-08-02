@@ -65,12 +65,16 @@ livrer un binaire helper distinct dont le graphe exclut la Console, Tauri, Wry,
 Tao, WebKit et JavaScriptCore. Cette décision ne change pas l'ordre des issues
 et ne vaut pas à elle seule preuve du helper. Sa fondation fail-closed et ses
 gates Linux sont exécutés ; le lancement parent et le premier consentement
-GTK3 sans secret sont également prouvés dans le LAB. Le dialogue Win32, la
-saisie et l'effacement des secrets, l'annulation coopérative et les gates
-Windows restent nécessaires avant de fermer #45. Pour #43, la récolte Linux
-est désormais autonome et bornée côté appelant, et un nettoyage non prouvable
-ferme les relances ; l'équivalent Windows par Job Object, le dispatch Tauri
-vivant et la garde propre aux futurs descendants de #42 restent ouverts.
+GTK3 sans secret sont également prouvés dans le LAB. La saisie GTK3 et Win32 et
+l'effacement des secrets, l'annulation coopérative, `mlock`,
+`MADV_DONTDUMP`, `VirtualLock` et l'exclusion Windows Error Reporting restent
+nécessaires avant de fermer #45.
+Pour #43, la récolte Linux autonome, le Job Object Windows avec racine et vrai
+descendant, les branches hostiles avant reprise et le dispatch Tauri vivant ont
+réussi sur le candidat exact `f3fef79` dans le run manuel `30753216798` : cette
+intégration ferme #43. La garde des futurs
+descendants SSH ou privilégiés appartient encore à #42. La suite reste donc
+`#45 → #42 → #35` ; #13, la milestone et la V1 demeurent ouverts.
 
 Aucune date d'échéance arbitraire ne lui est attachée. Elle n'est fermée qu'après
 la preuve globale #41, la propagation documentaire et la fermeture de #13 ; sa

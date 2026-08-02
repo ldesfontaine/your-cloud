@@ -1,7 +1,9 @@
 # Amorçage et remplacement du Controller
 
-> Statut : contrat d'architecture décidé, non implémenté et non prouvé. Il
-> décrit le parcours qui devra être fermé avant le premier plan d'action V1.
+> Statut : contrat d'architecture décidé, partiellement implémenté et
+> partiellement prouvé. Le socle IPC et cycle de vie natif Linux/Windows de #43
+> est acquis ; le parcours d'amorçage global reste ouvert avant le premier plan
+> d'action V1.
 
 Une [édition HTML autonome et visuelle](../html/amorcage-controller.html)
 accompagne cette source Markdown.
@@ -55,6 +57,52 @@ un branchement avant `main` dans ce même exécutable ne peut donc pas constitue
 une absence de WebKit. La mesure, ses préconditions et ses limites sont
 conservées dans le
 [rapport IPC et gate helper Linux](../lab/v1-bootstrap-ipc-linux.md).
+
+### Socle IPC et cycle de vie Windows acquis
+
+Le palier #43 livre désormais le helper distinct avec la Console et borne son
+lancement natif sous Windows. Le candidat MSI inspecté place les deux
+exécutables installables dans une même image administrative et les signe avec
+la même identité Authenticode synthétique. Le parent crée le helper suspendu, ne
+rend héritables que ses poignées d'entrée-sortie exactes via
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, l'assigne à un Job Object, vérifie cette
+appartenance, puis seulement reprend son thread principal.
+
+Le Job suit les descendants du helper. Une session native n'est considérée
+nettoyée qu'après la fin de la racine et la preuve que le Job est vide. Une
+annulation ou une sortie en échec arrête la racine et ses descendants, puis en
+vérifie l'absence. Si ce nettoyage ne peut pas être prouvé, l'état natif devient
+définitivement indisponible pour le processus Console courant et tout nouveau
+lancement est refusé : l'interface ne peut pas continuer sur une incertitude de
+confinement.
+
+L'IPC vivant entre WebView et Tauri expose exactement les parcours `create` et
+`replace` par les commandes `start_bootstrap`, `bootstrap_status` et
+`cancel_bootstrap`. Les schémas positifs ne possèdent aucun champ secret. Le
+frontend ne fixe ni l'étape, ni l'action, ni l'échéance, ni le succès. Le cœur
+natif génère un identifiant non rejouable ; demande forgée, seconde demande
+concurrente et rejeu sont refusés. Annulation, expiration et fermeture de la
+fenêtre produisent des états terminaux. Aucune commande SSH, d'agent ou de
+signature générale n'est exposée et les erreurs publiques restent limitées à un
+code.
+
+La portée et les artefacts exacts sont conservés dans le
+[rapport IPC, paquet et confinement Windows](../lab/v1-bootstrap-ipc-windows.md).
+Cette preuve concerne l'image administrative MSI et son ensemble de fichiers
+exécutables installables, pas chaque octet possible du conteneur MSI. La
+signature synthétique prouve la mécanique Authenticode, pas une identité de
+publication reconnue. Le gate PE analyse les tables d'imports normaux et
+retardés ; il ne prouve pas l'absence universelle de tout chargement dynamique
+de module.
+
+Ce socle ne ferme pas le contrat global. #45 doit encore compléter les dialogues
+GTK3 et Win32 pour les secrets, leur zéroïsation et leurs preuves de
+non-divulgation, ainsi que `mlock`, `MADV_DONTDUMP`, `VirtualLock` et les
+protections Windows Error Reporting dans leurs bornes documentées. #42 doit
+encore fournir l'agent SSH, la clé chiffrée, SSH, `sudo`, le repli `root`, les
+vrais descendants de ces parcours métier et leur arrêt. Aucun audit de machine,
+Controller installé, succès métier ou signature Windows publique n'est donc
+revendiqué ici.
 
 Le parent et le helper communiquent uniquement par des pipes anonymes, typés et
 bornés. Le parent fournit un périmètre public immuable : identifiant de demande,
@@ -147,10 +195,11 @@ exige un nouveau consentement et une nouvelle mise à disposition de l'accès.
 Le helper zéroïse ses propres buffers sur chaque sortie contrôlée. Sous Linux,
 il meurt avec son parent, désactive les dumps de processus avec
 `PR_SET_DUMPABLE=0` et `RLIMIT_CORE=0`, puis emploie `mlock` et
-`MADV_DONTDUMP` lorsqu'ils sont disponibles. Sous Windows, un Job Object ferme
-les descendants lorsque le parent disparaît, `VirtualLock` garde les buffers
-sensibles hors du fichier d'échange dans sa borne documentée et Windows Error
-Reporting est empêché d'y collecter les buffers lorsque l'API le permet.
+`MADV_DONTDUMP` lorsqu'ils sont disponibles. Sous Windows, le Job Object ferme
+désormais la racine et ses descendants selon le socle prouvé ci-dessus. Le
+parcours secret final doit encore employer `VirtualLock` pour garder les
+buffers sensibles hors du fichier d'échange dans sa borne documentée et
+empêcher Windows Error Reporting de les collecter lorsque l'API le permet.
 
 Cette destruction reste une mesure **best effort**, pas une promesse d'absence
 universelle de copie. GTK, Win32 et le système peuvent posséder des copies
@@ -530,17 +579,25 @@ Une coupure pendant une action produit `résultat inconnu`. Le Controller
 n'effectue aucun rejeu aveugle : après reconnexion, il observe l'état réel puis
 propose seulement une réparation ou un retrait compatible avec cet état.
 
-## Preuves attendues
+## Preuves acquises et encore attendues
 
-Le palier d'amorçage ne sera prouvé qu'après avoir montré dans le LAB :
+Le rapport Windows établit le socle #43 décrit plus haut : paquetage des deux
+exécutables, lancement suspendu avec héritage exact, Job vérifié avant reprise,
+arrêt borné de l'arbre, refus après nettoyage incertain et IPC WebView/Tauri
+hostile. Il ne transforme ni un état natif terminal en succès métier, ni une
+signature synthétique en distribution publique.
+
+Le palier d'amorçage global ne sera prouvé qu'après avoir aussi montré dans le
+LAB :
 
 - audit sans mutation et absence de scan ;
 - refus d'une clé d'hôte non confirmée, d'une cible incompatible et d'un rôle
   non approuvé ;
-- binaire helper distinct dont le graphe, le `DT_NEEDED`, les dépendances
-  transitives et les mappings vivants excluent Tauri, Wry, Tao, WebKit et
-  JavaScriptCore, un processus par consentement et aucun descendant après
-  annulation, timeout, EOF, mort du parent ou crash ;
+- chaîne de production complète du helper distinct dont le graphe, le
+  `DT_NEEDED`, les dépendances transitives et les mappings vivants excluent
+  Tauri, Wry, Tao, WebKit et JavaScriptCore sur chaque cible publiée, avec un
+  processus par consentement et aucun descendant après annulation, timeout,
+  EOF, mort du parent ou crash ;
 - absence de clé ou mot de passe personnel dans le frontend, le Controller,
   l'IPC, les arguments, l'environnement, les descripteurs inattendus, les
   fichiers persistants ou temporaires, les journaux et les artefacts ;

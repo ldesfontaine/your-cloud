@@ -239,7 +239,15 @@ en V1.
 
 Le contrat complet et ses preuves attendues sont fixés dans
 [Amorçage et remplacement du Controller](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
-Il est décidé, mais n'est encore ni implémenté ni prouvé.
+La capacité globale reste partielle. Le socle `#43` du helper, de l'IPC et de
+son cycle de vie est implémenté et prouvé sous Linux et Windows sur le commit
+`f3fef79`, dans le run `30753216798` : modes `create` et `replace`, commandes
+Tauri positives sans secret, identifiant natif anti-rejeu, aucun listener et,
+sous Windows, création suspendue avec liste exacte de handles puis Job Object.
+Le [rapport du runner Windows](../lab/v1-bootstrap-ipc-windows.md) borne aussi
+les gates de packaging natif. Les dialogues et protections de secrets `#45`,
+l'accès SSH personnel `#42`, puis l'intégration complète suivie par `#35`
+restent à implémenter et prouver avant de poursuivre le reste du palier `#13`.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 ### Un seul artefact, des rôles réellement isolés

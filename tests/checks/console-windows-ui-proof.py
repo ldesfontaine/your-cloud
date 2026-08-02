@@ -78,6 +78,25 @@ class Driver:
             {"script": script, "args": arguments or []},
         )
 
+    def execute_async(
+        self,
+        script: str,
+        arguments: list[object] | None = None,
+        timeout_seconds: int = 45,
+    ) -> object:
+        request(
+            self.base_url,
+            "POST",
+            f"/session/{self.session_id}/timeouts",
+            {"script": timeout_seconds * 1000},
+        )
+        return request(
+            self.base_url,
+            "POST",
+            f"/session/{self.session_id}/execute/async",
+            {"script": script, "args": arguments or []},
+        )
+
     def wait(
         self,
         script: str,
@@ -325,6 +344,205 @@ def initialize_real_windows_vault(driver: Driver) -> None:
     assert residual == {"secrets": 0, "local": [], "session": [], "passwords": []}
 
 
+BOOTSTRAP_IPC_PROOF_SCRIPT = r"""
+const done = arguments[arguments.length - 1];
+(async () => {
+  const internals = window.__TAURI_INTERNALS__;
+  if (!internals || typeof internals.invoke !== 'function') {
+    throw new Error('tauri-invoke-unavailable');
+  }
+  const invoke = internals.invoke.bind(internals);
+  const hostKey = 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const target = Object.freeze({
+    host: 'controller.example.test',
+    port: 22,
+    username: 'infra_admin',
+    host_key_sha256: hostKey,
+    access_kind: 'administrator',
+  });
+  const expectedSessionKeys = [
+    'actions',
+    'expires_in_seconds',
+    'lifecycle',
+    'mode',
+    'request_id',
+    'schema_version',
+    'step',
+    'target',
+  ];
+  const expectedTargetKeys = [
+    'access_kind',
+    'host',
+    'host_key_sha256',
+    'port',
+    'username',
+  ];
+  const fail = (label) => { throw new Error(label); };
+  const settled = (promise) => Promise.resolve(promise).then(
+    (value) => ({ status: 'fulfilled', value }),
+    (reason) => ({ status: 'rejected', reason }),
+  );
+  const assertCodeOnly = (result, expectedCode, label, forbiddenValue = null) => {
+    if (result.status !== 'rejected') fail(`${label}-was-not-rejected`);
+    const error = result.reason;
+    if (!error || typeof error !== 'object' || Array.isArray(error)) {
+      fail(`${label}-error-is-not-an-object`);
+    }
+    const keys = Object.keys(error).sort();
+    if (keys.length !== 1 || keys[0] !== 'code' || error.code !== expectedCode) {
+      fail(`${label}-error-is-not-code-only`);
+    }
+    if (forbiddenValue !== null && JSON.stringify(error).includes(forbiddenValue)) {
+      fail(`${label}-echoed-sensitive-input`);
+    }
+    return error.code;
+  };
+  const assertSession = (session, mode, label) => {
+    if (!session || typeof session !== 'object' || Array.isArray(session)) {
+      fail(`${label}-session-is-not-an-object`);
+    }
+    if (JSON.stringify(Object.keys(session).sort()) !== JSON.stringify(expectedSessionKeys)) {
+      fail(`${label}-session-fields-drifted`);
+    }
+    if (session.schema_version !== 1 || session.mode !== mode ||
+        session.step !== 'personal_access' ||
+        session.lifecycle !== 'awaiting_native_assistant' ||
+        !Number.isInteger(session.expires_in_seconds) ||
+        session.expires_in_seconds < 1 || session.expires_in_seconds > 300 ||
+        !Array.isArray(session.actions) || session.actions.length !== 1 ||
+        session.actions[0] !== 'audit_target_read_only' ||
+        typeof session.request_id !== 'string' ||
+        !/^[0-9a-f]{32}$/.test(session.request_id)) {
+      fail(`${label}-session-contract-refused`);
+    }
+    if (!session.target || typeof session.target !== 'object' ||
+        JSON.stringify(Object.keys(session.target).sort()) !== JSON.stringify(expectedTargetKeys) ||
+        JSON.stringify(session.target) !== JSON.stringify(target)) {
+      fail(`${label}-target-drifted`);
+    }
+    return session.request_id;
+  };
+  const start = (mode, extra = {}) => invoke('start_bootstrap', {
+    input: { mode, target, ...extra },
+  });
+  const status = (requestId) => invoke('bootstrap_status', { requestId });
+  const cancel = (requestId) => invoke('cancel_bootstrap', { requestId });
+
+  const unknownCanary = 'unknown-field-must-not-be-reflected';
+  const unknown = await settled(start('create', { unexpected: unknownCanary }));
+  const unknownCode = assertCodeOnly(unknown, 'invalid_input', 'unknown-field', unknownCanary);
+
+  const sensitiveCanary = 'sensitive-value-must-not-be-reflected';
+  const sensitive = await settled(start('create', { password: sensitiveCanary }));
+  const sensitiveCode = assertCodeOnly(
+    sensitive,
+    'invalid_input',
+    'sensitive-field',
+    sensitiveCanary,
+  );
+
+  const concurrent = await Promise.all([
+    settled(start('create')),
+    settled(start('create')),
+  ]);
+  const winners = concurrent.filter((result) => result.status === 'fulfilled');
+  const busy = concurrent.filter((result) => result.status === 'rejected');
+  if (winners.length !== 1 || busy.length !== 1) fail('concurrent-create-cardinality-drifted');
+  const busyCode = assertCodeOnly(busy[0], 'bootstrap_busy', 'concurrent-create');
+  const createRequestId = assertSession(winners[0].value, 'create', 'create');
+
+  const forged = await settled(status('ffeeddccbbaa99887766554433221100'));
+  const forgedCode = assertCodeOnly(forged, 'bootstrap_request_refused', 'forged-id');
+
+  const cancelled = await settled(cancel(createRequestId));
+  if (cancelled.status !== 'fulfilled' || cancelled.value !== null) {
+    fail('active-create-cancellation-failed');
+  }
+  const cancellationReplay = await settled(cancel(createRequestId));
+  const cancellationReplayCode = assertCodeOnly(
+    cancellationReplay,
+    'bootstrap_request_refused',
+    'cancel-replay',
+  );
+
+  const replaceStart = await settled(start('replace'));
+  if (replaceStart.status !== 'fulfilled') fail('replace-start-was-rejected');
+  const replaceRequestId = assertSession(replaceStart.value, 'replace', 'replace');
+
+  let replacePolls = 0;
+  let terminalCode = null;
+  const terminalDeadline = performance.now() + 15000;
+  while (performance.now() < terminalDeadline) {
+    replacePolls += 1;
+    const polled = await settled(status(replaceRequestId));
+    if (polled.status === 'fulfilled') {
+      assertSession(polled.value, 'replace', 'replace-poll');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      continue;
+    }
+    terminalCode = assertCodeOnly(
+      polled,
+      'native_assistant_unavailable',
+      'replace-terminal',
+    );
+    break;
+  }
+  if (terminalCode === null) fail('replace-helper-did-not-fail-closed');
+
+  const terminalReplay = await settled(status(replaceRequestId));
+  const terminalReplayCode = assertCodeOnly(
+    terminalReplay,
+    'bootstrap_request_refused',
+    'terminal-replay',
+  );
+
+  return {
+    invoke_surface: 'window.__TAURI_INTERNALS__.invoke',
+    commands: ['start_bootstrap', 'bootstrap_status', 'cancel_bootstrap'],
+    modes: ['create', 'replace'],
+    session_schema_version: 1,
+    lifecycle_observed: 'awaiting_native_assistant',
+    create_terminal: 'cancelled_by_test',
+    replace_terminal: terminalCode,
+    replace_poll_count: replacePolls,
+    concurrency: 'one_active_one_bootstrap_busy',
+    request_ids_included_in_proof_artifact: false,
+    target_included_in_public_error_or_proof_artifact: false,
+    sensitive_input_included_in_public_error_or_proof_artifact: false,
+    error_shape: 'code-only',
+    rejected_codes: {
+      unknown_field: unknownCode,
+      sensitive_field: sensitiveCode,
+      concurrent_start: busyCode,
+      forged_id: forgedCode,
+      cancellation_replay: cancellationReplayCode,
+      terminal_replay: terminalReplayCode,
+    },
+    success_claimed: false,
+  };
+})().then(
+  (proof) => done({ ok: true, proof }),
+  (error) => done({
+    ok: false,
+    failure: error instanceof Error ? error.message : 'unknown-bootstrap-proof-failure',
+  }),
+);
+"""
+
+
+def exercise_live_bootstrap_ipc(driver: Driver) -> dict[str, object]:
+    outcome = driver.execute_async(BOOTSTRAP_IPC_PROOF_SCRIPT)
+    assert isinstance(outcome, dict)
+    assert outcome.get("ok") is True, outcome.get("failure", "bootstrap IPC proof failed")
+    proof = outcome.get("proof")
+    assert isinstance(proof, dict)
+    assert proof.get("success_claimed") is False
+    assert proof.get("request_ids_included_in_proof_artifact") is False
+    assert proof.get("target_included_in_public_error_or_proof_artifact") is False
+    assert proof.get("sensitive_input_included_in_public_error_or_proof_artifact") is False
+    return proof
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:4444")
@@ -359,6 +577,7 @@ def main() -> int:
         views["local-access"] = capture_view(driver, args.output, "local-access", "Accès local")
 
         initialize_real_windows_vault(driver)
+        report["bootstrap_tauri_ipc"] = exercise_live_bootstrap_ipc(driver)
         views["infrastructures"] = capture_view(
             driver, args.output, "infrastructures", "Infrastructures"
         )
@@ -377,6 +596,7 @@ def main() -> int:
         report.update(
             {
                 "real_windows_vault_initialized": True,
+                "bootstrap_business_result": "not_implemented_fail_closed",
                 "result": "pass",
             }
         )
@@ -390,7 +610,8 @@ def main() -> int:
     print(
         "PASS: installed Windows WebView2 rendered three pre-association views at "
         "1280x800 and 640x560, initialized the real Windows vault, kept 200% text "
-        "responsive and exposed no remote resource"
+        "responsive, exercised bounded Tauri bootstrap IPC without claiming business "
+        "success and exposed no remote resource"
     )
     return 0
 

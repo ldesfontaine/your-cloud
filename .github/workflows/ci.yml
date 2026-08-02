@@ -110,6 +110,15 @@ jobs:
         working-directory: console/src-tauri
         run: cargo +1.94.1 test --release --locked --workspace
 
+      - name: Prouver les handles et échecs suspendus Windows
+        if: runner.os == 'Windows'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --locked
+          --package your-cloud-native-bootstrap-assistant
+          --features windows-contract-test
+          --test windows-job-contract
+
       - name: Tester le consentement GTK3 isolé
         if: runner.os == 'Linux'
         working-directory: console/src-tauri

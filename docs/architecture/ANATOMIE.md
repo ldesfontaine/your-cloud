@@ -26,8 +26,10 @@ l'App `v0.0.3` est également implémenté et prouvé dans le LAB. Après une ma
 historique, la porte native Linux/Windows finale `30710037004` a entièrement
 réussi sur le candidat produit exact `3b8f81f`. L'issue `#9` relie ce run, le SHA
 et son intégration par fast-forward : le palier est fermé pour ce candidat,
-sans attribuer sa preuve aux révisions ultérieures. L'amorçage, le chemin
-d'action et les services du reste de la V1 sont décidés mais pas implémentés.
+sans attribuer sa preuve aux révisions ultérieures. L'amorçage possède désormais
+un socle helper/IPC implémenté et prouvé sous Linux et Windows sur `f3fef79`,
+dans le run `30753216798`. Sa capacité globale, le chemin d'action et les
+services du reste de la V1 restent ouverts.
 
 ## Distribution réellement prouvée pour `v0.0.2`
 
@@ -244,6 +246,15 @@ du 2 août 2026 a trouvé WebKitGTK et JavaScriptCoreGTK dans le `DT_NEEDED` de 
 Console. Le helper possède donc son propre crate, son propre graphe et sa propre
 preuve d'absence de WebView, tout en restant livré dans la même release.
 
+Le socle `#43` est implémenté et prouvé sous Linux et Windows sur le commit
+`f3fef79`, dans le run `30753216798`. Les modes `create` et `replace` passent
+par trois commandes Tauri positives sans champ secret et un identifiant natif
+anti-rejeu ; ni la Console ni le helper n'ouvrent de listener. Les gates natifs
+bornent aussi le packaging. Sous Windows, le processus est créé suspendu avec
+une liste exacte de handles héritables, affecté au Job Object avant reprise, et
+les descendants ainsi que les branches d'échec sont terminés avec lui. Voir le
+[rapport du runner Windows](../lab/v1-bootstrap-ipc-windows.md).
+
 Il existe deux catégories d'accès SSH d'administration des machines : l'accès
 personnel conservé par l'utilisateur et l'identité Your Cloud propre à chaque
 machine. L'authentification Console–Controller est séparée et ne devient pas une
@@ -309,7 +320,10 @@ font confiance au nouveau Controller seul. Une suspicion de compromission
 impose une base saine et l'isolement vérifié de l'ancien hôte.
 
 Le [contrat d'amorçage et de remplacement](AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
-est décidé pour la V1, mais reste non implémenté et non prouvé.
+reste partiellement implémenté et prouvé. Les dialogues et protections de
+secrets `#45`, l'accès SSH personnel `#42`, puis l'intégration complète `#35`
+restent nécessaires avant le reste du palier `#13` ; aucune de ces frontières,
+ni le milestone, ni la V1 ne sont fermés par la preuve `#43`.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 <!-- coherence: SERVICE-LIFECYCLE:start -->

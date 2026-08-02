@@ -21,11 +21,16 @@ $automationProfilePath = $null
 $automationAccount = $null
 $msi = $null
 $packagedExecutable = $null
+$packagedHelper = $null
 $shortcut = $null
 $installedExecutable = $null
+$installedHelper = $null
 $msiSha256 = $null
 $packagedExecutableSha256 = $null
 $installedExecutableSha256 = $null
+$packagedHelperSha256 = $null
+$installedHelperSha256 = $null
+$peGateProof = $null
 $packageLockSha256 = $null
 $cargoLockSha256 = $null
 $uiSmokeRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-webview2-smoke"
@@ -175,6 +180,146 @@ function Assert-AuthenticodeSignature {
     }
     if ($null -eq $signature.TimeStamperCertificate) {
         throw "missing RFC 3161 timestamp for $Path"
+    }
+}
+
+function Assert-NonReparseRegularFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedParent,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $fullParent = [IO.Path]::GetFullPath($ExpectedParent).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    if (-not [string]::Equals(
+        [IO.Path]::GetDirectoryName($fullPath),
+        $fullParent,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "$Description is not an exact sibling in its expected directory"
+    }
+
+    $parentItem = Get-Item -LiteralPath $fullParent -Force -ErrorAction Stop
+    $fileItem = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+    if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ($fileItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Description or its direct parent is a reparse point"
+    }
+    if ($fileItem.PSIsContainer -or $fileItem.Length -le 0) {
+        throw "$Description is not a non-empty regular file"
+    }
+    return $fileItem
+}
+
+function Get-ExactExecutableArtifacts {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedFileNames,
+        [Parameter(Mandatory = $true)][string]$Description,
+        [switch]$Recurse
+    )
+
+    if ($Recurse) {
+        $executables = @(Get-ChildItem `
+            -LiteralPath $Root `
+            -Filter "*.exe" `
+            -Recurse `
+            -File `
+            -Force `
+            -ErrorAction Stop)
+    }
+    else {
+        $executables = @(Get-ChildItem `
+            -LiteralPath $Root `
+            -Filter "*.exe" `
+            -File `
+            -Force `
+            -ErrorAction Stop)
+    }
+    $actualNames = @($executables | ForEach-Object {
+        $_.Name.ToLowerInvariant()
+    } | Sort-Object)
+    $expectedNames = @($ExpectedFileNames | ForEach-Object {
+        $_.ToLowerInvariant()
+    } | Sort-Object)
+    if ($actualNames.Count -ne $expectedNames.Count -or
+        ($actualNames -join "`n") -ne ($expectedNames -join "`n")) {
+        throw "$Description must contain exactly $($expectedNames -join ', ')"
+    }
+    foreach ($executable in $executables) {
+        [void](Assert-NonReparseRegularFile `
+            -Path $executable.FullName `
+            -ExpectedParent $executable.DirectoryName `
+            -Description "$Description executable $($executable.Name)")
+    }
+    return $executables
+}
+
+function ConvertTo-SanitizedPeGateProof {
+    param(
+        [Parameter(Mandatory = $true)]$Document,
+        [Parameter(Mandatory = $true)][string]$ExpectedSha256
+    )
+
+    if ($Document.target -ne "x86_64-pc-windows-msvc" -or
+        $Document.size -isnot [ValueType] -or [int64]$Document.size -le 0 -or
+        $Document.sha256 -notmatch '^[0-9a-f]{64}$' -or
+        $Document.sha256 -ne $ExpectedSha256 -or
+        $Document.cargo.sha256 -notmatch '^[0-9a-f]{64}$' -or
+        $Document.elf_direct_needed -ne $null) {
+        throw "native helper PE gate returned contradictory identity metadata"
+    }
+    $packages = @($Document.cargo.packages)
+    if ($packages -notcontains "your-cloud-native-bootstrap-assistant" -or
+        $packages -notcontains "your-cloud-bootstrap-protocol") {
+        throw "native helper PE gate omitted its bounded Cargo roots"
+    }
+    $normalImports = @($Document.pe_imports.normal)
+    $delayImports = @($Document.pe_imports.delay)
+    $allImports = @($Document.pe_imports.all)
+    if ($Document.pe_imports.format -ne "PE32+" -or
+        $Document.pe_imports.machine -ne "AMD64") {
+        throw "native helper PE gate returned an unexpected executable format"
+    }
+    foreach ($import in @($normalImports + $delayImports + $allImports)) {
+        if ($import -isnot [string] -or $import -notmatch '^[A-Za-z0-9_.+-]+\.dll$') {
+            throw "native helper PE gate returned a non-canonical import name"
+        }
+        if ($import -match '(?:webview|webkit|javascriptcore|wpe)') {
+            throw "native helper PE gate returned a forbidden WebView-family import"
+        }
+    }
+    if ($normalImports.Count -eq 0) {
+        throw "native helper PE gate returned no direct import"
+    }
+    $expectedAllImports = @(($normalImports + $delayImports) |
+        Sort-Object -Unique)
+    $normalizedAllImports = (($allImports | Sort-Object) -join "`n")
+    $normalizedExpectedImports = (($expectedAllImports | Sort-Object) -join "`n")
+    if (($allImports | Sort-Object -Unique).Count -ne $allImports.Count -or
+        $normalizedAllImports -ne $normalizedExpectedImports) {
+        throw "native helper PE gate returned an inconsistent import union"
+    }
+
+    return [ordered]@{
+        target = $Document.target
+        size = [int64]$Document.size
+        sha256 = $Document.sha256
+        cargo = [ordered]@{
+            package_count = $packages.Count
+            graph_sha256 = $Document.cargo.sha256
+        }
+        pe_imports = [ordered]@{
+            format = $Document.pe_imports.format
+            machine = $Document.pe_imports.machine
+            normal = $normalImports
+            delay = $delayImports
+            all = $allImports
+        }
     }
 }
 
@@ -581,23 +726,66 @@ try {
         -Process $administrativeInstall `
         -TimeoutSeconds 300 `
         -Operation "MSI administrative extraction"
-    $packagedExecutables = @(Get-ChildItem `
-        -LiteralPath $administrativeImage `
-        -Filter "your-cloud-console.exe" `
-        -Recurse `
-        -File)
-    if ($packagedExecutables.Count -ne 1) {
-        throw "expected exactly one packaged Console executable in the MSI"
+    $consoleFileName = "your-cloud-console.exe"
+    $helperFileName = "your-cloud-native-bootstrap-assistant.exe"
+    $packagedExecutables = @(Get-ExactExecutableArtifacts `
+        -Root $administrativeImage `
+        -ExpectedFileNames @($consoleFileName, $helperFileName) `
+        -Description "MSI administrative image installable payload" `
+        -Recurse)
+    $packagedExecutable = $packagedExecutables |
+        Where-Object { $_.Name -eq $consoleFileName } |
+        Select-Object -First 1
+    $packagedHelper = $packagedExecutables |
+        Where-Object { $_.Name -eq $helperFileName } |
+        Select-Object -First 1
+    if ($null -eq $packagedExecutable -or $null -eq $packagedHelper -or
+        -not [string]::Equals(
+            $packagedExecutable.DirectoryName,
+            $packagedHelper.DirectoryName,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw "MSI must package the exact native helper beside the Console"
     }
-    $packagedExecutable = $packagedExecutables[0]
     Assert-AuthenticodeSignature `
         $packagedExecutable.FullName `
+        $certificate.Thumbprint `
+        $signTool.FullName
+    Assert-AuthenticodeSignature `
+        $packagedHelper.FullName `
         $certificate.Thumbprint `
         $signTool.FullName
     $packagedExecutableSha256 = (
         Get-FileHash -Algorithm SHA256 -LiteralPath $packagedExecutable.FullName
     ).Hash.ToLowerInvariant()
+    $packagedHelperSha256 = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath $packagedHelper.FullName
+    ).Hash.ToLowerInvariant()
     Write-Host "CI Windows: verified packaged executable SHA-256 $packagedExecutableSha256"
+    Write-Host "CI Windows: verified packaged native helper SHA-256 $packagedHelperSha256"
+
+    $nativeAssistantGate = Join-Path `
+        $console `
+        "tools\check-native-bootstrap-assistant.mjs"
+    $peGateOutput = @(Invoke-BoundedNative `
+        -FilePath (Get-Command node.exe -ErrorAction Stop).Source `
+        -TimeoutSeconds 300 `
+        -Arguments @(
+            $nativeAssistantGate,
+            "x86_64-pc-windows-msvc",
+            $packagedHelper.FullName,
+            "--packaged"
+        ))
+    try {
+        $peGateDocument = ($peGateOutput -join [Environment]::NewLine) |
+            ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "native helper PE gate did not return one valid JSON document"
+    }
+    $peGateProof = ConvertTo-SanitizedPeGateProof `
+        -Document $peGateDocument `
+        -ExpectedSha256 $packagedHelperSha256
 
     $shortcutRoots = @(
         (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs"),
@@ -615,17 +803,56 @@ try {
         throw "installed Your Cloud shortcut was not found"
     }
     $shell = New-Object -ComObject WScript.Shell
-    $installedExecutable = $shell.CreateShortcut($shortcut.FullName).TargetPath
-    if (-not (Test-Path -LiteralPath $installedExecutable -PathType Leaf)) {
-        throw "installed Console executable was not found"
+    $shortcutTarget = [IO.Path]::GetFullPath(
+        $shell.CreateShortcut($shortcut.FullName).TargetPath
+    )
+    if (-not (Test-Path -LiteralPath $shortcutTarget -PathType Leaf)) {
+        throw "installed Your Cloud shortcut does not target a file"
     }
+    $installedDirectory = [IO.Path]::GetDirectoryName(
+        $shortcutTarget
+    )
+    $installedExecutables = @(Get-ExactExecutableArtifacts `
+        -Root $installedDirectory `
+        -ExpectedFileNames @($consoleFileName, $helperFileName) `
+        -Description "installed product directory")
+    $installedConsole = $installedExecutables |
+        Where-Object { $_.Name -eq $consoleFileName } |
+        Select-Object -First 1
+    $installedNativeHelper = $installedExecutables |
+        Where-Object { $_.Name -eq $helperFileName } |
+        Select-Object -First 1
+    if ($null -eq $installedConsole -or
+        $null -eq $installedNativeHelper -or
+        -not [string]::Equals(
+            $shortcutTarget,
+            $installedConsole.FullName,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not [string]::Equals(
+            $installedConsole.DirectoryName,
+            $installedNativeHelper.DirectoryName,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw "shortcut target and installed native helper are not the exact Console siblings"
+    }
+    $installedExecutable = $installedConsole.FullName
+    $installedHelper = $installedNativeHelper.FullName
     Assert-AuthenticodeSignature $installedExecutable $certificate.Thumbprint $signTool.FullName
+    Assert-AuthenticodeSignature $installedHelper $certificate.Thumbprint $signTool.FullName
     $installedExecutableSha256 = (
         Get-FileHash -Algorithm SHA256 -LiteralPath $installedExecutable
     ).Hash.ToLowerInvariant()
+    $installedHelperSha256 = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath $installedHelper
+    ).Hash.ToLowerInvariant()
     Write-Host "CI Windows: verified installed executable SHA-256 $installedExecutableSha256"
+    Write-Host "CI Windows: verified installed native helper SHA-256 $installedHelperSha256"
     if ($installedExecutableSha256 -ne $packagedExecutableSha256) {
         throw "installed executable differs from the executable packaged in the MSI"
+    }
+    if ($installedHelperSha256 -ne $packagedHelperSha256) {
+        throw "installed native helper differs from the helper packaged in the MSI"
     }
 
     Write-Host "CI Windows: preparing the bounded WebView2 driver"
@@ -1050,6 +1277,7 @@ finally {
     $trackedExecutablePaths = @(
         @(
             $installedExecutable,
+            $installedHelper,
             $tauriDriverPath,
             $edgeDriverPath
         ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
@@ -1171,6 +1399,10 @@ finally {
         if ($null -ne $installedExecutable -and
             (Test-Path -LiteralPath $installedExecutable)) {
             throw "installed executable remained at $installedExecutable"
+        }
+        if ($null -ne $installedHelper -and
+            (Test-Path -LiteralPath $installedHelper)) {
+            throw "installed native helper remained at $installedHelper"
         }
         if ($null -ne $shortcut -and (Test-Path -LiteralPath $shortcut.FullName)) {
             throw "installed shortcut remained at $($shortcut.FullName)"
@@ -1358,6 +1590,12 @@ $proofReport | Add-Member -Force -NotePropertyName "verified_artifacts" -NotePro
     msi = [ordered]@{
         file_name = $msi.Name
         sha256 = $msiSha256
+        executable_file_names = @(
+            "your-cloud-console.exe",
+            "your-cloud-native-bootstrap-assistant.exe"
+        )
+        administrative_image_contains_exact_installable_executable_file_set = $true
+        authenticode_signer_matches_both_executables = $true
     }
     executable = [ordered]@{
         packaged_file_name = $packagedExecutable.Name
@@ -1366,12 +1604,24 @@ $proofReport | Add-Member -Force -NotePropertyName "verified_artifacts" -NotePro
         installed_sha256 = $installedExecutableSha256
         installed_matches_package = $true
     }
+    native_helper = [ordered]@{
+        packaged_file_name = $packagedHelper.Name
+        packaged_sha256 = $packagedHelperSha256
+        installed_file_name = [IO.Path]::GetFileName($installedHelper)
+        installed_sha256 = $installedHelperSha256
+        installed_matches_package = $true
+        installed_as_exact_console_sibling = $true
+        packaged_and_installed_without_reparse_point = $true
+        authenticode_signer_matches_console_and_msi = $true
+        pe_gate = $peGateProof
+    }
 })
 $proofReport | Add-Member -Force -NotePropertyName "cleanup" -NotePropertyValue ([ordered]@{
     result = "pass"
     enforcement = "blocking-script-exit"
     verified_absent = @(
         "msi-installation",
+        "installed-native-helper",
         "synthetic-certificate-and-private-key",
         "ephemeral-standard-user-and-profile",
         "temporary-security-material",
@@ -1400,5 +1650,7 @@ if ($unexpectedProofFiles.Count -ne 0 -or
     throw "Windows proof artifact contains an unexpected file"
 }
 
-Write-Host "PASS: Windows MSI signed, timestamped, installed, launched and opened no TCP listener"
+Write-Host "PASS: Windows MSI administrative image exposes exactly the same-signed installable Console and native helper executables"
+Write-Host "PASS: packaged and installed helper hashes match, sibling paths are direct and non-reparse"
+Write-Host "PASS: installed Console launched and opened no TCP listener"
 Write-Host "PASS: Windows proof report is bound to run $githubRunId at $githubSha and cleanup is verified"

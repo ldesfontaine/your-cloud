@@ -19,7 +19,10 @@ $requiredFunctions = @(
     "Test-ProcessInstanceIdentity",
     "Get-BoundedWaitMilliseconds",
     "Resolve-BoundedChildPath",
-    "Get-AttributedProofProcesses"
+    "Get-AttributedProofProcesses",
+    "Assert-NonReparseRegularFile",
+    "Get-ExactExecutableArtifacts",
+    "ConvertTo-SanitizedPeGateProof"
 )
 $functionDefinitions = @($ast.FindAll(
     {
@@ -34,6 +37,66 @@ foreach ($requiredFunction in $requiredFunctions) {
         throw "expected exactly one $requiredFunction function"
     }
     . ([scriptblock]::Create($matches[0].Extent.Text))
+}
+
+$syntheticSha256 = [string]::new('a', 64)
+$sanitizedPeProof = ConvertTo-SanitizedPeGateProof `
+    -Document ([pscustomobject]@{
+        target = "x86_64-pc-windows-msvc"
+        size = [int64]42
+        sha256 = $syntheticSha256
+        cargo = [pscustomobject]@{
+            packages = @(
+                "your-cloud-bootstrap-protocol",
+                "your-cloud-native-bootstrap-assistant"
+            )
+            sha256 = [string]::new('b', 64)
+        }
+        elf_direct_needed = $null
+        pe_imports = [pscustomobject]@{
+            format = "PE32+"
+            machine = "AMD64"
+            normal = @("kernel32.dll")
+            delay = @("user32.dll")
+            all = @("kernel32.dll", "user32.dll")
+        }
+    }) `
+    -ExpectedSha256 $syntheticSha256
+if ($sanitizedPeProof.sha256 -ne $syntheticSha256 -or
+    $sanitizedPeProof.cargo.package_count -ne 2 -or
+    $sanitizedPeProof.pe_imports.all.Count -ne 2) {
+    throw "sanitized PE gate proof contract is broken"
+}
+$hostilePeProofWasRejected = $false
+try {
+    [void](ConvertTo-SanitizedPeGateProof `
+        -Document ([pscustomobject]@{
+            target = "x86_64-pc-windows-msvc"
+            size = [int64]42
+            sha256 = $syntheticSha256
+            cargo = [pscustomobject]@{
+                packages = @(
+                    "your-cloud-bootstrap-protocol",
+                    "your-cloud-native-bootstrap-assistant"
+                )
+                sha256 = [string]::new('b', 64)
+            }
+            elf_direct_needed = $null
+            pe_imports = [pscustomobject]@{
+                format = "PE32+"
+                machine = "AMD64"
+                normal = @("webkit.dll")
+                delay = @()
+                all = @("webkit.dll")
+            }
+        }) `
+        -ExpectedSha256 $syntheticSha256)
+}
+catch {
+    $hostilePeProofWasRejected = $true
+}
+if (-not $hostilePeProofWasRejected) {
+    throw "an inconsistent PE import union must be rejected"
 }
 
 $failures = [Collections.Generic.List[string]]::new()
@@ -197,6 +260,8 @@ $cleanupNames = @($cleanupCommands | ForEach-Object {
 $requiredCleanupOrder = @(
     "attributed proof process drain",
     "product and driver process absence",
+    "MSI uninstall",
+    "MSI installation absence",
     "application data containment",
     "ephemeral profile removal",
     "ephemeral account removal",
@@ -278,4 +343,93 @@ if ($attributionResolutionFunctions.Count -ne 1 -or
     throw "a non-attributed process must emit no pipeline object"
 }
 
-Write-Host "PASS: Windows proof cleanup is attributable, bounded and DACL-compatible"
+$artifactSetFunctions = @($functionDefinitions | Where-Object {
+    $_.Name -eq "Get-ExactExecutableArtifacts"
+})
+if ($artifactSetFunctions.Count -ne 1 -or
+    $artifactSetFunctions[0].Extent.Text -notmatch '\*\.exe' -or
+    $artifactSetFunctions[0].Extent.Text -notmatch '\bAssert-NonReparseRegularFile\b' -or
+    $artifactSetFunctions[0].Extent.Text -notmatch '\$actualNames\.Count\s+-ne\s+\$expectedNames\.Count') {
+    throw "the artifact proof must enforce one exact non-reparse executable file set"
+}
+$nonReparseFunctions = @($functionDefinitions | Where-Object {
+    $_.Name -eq "Assert-NonReparseRegularFile"
+})
+if ($nonReparseFunctions.Count -ne 1 -or
+    $nonReparseFunctions[0].Extent.Text -notmatch '\bReparsePoint\b' -or
+    $nonReparseFunctions[0].Extent.Text -notmatch '\bGetDirectoryName\b' -or
+    $nonReparseFunctions[0].Extent.Text -notmatch '\bLength\s+-le\s+0\b') {
+    throw "packaged and installed executables must be direct non-empty non-reparse siblings"
+}
+
+$proofSource = Get-Content -LiteralPath $proofScript -Raw
+$artifactCommands = @($ast.FindAll(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq "Get-ExactExecutableArtifacts"
+    },
+    $true
+))
+$administrativeArtifactCall = @($artifactCommands | Where-Object {
+    $_.Extent.Text.Contains('MSI administrative image installable payload')
+})
+$installedArtifactCall = @($artifactCommands | Where-Object {
+    $_.Extent.Text.Contains('installed product directory')
+})
+if ($administrativeArtifactCall.Count -ne 1 -or
+    $administrativeArtifactCall[0].Extent.Text -notmatch '(?m)-Recurse\b' -or
+    $installedArtifactCall.Count -ne 1 -or
+    $installedArtifactCall[0].Extent.Text -match '(?m)-Recurse\b') {
+    throw "only the administrative image may be scanned recursively for executable artifacts"
+}
+foreach ($requiredProofFragment in @(
+    '"your-cloud-console.exe"',
+    '"your-cloud-native-bootstrap-assistant.exe"',
+    '"x86_64-pc-windows-msvc"',
+    '"--packaged"',
+    '"tools\check-native-bootstrap-assistant.mjs"',
+    '$installedHelperSha256 -ne $packagedHelperSha256',
+    'Assert-AuthenticodeSignature $installedHelper $certificate.Thumbprint',
+    'installed native helper remained at $installedHelper',
+    '$shortcutTarget,',
+    '$installedConsole.FullName,',
+    'administrative_image_contains_exact_installable_executable_file_set'
+)) {
+    if (-not $proofSource.Contains($requiredProofFragment)) {
+        throw "Windows artifact proof is incomplete at $requiredProofFragment"
+    }
+}
+
+$uiProofScript = Resolve-Path (Join-Path $PSScriptRoot "console-windows-ui-proof.py")
+$uiProofSource = Get-Content -LiteralPath $uiProofScript -Raw
+foreach ($requiredUiFragment in @(
+    "window.__TAURI_INTERNALS__",
+    "start_bootstrap",
+    "bootstrap_status",
+    "cancel_bootstrap",
+    "bootstrap_busy",
+    "native_assistant_unavailable",
+    "bootstrap_request_refused",
+    "sensitive-value-must-not-be-reflected",
+    "request_ids_included_in_proof_artifact",
+    "target_included_in_public_error_or_proof_artifact",
+    "sensitive_input_included_in_public_error_or_proof_artifact",
+    "success_claimed: false"
+)) {
+    if (-not $uiProofSource.Contains($requiredUiFragment)) {
+        throw "live Windows Tauri bootstrap proof is incomplete at $requiredUiFragment"
+    }
+}
+$executeAsync = [regex]::Match(
+    $uiProofSource,
+    '(?ms)^    def execute_async\(.*?^    def wait\('
+)
+if (-not $executeAsync.Success -or
+    $executeAsync.Value.Contains('self.safe_request(') -or
+    -not $executeAsync.Value.Contains('return request(') -or
+    -not $executeAsync.Value.Contains('self.base_url')) {
+    throw "the mutating async WebDriver proof must use one non-retried request"
+}
+
+Write-Host "PASS: Windows artifact, live Tauri IPC and cleanup proof contracts are bounded"
