@@ -20,6 +20,7 @@ $requiredFunctions = @(
     "Get-BoundedWaitMilliseconds",
     "Resolve-BoundedChildPath",
     "Get-AttributedProofProcesses",
+    "Assert-NonReparseDirectory",
     "Assert-NonReparseRegularFile",
     "Get-ExactExecutableArtifacts",
     "ConvertTo-SanitizedPeGateProof",
@@ -143,7 +144,37 @@ foreach ($hostileDevToolsActivePort in @(
 $devToolsContractPath = Join-Path `
     ([IO.Path]::GetTempPath()) `
     ("your-cloud-devtools-active-port-" + [Guid]::NewGuid().ToString("N"))
+$devToolsContractRoot = Join-Path `
+    ([IO.Path]::GetTempPath()) `
+    ("your-cloud-webview-root-" + [Guid]::NewGuid().ToString("N"))
+$devToolsContractUserData = Join-Path $devToolsContractRoot "EBWebView"
 try {
+    New-Item `
+        -ItemType Directory `
+        -Path $devToolsContractRoot, $devToolsContractUserData `
+        -Force | Out-Null
+    [void](Assert-NonReparseDirectory `
+        -Path $devToolsContractRoot `
+        -ExpectedParent ([IO.Path]::GetTempPath()) `
+        -Description "contract WebView2 host root")
+    [void](Assert-NonReparseDirectory `
+        -Path $devToolsContractUserData `
+        -ExpectedParent $devToolsContractRoot `
+        -Description "contract WebView2 user data")
+    $nonDirectDirectoryWasRejected = $false
+    try {
+        [void](Assert-NonReparseDirectory `
+            -Path $devToolsContractUserData `
+            -ExpectedParent ([IO.Path]::GetTempPath()) `
+            -Description "hostile non-direct WebView2 user data")
+    }
+    catch {
+        $nonDirectDirectoryWasRejected = $true
+    }
+    if (-not $nonDirectDirectoryWasRejected) {
+        throw "a non-direct WebView2 user data directory was accepted"
+    }
+
     $nominalDevToolsContent = "55123`n/devtools/browser/contract"
     [IO.File]::WriteAllText(
         $devToolsContractPath,
@@ -180,8 +211,14 @@ finally {
     if (Test-Path -LiteralPath $devToolsContractPath) {
         Remove-Item -LiteralPath $devToolsContractPath -Force -ErrorAction Stop
     }
+    if (Test-Path -LiteralPath $devToolsContractRoot) {
+        Remove-Item -LiteralPath $devToolsContractRoot -Recurse -Force -ErrorAction Stop
+    }
     if (Test-Path -LiteralPath $devToolsContractPath) {
         throw "DevToolsActivePort contract scratch file remained after cleanup"
+    }
+    if (Test-Path -LiteralPath $devToolsContractRoot) {
+        throw "WebView2 directory contract scratch root remained after cleanup"
     }
 }
 
@@ -589,6 +626,7 @@ foreach ($requiredProofFragment in @(
     '-Description "opened WebView2 DevToolsActivePort"',
     '[IO.FileShare]::Read',
     'DevToolsActivePort path changed after its bounded read',
+    'Assert-NonReparseDirectory',
     '-CandidatePath $candidate.ExecutablePath',
     '-CandidateOwnerSid $owner.Sid',
     '$debuggerSocket.AbsolutePath -eq $debuggerBrowserPath',
@@ -601,16 +639,30 @@ foreach ($requiredProofFragment in @(
 }
 if ($proofSource.Contains('[Net.Sockets.TcpListener]') -or
     $proofSource.Contains('"--remote-debugging-port=$remoteDebuggingPort"') -or
+    $proofSource.Contains('WEBVIEW2_USER_DATA_FOLDER = $webViewUserData') -or
+    ([regex]::Matches($proofSource, [regex]::Escape('"EBWebView"'))).Count -ne 1 -or
     ([regex]::Matches($proofSource, [regex]::Escape('"--remote-debugging-port=0"'))).Count -ne 1) {
-    throw "WebView2 must bind an OS-selected port atomically and publish DevToolsActivePort"
+    throw "WebView2 must derive one EBWebView UDF and bind an OS-selected debugger port"
 }
 $orderedDebuggerFragments = @(
+    '$webViewDataRoot = Join-Path',
+    '$webViewUserData = Join-Path $webViewDataRoot "EBWebView"',
     '$devToolsActivePortPath = Join-Path $webViewUserData "DevToolsActivePort"',
-    'WEBVIEW2_USER_DATA_FOLDER = $webViewUserData',
+    '$unexpectedRootDevToolsActivePortPath = Join-Path',
+    '$unexpectedNestedDevToolsActivePortPath = Join-Path',
+    '-Path $automationTemp, $webViewDataRoot, $webViewUserData',
+    '-Description "ephemeral WebView2 host data root"',
+    '-Description "ephemeral WebView2 user data directory"',
+    'WEBVIEW2_USER_DATA_FOLDER = $webViewDataRoot',
     'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=0"',
     '$automationProcess = Start-Process',
     '$devToolsEndpoint = $null',
+    'throw "WebView2 published DevToolsActivePort outside the exact EBWebView UDF"',
+    '-Description "stable WebView2 host data root"',
+    '-Description "stable WebView2 user data directory"',
     '$devToolsContent = Read-BoundedDevToolsActivePortContent',
+    '-Description "revalidated WebView2 host data root"',
+    '-Description "revalidated WebView2 user data directory"',
     '$devToolsEndpoint = ConvertFrom-DevToolsActivePort',
     '$remoteDebuggingPort = $devToolsEndpoint.Port',
     '$debuggerBrowserPath = $devToolsEndpoint.BrowserPath',

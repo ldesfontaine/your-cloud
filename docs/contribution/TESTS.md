@@ -51,7 +51,14 @@ La preuve vivante ajoute jusqu'à cinq tentatives bornées par capture après
 barrière de peinture. Le
 smoke Windows délègue le bind éphémère à WebView2 avec le port `0`, découvre
 `DevToolsActivePort`, puis vérifie loopback, runtime et SID exacts. Ces gardes
-restent à exécuter dans une nouvelle matrice sur le SHA candidat.
+passent sous Linux dans `30775430141` sur `233c92c` : les neuf rasters sont
+valides dès la première tentative et les dix PNG sont inspectés. Le run reste
+rouge parce que Windows cherche le fichier dans le chemin fourni déjà suffixé
+`EBWebView`. WebView2 ajoute lui-même ce suffixe ; le candidat suivant fournit
+donc le parent à `WEBVIEW2_USER_DATA_FOLDER` et conserve le chemin suffixé exact
+pour la lecture. Cette correction reste à exécuter sur son nouveau SHA. Le run
+Linux ne prouve pas l'absence générale de texte rogné à 200 % ; cette comparaison
+responsive exhaustive reste planifiée dans le registre ci-dessous.
 
 ## Vocabulaire de travail
 

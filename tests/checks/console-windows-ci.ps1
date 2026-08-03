@@ -34,6 +34,7 @@ $peGateProof = $null
 $packageLockSha256 = $null
 $cargoLockSha256 = $null
 $uiSmokeRoot = Join-Path $env:RUNNER_TEMP "your-cloud-windows-webview2-smoke"
+$webViewDataRoot = $null
 $webViewUserData = $null
 $tauriDriverPath = $null
 $edgeDriverPath = $null
@@ -215,6 +216,41 @@ function Assert-NonReparseRegularFile {
         throw "$Description is not a non-empty regular file"
     }
     return $fileItem
+}
+
+function Assert-NonReparseDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedParent,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    $fullParent = [IO.Path]::GetFullPath($ExpectedParent).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    if (-not [string]::Equals(
+        [IO.Path]::GetDirectoryName($fullPath),
+        $fullParent,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "$Description is not a direct child of its expected directory"
+    }
+
+    $parentItem = Get-Item -LiteralPath $fullParent -Force -ErrorAction Stop
+    $directoryItem = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+    if (-not $parentItem.PSIsContainer -or -not $directoryItem.PSIsContainer) {
+        throw "$Description or its direct parent is not a directory"
+    }
+    if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Description or its direct parent is a reparse point"
+    }
+    return $directoryItem
 }
 
 function Get-ExactExecutableArtifacts {
@@ -1269,13 +1305,37 @@ try {
     $automationRoamingData = Join-Path $automationUserProfile.LocalPath "AppData\Roaming"
     $applicationData = Join-Path $automationRoamingData "fr.your-cloud.console"
     $automationTemp = Join-Path $automationLocalData "Temp"
-    $webViewUserData = Join-Path `
+    $webViewDataRoot = Join-Path `
         $automationLocalData `
-        "your-cloud-windows-webview2-smoke\EBWebView"
+        "your-cloud-windows-webview2-smoke"
+    $webViewUserData = Join-Path $webViewDataRoot "EBWebView"
     $devToolsActivePortPath = Join-Path $webViewUserData "DevToolsActivePort"
-    New-Item -ItemType Directory -Path $automationTemp, $webViewUserData -Force | Out-Null
-    if (Test-Path -LiteralPath $devToolsActivePortPath) {
-        throw "ephemeral WebView2 user data contains a stale DevToolsActivePort file"
+    $unexpectedRootDevToolsActivePortPath = Join-Path `
+        $webViewDataRoot `
+        "DevToolsActivePort"
+    $unexpectedNestedDevToolsActivePortPath = Join-Path `
+        $webViewUserData `
+        "EBWebView\DevToolsActivePort"
+    New-Item `
+        -ItemType Directory `
+        -Path $automationTemp, $webViewDataRoot, $webViewUserData `
+        -Force | Out-Null
+    [void](Assert-NonReparseDirectory `
+        -Path $webViewDataRoot `
+        -ExpectedParent $automationLocalData `
+        -Description "ephemeral WebView2 host data root")
+    [void](Assert-NonReparseDirectory `
+        -Path $webViewUserData `
+        -ExpectedParent $webViewDataRoot `
+        -Description "ephemeral WebView2 user data directory")
+    foreach ($staleDevToolsActivePortPath in @(
+        $devToolsActivePortPath,
+        $unexpectedRootDevToolsActivePortPath,
+        $unexpectedNestedDevToolsActivePortPath
+    )) {
+        if (Test-Path -LiteralPath $staleDevToolsActivePortPath) {
+            throw "ephemeral WebView2 data contains a stale DevToolsActivePort file"
+        }
     }
     Write-Host "CI Windows: installed Console will run as a bounded standard user"
 
@@ -1290,7 +1350,8 @@ try {
         LOCALAPPDATA = $automationLocalData
         TEMP = $automationTemp
         TMP = $automationTemp
-        WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
+        # WebView2 appends the browser-owned EBWebView suffix to this host root.
+        WEBVIEW2_USER_DATA_FOLDER = $webViewDataRoot
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=0"
     }
     $automationProcess = Start-Process `
@@ -1315,11 +1376,35 @@ try {
         if ($automationProcess.HasExited) {
             throw "installed Console exited before publishing DevToolsActivePort"
         }
+        foreach ($unexpectedDevToolsActivePortPath in @(
+            $unexpectedRootDevToolsActivePortPath,
+            $unexpectedNestedDevToolsActivePortPath
+        )) {
+            if (Test-Path -LiteralPath $unexpectedDevToolsActivePortPath) {
+                throw "WebView2 published DevToolsActivePort outside the exact EBWebView UDF"
+            }
+        }
         if (Test-Path -LiteralPath $devToolsActivePortPath) {
             try {
+                [void](Assert-NonReparseDirectory `
+                    -Path $webViewDataRoot `
+                    -ExpectedParent $automationLocalData `
+                    -Description "stable WebView2 host data root")
+                [void](Assert-NonReparseDirectory `
+                    -Path $webViewUserData `
+                    -ExpectedParent $webViewDataRoot `
+                    -Description "stable WebView2 user data directory")
                 $devToolsContent = Read-BoundedDevToolsActivePortContent `
                     -Path $devToolsActivePortPath `
                     -ExpectedParent $webViewUserData
+                [void](Assert-NonReparseDirectory `
+                    -Path $webViewDataRoot `
+                    -ExpectedParent $automationLocalData `
+                    -Description "revalidated WebView2 host data root")
+                [void](Assert-NonReparseDirectory `
+                    -Path $webViewUserData `
+                    -ExpectedParent $webViewDataRoot `
+                    -Description "revalidated WebView2 user data directory")
                 $devToolsEndpoint = ConvertFrom-DevToolsActivePort `
                     -Content $devToolsContent
             }

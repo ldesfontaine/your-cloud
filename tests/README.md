@@ -82,6 +82,13 @@ par WebView2 via `DevToolsActivePort`, puis attribue le listener au runtime et
 au SID exacts. Une nouvelle matrice doit encore exécuter ces gardes sur leur
 SHA.
 
+`30775430141` confirme ensuite le garde raster réel sous Linux : neuf captures
+valides dès la première tentative et dix PNG inspectés. Le run reste rouge sous
+Windows, car le harnais fournissait déjà `EBWebView` dans la racine que WebView2
+suffixe lui-même. Le candidat suivant transmet le parent au runtime et lit le
+fichier dans l'UDF suffixé exact. Cette correction doit encore être rejouée ; le
+résultat Linux ne revendique pas la comparaison responsive exhaustive à 200 %.
+
 Le registre détaillé reste
 [`docs/contribution/TESTS.md`](../docs/contribution/TESTS.md). Le placement, les
 permissions et les limites de la couche distante sont fixés par le
