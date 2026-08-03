@@ -48,5 +48,19 @@ suite=(
 # own supervisor, observed through the window it opens. `LC_ALL` is fixed
 # because GTK writes on standard error under an unset locale, and the Console
 # forwards to the helper exactly the locale it holds itself.
-LC_ALL=C.UTF-8 xvfb-run -a env NO_AT_BRIDGE=1 \
+#
+# `-noreset` is what makes the display a fixture instead of a moving part, and
+# it is not a convenience. An X server regenerates — frees every resource,
+# recompiles its keymap, reloads its extensions — each time its client count
+# falls back to zero, and on this pass that happens dozens of times: the only
+# clients are the helpers under observation and the short-lived `xdotool` probes
+# that observe them. A connection accepted in the same dispatch cycle as a
+# pending regeneration is closed before its setup reply ever arrives, so
+# `XOpenDisplay` answers nothing and the helper honestly reports a display it
+# could not reach. That refusal is aimed at no one in particular: on this very
+# session a stock `xdpyinfo`, with not a line of the Console in it, is refused
+# about three times in a hundred while an `xdotool` loop connects beside it, and
+# never once when the generation is held. The screen geometry is repeated here
+# because `--server-args` replaces the default rather than extending it.
+LC_ALL=C.UTF-8 xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1 \
   "${suite[@]}" "$@" -- --ignored --test-threads=1
