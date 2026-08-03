@@ -173,7 +173,37 @@ russh = { version = "=0.62.4", default-features = false, features = ["ring", "rs
 ```
 
 Ses algorithmes sont choisis par une liste positive. DSA, DES, la compression
-et la signature RSA `ssh-rsa` fondée sur SHA-1 sont refusés. La clé d'hôte est
+et la signature RSA `ssh-rsa` fondée sur SHA-1 sont refusés. `Preferred::DEFAULT`
+n'est jamais réutilisé : il offre encore ECDSA, les courbes NIST et
+`Algorithm::Rsa { hash: None }`, qui désigne précisément la signature SHA-1.
+Les cinq champs négociés — échange de clés, clés, chiffrement, MAC et
+compression — sont donc reconstruits explicitement. La liste d'échange de clés
+conserve obligatoirement les pseudo-algorithmes `ext-info` et strict key
+exchange d'OpenSSH : `russh` les filtre par rôle mais ne les ajoute jamais
+lui-même, si bien qu'une liste écrite à la main qui les omettrait perdrait
+silencieusement l'atténuation de Terrapin.
+
+**Risque résiduel de chaîne d'approvisionnement.** La résolution réelle de
+`russh 0.62.4` fait entrer 108 paquets supplémentaires dans le graphe du
+helper, qui passe de 71 à 179, ainsi qu'un runtime asynchrone `tokio`. Cinq
+d'entre eux sont des versions préliminaires : `ssh-key 0.7.0-rc.11`,
+`rsa 0.10.0-rc.18`, `pkcs1 0.8.0-rc.4`, `blake2 0.11.0-rc.6` et
+`argon2 0.6.0-rc.8`. L'analyse de la clé personnelle et le traitement des
+paquets d'un serveur distant reposent donc sur des candidates de publication
+issues de RustCrypto. Ce choix est assumé faute d'alternative meilleure —
+déléguer au binaire `ssh` sortirait la passphrase de la mémoire protégée et
+retirerait le contrôle du budget de signatures, tandis qu'une bibliothèque en C
+déplacerait la surface distante hors de la sûreté mémoire. Cette limite est
+nommée au même titre que la signature Windows synthétique : elle n'est pas
+prouvée absente, elle est déclarée.
+
+Ces versions préliminaires restent confinées au sous-arbre du helper. La
+vérification du lockfile montre qu'un seul paquet est réellement remplacé dans
+tout le workspace : `zeroize`, porté de `1.8.2` à `1.9.0` parce que
+`ssh-key 0.7.0-rc.11` l'exige. Tous les autres coexistent en deux versions, si
+bien que la Console conserve intacte la crypto de son coffre déjà prouvée —
+notamment `argon2 0.5.3`, `ed25519-dalek 2.2.0`, `sha2 0.10.9` et `rand 0.8.5`.
+Le helper compile sa propre pile ; il ne déplace pas celle de la Console. La clé d'hôte est
 comparée exactement à celle du périmètre approuvé : le client ne décide jamais
 la confiance au premier contact (`TOFU`) et n'écrit pas implicitement dans
 `known_hosts`. Il n'expose ni shell, ni PTY, ni redirection, ni SFTP, X11,

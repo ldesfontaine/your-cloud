@@ -71,6 +71,10 @@ path = "tests/delayed_start_contract.rs"
 required-features = ["delayed-start-contract-test"]
 
 [dependencies]
+# Client SSH du chemin d'accès personnel. Épinglé exactement, sans features
+# par défaut : `Preferred::DEFAULT` reste inutilisable et chaque champ négocié
+# est fermé explicitement par `personal_access::ssh_algorithms`.
+russh = { version = "=0.62.4", default-features = false, features = ["ring", "rsa"] }
 serde_json = "=1.0.149"
 your-cloud-bootstrap-protocol = { version = "=0.0.3", path = "../bootstrap-protocol" }
 
