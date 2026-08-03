@@ -12,6 +12,7 @@
 pub mod agent_endpoint;
 pub mod algorithms;
 pub mod openssh_key;
+pub mod signature_budget;
 pub mod ssh_algorithms;
 pub mod sudo_policy;
 pub mod target;
