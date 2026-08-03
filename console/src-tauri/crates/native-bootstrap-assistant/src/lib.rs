@@ -123,6 +123,9 @@ pub(crate) enum SessionTerminal {
 
 pub(crate) enum PromptOutcome {
     Consent,
+    /// Consent that also names the single agent identity the user selected.
+    /// The fingerprint is public material; it is never a secret.
+    ConsentWithIdentity(String),
     Secret(secret::ProtectedSecret),
     Refused,
     Cancelled,
@@ -200,7 +203,12 @@ fn serve_scope(
 
 fn terminal_from_prompt(outcome: PromptOutcome) -> SessionTerminal {
     match outcome {
-        PromptOutcome::Consent => SessionTerminal::Unavailable,
+        // A verified personal access is deliberately indistinguishable from an
+        // unavailable one on the public surface: announcing it belongs to a
+        // later issue, not to this one.
+        PromptOutcome::Consent | PromptOutcome::ConsentWithIdentity(_) => {
+            SessionTerminal::Unavailable
+        }
         PromptOutcome::Secret(secret) => {
             drop(secret);
             SessionTerminal::Unavailable
@@ -248,7 +256,84 @@ fn show_prompt(
     expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: LeaseState,
 ) -> PromptOutcome {
+    if scope.prompt == your_cloud_bootstrap_protocol::NativePromptKind::ConfirmPersonalAccess {
+        return serve_personal_access(scope, deadline, expired, lease);
+    }
     native_prompt::prompt(scope, deadline, expired, lease)
+}
+
+/// The whole personal access, in the order the perimeter fixes.
+///
+/// Every observation happens before the window opens, so what the user reads
+/// — the frozen addresses beside the name, the identities the agent really
+/// holds — is exactly what the transport will use afterwards. Nothing is
+/// re-derived after consent, and every refusal is expurgated into the same
+/// Unavailable outcome, because no public surface of this palier may reveal
+/// whether an access was verified.
+#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "linux"))]
+fn serve_personal_access(
+    scope: &AssistantScopeV1,
+    deadline: Instant,
+    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: LeaseState,
+) -> PromptOutcome {
+    use personal_access::session::{AuthenticationRequest, GuardVerdict, Prepared};
+    use std::sync::atomic::Ordering;
+
+    let Ok(prepared) = Prepared::open(&scope.target.host, scope.target.port, deadline) else {
+        return PromptOutcome::Unavailable;
+    };
+
+    // The scope shown is the received one plus the addresses this process just
+    // froze; revalidating it keeps that augmentation inside the same bounds the
+    // parent's scope had to satisfy.
+    let mut resolved = scope.clone();
+    resolved.target_addresses = prepared
+        .target()
+        .addresses()
+        .iter()
+        .map(|address| address.to_string())
+        .collect();
+    let Ok(resolved) = resolved.validate() else {
+        return PromptOutcome::Unavailable;
+    };
+
+    let outcome = native_prompt::prompt_with_identities(
+        &resolved,
+        prepared.identities(),
+        deadline,
+        std::sync::Arc::clone(&expired),
+        lease.clone(),
+    );
+    let PromptOutcome::ConsentWithIdentity(selected) = outcome else {
+        return outcome;
+    };
+
+    let guard_expired = std::sync::Arc::clone(&expired);
+    let guard_lease = lease.clone();
+    let guard = move || {
+        if guard_expired.load(Ordering::SeqCst) || Instant::now() >= deadline {
+            GuardVerdict::Expired
+        } else if guard_lease.is_cancelled() || guard_lease.is_protocol_invalid() {
+            GuardVerdict::Cancelled
+        } else {
+            GuardVerdict::Continue
+        }
+    };
+    let request = AuthenticationRequest {
+        username: &scope.target.username,
+        approved_host_key_fingerprint: &scope.target.host_key_sha256,
+        selected_fingerprint: &selected,
+    };
+    match prepared.run(&request, deadline, &guard) {
+        Ok(report) => {
+            // The probe result stays internal at this palier: it is dropped
+            // here rather than travelling to any public event.
+            drop(report);
+            PromptOutcome::ConsentWithIdentity(selected)
+        }
+        Err(_refused) => PromptOutcome::Unavailable,
+    }
 }
 
 #[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "windows"))]

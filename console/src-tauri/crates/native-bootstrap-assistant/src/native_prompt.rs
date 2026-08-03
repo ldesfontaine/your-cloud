@@ -10,14 +10,17 @@ use std::{
 use gtk::{
     glib::{self, translate::ToGlibPtr, ControlFlow},
     prelude::*,
-    Dialog, DialogFlags, Entry, InputPurpose, Label, ResponseType,
+    ComboBoxText, Dialog, DialogFlags, Entry, InputPurpose, Label, ResponseType,
 };
 use your_cloud_bootstrap_protocol::{
     AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
     NativePromptKind,
 };
 
-use crate::{lease::LeaseState, secret::ProtectedSecret, PromptOutcome};
+use crate::{
+    lease::LeaseState, personal_access::signature_budget::OfferedIdentity, secret::ProtectedSecret,
+    PromptOutcome,
+};
 
 const TIMER_INTERVAL: Duration = Duration::from_millis(25);
 #[cfg(test)]
@@ -36,16 +39,39 @@ pub(crate) fn prompt(
 ) -> PromptOutcome {
     #[cfg(test)]
     {
-        run_dialog(scope, deadline, expired, lease, None)
+        run_dialog(scope, &[], deadline, expired, lease, None)
     }
     #[cfg(not(test))]
     {
-        run_dialog(scope, deadline, expired, lease)
+        run_dialog(scope, &[], deadline, expired, lease)
+    }
+}
+
+/// The personal access window: the same public scope, plus the selection of
+/// exactly one identity among those the agent holds.
+///
+/// The acceptance button stays insensitive until an identity is selected, so a
+/// consent can never be given without naming which key it applies to.
+pub(crate) fn prompt_with_identities(
+    scope: &AssistantScopeV1,
+    identities: &[OfferedIdentity],
+    deadline: Instant,
+    expired: Arc<AtomicBool>,
+    lease: LeaseState,
+) -> PromptOutcome {
+    #[cfg(test)]
+    {
+        run_dialog(scope, identities, deadline, expired, lease, None)
+    }
+    #[cfg(not(test))]
+    {
+        run_dialog(scope, identities, deadline, expired, lease)
     }
 }
 
 fn run_dialog(
     scope: &AssistantScopeV1,
+    identities: &[OfferedIdentity],
     deadline: Instant,
     expired: Arc<AtomicBool>,
     lease: LeaseState,
@@ -89,6 +115,8 @@ fn run_dialog(
         label.set_selectable(true);
         content.pack_start(&label, false, false, 0);
     }
+
+    let identity_chooser = build_identity_chooser(&dialog, &content, identities);
 
     let countdown = Label::new(Some(&countdown_text(deadline)));
     countdown.set_xalign(0.0);
@@ -150,7 +178,12 @@ fn run_dialog(
     } else if lease.is_cancelled() || response == ResponseType::Other(LEASE_CANCELLED_RESPONSE_ID) {
         PromptOutcome::Cancelled
     } else {
-        outcome_from_response(scope.prompt, response, secret_entry.as_ref())
+        outcome_from_response(
+            scope.prompt,
+            response,
+            secret_entry.as_ref(),
+            identity_chooser.as_ref(),
+        )
     };
 
     if let Some(entry) = secret_entry.as_ref() {
@@ -162,14 +195,78 @@ fn run_dialog(
     outcome
 }
 
+/// The rows a user may actually pick, each as its identifying fingerprint and
+/// the line displayed for it.
+///
+/// A certificate is dropped rather than shown: this palier refuses to sign
+/// with one, and offering it would let the user pick something the signature
+/// budget is going to refuse anyway.
+fn selectable_identities(identities: &[OfferedIdentity]) -> Vec<(String, String)> {
+    identities
+        .iter()
+        .filter(|identity| !identity.is_certificate)
+        .map(|identity| {
+            (
+                identity.fingerprint.clone(),
+                format!("{} {}", identity.algorithm, identity.fingerprint),
+            )
+        })
+        .collect()
+}
+
+/// Builds the identity list, or nothing at all when there is none to choose.
+///
+/// Each row is named by its own SHA-256 fingerprint, which is also the value
+/// the transport later binds its signature budget to, so what the user reads
+/// and what gets signed cannot drift apart.
+fn build_identity_chooser(
+    dialog: &Dialog,
+    content: &gtk::Box,
+    identities: &[OfferedIdentity],
+) -> Option<ComboBoxText> {
+    if identities.is_empty() {
+        return None;
+    }
+    let label = Label::new(Some("Identité de l’agent à utiliser :"));
+    label.set_xalign(0.0);
+    content.pack_start(&label, false, false, 0);
+
+    let chooser = ComboBoxText::new();
+    for (fingerprint, line) in selectable_identities(identities) {
+        chooser.append(Some(&fingerprint), &line);
+    }
+    content.pack_start(&chooser, false, false, 0);
+
+    // Nothing is preselected, and acceptance stays unavailable until the user
+    // has named exactly one identity.
+    dialog.set_response_sensitive(ResponseType::Accept, false);
+    let sensitivity_dialog = dialog.clone();
+    chooser.connect_changed(move |chooser| {
+        sensitivity_dialog
+            .set_response_sensitive(ResponseType::Accept, chooser.active_id().is_some());
+    });
+    Some(chooser)
+}
+
 fn outcome_from_response(
     prompt: NativePromptKind,
     response: ResponseType,
     secret_entry: Option<&Entry>,
+    identity_chooser: Option<&ComboBoxText>,
 ) -> PromptOutcome {
     match response {
         ResponseType::Reject => PromptOutcome::Refused,
         ResponseType::Accept => match prompt {
+            NativePromptKind::ConfirmPersonalAccess if identity_chooser.is_some() => {
+                match identity_chooser.and_then(ComboBoxExt::active_id) {
+                    // The selected identity travels with the consent: nothing
+                    // downstream may choose a key on the user's behalf.
+                    Some(fingerprint) => {
+                        PromptOutcome::ConsentWithIdentity(fingerprint.to_string())
+                    }
+                    None => PromptOutcome::Refused,
+                }
+            }
             NativePromptKind::ConfirmPersonalAccess | NativePromptKind::ConfirmRootAccess => {
                 // Consent is internal to the helper. The caller maps it to an
                 // expurgated Unavailable terminal until the next issue consumes it.
@@ -301,17 +398,26 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
     let action = match scope.actions {
         [BootstrapAction::AuditTargetReadOnly] => "audit de la cible en lecture seule",
     };
-    vec![
+    let mut lines = vec![
         format!("Parcours : {mode}"),
         format!(
             "Cible : {}@{}:{}",
             scope.target.username, scope.target.host, scope.target.port
         ),
+    ];
+    // The name is what the user recognises; the frozen addresses are what the
+    // transport will actually dial. Showing both is the only way consent can
+    // cover the peer rather than the label.
+    if !scope.target_addresses.is_empty() {
+        lines.push(format!("Adresses : {}", scope.target_addresses.join(", ")));
+    }
+    lines.extend([
         format!("Route d’accès : {access}"),
         format!("Empreinte hôte : {}", scope.target.host_key_sha256),
         format!("Étape : {step}"),
         format!("Action : {action}"),
-    ]
+    ]);
+    lines
 }
 
 fn wrap_public_line(line: &str) -> Vec<String> {
@@ -465,11 +571,20 @@ mod tests {
     fn run_test_dialog(scope: &AssistantScopeV1, action: Option<AutomaticAction>) -> PromptOutcome {
         run_dialog(
             scope,
+            &[],
             Instant::now() + Duration::from_secs(5),
             Arc::new(AtomicBool::new(false)),
             LeaseState::active_for_test(),
             action,
         )
+    }
+
+    fn ed25519_identity(fingerprint: &str) -> OfferedIdentity {
+        OfferedIdentity {
+            algorithm: russh::keys::Algorithm::Ed25519,
+            fingerprint: fingerprint.into(),
+            is_certificate: false,
+        }
     }
 
     #[test]
@@ -525,6 +640,62 @@ mod tests {
         }
     }
 
+    /// What the transport will dial must be readable before consent, next to
+    /// the name it came from. An unresolved scope shows no address line at all
+    /// rather than an empty or invented one.
+    #[test]
+    fn the_frozen_addresses_are_displayed_beside_the_name() {
+        let mut resolved = scope(NativePromptKind::ConfirmPersonalAccess);
+        resolved.target_addresses = vec!["192.168.1.10".into(), "2001:db8::1".into()];
+        let resolved = resolved.validate().expect("a bounded frozen set");
+
+        let lines = logical_scope_lines(&resolved);
+        assert_eq!(
+            lines,
+            vec![
+                "Parcours : création",
+                "Cible : infra_admin@controller.example.test:22",
+                "Adresses : 192.168.1.10, 2001:db8::1",
+                "Route d’accès : administrateur",
+                "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "Étape : accès personnel",
+                "Action : audit de la cible en lecture seule",
+            ]
+        );
+
+        let unresolved = scope(NativePromptKind::ConfirmPersonalAccess);
+        assert!(
+            !logical_scope_lines(&unresolved)
+                .iter()
+                .any(|line| line.starts_with("Adresses")),
+            "nothing frozen yet means nothing to display"
+        );
+    }
+
+    /// Eight IPv6 addresses is the widest set the perimeter accepts; it must
+    /// still be shown whole, wrapped rather than cut.
+    #[test]
+    fn a_maximal_frozen_set_is_wrapped_without_truncation() {
+        let mut maximal = scope(NativePromptKind::ConfirmPersonalAccess);
+        maximal.target_addresses = (1..=8)
+            .map(|last| format!("2001:db8:aaaa:bbbb:cccc:dddd:eeee:{last:x}"))
+            .collect();
+        let maximal = maximal.validate().expect("eight canonical addresses");
+
+        let logical = logical_scope_lines(&maximal);
+        let wrapped = scope_lines(&maximal);
+        assert!(wrapped
+            .iter()
+            .all(|line| line.chars().count() <= MAX_PUBLIC_LINE_CHARACTERS));
+        assert_eq!(wrapped.concat(), logical.concat());
+        for address in &maximal.target_addresses {
+            assert!(
+                wrapped.concat().contains(address.as_str()),
+                "{address} must stay readable in the consent window"
+            );
+        }
+    }
+
     #[test]
     fn maximal_canonical_target_and_fingerprint_are_split_without_truncation() {
         let maximal = maximal_scope(NativePromptKind::KeyPassphrase);
@@ -562,6 +733,56 @@ mod tests {
         assert!(prompt_copy(NativePromptKind::SudoPassword)
             .secret_label
             .is_some());
+    }
+
+    /// Each row is named by the exact fingerprint the budget will be bound to,
+    /// and a certificate is never offered as a choice.
+    #[test]
+    fn only_plain_identities_are_offered_and_each_row_names_its_own_fingerprint() {
+        const FIRST: &str = "SHA256:0ur4Vv8h1nRhKZ9lPqYq2sBvXwGx7cJd1KfE0mTnRbA";
+        const SECOND: &str = "SHA256:Zz9QaWxLm4Tn2VkJhRfCg7BdY6sXeUo1PtNvHcMi3Ek";
+
+        let rows = selectable_identities(&[
+            ed25519_identity(FIRST),
+            OfferedIdentity {
+                is_certificate: true,
+                ..ed25519_identity(SECOND)
+            },
+        ]);
+        assert_eq!(
+            rows,
+            vec![(
+                FIRST.to_string(),
+                format!("{} {FIRST}", russh::keys::Algorithm::Ed25519)
+            )],
+            "a certificate must never be selectable at this palier"
+        );
+        assert!(rows[0].1.contains(FIRST));
+        assert!(selectable_identities(&[]).is_empty());
+    }
+
+    /// Without any identity list the window keeps its plain consent, which is
+    /// what the other three prompts of this palier rely on.
+    #[test]
+    fn a_window_without_an_identity_list_keeps_the_plain_consent() {
+        assert!(matches!(
+            outcome_from_response(
+                NativePromptKind::ConfirmPersonalAccess,
+                ResponseType::Accept,
+                None,
+                None,
+            ),
+            PromptOutcome::Consent
+        ));
+        assert!(matches!(
+            outcome_from_response(
+                NativePromptKind::ConfirmPersonalAccess,
+                ResponseType::Reject,
+                None,
+                None,
+            ),
+            PromptOutcome::Refused
+        ));
     }
 
     #[test]
@@ -657,6 +878,7 @@ mod tests {
         assert!(matches!(
             run_dialog(
                 &expiring_scope,
+                &[],
                 Instant::now() + Duration::from_millis(100),
                 Arc::new(AtomicBool::new(false)),
                 LeaseState::active_for_test(),
