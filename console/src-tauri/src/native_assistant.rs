@@ -30,6 +30,12 @@ use your_cloud_bootstrap_protocol::{
     MAX_ASSISTANT_SCOPE_FRAME_BYTES,
 };
 
+// The launch-time environment allowlist is decided per prompt, so the kind of
+// window about to open is part of what the spawn path reads. Windows builds
+// their command line elsewhere and never consult it.
+#[cfg(not(target_os = "windows"))]
+use your_cloud_bootstrap_protocol::NativePromptKind;
+
 #[cfg(target_os = "windows")]
 #[path = "native_assistant/windows.rs"]
 mod windows;
@@ -208,7 +214,7 @@ impl NativeAssistantSupervisor {
             command.stdin(Stdio::from(OwnedFd::from(child_input)));
             #[cfg(not(target_os = "linux"))]
             command.stdin(Stdio::piped());
-            configure_public_gui_environment(&mut command);
+            configure_public_gui_environment(&mut command, scope.prompt);
             #[cfg(target_os = "linux")]
             command.process_group(0);
             command
@@ -394,7 +400,7 @@ fn remaining_millis(deadline: Instant, now: Instant) -> Result<u64, NativeAssist
 }
 
 #[cfg(not(target_os = "windows"))]
-fn configure_public_gui_environment(command: &mut Command) {
+fn configure_public_gui_environment(command: &mut Command, prompt: NativePromptKind) {
     for name in [
         "DISPLAY",
         "XAUTHORITY",
@@ -409,7 +415,43 @@ fn configure_public_gui_environment(command: &mut Command) {
         }
     }
     command.env("NO_AT_BRIDGE", "1");
+    configure_personal_agent_endpoint(command, prompt);
 }
+
+/// Hands the helper the endpoint of the user's personal SSH agent, and only
+/// where that endpoint is the one thing the step cannot do without.
+///
+/// An agent is a signing oracle. A window that asks for a `sudo` password, a
+/// key passphrase or a `root` confirmation never needs one, so it never
+/// receives one: the allowlist stays a per-step grant rather than a single
+/// environment every helper inherits. Only the personal access step reads it,
+/// and it reads exactly this name once.
+///
+/// The Console deliberately does not judge the value beyond "present and not
+/// empty". Everything that decides whether the endpoint is *admissible* — an
+/// absolute, bounded, NUL-free path naming a real socket this user owns,
+/// inside a directory nobody else can rearrange — belongs to the helper's
+/// `personal_access::agent_endpoint`, because only the helper observes the
+/// filesystem it will then connect to. A check performed here would be a check
+/// performed against a different moment and, being neither authoritative nor
+/// re-verified, would invite trusting it. The one thing this side owes the
+/// helper is that no *other* variable can name an endpoint, which `env_clear`
+/// above already guarantees.
+#[cfg(target_os = "linux")]
+fn configure_personal_agent_endpoint(command: &mut Command, prompt: NativePromptKind) {
+    if prompt != NativePromptKind::ConfirmPersonalAccess {
+        return;
+    }
+    const PERSONAL_AGENT_ENDPOINT: &str = "SSH_AUTH_SOCK";
+    if let Some(value) = env::var_os(PERSONAL_AGENT_ENDPOINT).filter(|value| !value.is_empty()) {
+        command.env(PERSONAL_AGENT_ENDPOINT, value);
+    }
+}
+
+/// No other Unix target reads an agent endpoint: the helper's observation is
+/// Linux-only and no other target can even locate an installed helper.
+#[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
+fn configure_personal_agent_endpoint(_command: &mut Command, _prompt: NativePromptKind) {}
 
 #[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
 fn take_child_stdin(child: &mut NativeChild) -> Option<std::process::ChildStdin> {

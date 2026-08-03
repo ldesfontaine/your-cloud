@@ -212,7 +212,15 @@ transfert d'agent ou commande générale.
 L'Assistant préfère un agent SSH déjà déverrouillé et lui demande de signer sans
 extraire la clé privée. Sous Linux, il accepte seulement le chemin absolu lu une
 fois depuis `SSH_AUTH_SOCK`, vérifié comme socket Unix appartenant à
-l'utilisateur courant. Sous Windows, `v0.1.0` accepte seulement le pipe OpenSSH
+l'utilisateur courant. Le helper est lancé avec un environnement vidé, si bien
+que cette variable n'existe pour lui que si la Console la lui transmet. Elle la
+transmet **seulement** pour l'étape d'accès personnel : un agent est un oracle
+de signature, et une fenêtre qui demande un mot de passe `sudo`, une passphrase
+ou une confirmation `root` n'en a aucun usage. La Console ne juge pas la valeur,
+elle ne fait que la porter ; l'admissibilité — chemin absolu et borné, socket
+réel appartenant à l'utilisateur, répertoire parent que personne d'autre ne peut
+réarranger — est décidée par le helper, seul à observer le système de fichiers
+auquel il va ensuite se connecter. Sous Windows, `v0.1.0` accepte seulement le pipe OpenSSH
 `\\.\pipe\openssh-ssh-agent`. Une seule clé est sélectionnée et un budget fini
 de signatures est limité à l'authentification SSH de cette opération ; une
 deuxième signature ou un message hors de cette capacité est refusé. Les logs du

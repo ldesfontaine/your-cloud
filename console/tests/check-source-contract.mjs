@@ -1764,7 +1764,6 @@ for (const forbiddenEnvironmentName of [
   "LD_LIBRARY_PATH",
   "GTK_MODULES",
   "GTK_PATH",
-  "SSH_AUTH_SOCK",
 ]) {
   if (
     nativeAssistantRuntime.includes(`"${forbiddenEnvironmentName}"`) ||
@@ -1774,6 +1773,29 @@ for (const forbiddenEnvironmentName of [
       `native_assistant.rs: variable non autorisée transmise trop tôt (${forbiddenEnvironmentName})`,
     );
   }
+}
+// L'endpoint de l'agent personnel est transmis, mais c'est un oracle de
+// signature : il n'est dû qu'à la fenêtre d'accès personnel. Le garde doit
+// donc rester dans la même fonction que la variable, et la variable ne doit
+// jamais apparaître du côté Windows, où l'endpoint est un pipe fixe.
+if (!nativeAssistantRuntime.includes('"SSH_AUTH_SOCK"')) {
+  failures.push(
+    "native_assistant.rs: l’endpoint de l’agent personnel n’est plus transmis au helper",
+  );
+}
+if (nativeAssistantWindows.includes('"SSH_AUTH_SOCK"')) {
+  failures.push(
+    "native_assistant/windows.rs: l’endpoint d’agent Linux n’a rien à y faire",
+  );
+}
+if (
+  !/prompt != NativePromptKind::ConfirmPersonalAccess \{\s*return;\s*\}[\s\S]{0,400}?"SSH_AUTH_SOCK"/u.test(
+    nativeAssistantRuntime,
+  )
+) {
+  failures.push(
+    "native_assistant.rs: SSH_AUTH_SOCK doit rester réservé au prompt d’accès personnel",
+  );
 }
 for (const expected of [
   "Dialog::with_buttons",
