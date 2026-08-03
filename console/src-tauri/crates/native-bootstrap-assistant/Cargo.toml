@@ -76,6 +76,15 @@ required-features = ["delayed-start-contract-test"]
 # est fermé explicitement par `personal_access::ssh_algorithms`.
 russh = { version = "=0.62.4", default-features = false, features = ["ring", "rsa"] }
 serde_json = "=1.0.149"
+# Runtime du transport personnel. `russh` impose déjà exactement cette version ;
+# la dépendance directe n'ajoute rien au graphe, elle rend seulement utilisable
+# la boucle courante et le socket Unix que le client d'agent exige.
+tokio = { version = "=1.53.0", default-features = false, features = [
+  "io-util",
+  "net",
+  "rt",
+  "time",
+] }
 your-cloud-bootstrap-protocol = { version = "=0.0.3", path = "../bootstrap-protocol" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

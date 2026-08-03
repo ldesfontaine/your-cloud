@@ -7,9 +7,11 @@
 //! actually hold, so the endpoint is chosen under a closed rule rather than
 //! taken from the environment as-is.
 //!
-//! The decision is kept separate from the system read: the caller performs the
-//! `stat` or the pipe lookup, this module judges the result. That keeps the
-//! rule testable without a live agent.
+//! The decision is kept separate from the system read: [`accept_linux_endpoint`]
+//! judges an [`ObservedSocket`] without touching the filesystem, which keeps
+//! every rule testable without a live agent, while [`observe_linux_endpoint`]
+//! performs the one environment read and the two `lstat` calls that produce
+//! such an observation on a real machine.
 
 /// The single environment variable consulted on Linux. It is read once, and
 /// no other variable can name an endpoint.
@@ -26,6 +28,9 @@ pub const MAX_ENDPOINT_PATH_BYTES: usize = 107;
 pub enum EndpointRefusal {
     Missing,
     Empty,
+    /// The variable holds bytes that are not a valid string. A real endpoint
+    /// path never is, and refusing keeps a lossy conversion from inventing one.
+    NotUnicode,
     NotAbsolute,
     PathTooLong,
     InteriorNul,
@@ -35,6 +40,8 @@ pub enum EndpointRefusal {
     GroupOrWorldWritable,
     ForeignParentDirectory,
     ReplaceableParentDirectory,
+    /// The path or its parent could not be observed at all.
+    NotObservable,
     UnexpectedPipeName,
 }
 
@@ -115,6 +122,76 @@ fn check_path_shape(path: &str) -> Result<(), EndpointRefusal> {
         return Err(EndpointRefusal::RelativeComponent);
     }
     Ok(())
+}
+
+/// Reads the one environment variable and observes what it names.
+///
+/// This is the whole system side of the Linux endpoint: one `getenv`, one
+/// `lstat` on the socket and one on its parent directory. `lstat` rather than
+/// `stat` is deliberate — a symlink is reported as a symlink and therefore
+/// refused as "not a socket", instead of letting the link's target smuggle in
+/// a directory whose ownership was never examined.
+///
+/// The accepted path is returned so the caller connects to exactly what was
+/// judged, never to a second reading of the variable.
+#[cfg(target_os = "linux")]
+pub fn observe_linux_endpoint() -> Result<String, EndpointRefusal> {
+    let declared = std::env::var_os(LINUX_ENDPOINT_VARIABLE).ok_or(EndpointRefusal::Missing)?;
+    let declared = declared.to_str().ok_or(EndpointRefusal::NotUnicode)?;
+    // SAFETY: geteuid cannot fail and touches no memory.
+    let current_uid = unsafe { libc::geteuid() };
+    observe_declared_endpoint(declared, current_uid)
+}
+
+/// The observation itself, separated from the environment read so the system
+/// side can be exercised against a real socket without mutating the process
+/// environment while other tests run.
+#[cfg(target_os = "linux")]
+pub fn observe_declared_endpoint(
+    declared: &str,
+    current_uid: u32,
+) -> Result<String, EndpointRefusal> {
+    // The shape is checked first: everything below builds a C string from this
+    // path, and only a bounded, absolute, NUL-free path may reach that step.
+    check_path_shape(declared)?;
+    let parent = parent_directory(declared).ok_or(EndpointRefusal::NotAbsolute)?;
+
+    let socket = lstat(declared).ok_or(EndpointRefusal::NotObservable)?;
+    let parent = lstat(parent).ok_or(EndpointRefusal::NotObservable)?;
+    let observed = ObservedSocket {
+        is_socket: socket.st_mode & libc::S_IFMT == libc::S_IFSOCK,
+        owner_uid: socket.st_uid,
+        mode: socket.st_mode & 0o7777,
+        parent_owner_uid: parent.st_uid,
+        parent_mode: parent.st_mode & 0o7777,
+    };
+    accept_linux_endpoint(Some(declared), observed, current_uid)?;
+    Ok(declared.to_owned())
+}
+
+/// The directory containing `path`, for an already shape-checked absolute path.
+fn parent_directory(path: &str) -> Option<&str> {
+    let (parent, last) = path.rsplit_once('/')?;
+    if last.is_empty() {
+        // A trailing slash names a directory, never a socket.
+        return None;
+    }
+    Some(if parent.is_empty() { "/" } else { parent })
+}
+
+#[cfg(target_os = "linux")]
+fn lstat(path: &str) -> Option<libc::stat> {
+    use std::{ffi::CString, mem::MaybeUninit};
+
+    let path = CString::new(path).ok()?;
+    let mut status = MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: path is a live NUL-terminated string and status is valid, aligned
+    // storage of exactly the size lstat writes.
+    if unsafe { libc::lstat(path.as_ptr(), status.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: lstat returned success, so the storage is fully initialised.
+    Some(unsafe { status.assume_init() })
 }
 
 /// Judges a Windows agent endpoint. Only the fixed OpenSSH pipe is admissible;
@@ -318,5 +395,126 @@ mod tests {
     #[test]
     fn only_one_environment_variable_can_ever_name_an_endpoint() {
         assert_eq!(LINUX_ENDPOINT_VARIABLE, "SSH_AUTH_SOCK");
+    }
+
+    #[test]
+    fn the_parent_directory_of_an_endpoint_is_derived_without_touching_the_filesystem() {
+        assert_eq!(
+            parent_directory("/tmp/ssh-abc/agent.1"),
+            Some("/tmp/ssh-abc")
+        );
+        assert_eq!(parent_directory("/agent.sock"), Some("/"));
+        assert_eq!(
+            parent_directory("/tmp/ssh-abc/"),
+            None,
+            "a trailing slash names a directory, never a socket"
+        );
+        assert_eq!(parent_directory("agent.sock"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    mod system {
+        use super::*;
+        use std::{
+            fs,
+            os::unix::{fs::PermissionsExt, net::UnixListener},
+            path::PathBuf,
+        };
+
+        /// A private directory of this test process, named after the running
+        /// process and the case so parallel tests never collide.
+        fn private_directory(case: &str) -> PathBuf {
+            let directory = std::env::temp_dir()
+                .join(format!("your-cloud-endpoint-{}-{case}", std::process::id()));
+            let _ = fs::remove_dir_all(&directory);
+            fs::create_dir(&directory).expect("private directory");
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .expect("private mode");
+            directory
+        }
+
+        fn current_uid() -> u32 {
+            // SAFETY: geteuid cannot fail and touches no memory.
+            unsafe { libc::geteuid() }
+        }
+
+        /// The shape a live `ssh-agent` produces, observed for real: a socket
+        /// this user owns, inside a `0700` directory this user owns.
+        #[test]
+        fn a_real_socket_in_a_private_directory_is_observed_and_accepted() {
+            let directory = private_directory("accepted");
+            let path = directory.join("agent.sock");
+            let listener = UnixListener::bind(&path).expect("bound socket");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("socket mode");
+            let declared = path.to_str().expect("ascii path").to_owned();
+
+            assert_eq!(
+                observe_declared_endpoint(&declared, current_uid()),
+                Ok(declared.clone()),
+                "the accepted path is returned so the caller never re-reads the variable"
+            );
+
+            drop(listener);
+            let _ = fs::remove_dir_all(&directory);
+        }
+
+        #[test]
+        fn a_regular_file_a_symlink_and_an_absent_path_all_fail_closed() {
+            let directory = private_directory("refused");
+            let uid = current_uid();
+
+            let regular = directory.join("not-a-socket");
+            fs::write(&regular, b"").expect("regular file");
+            assert_eq!(
+                observe_declared_endpoint(regular.to_str().unwrap(), uid),
+                Err(EndpointRefusal::NotASocket)
+            );
+
+            let socket = directory.join("agent.sock");
+            let listener = UnixListener::bind(&socket).expect("bound socket");
+            let link = directory.join("agent.link");
+            std::os::unix::fs::symlink(&socket, &link).expect("symlink");
+            assert_eq!(
+                observe_declared_endpoint(link.to_str().unwrap(), uid),
+                Err(EndpointRefusal::NotASocket),
+                "lstat reports the link itself, so no link may stand in for a socket"
+            );
+
+            let absent = directory.join("never-created");
+            assert_eq!(
+                observe_declared_endpoint(absent.to_str().unwrap(), uid),
+                Err(EndpointRefusal::NotObservable)
+            );
+
+            assert_eq!(
+                observe_declared_endpoint(socket.to_str().unwrap(), uid + 1),
+                Err(EndpointRefusal::ForeignOwner),
+                "a socket this user does not own is another account's agent"
+            );
+
+            drop(listener);
+            let _ = fs::remove_dir_all(&directory);
+        }
+
+        /// A socket this user owns is still refused when the directory holding
+        /// it can be rearranged by someone else.
+        #[test]
+        fn a_replaceable_directory_is_refused_even_around_a_real_socket() {
+            let directory = private_directory("exposed");
+            let path = directory.join("agent.sock");
+            let listener = UnixListener::bind(&path).expect("bound socket");
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o777))
+                .expect("exposed mode");
+
+            assert_eq!(
+                observe_declared_endpoint(path.to_str().unwrap(), current_uid()),
+                Err(EndpointRefusal::ReplaceableParentDirectory)
+            );
+
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .expect("restore mode");
+            drop(listener);
+            let _ = fs::remove_dir_all(&directory);
+        }
     }
 }
