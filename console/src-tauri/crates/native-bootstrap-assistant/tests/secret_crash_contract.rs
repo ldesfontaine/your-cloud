@@ -11,7 +11,7 @@ use canary_scan::{contains_subslice, file_contains};
 
 use crash_canary::CANARY_BYTES;
 use std::{
-    fs::{self, File},
+    fs,
     io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio},
@@ -158,7 +158,7 @@ fn administrator_local_dump_is_outside_the_wer_exclusion_contract() {
 
         let dump = wait_for_stable_dump(scratch.path(), FIXTURE_TIMEOUT);
         let mut signature = [0_u8; 4];
-        File::open(&dump)
+        fs::File::open(&dump)
             .and_then(|mut file| file.read_exact(&mut signature))
             .expect("read minidump signature");
         let dump_control_present = file_contains(&dump, &dump_control).expect("scan dump control");

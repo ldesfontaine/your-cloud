@@ -21,8 +21,7 @@ use std::{
 mod bounded_process;
 
 use bounded_process::{
-    collect_output_bounded, read_eof_bounded, terminate_and_reap_bounded, wait_bounded,
-    REAP_TIMEOUT,
+    collect_output_bounded, read_eof_bounded, terminate_and_reap_bounded, REAP_TIMEOUT,
 };
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1, BootstrapAccessKind,
