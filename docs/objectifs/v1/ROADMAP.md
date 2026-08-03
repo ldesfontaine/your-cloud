@@ -98,8 +98,11 @@ que l'adresse figée, la clé d'hôte, l'identité choisie et la sonde fixe
 `/usr/bin/id -u` ont vérifié un accès direct `root` ou le chemin `sudo`
 autorisé. Il ne vaut ni audit, ni installation, ni succès d'amorçage. La
 séquence de fermeture est
-`#45 → #51 → #52 → #53 → #54 → #42 → #35`. `#45` est fermée depuis le 3 août
-2026 : la prochaine issue est donc `#51`.
+`#45 → #51 → #52 → #53 → #54 → #42 → #35`. `#45` et `#51` sont fermées depuis
+le 3 août 2026. `#52` est en cours dans la
+[PR `#69`](https://github.com/ldesfontaine/your-cloud/pull/69) : sa moitié
+Linux est implémentée et prouvée dans le LAB, sa moitié Windows attend le LAB
+ouvert par `#67` et aucune porte native ne l'a couverte.
 
 ## État de départ
 
@@ -113,7 +116,7 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
 | `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat produit Linux/Windows `3b8f81f` | oui — fonctionnel LAB Linux ; porte native finale verte dans `30710037004`, liée au SHA exact par `#9` |
-| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | partiel — #43 et #45 acquises et fusionnées ; #42 et #35 ouverts | partiel — #43 et #45 prouvés et fermés, #45 sur `c0569d0` dans `30779157351` ; #42 reprend par #51 |
+| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | partiel — #43, #45 et #51 acquises et fusionnées ; #52 en revue dans la PR #69 ; #42 et #35 ouverts | partiel — #43 et #45 prouvés et fermés, #45 sur `c0569d0` dans `30779157351` ; la moitié Linux de #52 est prouvée par le LAB seul, sans porte native |
 | Autres paliers de `v0.1.0` | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
@@ -384,8 +387,8 @@ l'implémentation ne réinvente pas l'autorité initiale. Le socle helper/IPC
 `#43` est prouvé. `#45` est prouvée sur `c0569d0` puis fermée le 3 août 2026.
 La séquence de ce sous-palier plaçait #45 avant les sous-issues
 `#51 → #52 → #53 → #54`, la fermeture de leur parente `#42`, puis celle de
-l'intégration `#35`. Le travail reprend donc à #51 avant le reste du palier
-`#13`.
+l'intégration `#35`. `#51` est fermée et `#52` est en revue : le travail
+reprend donc à `#53` une fois `#52` fermée, avant le reste du palier `#13`.
 
 **Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
@@ -489,8 +492,9 @@ frontière n'exécute ni SSH, ni `sudo`, ni `root`, ni audit ou installation.
 Le socle `#43` ci-dessus est exécuté dans des runners isolés avec des données
 sentinelles synthétiques et aucun secret réel. La preuve de sortie globale reste
 incomplète : `#45` a réussi sa matrice native finale et est fermée ; l'accès SSH
-personnel avance maintenant par `#51`, `#52`, `#53` et `#54` avant la fermeture
-de `#42`, puis l'intégration `#35` reste à prouver. La signature Windows
+personnel a fermé `#51`, tient `#52` en revue avec sa moitié Linux prouvée dans
+le LAB et sa moitié Windows en attente, puis avance par `#53` et `#54` avant la
+fermeture de `#42` ; l'intégration `#35` reste à prouver. La signature Windows
 synthétique valide la mécanique de build du candidat, pas une identité
 publique ; une distribution publique attend toujours une signature reconnue et
 gratuite réellement opérationnelle.
@@ -698,6 +702,8 @@ ce SHA, la PR #50 est fusionnée par fast-forward et #45 est fermée le 3 août
 2026. Ces
 résultats ne ferment ni `#35`, ni le palier `#13`, ni son milestone : l'ordre
 reprend par `#51 → #52 → #53 → #54 → #42 → #35`, puis les autres issues
-du palier. Ansible intégré, WireGuard, OCI, téléphone, navigateur public,
+du palier. `#51` est fermée et `#52` est en revue dans la PR `#69`, prouvée par
+le seul LAB : aucune porte native ne couvre son code, et sa moitié Windows
+n'est pas écrite. Ansible intégré, WireGuard, OCI, téléphone, navigateur public,
 Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors du
 périmètre de code actuellement prouvé.
