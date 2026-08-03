@@ -130,9 +130,15 @@ documentée et reproductible dans le LAB approprié.
   l'échéance. La matrice `sudo` réelle sur Debian 13 valide les refus de
   `log_input` et `log_stdin` et révèle que les entrées Defaults sont réparties
   sur plusieurs lignes ; les cinq captures sont figées comme fixtures. 65 tests
-  verts, secrets exclusivement synthétiques, compte et politiques retirés. Ce
-  passage ne prouve ni SSH, ni signature d'agent, ni envoi de mot de passe : ils
-  restent à #52, #53 et #54.
+  verts, secrets exclusivement synthétiques, compte et politiques retirés. Un
+  second passage y ajoute les décisions pures de #52 : cible résolue une seule
+  fois puis gelée contre le rebinding DNS, refus du lien-local et donc de
+  l'endpoint de métadonnées cloud, normalisation des adresses IPv4 encapsulées
+  et admissibilité de l'endpoint d'agent. L'observation d'un vrai `ssh-agent` y
+  révèle que le socket `0600` est protégé par son répertoire parent `0700`, et
+  non par son propre mode ; la règle vérifie désormais le parent. 86 tests
+  verts. Ces passages ne prouvent ni connexion SSH, ni signature d'agent, ni
+  envoi de mot de passe : ils restent à #52, #53 et #54.
 - [`v0.1.0` — consentement natif et mémoire secrète Linux/Windows](v0.1.0-native-secret-consent-linux-windows.md) :
   #45 prouvée sur `c0569d0` par `30779157351` puis fermée le 3 août 2026 ;
   `ae550470bcff08c08624988c17d16db6cb62070a` reste un candidat intermédiaire et

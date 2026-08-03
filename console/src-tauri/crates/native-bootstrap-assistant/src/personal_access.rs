@@ -9,6 +9,8 @@
 //! before anything privileged happens. The connection belongs to #52, the
 //! encrypted key opening to #53 and the elevation to #54.
 
+pub mod agent_endpoint;
 pub mod algorithms;
 pub mod openssh_key;
 pub mod sudo_policy;
+pub mod target;
