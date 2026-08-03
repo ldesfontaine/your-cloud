@@ -16,6 +16,8 @@
 
 use std::net::{IpAddr, Ipv6Addr};
 
+use super::local_addresses::LocalAddresses;
+
 /// Largest accepted number of distinct addresses behind one name.
 pub const MAX_TARGET_ADDRESSES: usize = 8;
 
@@ -74,13 +76,14 @@ impl FrozenTarget {
 /// Freezes a resolution result into a consentable target.
 ///
 /// `resolved` is what the single resolution returned, in order. `local` is the
-/// set of addresses the administrator's own machine holds; the caller
-/// enumerates them so this decision stays pure.
+/// witness that the administrator's own addresses were really enumerated; it
+/// is a dedicated type rather than a slice precisely so that omitting the
+/// observation is not expressible here.
 pub fn freeze(
     name: &str,
     port: u16,
     resolved: &[IpAddr],
-    local: &[IpAddr],
+    local: &LocalAddresses,
 ) -> Result<FrozenTarget, TargetRefusal> {
     if name.is_empty() {
         return Err(TargetRefusal::EmptyName);
@@ -101,7 +104,7 @@ pub fn freeze(
         return Err(TargetRefusal::NoAddress);
     }
 
-    let local: Vec<IpAddr> = local.iter().copied().map(normalise).collect();
+    let local: Vec<IpAddr> = local.addresses().iter().copied().map(normalise).collect();
     let mut addresses: Vec<IpAddr> = Vec::new();
     for candidate in resolved {
         let candidate = normalise(*candidate);
@@ -193,6 +196,13 @@ mod tests {
         text.parse().expect("test address")
     }
 
+    /// An observation that really happened and that collides with no target
+    /// used below. It replaces the former `&[]`, which could not tell an
+    /// enumeration apart from its absence.
+    fn elsewhere() -> LocalAddresses {
+        LocalAddresses::observed_for_test(&[ip("203.0.113.9")])
+    }
+
     #[test]
     fn private_unique_local_and_public_targets_stay_reachable() {
         for address in [
@@ -203,7 +213,7 @@ mod tests {
             "93.184.216.34",
             "2001:db8::1",
         ] {
-            let target = freeze("target.lab", 22, &[ip(address)], &[])
+            let target = freeze("target.lab", 22, &[ip(address)], &elsewhere())
                 .unwrap_or_else(|error| panic!("{address} must stay reachable: {error:?}"));
             assert_eq!(target.addresses(), [ip(address)]);
         }
@@ -224,7 +234,7 @@ mod tests {
             ("255.255.255.255", TargetRefusal::Broadcast),
         ] {
             assert_eq!(
-                freeze("target.lab", 22, &[ip(address)], &[]),
+                freeze("target.lab", 22, &[ip(address)], &elsewhere()),
                 Err(expected),
                 "{address} must fail closed"
             );
@@ -236,7 +246,7 @@ mod tests {
     #[test]
     fn the_cloud_metadata_endpoint_is_refused() {
         assert_eq!(
-            freeze("metadata", 22, &[ip("169.254.169.254")], &[]),
+            freeze("metadata", 22, &[ip("169.254.169.254")], &elsewhere()),
             Err(TargetRefusal::LinkLocal)
         );
     }
@@ -250,7 +260,7 @@ mod tests {
             ("::ffff:255.255.255.255", TargetRefusal::Broadcast),
         ] {
             assert_eq!(
-                freeze("target.lab", 22, &[ip(address)], &[]),
+                freeze("target.lab", 22, &[ip(address)], &elsewhere()),
                 Err(expected),
                 "{address} must be normalised before it is judged"
             );
@@ -259,7 +269,7 @@ mod tests {
 
     #[test]
     fn an_address_the_local_machine_holds_is_refused() {
-        let local = [ip("192.168.1.20"), ip("fd00::20")];
+        let local = LocalAddresses::observed_for_test(&[ip("192.168.1.20"), ip("fd00::20")]);
         for address in ["192.168.1.20", "fd00::20", "::ffff:192.168.1.20"] {
             assert_eq!(
                 freeze("target.lab", 22, &[ip(address)], &local),
@@ -270,6 +280,32 @@ mod tests {
         assert!(freeze("target.lab", 22, &[ip("192.168.1.21")], &local).is_ok());
     }
 
+    /// The guard used to be optional by construction: passing an empty slice
+    /// disabled it without any signal. The witness is now the only way in, and
+    /// a real enumeration of this machine refuses this machine's own addresses.
+    #[test]
+    fn the_local_guard_cannot_be_disabled_by_omission() {
+        let observed = LocalAddresses::observe().expect("this machine has interfaces");
+        for address in observed.addresses() {
+            // Loopback and link-local are already refused for their class; the
+            // remaining ones exercise the local-interface refusal itself.
+            let refusal = freeze("target.lab", 22, &[*address], &observed)
+                .expect_err("no address of this machine may be dialled");
+            assert!(
+                matches!(
+                    refusal,
+                    TargetRefusal::LocalInterface
+                        | TargetRefusal::Loopback
+                        | TargetRefusal::LinkLocal
+                        | TargetRefusal::Unspecified
+                        | TargetRefusal::Multicast
+                        | TargetRefusal::Broadcast
+                ),
+                "{address} is held by this machine yet produced {refusal:?}"
+            );
+        }
+    }
+
     #[test]
     fn duplicates_collapse_while_preserving_resolution_order() {
         let resolved = [
@@ -278,7 +314,7 @@ mod tests {
             ip("192.168.1.10"),
             ip("::ffff:10.0.0.1"),
         ];
-        let target = freeze("target.lab", 22, &resolved, &[]).expect("deduplicated");
+        let target = freeze("target.lab", 22, &resolved, &elsewhere()).expect("deduplicated");
         assert_eq!(target.addresses(), [ip("192.168.1.10"), ip("10.0.0.1")]);
     }
 
@@ -287,13 +323,13 @@ mod tests {
         let eight: Vec<IpAddr> = (1..=8)
             .map(|last| IpAddr::V4(Ipv4Addr::new(192, 168, 1, last)))
             .collect();
-        assert!(freeze("target.lab", 22, &eight, &[]).is_ok());
+        assert!(freeze("target.lab", 22, &eight, &elsewhere()).is_ok());
 
         let nine: Vec<IpAddr> = (1..=9)
             .map(|last| IpAddr::V4(Ipv4Addr::new(192, 168, 1, last)))
             .collect();
         assert_eq!(
-            freeze("target.lab", 22, &nine, &[]),
+            freeze("target.lab", 22, &nine, &elsewhere()),
             Err(TargetRefusal::TooManyAddresses)
         );
     }
@@ -301,7 +337,7 @@ mod tests {
     #[test]
     fn a_name_or_port_that_cannot_be_displayed_or_dialled_is_refused() {
         assert_eq!(
-            freeze("", 22, &[ip("10.0.0.1")], &[]),
+            freeze("", 22, &[ip("10.0.0.1")], &elsewhere()),
             Err(TargetRefusal::EmptyName)
         );
         assert_eq!(
@@ -309,30 +345,30 @@ mod tests {
                 &"a".repeat(MAX_TARGET_NAME_BYTES + 1),
                 22,
                 &[ip("10.0.0.1")],
-                &[]
+                &elsewhere()
             ),
             Err(TargetRefusal::NameTooLong)
         );
         for hostile in ["tar\nget", "tar get", "targ\u{0}et", "tärget"] {
             assert_eq!(
-                freeze(hostile, 22, &[ip("10.0.0.1")], &[]),
+                freeze(hostile, 22, &[ip("10.0.0.1")], &elsewhere()),
                 Err(TargetRefusal::NameNotPrintableAscii),
                 "{hostile:?} must never reach the native window"
             );
         }
         assert_eq!(
-            freeze("target.lab", 0, &[ip("10.0.0.1")], &[]),
+            freeze("target.lab", 0, &[ip("10.0.0.1")], &elsewhere()),
             Err(TargetRefusal::PortZero)
         );
         assert_eq!(
-            freeze("target.lab", 22, &[], &[]),
+            freeze("target.lab", 22, &[], &elsewhere()),
             Err(TargetRefusal::NoAddress)
         );
     }
 
     #[test]
     fn a_frozen_target_only_ever_admits_its_own_addresses() {
-        let target = freeze("target.lab", 22, &[ip("192.168.1.10")], &[]).expect("frozen");
+        let target = freeze("target.lab", 22, &[ip("192.168.1.10")], &elsewhere()).expect("frozen");
 
         assert!(target.allows(ip("192.168.1.10")));
         assert!(
@@ -350,7 +386,7 @@ mod tests {
 
     #[test]
     fn a_frozen_target_exposes_no_way_to_resolve_again() {
-        let target = freeze("target.lab", 2222, &[ip("10.0.0.1")], &[]).expect("frozen");
+        let target = freeze("target.lab", 2222, &[ip("10.0.0.1")], &elsewhere()).expect("frozen");
         assert_eq!(target.name(), "target.lab");
         assert_eq!(target.port(), 2222);
         // The displayed name is inert: only the frozen addresses select a peer.
