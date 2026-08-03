@@ -70,7 +70,8 @@ PYTHONPYCACHEPREFIX="$workdir/pycache" python3 -m py_compile \
   tests/checks/console-windows-ui-proof.py \
   tests/checks/render-v0.0.1-schema.py \
   tests/checks/plumber-report.py \
-  tests/checks/test-plumber-report.py
+  tests/checks/test-plumber-report.py \
+  tests/checks/test-console-ui-raster.py
 
 step "CI trigger policy"
 python3 -B tests/checks/ci-workflow-policy.py
@@ -80,6 +81,9 @@ python3 -B tests/checks/render-v0.0.1-schema.py
 
 step "Plumber structured-report boundary"
 python3 -B tests/checks/test-plumber-report.py
+
+step "Installed UI screenshot raster boundary"
+python3 -B tests/checks/test-console-ui-raster.py
 
 step "labctl list contract"
 bash tests/checks/labctl-list

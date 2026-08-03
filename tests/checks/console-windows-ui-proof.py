@@ -5,15 +5,179 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
+import collections
 import ctypes
 import http.client
 import json
 import pathlib
 import re
+import struct
 import subprocess
 import time
 import urllib.error
 import urllib.request
+import zlib
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_SCREENSHOT_ATTEMPTS = 5
+SCREENSHOT_RETRY_DELAY_SECONDS = 0.5
+MIN_SCREENSHOT_DISTINCT_RGB = 256
+MAX_SCREENSHOT_DOMINANT_RGB_RATIO = 0.995
+MAX_SCREENSHOT_EXACT_BLACK_RATIO = 0.10
+
+
+class ScreenshotRasterError(AssertionError):
+    """Reject a screenshot whose encoded raster cannot support visual proof."""
+
+
+def paeth_predictor(left: int, above: int, upper_left: int) -> int:
+    estimate = left + above - upper_left
+    left_distance = abs(estimate - left)
+    above_distance = abs(estimate - above)
+    upper_left_distance = abs(estimate - upper_left)
+    if left_distance <= above_distance and left_distance <= upper_left_distance:
+        return left
+    if above_distance <= upper_left_distance:
+        return above
+    return upper_left
+
+
+def inspect_png_raster(
+    payload: bytes,
+    expected_width: int,
+    expected_height: int,
+) -> dict[str, object]:
+    if not payload.startswith(PNG_SIGNATURE):
+        raise ScreenshotRasterError("capture is not a PNG")
+
+    cursor = len(PNG_SIGNATURE)
+    header: tuple[int, int, int, int, int, int, int] | None = None
+    compressed = bytearray()
+    saw_image_data = False
+    saw_end = False
+    while cursor < len(payload):
+        if len(payload) - cursor < 12:
+            raise ScreenshotRasterError("capture PNG chunk is truncated")
+        chunk_length = struct.unpack_from(">I", payload, cursor)[0]
+        chunk_end = cursor + 12 + chunk_length
+        if chunk_end > len(payload):
+            raise ScreenshotRasterError("capture PNG chunk exceeds the payload")
+        chunk_type = payload[cursor + 4 : cursor + 8]
+        chunk_payload = payload[cursor + 8 : cursor + 8 + chunk_length]
+        expected_crc = struct.unpack_from(">I", payload, cursor + 8 + chunk_length)[0]
+        actual_crc = zlib.crc32(chunk_type)
+        actual_crc = zlib.crc32(chunk_payload, actual_crc) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            raise ScreenshotRasterError("capture PNG chunk CRC is invalid")
+
+        if header is None and chunk_type != b"IHDR":
+            raise ScreenshotRasterError("capture PNG does not start with IHDR")
+        if chunk_type == b"IHDR":
+            if header is not None or chunk_length != 13:
+                raise ScreenshotRasterError("capture PNG IHDR is duplicated or invalid")
+            header = struct.unpack(">IIBBBBB", chunk_payload)
+        elif chunk_type == b"IDAT":
+            if header is None or saw_end:
+                raise ScreenshotRasterError("capture PNG IDAT order is invalid")
+            saw_image_data = True
+            compressed.extend(chunk_payload)
+        elif chunk_type == b"IEND":
+            if chunk_length != 0 or not saw_image_data:
+                raise ScreenshotRasterError("capture PNG IEND is invalid")
+            saw_end = True
+            cursor = chunk_end
+            break
+        elif chunk_type[0] & 0x20 == 0:
+            raise ScreenshotRasterError("capture PNG contains an unsupported critical chunk")
+        cursor = chunk_end
+
+    if header is None or not saw_end or cursor != len(payload):
+        raise ScreenshotRasterError("capture PNG is incomplete or has trailing data")
+    width, height, bit_depth, color_type, compression, filtering, interlace = header
+    if width != expected_width or height != expected_height:
+        raise ScreenshotRasterError("capture PNG dimensions differ from the requested view")
+    if (
+        bit_depth != 8
+        or color_type not in {2, 6}
+        or compression != 0
+        or filtering != 0
+        or interlace != 0
+    ):
+        raise ScreenshotRasterError("capture PNG encoding is outside the RGB8 contract")
+
+    bytes_per_pixel = 3 if color_type == 2 else 4
+    row_length = width * bytes_per_pixel
+    expected_length = (row_length + 1) * height
+    inflater = zlib.decompressobj()
+    try:
+        raw = inflater.decompress(bytes(compressed), expected_length + 1)
+    except zlib.error as error:
+        raise ScreenshotRasterError("capture PNG image data is invalid") from error
+    if (
+        len(raw) != expected_length
+        or not inflater.eof
+        or inflater.unconsumed_tail
+        or inflater.unused_data
+    ):
+        raise ScreenshotRasterError("capture PNG decompressed length is invalid")
+
+    previous = bytearray(row_length)
+    colors: collections.Counter[tuple[int, int, int]] = collections.Counter()
+    exact_black_pixels = 0
+    raw_cursor = 0
+    for _ in range(height):
+        filter_type = raw[raw_cursor]
+        raw_cursor += 1
+        filtered = raw[raw_cursor : raw_cursor + row_length]
+        raw_cursor += row_length
+        reconstructed = bytearray(row_length)
+        for index, encoded in enumerate(filtered):
+            left = reconstructed[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            above = previous[index]
+            upper_left = previous[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            if filter_type == 0:
+                predictor = 0
+            elif filter_type == 1:
+                predictor = left
+            elif filter_type == 2:
+                predictor = above
+            elif filter_type == 3:
+                predictor = (left + above) // 2
+            elif filter_type == 4:
+                predictor = paeth_predictor(left, above, upper_left)
+            else:
+                raise ScreenshotRasterError("capture PNG uses an unknown row filter")
+            reconstructed[index] = (encoded + predictor) & 0xFF
+
+        for index in range(0, row_length, bytes_per_pixel):
+            red, green, blue = reconstructed[index : index + 3]
+            if bytes_per_pixel == 4 and reconstructed[index + 3] != 255:
+                raise ScreenshotRasterError("capture PNG contains a transparent pixel")
+            color = (red, green, blue)
+            colors[color] += 1
+            if color == (0, 0, 0):
+                exact_black_pixels += 1
+        previous = reconstructed
+
+    total_pixels = width * height
+    distinct_rgb = len(colors)
+    dominant_rgb_ratio = max(colors.values()) / total_pixels
+    exact_black_ratio = exact_black_pixels / total_pixels
+    if distinct_rgb < MIN_SCREENSHOT_DISTINCT_RGB:
+        raise ScreenshotRasterError("capture raster has too few distinct RGB colors")
+    if dominant_rgb_ratio > MAX_SCREENSHOT_DOMINANT_RGB_RATIO:
+        raise ScreenshotRasterError("capture raster is dominated by one RGB color")
+    if exact_black_ratio > MAX_SCREENSHOT_EXACT_BLACK_RATIO:
+        raise ScreenshotRasterError("capture raster contains too much exact black")
+    return {
+        "width": width,
+        "height": height,
+        "distinct_rgb": distinct_rgb,
+        "dominant_rgb_ratio": round(dominant_rgb_ratio, 6),
+        "exact_black_ratio": round(exact_black_ratio, 6),
+    }
 
 
 def request(
@@ -160,12 +324,57 @@ class Driver:
             f"/session/{self.session_id}/window/rect",
             {"x": 0, "y": 0, "width": width, "height": height},
         )
-        time.sleep(0.25)
+        self.wait(
+            "return innerWidth===arguments[0] && innerHeight===arguments[1];",
+            arguments=[width, height],
+        )
         return value
 
-    def screenshot(self, path: pathlib.Path) -> None:
-        encoded = request(self.base_url, "GET", f"/session/{self.session_id}/screenshot")
-        path.write_bytes(base64.b64decode(encoded, validate=True))
+    def wait_for_paint(self) -> None:
+        painted = self.execute_async(
+            """
+const done = arguments[arguments.length - 1];
+const afterFonts = () => requestAnimationFrame(
+  () => requestAnimationFrame(() => done(true)),
+);
+Promise.resolve(document.fonts?.ready).then(afterFonts, afterFonts);
+""",
+            timeout_seconds=5,
+        )
+        if painted is not True:
+            raise AssertionError("renderer did not cross the bounded paint barrier")
+
+    def screenshot(
+        self,
+        path: pathlib.Path,
+        expected_width: int,
+        expected_height: int,
+    ) -> dict[str, object]:
+        last_raster_error: ScreenshotRasterError | None = None
+        for attempt in range(1, MAX_SCREENSHOT_ATTEMPTS + 1):
+            self.wait_for_paint()
+            encoded = request(self.base_url, "GET", f"/session/{self.session_id}/screenshot")
+            try:
+                if not isinstance(encoded, str):
+                    raise ScreenshotRasterError("WebDriver screenshot is not base64 text")
+                payload = base64.b64decode(encoded, validate=True)
+                raster = inspect_png_raster(payload, expected_width, expected_height)
+            except (binascii.Error, ValueError) as error:
+                last_raster_error = ScreenshotRasterError(
+                    "WebDriver screenshot base64 is invalid"
+                )
+                last_raster_error.__cause__ = error
+            except ScreenshotRasterError as error:
+                last_raster_error = error
+            else:
+                path.write_bytes(payload)
+                return {**raster, "capture_attempts": attempt}
+            if attempt < MAX_SCREENSHOT_ATTEMPTS:
+                time.sleep(SCREENSHOT_RETRY_DELAY_SECONDS)
+        raise AssertionError(
+            f"screenshot raster remained invalid after {MAX_SCREENSHOT_ATTEMPTS} attempts: "
+            f"{last_raster_error}"
+        ) from last_raster_error
 
     def press_tab(self) -> None:
         request(
@@ -259,7 +468,11 @@ def capture_view(
     desktop = driver.execute(METRICS_SCRIPT)
     assert isinstance(desktop, dict)
     assert_metrics(desktop, heading, platform)
-    driver.screenshot(output / f"{platform}-{slug}-1280x800.png")
+    desktop["raster"] = driver.screenshot(
+        output / f"{platform}-{slug}-1280x800.png",
+        1280,
+        800,
+    )
 
     driver.execute("document.body.focus(); return true;")
     driver.press_tab()
@@ -275,7 +488,11 @@ def capture_view(
     compact = driver.execute(METRICS_SCRIPT)
     assert isinstance(compact, dict)
     assert_metrics(compact, heading, platform)
-    driver.screenshot(output / f"{platform}-{slug}-640x560.png")
+    compact["raster"] = driver.screenshot(
+        output / f"{platform}-{slug}-640x560.png",
+        640,
+        560,
+    )
 
     compact_root_font_size = css_pixels(compact["root_font_size"])
     zoomed_root_font_size = compact_root_font_size * 2
@@ -298,7 +515,11 @@ def capture_view(
             "actual": actual_zoomed_root_font_size,
         }
         assert zoomed["horizontal_overflow"] is False
-        driver.screenshot(output / f"{platform}-{slug}-640x560-text-200.png")
+        zoomed["raster"] = driver.screenshot(
+            output / f"{platform}-{slug}-640x560-text-200.png",
+            640,
+            560,
+        )
     finally:
         driver.execute(
             "document.documentElement.style.removeProperty('font-size'); return true;"

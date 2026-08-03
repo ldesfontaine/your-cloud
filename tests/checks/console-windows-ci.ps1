@@ -39,6 +39,8 @@ $tauriDriverPath = $null
 $edgeDriverPath = $null
 $webViewRuntimePath = $null
 $remoteDebuggingPort = $null
+$devToolsActivePortPath = $null
+$debuggerBrowserPath = $null
 $sessionReadyMarker = Join-Path $temporaryRoot "webdriver-session-ready"
 $applicationData = $null
 $proofReportPath = Join-Path $uiSmokeRoot "windows-webview2-smoke.json"
@@ -335,6 +337,190 @@ function Get-ProcessOwnerIdentity {
         throw "owner of process $ProcessId could not be resolved"
     }
     return "$($owner.Domain)\$($owner.User)"
+}
+
+function ConvertFrom-DevToolsActivePort {
+    param([Parameter(Mandatory = $true)][string]$Content)
+
+    if ($Content.Length -eq 0 -or $Content.Length -gt 512 -or $Content.Contains("`r")) {
+        throw "DevToolsActivePort content is empty, oversized or non-canonical"
+    }
+    $body = if ($Content.EndsWith("`n")) {
+        $Content.Substring(0, $Content.Length - 1)
+    }
+    else {
+        $Content
+    }
+    $lines = @($body.Split([char]"`n"))
+    if ($lines.Count -ne 2 -or
+        $lines[0] -notmatch '^[1-9][0-9]{0,4}$' -or
+        $lines[1] -notmatch '^/devtools/browser/[A-Za-z0-9._-]{1,128}$') {
+        throw "DevToolsActivePort content is not the exact port and browser path pair"
+    }
+    $port = [int]$lines[0]
+    if ($port -gt 65535) {
+        throw "DevToolsActivePort port is outside the TCP range"
+    }
+    return [pscustomobject]@{
+        Port = $port
+        BrowserPath = $lines[1]
+    }
+}
+
+function Read-BoundedDevToolsActivePortContent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedParent
+    )
+
+    $stream = [IO.File]::Open(
+        $Path,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        [IO.FileShare]::Read
+    )
+    try {
+        $handleLength = $stream.Length
+        if ($handleLength -le 0 -or $handleLength -gt 512) {
+            throw [IO.InvalidDataException]::new(
+                "DevToolsActivePort handle length is outside its public bound"
+            )
+        }
+        $openedFile = Assert-NonReparseRegularFile `
+            -Path $Path `
+            -ExpectedParent $ExpectedParent `
+            -Description "opened WebView2 DevToolsActivePort"
+        if ($openedFile.Length -ne $handleLength) {
+            throw [IO.InvalidDataException]::new(
+                "DevToolsActivePort handle and direct path lengths differ"
+            )
+        }
+        $bytes = [byte[]]::new([int]$handleLength)
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $read = $stream.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($read -le 0) {
+                throw [IO.EndOfStreamException]::new(
+                    "DevToolsActivePort ended before its declared handle length"
+                )
+            }
+            $offset += $read
+        }
+        if ($stream.Length -ne $handleLength) {
+            throw [IO.InvalidDataException]::new(
+                "DevToolsActivePort handle length changed during its bounded read"
+            )
+        }
+        $stableFile = Assert-NonReparseRegularFile `
+            -Path $Path `
+            -ExpectedParent $ExpectedParent `
+            -Description "stable WebView2 DevToolsActivePort"
+        if ($stableFile.Length -ne $handleLength) {
+            throw [IO.InvalidDataException]::new(
+                "DevToolsActivePort path changed after its bounded read"
+            )
+        }
+        foreach ($value in $bytes) {
+            if ($value -ne 0x0A -and ($value -lt 0x20 -or $value -gt 0x7E)) {
+                throw [IO.InvalidDataException]::new(
+                    "DevToolsActivePort contains a non-ASCII byte"
+                )
+            }
+        }
+        return [Text.Encoding]::ASCII.GetString($bytes)
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function Test-DebuggerListenerAttribution {
+    param(
+        [AllowNull()][string]$LocalAddress,
+        [AllowNull()][string]$CandidatePath,
+        [AllowNull()][string]$CandidateOwnerSid,
+        [AllowNull()][string]$ExpectedRuntimePath,
+        [AllowNull()][string]$ExpectedOwnerSid
+    )
+
+    if ($LocalAddress -notin @("127.0.0.1", "::1") -or
+        [string]::IsNullOrWhiteSpace($CandidatePath) -or
+        [string]::IsNullOrWhiteSpace($CandidateOwnerSid) -or
+        [string]::IsNullOrWhiteSpace($ExpectedRuntimePath) -or
+        [string]::IsNullOrWhiteSpace($ExpectedOwnerSid)) {
+        return $false
+    }
+    return [string]::Equals(
+        $CandidatePath,
+        $ExpectedRuntimePath,
+        [StringComparison]::OrdinalIgnoreCase
+    ) -and [string]::Equals(
+        $CandidateOwnerSid,
+        $ExpectedOwnerSid,
+        [StringComparison]::OrdinalIgnoreCase
+    )
+}
+
+function Get-AttributedDebuggerListeners {
+    param(
+        [Parameter(Mandatory = $true)][ValidateRange(1, 65535)][int]$Port,
+        [Parameter(Mandatory = $true)][string]$ExpectedRuntimePath,
+        [Parameter(Mandatory = $true)][string]$ExpectedOwnerSid
+    )
+
+    $listeners = @(Get-NetTCPConnection `
+        -State Listen `
+        -LocalPort $Port `
+        -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) {
+        return
+    }
+    $ownerProcessIds = [Collections.Generic.HashSet[uint32]]::new()
+    $attributed = [Collections.Generic.List[object]]::new()
+    foreach ($listener in $listeners) {
+        $candidate = Get-CimInstance `
+            Win32_Process `
+            -Filter "ProcessId = $($listener.OwningProcess)" `
+            -ErrorAction Stop
+        if ($null -eq $candidate -or $null -eq $candidate.CreationDate) {
+            throw "WebView2 debugger listener process disappeared or has no creation time"
+        }
+        if ($null -eq $listener.CreationTime) {
+            throw "WebView2 debugger socket has no creation time"
+        }
+        $listenerCreationTime = [DateTime]$listener.CreationTime
+        if ($listenerCreationTime -eq [DateTime]::MinValue) {
+            throw "WebView2 debugger socket creation time is not attributable"
+        }
+        $owner = Invoke-CimMethod `
+            -InputObject $candidate `
+            -MethodName GetOwnerSid `
+            -ErrorAction Stop
+        if ($owner.ReturnValue -ne 0 -or
+            $owner.Sid -notmatch '^S-[0-9]+(?:-[0-9]+)+$' -or
+            -not (Test-DebuggerListenerAttribution `
+                -LocalAddress $listener.LocalAddress `
+                -CandidatePath $candidate.ExecutablePath `
+                -CandidateOwnerSid $owner.Sid `
+                -ExpectedRuntimePath $ExpectedRuntimePath `
+                -ExpectedOwnerSid $ExpectedOwnerSid)) {
+            throw "WebView2 debugger listener escaped its loopback runtime or account"
+        }
+        [void]$ownerProcessIds.Add([uint32]$candidate.ProcessId)
+        [void]$attributed.Add([pscustomobject]@{
+            ProcessId = [uint32]$candidate.ProcessId
+            CreationDate = $candidate.CreationDate
+            LocalAddress = [string]$listener.LocalAddress
+            ListenerCreationTime = $listenerCreationTime
+        })
+    }
+    if ($ownerProcessIds.Count -ne 1) {
+        throw "WebView2 debugger listeners are not owned by one exact runtime process"
+    }
+    if ($attributed.LocalAddress -notcontains "127.0.0.1") {
+        throw "WebView2 debugger did not expose the verified IPv4 loopback endpoint"
+    }
+    return $attributed.ToArray()
 }
 
 function Test-ProofProcessAttribution {
@@ -1023,16 +1209,6 @@ try {
         throw "tauri-driver did not become ready within 30 seconds"
     }
 
-    $portReservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    try {
-        $portReservation.Start()
-        $remoteDebuggingPort = ([Net.IPEndPoint]$portReservation.LocalEndpoint).Port
-    }
-    finally {
-        $portReservation.Stop()
-    }
-    $debuggerAddress = "127.0.0.1:$remoteDebuggingPort"
-
     # GitHub-hosted Windows runners are administrators with UAC disabled. WebView2 150 can
     # suppress its DevTools endpoint from an elevated host, so exercise the installed app
     # under the standard-user context in which the product is meant to run.
@@ -1093,8 +1269,14 @@ try {
     $automationRoamingData = Join-Path $automationUserProfile.LocalPath "AppData\Roaming"
     $applicationData = Join-Path $automationRoamingData "fr.your-cloud.console"
     $automationTemp = Join-Path $automationLocalData "Temp"
-    $webViewUserData = Join-Path $automationLocalData "your-cloud-windows-webview2-smoke\webview2"
+    $webViewUserData = Join-Path `
+        $automationLocalData `
+        "your-cloud-windows-webview2-smoke\EBWebView"
+    $devToolsActivePortPath = Join-Path $webViewUserData "DevToolsActivePort"
     New-Item -ItemType Directory -Path $automationTemp, $webViewUserData -Force | Out-Null
+    if (Test-Path -LiteralPath $devToolsActivePortPath) {
+        throw "ephemeral WebView2 user data contains a stale DevToolsActivePort file"
+    }
     Write-Host "CI Windows: installed Console will run as a bounded standard user"
 
     $automationHomeDrive = [IO.Path]::GetPathRoot(
@@ -1109,7 +1291,7 @@ try {
         TEMP = $automationTemp
         TMP = $automationTemp
         WEBVIEW2_USER_DATA_FOLDER = $webViewUserData
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$remoteDebuggingPort"
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=0"
     }
     $automationProcess = Start-Process `
         -FilePath $installedExecutable `
@@ -1126,53 +1308,85 @@ try {
         throw "installed Console did not start under the bounded standard-user account"
     }
 
+    $devToolsEndpoint = $null
+    $devToolsEndpointFailure = "file absent"
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        $automationProcess.Refresh()
+        if ($automationProcess.HasExited) {
+            throw "installed Console exited before publishing DevToolsActivePort"
+        }
+        if (Test-Path -LiteralPath $devToolsActivePortPath) {
+            try {
+                $devToolsContent = Read-BoundedDevToolsActivePortContent `
+                    -Path $devToolsActivePortPath `
+                    -ExpectedParent $webViewUserData
+                $devToolsEndpoint = ConvertFrom-DevToolsActivePort `
+                    -Content $devToolsContent
+            }
+            catch {
+                $devToolsEndpointFailure = $_.Exception.Message
+                $devToolsEndpoint = $null
+            }
+            if ($null -ne $devToolsEndpoint) {
+                break
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($null -eq $devToolsEndpoint) {
+        throw "installed WebView2 did not publish stable DevToolsActivePort within 30 seconds: $devToolsEndpointFailure"
+    }
+    $remoteDebuggingPort = $devToolsEndpoint.Port
+    $debuggerBrowserPath = $devToolsEndpoint.BrowserPath
+    $debuggerAddress = "127.0.0.1:$remoteDebuggingPort"
+
     $remoteDebuggerReady = $false
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
         $automationProcess.Refresh()
         if ($automationProcess.HasExited) {
             throw "installed Console exited before exposing its bounded WebView2 debugger"
         }
-        $allProcesses = @(Get-CimInstance Win32_Process)
-        $automationProcessIds = [Collections.Generic.HashSet[uint32]]::new()
-        [void]$automationProcessIds.Add([uint32]$automationProcess.Id)
-        do {
-            $added = $false
-            foreach ($candidate in $allProcesses) {
-                if ($automationProcessIds.Contains([uint32]$candidate.ParentProcessId) -and
-                    $automationProcessIds.Add([uint32]$candidate.ProcessId)) {
-                    $added = $true
-                }
-            }
-        } while ($added)
-        $debuggerListeners = @(Get-NetTCPConnection `
-            -State Listen `
-            -LocalPort $remoteDebuggingPort `
-            -ErrorAction SilentlyContinue)
+        $debuggerListeners = @(Get-AttributedDebuggerListeners `
+            -Port $remoteDebuggingPort `
+            -ExpectedRuntimePath $webViewRuntimePath `
+            -ExpectedOwnerSid $automationUser.SID.Value)
         if ($debuggerListeners.Count -gt 0) {
-            foreach ($listener in $debuggerListeners) {
-                if ($listener.LocalAddress -notin @("127.0.0.1", "::1")) {
-                    throw "WebView2 debugger escaped the loopback interface"
-                }
-                if (-not $automationProcessIds.Contains([uint32]$listener.OwningProcess)) {
-                    throw "reserved WebView2 debugger port was claimed by another process"
-                }
-            }
+            $debuggerVersion = $null
             try {
                 $debuggerVersion = Invoke-RestMethod `
                     -Uri "http://$debuggerAddress/json/version" `
                     -NoProxy `
                     -TimeoutSec 1
+            }
+            catch {
+                # The listener can appear briefly before the CDP endpoint is ready.
+            }
+            if ($null -ne $debuggerVersion) {
                 $debuggerSocket = [Uri]$debuggerVersion.webSocketDebuggerUrl
                 if ($debuggerSocket.Scheme -eq "ws" -and
                     $debuggerSocket.Host -eq "127.0.0.1" -and
                     $debuggerSocket.Port -eq $remoteDebuggingPort -and
-                    $debuggerSocket.AbsolutePath.StartsWith("/devtools/browser/")) {
+                    $debuggerSocket.AbsolutePath -eq $debuggerBrowserPath) {
+                    $revalidatedDebuggerListeners = @(Get-AttributedDebuggerListeners `
+                        -Port $remoteDebuggingPort `
+                        -ExpectedRuntimePath $webViewRuntimePath `
+                        -ExpectedOwnerSid $automationUser.SID.Value)
+                    $listenerIdentities = @($debuggerListeners | ForEach-Object {
+                        "$($_.ProcessId)|$($_.LocalAddress)|$($_.CreationDate.ToUniversalTime().Ticks)|$($_.ListenerCreationTime.ToUniversalTime().Ticks)"
+                    } | Sort-Object)
+                    $revalidatedListenerIdentities = @(
+                        $revalidatedDebuggerListeners | ForEach-Object {
+                            "$($_.ProcessId)|$($_.LocalAddress)|$($_.CreationDate.ToUniversalTime().Ticks)|$($_.ListenerCreationTime.ToUniversalTime().Ticks)"
+                        } | Sort-Object
+                    )
+                    if ($listenerIdentities.Count -ne $revalidatedListenerIdentities.Count -or
+                        ($listenerIdentities -join "`n") -ne
+                            ($revalidatedListenerIdentities -join "`n")) {
+                        throw "WebView2 debugger listener instance changed during CDP verification"
+                    }
                     $remoteDebuggerReady = $true
                     break
                 }
-            }
-            catch {
-                # The listener can appear briefly before the CDP endpoint is ready.
             }
         }
         Start-Sleep -Milliseconds 250

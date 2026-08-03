@@ -11,8 +11,8 @@ a été exécuté.
 
 | Couche | Contenu | Runner attendu | Autorité |
 |---|---|---|---|
-| porte rapide sous [`checks/`](checks/) | format, syntaxe, contrat PowerShell de nettoyage attribué par SID, chemins bornés et collecte sans faux candidat nul, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
-| matrice native sous [`checks/`](checks/) | tests frontend et Rust, consentement GTK3/Win32, fixture de crash avec contrôle ordinaire et canari protégé, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, dumps synthétiques bornés puis nettoyés et, par plateforme, artefact expurgé de onze fichiers : un JSON, neuf vues et un consentement natif PNG |
+| porte rapide sous [`checks/`](checks/) | format, syntaxe, contrat PowerShell de nettoyage attribué par SID, chemins bornés et collecte sans faux candidat nul, cas hostiles du raster PNG, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
+| matrice native sous [`checks/`](checks/) | tests frontend et Rust, consentement GTK3/Win32, fixture de crash avec contrôle ordinaire et canari protégé, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener, captures validées après peinture et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, dumps synthétiques bornés puis nettoyés et, par plateforme, artefact expurgé de onze fichiers : un JSON, neuf vues et un consentement natif PNG |
 | [`lab/v0.0.1/`](lab/v0.0.1/) | préparation, déploiement, scénarios hostiles multi-VM, nettoyage et restitution P2 | topologie KVM/libvirt `v1-full` pilotée par `labctl` | `result.json` et assertions machine |
 | [`artifacts/`](artifacts/) | convention et sorties locales non versionnées des preuves | poste de pilotage après rapatriement d'un résultat LAB | résultat structuré du run exact |
 
@@ -72,6 +72,15 @@ les deux inscriptions de registre absentes et trois artefacts inspectés. Le
 conserve les jobs, empreintes et limites. L'issue #45 doit enregistrer l'ultime run du
 SHA de propagation documentaire avant fermeture ; #42 et #35 restent hors de
 cette preuve.
+
+La tentative `30772674819` montre pourquoi le vert d'un job ne suffit pas :
+une capture Linux est uniforme et une autre partiellement noire alors que les
+métriques DOM et le JSON restent au vert ; Windows refuse ensuite l'attribution
+du port avant son smoke. Le garde raster décode et contrôle donc chaque PNG
+WebDriver avant écriture, et le smoke Windows découvre le port lié atomiquement
+par WebView2 via `DevToolsActivePort`, puis attribue le listener au runtime et
+au SID exacts. Une nouvelle matrice doit encore exécuter ces gardes sur leur
+SHA.
 
 Le registre détaillé reste
 [`docs/contribution/TESTS.md`](../docs/contribution/TESTS.md). Le placement, les

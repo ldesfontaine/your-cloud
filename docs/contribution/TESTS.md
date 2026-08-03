@@ -40,6 +40,18 @@ cette étape intermédiaire, sans fermer #45. `c8643b0` ajoute ensuite
 inspectés. Cette ligne est donc implémentée et prouvée dans la matrice
 Linux/Windows. L'ultime run du SHA de propagation doit être enregistré dans
 l'issue avant fermeture ; #42 et #35 ne sont pas fermées par cette preuve.
+La première tentative ultime `30772674819` sur `028a459` n'est pas recevable :
+un PNG Linux est uniforme et un autre partiellement noir malgré un JSON `pass`,
+puis Windows échoue avant le smoke sur un refus d'attribution. Le harnais avait
+à la fois libéré le port avant le lancement et conservé un inventaire
+d'ascendance pris plus tôt ; le run ne départage pas ces deux défauts.
+Le cas hostile de raster synthétique refuse désormais couleurs insuffisantes,
+dominante excessive, noir anormal, transparence, CRC, dimensions et troncature.
+La preuve vivante ajoute jusqu'à cinq tentatives bornées par capture après
+barrière de peinture. Le
+smoke Windows délègue le bind éphémère à WebView2 avec le port `0`, découvre
+`DevToolsActivePort`, puis vérifie loopback, runtime et SID exacts. Ces gardes
+restent à exécuter dans une nouvelle matrice sur le SHA candidat.
 
 ## Vocabulaire de travail
 

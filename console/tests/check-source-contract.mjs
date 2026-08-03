@@ -319,6 +319,12 @@ const windowsInstalledProof = await readSourceText(
 const installedUiProof = await readSourceText(
   join(consoleRoot, "..", "tests", "checks", "console-windows-ui-proof.py"),
 );
+const installedUiRasterContract = await readSourceText(
+  join(consoleRoot, "..", "tests", "checks", "test-console-ui-raster.py"),
+);
+const genericSourceGate = await readSourceText(
+  join(consoleRoot, "..", "tests", "checks", "source-v0.0.1"),
+);
 const consoleRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "lib.rs"));
 const productModels = await readSourceText(join(consoleRoot, "src", "product", "models.ts"));
 const nativeOperations = await readSourceText(join(consoleRoot, "src", "product", "native.ts"));
@@ -476,6 +482,21 @@ for (const [name, source, fragments] of [
       "authority_fields: authorityRejections",
       "active_target_mutation: targetMutationCode",
       "sensitive_input_included_in_public_error_or_proof_artifact: false",
+      "MAX_SCREENSHOT_ATTEMPTS = 5",
+      "MIN_SCREENSHOT_DISTINCT_RGB = 256",
+      "MAX_SCREENSHOT_DOMINANT_RGB_RATIO = 0.995",
+      "MAX_SCREENSHOT_EXACT_BLACK_RATIO = 0.10",
+      "def inspect_png_raster(",
+      "zlib.decompressobj()",
+      "document.fonts?.ready",
+      "requestAnimationFrame",
+      "capture_attempts",
+      "capture raster has too few distinct RGB colors",
+      "capture raster is dominated by one RGB color",
+      "capture raster contains too much exact black",
+      'desktop["raster"] = driver.screenshot(',
+      'compact["raster"] = driver.screenshot(',
+      'zoomed["raster"] = driver.screenshot(',
     ],
   ],
 ]) {
@@ -484,6 +505,62 @@ for (const [name, source, fragments] of [
       failures.push(`${name}: contrat absent (${fragment})`);
     }
   }
+}
+
+for (const fragment of [
+  "black_damage",
+  "dominant_pixel",
+  "transparent",
+  "corrupt_crc",
+  "dimensions differ",
+  "exercise_screenshot_retry",
+  '"not-base64!"',
+  "remained invalid after 5 attempts",
+  "target.exists()",
+  "for filter_type in range(1, 5)",
+  "unknown_filter",
+  "unknown_critical",
+]) {
+  if (!installedUiRasterContract.includes(fragment)) {
+    failures.push(`preuve hostile du raster UI absente (${fragment})`);
+  }
+}
+if (
+  !genericSourceGate.includes("tests/checks/test-console-ui-raster.py") ||
+  !genericSourceGate.includes("python3 -B tests/checks/test-console-ui-raster.py")
+) {
+  failures.push("source-v0.0.1: le contrat hostile du raster UI doit être exécuté");
+}
+
+const resizeMethodStart = installedUiProof.indexOf("    def resize(");
+const screenshotMethodStart = installedUiProof.indexOf("    def screenshot(");
+const screenshotMethodEnd = installedUiProof.indexOf("    def press_tab(", screenshotMethodStart);
+const resizeMethod =
+  resizeMethodStart >= 0 && screenshotMethodStart > resizeMethodStart
+    ? installedUiProof.slice(resizeMethodStart, screenshotMethodStart)
+    : "";
+const screenshotMethod =
+  screenshotMethodStart >= 0 && screenshotMethodEnd > screenshotMethodStart
+    ? installedUiProof.slice(screenshotMethodStart, screenshotMethodEnd)
+    : "";
+const screenshotOrder = [
+  "for attempt in range(",
+  "self.wait_for_paint()",
+  'f"/session/{self.session_id}/screenshot"',
+  "base64.b64decode(encoded, validate=True)",
+  "inspect_png_raster(payload, expected_width, expected_height)",
+  "path.write_bytes(payload)",
+  'return {**raster, "capture_attempts": attempt}',
+].map((fragment) => screenshotMethod.indexOf(fragment));
+if (
+  !resizeMethod.includes("self.wait(") ||
+  resizeMethod.includes("time.sleep(0.25)") ||
+  screenshotOrder.some((position) => position < 0) ||
+  screenshotOrder.some((position, index) => index > 0 && position <= screenshotOrder[index - 1])
+) {
+  failures.push(
+    "preuve UI installée: resize et capture doivent attendre, valider puis écrire le raster dans cet ordre",
+  );
 }
 
 const linuxPidTerminatorStart = linuxInstalledProof.indexOf("terminate_child_pid() {");

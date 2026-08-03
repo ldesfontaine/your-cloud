@@ -16,7 +16,7 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 | porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974` | états des jobs `Contrôles génériques` et `Politique Plumber` |
 | matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
 | bornage IPC #43 | porte rapide `30753208857` puis matrice manuelle `30753216798` entièrement vertes sur le candidat produit exact `f3fef79` ; Linux et Windows exécutent le helper compagnon, Windows ajoute son Job Object, son paquet, son gate PE et le dispatch Tauri vivant | états des jobs, journaux et artefact expurgé liés depuis le rapport #43 |
-| consentement et mémoire secrète #45 | preuve fonctionnelle acquise dans le run `30770893733`, entièrement vert sur `b76ded8` : `remove_and_prove_absent`, observation puis absence du répertoire WER avant verdict, matrice native, paquets et trois artefacts inspectés ; l'ultime run du SHA de propagation doit être enregistré dans l'issue avant fermeture | états des quatre jobs, ordre bloquant du test WER, métadonnées GitHub et inspection des artefacts expurgés |
+| consentement et mémoire secrète #45 | preuve fonctionnelle acquise dans `30770893733` sur `b76ded8` ; la tentative ultime `30772674819` sur `028a459` est invalide, avec deux captures Linux corrompues malgré le job vert puis un refus d'attribution du port WebView2 sous Windows ; le candidat corrige les deux oracles et doit être rejoué sur son SHA exact | états des quatre jobs, ordre bloquant du test WER, validation machine des rasters, attribution du listener et inspection des artefacts expurgés |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
 | exécution GitHub Actions réelle | [run final `30710037004`](https://github.com/ldesfontaine/your-cloud/actions/runs/30710037004) entièrement vert sur le candidat produit exact `3b8f81f`, avec les deux gardes et les variantes natives ; l'issue `#9` conserve le SHA, les liens et les empreintes | états des jobs, journaux et artefact de smoke du run |
@@ -145,6 +145,33 @@ artefacts sur `b76ded8`, qui inclut `c8643b0` et le contrat documentaire. La
 présente propagation de ses résultats est la seule modification ultérieure ;
 l'issue `#45` doit enregistrer l'ultime run entièrement vert de ce SHA documentaire,
 sans modification suivante avant fusion.
+
+Le premier rejeu exact
+[`30772674819`](https://github.com/ldesfontaine/your-cloud/actions/runs/30772674819)
+sur `028a459` échoue et ne remplit pas cette porte. Les gardes réussissent, de
+même que le test WER Windows. Linux publie l'artefact `8841198084` avec un job
+vert, mais deux de ses dix PNG sont invalides : la vue locale `1280x800` ne
+contient qu'une couleur et la vue `640x560` contient 42,857 % de noir. Le JSON
+reste identique à celui de `30770893733`, donc le DOM seul ne détecte pas la
+divergence entre le DOM et le compositing WebKitGTK/Xvfb. Windows s'arrête
+ensuite avant le smoke : l'ancien harnais avait libéré le port de débogage avant
+le lancement et attribuait son listener depuis un inventaire de processus pris
+plus tôt. Le run ne distingue pas lequel de ces deux défauts a provoqué le
+refus. Aucun artefact Windows n'est publié. Ce run est conservé comme
+diagnostic, jamais comme preuve partielle de fermeture.
+
+Le correctif candidat valide chaque raster WebDriver avant écriture : PNG RGB
+ou RGBA opaque, dimensions et CRC exacts, au moins 256 couleurs, dominante au
+plus à 99,5 % et noir exact au plus à 10 %. Il attend les dimensions, les
+fontes et deux frames, avec cinq tentatives et un délai total borné. Le cas
+hostile standard-library reproduit les défauts sans dépendance d'image. Sous
+Windows, le runtime suit le
+[mécanisme documenté par Microsoft](https://learn.microsoft.com/en-us/microsoft-edge/web-platform/devtools-mcp-server) :
+`--remote-debugging-port=0`, puis lecture de `DevToolsActivePort` dans le dossier
+de données WebView2. Le fichier direct non-reparse, son port, son chemin
+WebSocket, le listener loopback, l'exécutable du runtime et le SID éphémère sont
+tous vérifiés. Cette mécanique supprime le free-then-use du port sans accepter
+un listener étranger. Elle reste à prouver par la prochaine matrice exacte.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation
