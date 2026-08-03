@@ -2,11 +2,10 @@
 
 > Statut : contrat d'architecture décidé, partiellement implémenté et
 > partiellement prouvé. Le socle IPC et cycle de vie natif Linux/Windows de #43
-> est acquis. Le consentement et la mémoire secrète #45 possèdent une
-> implémentation et une preuve fonctionnelle Linux/Windows dans `30770893733` ;
-> leur fermeture exacte exige l'ultime run du SHA documentaire enregistré dans
-> l'issue. Le parcours d'amorçage global demeure ouvert avant le premier plan
-> d'action de `v0.1.0`.
+> est acquis. Le consentement et la mémoire secrète #45 sont prouvés sous Linux
+> et Windows par `30779157351` sur `c0569d0`, puis fermés le 3 août 2026. Le
+> travail reprend à #51. Le parcours d'amorçage global demeure ouvert avant le
+> premier plan d'action de `v0.1.0`.
 
 Une [édition HTML autonome et visuelle](../html/amorcage-controller.html)
 accompagne cette source Markdown.
@@ -98,10 +97,10 @@ publication reconnue. Le gate PE analyse les tables d'imports normaux et
 retardés ; il ne prouve pas l'absence universelle de tout chargement dynamique
 de module.
 
-Ce socle ne ferme pas le contrat global. #45 possède maintenant une
-implémentation et une preuve fonctionnelle des dialogues GTK3 et Win32, de la
-zéroïsation, de
-`mlock`, `MADV_DONTDUMP`, `VirtualLock` et de l'enregistrement Windows Error
+Ce socle ne ferme pas le contrat global. #45 est maintenant implémentée,
+prouvée et fermée pour les dialogues GTK3 et Win32, la
+zéroïsation,
+`mlock`, `MADV_DONTDUMP`, `VirtualLock` et l'enregistrement Windows Error
 Reporting en défense en profondeur.
 `30768351689` et `30768749538` sont rouges sous l'ancien oracle qui exigeait le
 canari absent ; ils caractérisent désormais `LocalDumps` administrateur, hors
@@ -115,8 +114,9 @@ ne ferme donc pas #45. `c8643b0` remplace ensuite ce nettoyage par
 Le run `30770893733` réussit ses quatre jobs sur `b76ded8`, valide cette
 séquence et publie trois artefacts inspectés. Le
 [rapport de consentement natif](../lab/v0.1.0-native-secret-consent-linux-windows.md)
-conserve les tentatives, preuves, artefacts et limites. L'issue #45 doit enregistrer
-l'ultime run du SHA documentaire avant fermeture. #42 doit
+conserve les tentatives, preuves, artefacts et limites. Après trois corrections
+du harnais de captures, `30779157351` réussit ses quatre jobs sur `c0569d0` :
+l'issue #45 lie ce run et ce SHA, puis se ferme. #42 doit
 encore fournir l'agent SSH, la clé chiffrée, SSH, `sudo`, le repli `root`, les
 vrais descendants de ces parcours métier et leur arrêt. Aucun audit de machine,
 Controller installé, succès métier ou signature Windows publique n'est donc

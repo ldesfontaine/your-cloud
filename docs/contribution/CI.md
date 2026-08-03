@@ -141,10 +141,9 @@ n'est accepté si l'observation ou l'un des quatre nettoyages manque.
 La matrice manuelle
 [`30770893733`](https://github.com/ldesfontaine/your-cloud/actions/runs/30770893733)
 réussit les deux gardes, Linux, Windows, paquets, dialogues, nettoyages et
-artefacts sur `b76ded8`, qui inclut `c8643b0` et le contrat documentaire. La
-présente propagation de ses résultats est la seule modification ultérieure ;
-l'issue `#45` doit enregistrer l'ultime run entièrement vert de ce SHA documentaire,
-sans modification suivante avant fusion.
+artefacts sur `b76ded8`, qui inclut `c8643b0` et le contrat documentaire. Trois
+corrections du harnais de captures la suivent ; seul le run `30779157351` sur
+`c0569d0` ferme finalement `#45`.
 
 Le premier rejeu exact
 [`30772674819`](https://github.com/ldesfontaine/your-cloud/actions/runs/30772674819)
@@ -201,7 +200,16 @@ le `POST /execute/async` qui pourrait muter l'état, puis refuse de déclarer so
 nettoyage complet. Aucun artefact Linux n'est publié. Le candidat autorise deux
 essais seulement pour ce réglage idempotent ; la requête async suivante reste
 unique et toute déconnexion après son envoi demeure terminale. Deux cas
-synthétiques doivent verrouiller cette frontière au prochain rejeu exact.
+synthétiques verrouillent cette frontière.
+
+La matrice
+[`30779157351`](https://github.com/ldesfontaine/your-cloud/actions/runs/30779157351)
+sur `c0569d0` ferme enfin la porte : ses quatre jobs sont verts, les deux
+smokes publient chacun un JSON et dix PNG, et le rapport Plumber vaut `A`,
+`100/100` sans finding. Les trois artefacts et leurs 23 fichiers sont inspectés
+sans secret, dump, paquet ni binaire. C'est le run que l'issue `#45` enregistre
+avant sa fermeture et la fusion par fast-forward de la PR #50. Cette porte ne
+couvre toujours pas la preuve responsive exhaustive à 200 %, suivie par #56.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation

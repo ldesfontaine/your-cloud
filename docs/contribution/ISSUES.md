@@ -85,10 +85,11 @@ retrait du répertoire seulement par `Drop`. Son run `30769440106` a réussi ses
 quatre jobs et prouve cette étape intermédiaire, mais ne ferme pas #45.
 `c8643b0` emploie ensuite `remove_and_prove_absent` pour exiger l'absence du
 répertoire avant verdict. Le run `30770893733` réussit les quatre jobs sur
-`b76ded8`, valide cette séquence et publie trois artefacts inspectés. L'issue
-#45 doit conserver l'ultime matrice verte du SHA de propagation documentaire ; aucune
-modification ne suit ce run avant fusion. Sa fermeture débloque #51, puis
-#52, #53 et #54 dans cet ordre.
+`b76ded8`, valide cette séquence et publie trois artefacts inspectés. Après
+trois corrections du harnais de captures, la matrice `30779157351` est
+entièrement verte sur `c0569d0` : l'issue #45 lie ce run et ce SHA, la PR #50
+est fusionnée par fast-forward et #45 est fermée le 3 août 2026. Cette
+fermeture débloque #51, puis #52, #53 et #54 dans cet ordre.
 Pour #43, la récolte Linux autonome, le Job Object Windows avec racine et vrai
 descendant, les branches hostiles avant reprise et le dispatch Tauri vivant ont
 réussi sur le candidat exact `f3fef79` dans le run manuel `30753216798` : cette
@@ -112,7 +113,7 @@ vérifié l'accès direct `root` ou le chemin `sudo` autorisé. Il ne signifie n
 audit Debian, ni installation, ni mutation, ni Controller autonome, ni succès
 d'amorçage. #42 ne se ferme qu'après #51, #52, #53 et #54 ; #35 se ferme après
 #42 et l'intégration avec #43/#45. La séquence de fermeture du sous-palier est
-`#45 → #51 → #52 → #53 → #54 → #42 → #35`. Une fois #45 fermée, la prochaine
+`#45 → #51 → #52 → #53 → #54 → #42 → #35`. #45 étant fermée, la prochaine
 issue est #51 ; #13 et la milestone demeurent ouverts jusqu'à leurs propres
 preuves, tandis que `v0.1.0` reste à atteindre.
 

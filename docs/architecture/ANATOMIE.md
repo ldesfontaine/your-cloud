@@ -28,8 +28,8 @@ réussi sur le candidat produit exact `3b8f81f`. L'issue `#9` relie ce run, le S
 et son intégration par fast-forward : le palier est fermé pour ce candidat,
 sans attribuer sa preuve aux révisions ultérieures. L'amorçage possède désormais
 un socle helper/IPC implémenté et prouvé sous Linux et Windows sur `f3fef79`,
-dans le run `30753216798`. Le consentement et la mémoire secrète #45 possèdent
-une implémentation et une preuve fonctionnelle Linux/Windows après les runs
+dans le run `30753216798`. Le consentement et la mémoire secrète #45 sont
+implémentés, prouvés sous Linux/Windows et fermés après les runs
 rouges `30768351689` et `30768749538`. Leur ancien oracle
 exigeait le canari absent ; le contrat corrigé classe `LocalDumps`
 administrateur hors garantie, garde l'enregistrement WER en défense en
@@ -39,8 +39,9 @@ avant verdict ; le répertoire n'est retiré que par `Drop` ensuite. Son run
 `30769440106` a réussi ses quatre jobs et prouve cette étape intermédiaire, sans
 fermer #45. `c8643b0` exige ensuite le répertoire absent avant verdict ; le run
 `30770893733` réussit les quatre jobs sur `b76ded8` et ses trois artefacts sont
-inspectés. L'issue #45 doit conserver l'ultime run du SHA documentaire. Sa
-capacité globale, le chemin d'action et
+inspectés. Après trois corrections du harnais de captures, `30779157351`
+réussit ses quatre jobs sur `c0569d0` : l'issue #45 lie ce run et ce SHA, puis
+se ferme. Sa capacité globale, le chemin d'action et
 les services du reste de `v0.1.0` restent ouverts.
 
 ## Distribution réellement prouvée pour `v0.0.2`

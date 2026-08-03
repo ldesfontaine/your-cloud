@@ -124,7 +124,7 @@ documentée et reproductible dans le LAB approprié.
 ## Rapports exécutés
 
 - [`v0.1.0` — consentement natif et mémoire secrète Linux/Windows](v0.1.0-native-secret-consent-linux-windows.md) :
-  implémentation et preuve fonctionnelle de #45 acquises ;
+  #45 prouvée sur `c0569d0` par `30779157351` puis fermée le 3 août 2026 ;
   `ae550470bcff08c08624988c17d16db6cb62070a` reste un candidat intermédiaire et
   `c8643b0903aee8ad194fb7c34ae6e459c52550a3` ajoute la preuve de retrait
   manquante.
@@ -138,8 +138,9 @@ documentée et reproductible dans le LAB approprié.
   `remove_and_prove_absent`. `30770893733` réussit ensuite ses quatre jobs sur
   `b76ded8`, avec matrice native, paquets et trois artefacts inspectés. Le
   rapport distingue les sous-cas Linux exécutés, les limites
-  Windows et l'enregistrement WER en défense en profondeur ;
-  l'issue #45 doit conserver l'ultime run du SHA documentaire avant fermeture. Cette
+  Windows et l'enregistrement WER en défense en profondeur. Après trois
+  corrections du harnais de captures, `30779157351` réussit ses quatre jobs sur
+  `c0569d0` : ce run et ce SHA ferment #45. Cette
   preuve ne ferme ni #42, ni #35, ni le palier #13 ou `v0.1.0`.
 - [`v0.1.0` — bornage IPC et helper Windows](v1-bootstrap-ipc-windows.md) : run
   GitHub Actions manuel `30753216798` entièrement vert sur le candidat produit

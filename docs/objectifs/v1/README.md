@@ -396,7 +396,7 @@ Job Object, ainsi que les gates de packaging natif. Voir le
 [rapport du runner Windows](../../lab/v1-bootstrap-ipc-windows.md).
 
 Cette preuve ne ferme ni l'amorçage complet, ni `#35`, ni le palier `#13`.
-`#45` possède maintenant une implémentation et une preuve fonctionnelle des
+`#45` est maintenant implémentée, prouvée et fermée pour les
 fenêtres GTK3 et
 Win32 natives, du périmètre immuable, de l'échéance monotone non renouvelable
 de 300 secondes, du tampon protégé de 4096 octets et de son effacement, ainsi
@@ -412,8 +412,9 @@ mais ne retire le répertoire que par `Drop` après verdict. `30769440106` a
 entièrement réussi ses quatre jobs et prouve cette étape intermédiaire, sans
 fermer #45. `c8643b0` exige ensuite avec `remove_and_prove_absent` le
 répertoire absent avant verdict. `30770893733` réussit ses quatre jobs sur
-`b76ded8` et publie trois artefacts inspectés. L'issue #45 doit conserver l'ultime run
-du SHA documentaire avant fermeture. Après
+`b76ded8` et publie trois artefacts inspectés. Après trois corrections du
+harnais de captures, `30779157351` réussit ses quatre jobs sur `c0569d0` :
+l'issue #45 lie ce run et ce SHA, puis se ferme le 3 août 2026. Après
 acceptation,
 le secret est détruit et l'événement terminal public reste `Unavailable` jusqu'à
 `#42` ; aucun SSH, `sudo`, `root`, audit ou succès d'amorçage n'est revendiqué.

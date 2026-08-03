@@ -38,8 +38,8 @@ cette étape intermédiaire, sans fermer #45. `c8643b0` ajoute ensuite
 `remove_and_prove_absent`. Le run `30770893733` réussit les quatre jobs sur
 `b76ded8`, prouve le répertoire absent avant verdict et publie trois artefacts
 inspectés. Cette ligne est donc implémentée et prouvée dans la matrice
-Linux/Windows. L'ultime run du SHA de propagation doit être enregistré dans
-l'issue avant fermeture ; #42 et #35 ne sont pas fermées par cette preuve.
+Linux/Windows, close par le run `30779157351` sur `c0569d0` ; #42 et #35 ne
+sont pas fermées par cette preuve.
 La première tentative ultime `30772674819` sur `028a459` n'est pas recevable :
 un PNG Linux est uniforme et un autre partiellement noir malgré un JSON `pass`,
 puis Windows échoue avant le smoke sur un refus d'attribution. Le harnais avait
@@ -65,10 +65,15 @@ le job Windows complet. Il reste rouge : Linux reçoit une déconnexion pendant
 le réglage idempotent du timeout de script, avant l'appel async mutant, puis son
 nettoyage échoue fermé. Le candidat sépare maintenant les deux opérations : le
 réglage peut être tenté deux fois après une coupure transport, tandis que
-`/execute/async` n'est envoyé qu'une fois et ne peut jamais être rejoué. L'oracle
-synthétique doit reproduire les deux coupures et compter exactement les
-requêtes. Cette correction reste à exécuter dans une nouvelle matrice sur son
-SHA exact.
+`/execute/async` n'est envoyé qu'une fois et ne peut jamais être rejoué.
+L'oracle synthétique reproduit les deux coupures et compte exactement les
+requêtes.
+
+Le run `30779157351` sur `c0569d0` valide enfin cette correction : ses quatre
+jobs sont verts, les trois artefacts publiés sont inspectés et les vingt
+captures sont valides sur les deux OS. C'est la matrice de fermeture de #45.
+Elle ne prouve toujours pas l'absence générale de texte rogné à 200 %, suivie
+séparément par #56.
 
 ## Vocabulaire de travail
 
@@ -360,9 +365,8 @@ La décision documentaire #44 fixe le canal à construire, mais n'exécute aucun
 scénario runtime. Le bornage du processus et de son IPC appartient à #43, la
 surface de consentement native à #45, puis l'accès SSH personnel à #42. #45
 possède son implémentation, son rapport et la matrice Linux/Windows entièrement
-verte `30770893733` sur `b76ded8`. Les preuves emploient des secrets
-exclusivement synthétiques ; l'issue doit conserver l'ultime run du SHA
-documentaire avant fermeture.
+verte `30779157351` sur `c0569d0`, qui la ferme. Les preuves emploient des
+secrets exclusivement synthétiques.
 
 #42 est découpée dans l'ordre en #51 pour les bornes KDF et la politique
 `sudo`, #52 pour l'agent personnel contre une cible exacte, #53 pour la clé
@@ -375,7 +379,7 @@ peuvent se fermer.
 | Frontière | Nominal à automatiser | Refus hostile à automatiser | État |
 |---|---|---|---|
 | lot Console et serveur | installateur contenant l'Assistant, l'unique `.deb` Debian 13 `amd64`, ses définitions statiques et le manifeste signé exact ; signature, cible, version, taille, SHA-256 et dépendances hors ligne vérifiés avant privilège ; `/usr/lib/your-cloud/your-cloud` `root:root` `0755` sans setuid, setgid ni capacité et exactement trois unités `root:root` `0644` inactives sous `/usr/lib/systemd/system` ; état propre à la machine géré par l'Assistant ; binaire installé et vérifié avant la clé forcée ; retour à l'absence ou à la version antérieure avant transfert d'autorité ; entrée Auxiliaire initiale en lecture seule et en refus de mutation | paquet ou manifeste altéré, cible, version, taille ou empreinte divergente, dépendance exigeant le réseau, fichier ou unité supplémentaire, propriétaire ou mode divergent, setuid, setgid, capacité ou unité activée par l'installation, script mainteneur interactif ou activant un rôle, secret ou configuration propre à une machine dans le paquet, état à demi configuré présenté comme sain, retrait aveugle après coupure, binaire privilégié téléchargé à la volée, clé activée avant le binaire, mutation acceptée avant son contrat, `arm64` accepté sans preuve ; certificat Windows synthétique présenté comme signature publique | helper Linux construit et contrôlé puis `.deb` Console installé pour #43 ; sous Windows, le `.msi` installé contient exactement les deux exécutables installables et le certificat synthétique prouve seulement la mécanique Authenticode. Le paquet serveur, ses unités, son manifeste public et son cycle privilégié restent planifiés |
-| helper natif et cycle de vie | binaire compagnon `your-cloud-native-bootstrap-assistant` lancé une fois par consentement avec la garde `--native-bootstrap-assistant`, graphe autonome sans Tauri, Wry, Tao, WebKit ou JavaScriptCore ; pipes anonymes typés portant seulement le périmètre public immuable et des états expurgés ; expiration native monotone fixe de 300 secondes ; fermeture des enfants après succès, refus, annulation, timeout, EOF, mort du parent et crash | durée fournie ou prolongée par le frontend, dépendance directe, transitive ou chargée dynamiquement vers WebKit/JavaScriptCore, seconde WebView, secret dans l'IPC frontend, arguments, environnement, URL, descripteur hérité inattendu, fichier temporaire, journal ou dump ; helper ou enfant survivant, état réutilisé entre deux opérations | bornage #43 prouvé sous Linux et Windows : gates Cargo/ELF, imports PE normaux et différés, framing, échéance native, lancement Console, WebView Tauri vivante, session unique, forge et rejeu refusés, groupe Linux, Job Windows avec racine et descendant, branches avant reprise, récolte autonome et refus de relance si le nettoyage n'est pas prouvable. Le gate PE ne prouve pas l'absence universelle de chargement dynamique. #45 prouve dans `30770893733` le pair/parent lié, le périmètre immuable, l'annulation coopérative, la collecte secrète et les protections mémoire. Les vrais descendants SSH et privilégiés restent à #42 |
+| helper natif et cycle de vie | binaire compagnon `your-cloud-native-bootstrap-assistant` lancé une fois par consentement avec la garde `--native-bootstrap-assistant`, graphe autonome sans Tauri, Wry, Tao, WebKit ou JavaScriptCore ; pipes anonymes typés portant seulement le périmètre public immuable et des états expurgés ; expiration native monotone fixe de 300 secondes ; fermeture des enfants après succès, refus, annulation, timeout, EOF, mort du parent et crash | durée fournie ou prolongée par le frontend, dépendance directe, transitive ou chargée dynamiquement vers WebKit/JavaScriptCore, seconde WebView, secret dans l'IPC frontend, arguments, environnement, URL, descripteur hérité inattendu, fichier temporaire, journal ou dump ; helper ou enfant survivant, état réutilisé entre deux opérations | bornage #43 prouvé sous Linux et Windows : gates Cargo/ELF, imports PE normaux et différés, framing, échéance native, lancement Console, WebView Tauri vivante, session unique, forge et rejeu refusés, groupe Linux, Job Windows avec racine et descendant, branches avant reprise, récolte autonome et refus de relance si le nettoyage n'est pas prouvable. Le gate PE ne prouve pas l'absence universelle de chargement dynamique. #45 prouve dans `30779157351` sur `c0569d0` le pair/parent lié, le périmètre immuable, l'annulation coopérative, la collecte secrète et les protections mémoire ; l'issue est fermée. Les vrais descendants SSH et privilégiés restent à #42 |
 | moteur SSH et agent personnel | `russh 0.62.4` épinglé, algorithmes sur liste positive, clé d'hôte exacte ; socket Unix absolu appartenant à l'utilisateur courant sous Linux ou pipe `\\.\pipe\openssh-ssh-agent` sous Windows ; une clé et un budget fini de signatures pour l'authentification exacte | clé d'hôte inattendue, DSA, DES, compression ou `ssh-rsa` SHA-1, autre endpoint d'agent, deuxième signature, message de signature libre, TOFU, écriture de `known_hosts`, shell, PTY, SFTP, X11, redirection, transfert d'agent ou commande générale | planifié, non exécuté (#52 puis #42) |
 | repli par fichier de clé | sélecteur natif ouvrant sans réécriture une clé `OPENSSH PRIVATE KEY` chiffrée bcrypt + `aes256-ctr`, Ed25519 ou RSA d'au moins 3072 bits ; octets, passphrase et clé déchiffrée zéroïsés sur sortie contrôlée | clé en clair, RSA trop courte, PKCS#1, PKCS#8, SEC1, PPK, autre KDF ou chiffrement, fichier trop grand ou remplacé pendant l'ouverture, passphrase ou clé retrouvée dans un état persistant ou un artefact | dialogue secret implémenté et prouvé par #45 ; KDF #51 et ouverture de clé #53 planifiés, non exécutés, avant fermeture de #42 |
 | déclaration et audit | endpoints fournis un par un, clé d'hôte confirmée, audit SSH strictement en lecture seule, Debian 13 `amd64`, rôles et ressources rendus ; chaque endpoint et sa clé d'hôte revérifiés depuis le Controller avant mutation des cibles | scan du LAN, plage ou fournisseur, clé d'hôte acceptée silencieusement, mutation pendant l'audit, cible ou rôle incompatible proposé, cible joignable depuis le laptop mais pas depuis le Controller | planifié, non exécuté |
@@ -451,9 +455,15 @@ L'inventaire exact rend 20 PNG et 3 JSON, tous réguliers et non vides. Les
 captures sont cohérentes et sans secret ; le scan ne retrouve ni clé, token,
 certificat, canari, sentinelle, `MDMP`, paquet ou binaire. Le JSON Windows
 agrège le matériel WER sous `temporary-security-material` : les trois absences
-distinctes avant verdict restent attribuées au test bloquant vert. L'issue #45
-doit conserver l'ultime run du SHA de cette propagation, sans modification
-suivante.
+distinctes avant verdict restent attribuées au test bloquant vert.
+
+Le run de fermeture `30779157351` sur `c0569d0` publie à son tour exactement
+trois artefacts — Windows `8843307931` (288659 octets), Linux `8843258164`
+(297139 octets) et Plumber `8843057913` (1856 octets) — dont les empreintes API
+concordent avec les archives téléchargées. Leurs 23 fichiers sont inspectés,
+les vingt captures sont valides et sans secret, et le rapport Plumber vaut `A`,
+`100/100` sans finding. Le détail complet est conservé dans le
+[rapport LAB](../lab/v0.1.0-native-secret-consent-linux-windows.md).
 
 ## Matrice exécutée de `v0.0.2` — orchestration assistée
 

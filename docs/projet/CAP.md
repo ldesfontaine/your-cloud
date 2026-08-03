@@ -247,7 +247,7 @@ Tauri positives sans secret, identifiant natif anti-rejeu, aucun listener et,
 sous Windows, création suspendue avec liste exacte de handles puis Job Object.
 Le [rapport du runner Windows](../lab/v1-bootstrap-ipc-windows.md) borne aussi
 les gates de packaging natif. Les dialogues et protections de secrets `#45`
-possèdent maintenant une implémentation et une preuve fonctionnelle : fenêtres
+sont maintenant implémentés, prouvés et fermés : fenêtres
 GTK3 et Win32
 natives, périmètre et parent liés, échéance monotone non renouvelable de 300
 secondes, tampon protégé de 4096 octets puis destruction, protections
@@ -266,7 +266,8 @@ absentes. Comme le répertoire n'est retiré que par `Drop` après verdict, ce r
 ne peut pas fermer #45. `c8643b0` ajoute `remove_and_prove_absent` ; le run
 `30770893733` réussit ses quatre jobs sur `b76ded8`, prouve le répertoire et les
 deux inscriptions absents avant verdict et publie trois artefacts inspectés.
-L'issue #45 doit enregistrer l'ultime run du SHA documentaire avant fermeture.
+Après trois corrections du harnais de captures, `30779157351` réussit ses
+quatre jobs sur `c0569d0` : l'issue #45 lie ce run et ce SHA, puis se ferme.
 L'accès SSH
 personnel `#42`, puis l'intégration complète suivie
 par `#35` restent aussi à implémenter et prouver avant de poursuivre le reste

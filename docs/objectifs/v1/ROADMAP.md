@@ -96,8 +96,8 @@ que l'adresse figée, la clé d'hôte, l'identité choisie et la sonde fixe
 `/usr/bin/id -u` ont vérifié un accès direct `root` ou le chemin `sudo`
 autorisé. Il ne vaut ni audit, ni installation, ni succès d'amorçage. La
 séquence de fermeture est
-`#45 → #51 → #52 → #53 → #54 → #42 → #35` ; une fois #45 fermée exactement,
-la prochaine issue est #51.
+`#45 → #51 → #52 → #53 → #54 → #42 → #35`. `#45` est fermée depuis le 3 août
+2026 : la prochaine issue est donc `#51`.
 
 ## État de départ
 
@@ -111,7 +111,7 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
 | `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat produit Linux/Windows `3b8f81f` | oui — fonctionnel LAB Linux ; porte native finale verte dans `30710037004`, liée au SHA exact par `#9` |
-| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | partiel — #43 et implémentation #45 acquises ; #42 et #35 ouverts | partiel — #43 prouvé ; preuve fonctionnelle #45 acquise dans `30770893733`, fermeture exacte conditionnée au run final enregistré dans l'issue |
+| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | partiel — #43 et #45 acquises et fusionnées ; #42 et #35 ouverts | partiel — #43 et #45 prouvés et fermés, #45 sur `c0569d0` dans `30779157351` ; #42 reprend par #51 |
 | Autres paliers de `v0.1.0` | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
@@ -379,12 +379,11 @@ Ce palier est suivi par l'issue `#13`. La condition de fermeture `#9` de
 `v0.0.3` est satisfaite sur le candidat produit `3b8f81f` effectivement
 fusionné : l'amorçage est donc le palier ouvert. Son contrat est décidé afin que
 l'implémentation ne réinvente pas l'autorité initiale. Le socle helper/IPC
-`#43` est prouvé. `#45` possède une implémentation et sa preuve fonctionnelle
-native ; son issue doit conserver l'ultime run du SHA documentaire avant
-fermeture. La séquence de ce sous-palier place #45 avant les sous-issues
+`#43` est prouvé. `#45` est prouvée sur `c0569d0` puis fermée le 3 août 2026.
+La séquence de ce sous-palier plaçait #45 avant les sous-issues
 `#51 → #52 → #53 → #54`, la fermeture de leur parente `#42`, puis celle de
-l'intégration `#35`. Une fois #45 fermée, le travail reprend à #51 avant le
-reste du palier `#13`.
+l'intégration `#35`. Le travail reprend donc à #51 avant le reste du palier
+`#13`.
 
 **Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
@@ -419,7 +418,7 @@ la création suspendue, la liste exacte de handles et le Job Object bornent auss
 les descendants et les branches d'échec. Voir le
 [rapport du runner Windows](../../lab/v1-bootstrap-ipc-windows.md).
 
-**Implémentation et preuve fonctionnelle (`#45`) :** le helper lie le véritable parent et
+**Implémentation prouvée et fermée (`#45`) :** le helper lie le véritable parent et
 son pair IPC au périmètre public immuable, fixe une échéance monotone de 300
 secondes non renouvelable et ouvre directement les fenêtres GTK3 ou Win32. Un
 `ProtectedSecret` borné à 4096 octets est détruit avant la sortie ; Linux
@@ -439,7 +438,9 @@ entièrement réussi ses quatre jobs et prouve cette étape intermédiaire, mais
 ferme pas #45. `c8643b0` ajoute `remove_and_prove_absent`, qui exige le
 répertoire absent avant verdict. Le run `30770893733` réussit ensuite ses
 quatre jobs sur `b76ded8`, valide cette séquence et publie trois artefacts
-inspectés. L'issue #45 doit conserver l'ultime run vert du SHA documentaire. Après
+inspectés. Après trois corrections du harnais de captures, le run
+`30779157351` réussit ses quatre jobs sur `c0569d0` : l'issue #45 lie ce run et
+ce SHA, fusionné par fast-forward, puis se ferme. Après
 acceptation, l'événement terminal public reste `Unavailable` : cette
 frontière n'exécute ni SSH, ni `sudo`, ni `root`, ni audit ou installation.
 
@@ -485,9 +486,9 @@ frontière n'exécute ni SSH, ni `sudo`, ni `root`, ni audit ou installation.
 
 Le socle `#43` ci-dessus est exécuté dans des runners isolés avec des données
 sentinelles synthétiques et aucun secret réel. La preuve de sortie globale reste
-incomplète : `#45` doit encore réussir sa matrice native finale ; l'accès SSH
-personnel avance ensuite par `#51`, `#52`, `#53` et `#54` avant la fermeture de
-`#42`, puis l'intégration `#35` reste à prouver. La signature Windows
+incomplète : `#45` a réussi sa matrice native finale et est fermée ; l'accès SSH
+personnel avance maintenant par `#51`, `#52`, `#53` et `#54` avant la fermeture
+de `#42`, puis l'intégration `#35` reste à prouver. La signature Windows
 synthétique valide la mécanique de build du candidat, pas une identité
 publique ; une distribution publique attend toujours une signature reconnue et
 gratuite réellement opérationnelle.
@@ -682,17 +683,19 @@ multi-VM. L'issue `#9` relie cette preuve au SHA intégré par fast-forward :
 `v0.0.3` est fermée. Le budget du projet reste nul. L'amorçage et le
 remplacement du Controller appartiennent au contrat de `v0.1.0` et restent ouverts, mais
 leur socle helper/IPC `#43` est implémenté et prouvé sous Linux et Windows sur
-`f3fef79` par le run `30753216798`. `#45` possède une implémentation et une
-preuve fonctionnelle ; les runs `30768351689` et `30768749538` sont restés
+`f3fef79` par le run `30753216798`. `#45` est désormais prouvée et fermée ; les
+runs `30768351689` et `30768749538` sont restés
 rouges sous l'ancien oracle de dump. `ae550470` corrige cette frontière, mais ne prouve que le
 répertoire vide avant verdict et ne le retire qu'au `Drop` ; son run
 `30769440106` a réussi ses quatre jobs, mais reste une preuve intermédiaire qui
 ne ferme pas #45. `c8643b0` exige le répertoire absent avant verdict ;
 `30770893733` réussit les quatre jobs sur `b76ded8` et ses trois artefacts sont
-inspectés. La fermeture exacte doit être enregistrée dans l'issue #45. Ces
+inspectés. Après trois corrections du harnais de captures, le run
+`30779157351` réussit ses quatre jobs sur `c0569d0` : l'issue #45 lie ce run et
+ce SHA, la PR #50 est fusionnée par fast-forward et #45 est fermée le 3 août
+2026. Ces
 résultats ne ferment ni `#35`, ni le palier `#13`, ni son milestone : l'ordre
-reprend par `#51 → #52 → #53 → #54 → #42 → #35` après fermeture exacte de
-`#45`, puis les autres issues
+reprend par `#51 → #52 → #53 → #54 → #42 → #35`, puis les autres issues
 du palier. Ansible intégré, WireGuard, OCI, téléphone, navigateur public,
 Proxmox, OpenStack, worker d'automatisation et projet IaC restent hors du
 périmètre de code actuellement prouvé.
