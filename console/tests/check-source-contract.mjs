@@ -285,6 +285,16 @@ const nativeAssistantWindowsLivePromptContract = await readSourceText(
     "windows_live_prompt_contract.rs",
   ),
 );
+const nativeAssistantPersonalAccessContract = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "personal_access_contract.rs",
+  ),
+);
 const nativeAssistantDelayedStartFixture = await readSourceText(
   join(
     consoleRoot,
@@ -1185,6 +1195,54 @@ if (
 ) {
   failures.push(
     "contrat prompt Win32 vivant: scope fraîche, frame, mutation dérivée, HWND, attente et sorties doivent rester ordonnés",
+  );
+}
+// Le cas homologue de l'accès personnel. Sans cet ordre, une régression pourrait
+// envoyer la mutation avant que la fenêtre existe : le helper la refuserait pour
+// n'avoir pas encore ouvert de dialogue, et le cas passerait au vert pour la
+// mauvaise raison. Le corps est découpé sur l'accolade fermante de la fonction
+// elle-même — la première en colonne zéro, les fermetures internes étant toutes
+// indentées — et non sur l'élément suivant : rien de ce qui vient après ne peut
+// donc satisfaire un fragment que le cas aurait perdu. Ce découpage n'exige la
+// présence d'aucune aide dans ce fichier, donc il n'interdit pas de les
+// partager avec l'autre suite.
+const personalAccessLivePromptStart = nativeAssistantPersonalAccessContract.indexOf(
+  "fn a_live_personal_access_window_refuses_target_step_action_and_expiration_mutations()",
+);
+const personalAccessLivePromptEnd =
+  personalAccessLivePromptStart < 0
+    ? -1
+    : nativeAssistantPersonalAccessContract.indexOf("\n}\n", personalAccessLivePromptStart);
+const personalAccessLivePromptBody =
+  personalAccessLivePromptStart >= 0 &&
+  personalAccessLivePromptEnd > personalAccessLivePromptStart
+    ? nativeAssistantPersonalAccessContract.slice(
+        personalAccessLivePromptStart,
+        personalAccessLivePromptEnd,
+      )
+    : "";
+const personalAccessLivePromptOrder = [
+  "for mutation_kind in MutationKind::ALL",
+  "let initial = direct_personal_access_scope(LIVE_WINDOW_LEASE_MILLIS)",
+  "let mutation = mutation_frame(&initial, mutation_kind)",
+  ".write_all(&scope_frame(&initial))",
+  "await_live_window_of(&mut child, WINDOW_TIMEOUT)",
+  "PERSONAL_ACCESS_TITLE",
+  ".write_all(&mutation)",
+  "collect_output_bounded(child, PROCESS_TIMEOUT)",
+  "output.status.code()",
+  "output.stdout.is_empty()",
+  "output.stderr.is_empty()",
+].map((fragment) => personalAccessLivePromptBody.indexOf(fragment));
+if (
+  personalAccessLivePromptBody.length === 0 ||
+  personalAccessLivePromptOrder.some((index) => index < 0) ||
+  personalAccessLivePromptOrder.some(
+    (index, position) => position > 0 && index <= personalAccessLivePromptOrder[position - 1],
+  )
+) {
+  failures.push(
+    "contrat fenêtre d'accès personnel vivante: scope fraîche, fenêtre observée vivante et titrée, mutation, attente bornée et sorties doivent rester ordonnées",
   );
 }
 for (const expected of [
