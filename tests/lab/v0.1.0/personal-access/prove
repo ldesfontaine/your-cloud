@@ -4,13 +4,14 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: prove [setup | sync | run [filtre...] | remove | all [filtre...]]
+usage: prove [setup | sync | check | run [filtre...] | remove | all [filtre...]]
 
   setup   mount the two-VM perimeter and write its description
   sync    copy the Console sources into lab-console, keeping its build cache
+  check   prove the Console crate still compiles against those sources
   run     run the personal access contract suite against the mounted perimeter
   remove  remove the perimeter from both VM and prove its absence
-  all     the four above in order, removing even when the suite fails (default)
+  all     the five above in order, removing even when a step fails (default)
 EOF
   exit 2
 }
@@ -18,7 +19,7 @@ EOF
 command=${1:-all}
 [[ $# -eq 0 ]] || shift
 case "$command" in
-  setup | sync | run | remove | all) ;;
+  setup | sync | check | run | remove | all) ;;
   *) usage ;;
 esac
 [[ $# -eq 0 || "$command" == run || "$command" == all ]] || usage
@@ -61,14 +62,22 @@ inventory() {
   echo "$ips"
 }
 
+# Install one script without touching whatever else the perimeter left there,
+# so a subcommand may deploy what it needs on its own.
+install_script() {
+  local vm=$1 script=$2
+  "$labctl" ssh "$vm" -- "install -d -m 0700 $remote_harness"
+  "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+  "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$script"
+}
+
 copy_harness() {
   local vm=$1 script
   shift
-  "$labctl" ssh "$vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  "$labctl" ssh "$vm" -- "rm -rf $remote_harness"
   for script in "$@"; do
-    "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    install_script "$vm" "$script"
   done
-  "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/*"
 }
 
 setup() {
@@ -77,7 +86,7 @@ setup() {
   server_address=$(inventory "$server_vm")
   echo "perimeter: client $console_vm, server $server_vm"
 
-  copy_harness "$console_vm" install-client remove-client run
+  copy_harness "$console_vm" install-client remove-client check run
   copy_harness "$server_vm" install-server remove-server
 
   # The server's real host key, read through the managed channel. It anchors
@@ -126,20 +135,40 @@ setup() {
 }
 
 sync() {
+  # `package.json` travels with `src-tauri` because `tauri.conf.json` reads its
+  # version from `../package.json`: without it the Console build script refuses
+  # the workspace, and the guard that says the Console still compiles could only
+  # ever be replayed by hand.
+  #
   # The build cache of lab-console is deliberately preserved: rebuilding this
   # workspace from nothing costs far more than the copy it would replace.
-  tar -C "$root/console" --exclude=target -czf "$workdir/src-tauri.tgz" src-tauri
-  "$labctl" copy-to "$console_vm" "$workdir/src-tauri.tgz" \
-    "$remote_harness/src-tauri.tgz" >/dev/null
+  tar -C "$root/console" --exclude=target -czf "$workdir/console.tgz" \
+    src-tauri package.json
+  # The staging directory belongs to the perimeter, but synchronising sources
+  # needs no perimeter: create it rather than depend on a previous `setup`.
+  "$labctl" ssh "$console_vm" -- "install -d -m 0700 $remote_harness"
+  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" \
+    "$remote_harness/console.tgz" >/dev/null
   "$labctl" ssh "$console_vm" -- "
 set -e
 install -d $remote_sources
+rm -f $remote_sources/package.json
 if [ -d $remote_sources/src-tauri ]; then
   find $remote_sources/src-tauri -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} +
 fi
-tar -C $remote_sources -xzf $remote_harness/src-tauri.tgz
-rm -f $remote_harness/src-tauri.tgz"
+tar -C $remote_sources -xzf $remote_harness/console.tgz
+rm -f $remote_harness/console.tgz"
   echo "sources synchronised into $console_vm:$remote_sources"
+}
+
+# The Console crate compiles against the sources this run synchronised. It is
+# its own subcommand rather than a step of `run`: it owes nothing to the mounted
+# perimeter, it fails for its own reason, and either one must stay replayable
+# without paying for the other. `all` runs it first, so a protocol change that
+# breaks the Console is seen before the suite is paid for.
+check() {
+  install_script "$console_vm" check
+  "$labctl" ssh "$console_vm" -- "$remote_harness/check"
 }
 
 run_suite() {
@@ -159,15 +188,19 @@ remove() {
 case "$command" in
   setup) setup ;;
   sync) sync ;;
+  check) check ;;
   run) run_suite "$@" ;;
   remove) remove ;;
   all)
     setup
     sync
     status=0
-    run_suite "$@" || status=$?
+    check || status=$?
+    if [[ $status -eq 0 ]]; then
+      run_suite "$@" || status=$?
+    fi
     remove
-    [[ $status -eq 0 ]] || fail "the personal access contract suite failed with $status"
+    [[ $status -eq 0 ]] || fail "the personal access proof failed with $status"
     echo "PROVE_PERSONAL_ACCESS_OK"
     ;;
 esac
