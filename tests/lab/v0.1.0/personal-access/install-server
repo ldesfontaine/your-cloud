@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Mount the synthetic server side of the personal access perimeter.
+set -euo pipefail
+
+[[ $# -eq 2 ]] || { echo "usage: install-server <authorized-public-key> <observer-public-key>" >&2; exit 2; }
+authorized_pub=$1
+observer_pub=$2
+
+[[ $(id -u) -eq 0 ]] || { echo "install-server must run as root" >&2; exit 1; }
+command -v sshd >/dev/null || command -v /usr/sbin/sshd >/dev/null \
+  || { echo "an OpenSSH server is required" >&2; exit 1; }
+
+# Every synthetic account, forced command and listener carries this prefix, so
+# the removal script can name exactly what this one created.
+prefix=ycpa
+forced_dir=/usr/local/lib/your-cloud-lab-personal-access
+log_fragment=/etc/ssh/sshd_config.d/$prefix-log.conf
+hostile_key=/etc/ssh/${prefix}_hostile_ecdsa_key
+nominal_port=22
+ecdsa_port=2202
+kex_port=2203
+cipher_port=2204
+# `MAX_PROBE_STREAM_BYTES` of the client, and the single byte past it.
+bound=4096
+over_bound=$((bound + 1))
+
+nominal=${prefix}nom
+oversized_stdout=${prefix}out
+oversized_stderr=${prefix}err
+exact_bound=${prefix}fit
+held=${prefix}hold
+accounts=("$nominal" "$oversized_stdout" "$oversized_stderr" "$exact_bound" "$held")
+
+for key in "$authorized_pub" "$observer_pub"; do
+  [[ -f "$key" && ! -L "$key" ]] || { echo "public key is missing or symbolic: $key" >&2; exit 1; }
+  ssh-keygen -l -f "$key" >/dev/null \
+    || { echo "not an OpenSSH public key: $key" >&2; exit 1; }
+  if grep -q 'PRIVATE KEY' "$key"; then
+    echo "refusing private key material: $key" >&2
+    exit 1
+  fi
+done
+
+for account in "${accounts[@]}"; do
+  if id -u "$account" >/dev/null 2>&1; then
+    echo "account $account already exists; run remove-server first" >&2
+    exit 1
+  fi
+done
+
+authorized_line=$(cat -- "$authorized_pub")
+observer_line=$(cat -- "$observer_pub")
+restrictions=no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
+
+# The forced commands. Only the server decides how many bytes come back, which
+# is the shape of the threat the client must survive.
+install -d -m 0755 "$forced_dir"
+cat >"$forced_dir/flood-stdout" <<EOF
+#!/bin/sh
+head -c $over_bound /dev/zero | tr '\0' x
+exit 0
+EOF
+cat >"$forced_dir/flood-stderr" <<EOF
+#!/bin/sh
+head -c $over_bound /dev/zero | tr '\0' y >&2
+exit 0
+EOF
+cat >"$forced_dir/exact-stdout" <<EOF
+#!/bin/sh
+head -c $bound /dev/zero | tr '\0' z
+exit 0
+EOF
+# The held probe reads the channel itself, so it lives exactly as long as the
+# transport does and never a moment longer.
+cat >"$forced_dir/hold" <<'EOF'
+#!/bin/sh
+exec cat
+EOF
+chmod 0755 "$forced_dir"/flood-stdout "$forced_dir"/flood-stderr \
+  "$forced_dir"/exact-stdout "$forced_dir"/hold
+
+declare -A forced=(
+  ["$nominal"]=""
+  ["$oversized_stdout"]="$forced_dir/flood-stdout"
+  ["$oversized_stderr"]="$forced_dir/flood-stderr"
+  ["$exact_bound"]="$forced_dir/exact-stdout"
+  ["$held"]="$forced_dir/hold"
+)
+
+for account in "${accounts[@]}"; do
+  useradd -m -s /bin/bash "$account"
+  install -d -m 0700 -o "$account" -g "$account" "/home/$account/.ssh"
+  command=${forced[$account]}
+  if [[ -n "$command" ]]; then
+    line="command=\"$command\",$restrictions $authorized_line"
+  else
+    line="$restrictions $authorized_line"
+  fi
+  printf '%s\n' "$line" >"/home/$account/.ssh/authorized_keys"
+  chown "$account:$account" "/home/$account/.ssh/authorized_keys"
+  chmod 0600 "/home/$account/.ssh/authorized_keys"
+done
+
+# The observation bridge reaches this machine as root, because the invariance
+# proof reads /etc/shadow and the closure proof reads the journal.
+install -d -m 0700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 0600 /root/.ssh/authorized_keys
+printf '%s %s\n' "$restrictions" "$observer_line" >>/root/.ssh/authorized_keys
+
+# The server's own account of a session closing is what the suite reads, and
+# only a verbose journal writes it.
+install -d -m 0755 /etc/ssh/sshd_config.d
+printf 'LogLevel VERBOSE\n' >"$log_fragment"
+systemctl restart ssh
+
+# Three servers that negotiate outside the client's positive lists, each with
+# one deviation and nothing else. They serve the same accounts as the nominal
+# one: what is proven is the refusal at negotiation, before any account matters.
+ssh-keygen -q -t ecdsa -b 256 -N '' -C "$prefix-hostile" -f "$hostile_key" <<<y >/dev/null 2>&1 \
+  || { echo "the hostile ECDSA host key could not be generated" >&2; exit 1; }
+
+start_instance() {
+  local port=$1 name=$2 deviation=$3 config="/etc/ssh/sshd_config_$prefix-$2"
+  cat >"$config" <<EOF
+Port $port
+ListenAddress 0.0.0.0
+PidFile /run/sshd-$prefix-$name.pid
+UsePAM no
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthorizedKeysFile /home/%u/.ssh/authorized_keys
+Subsystem sftp /usr/lib/openssh/sftp-server
+LogLevel VERBOSE
+$deviation
+EOF
+  /usr/sbin/sshd -f "$config" -E "/var/log/sshd-$prefix-$name.log"
+}
+
+start_instance "$ecdsa_port" ecdsa "HostKey $hostile_key
+HostKeyAlgorithms ecdsa-sha2-nistp256
+PubkeyAcceptedAlgorithms ssh-ed25519"
+start_instance "$kex_port" kex "HostKey /etc/ssh/ssh_host_ed25519_key
+KexAlgorithms diffie-hellman-group16-sha512"
+start_instance "$cipher_port" cipher "HostKey /etc/ssh/ssh_host_ed25519_key
+Ciphers aes128-ctr
+MACs hmac-sha2-256"
+
+listening() {
+  ss -tln | grep -qE "[:.]$1[[:space:]]"
+}
+for port in "$nominal_port" "$ecdsa_port" "$kex_port" "$cipher_port"; do
+  for _ in $(seq 50); do
+    listening "$port" && break
+    sleep 0.1
+  done
+  listening "$port" || { echo "no server listens on $port" >&2; exit 1; }
+done
+
+host_key=$(ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $2}')
+
+printf 'PORT=%s\n' "$nominal_port"
+printf 'USERNAME=%s\n' "$nominal"
+printf 'HOST_KEY=%s\n' "$host_key"
+printf 'UID=%s\n' "$(id -u "$nominal")"
+printf 'OVERSIZED_STDOUT_USERNAME=%s\n' "$oversized_stdout"
+printf 'OVERSIZED_STDERR_USERNAME=%s\n' "$oversized_stderr"
+printf 'EXACT_BOUND_USERNAME=%s\n' "$exact_bound"
+printf 'HELD_USERNAME=%s\n' "$held"
+printf 'ECDSA_PORT=%s\n' "$ecdsa_port"
+printf 'KEX_PORT=%s\n' "$kex_port"
+printf 'CIPHER_PORT=%s\n' "$cipher_port"
+echo "INSTALL_SERVER_OK" >&2

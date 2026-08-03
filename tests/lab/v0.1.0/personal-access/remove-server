@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Remove the synthetic server side of the personal access perimeter.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: remove-server" >&2; exit 2; }
+[[ $(id -u) -eq 0 ]] || { echo "remove-server must run as root" >&2; exit 1; }
+
+prefix=ycpa
+forced_dir=/usr/local/lib/your-cloud-lab-personal-access
+log_fragment=/etc/ssh/sshd_config.d/$prefix-log.conf
+hostile_key=/etc/ssh/${prefix}_hostile_ecdsa_key
+accounts=(${prefix}nom ${prefix}out ${prefix}err ${prefix}fit ${prefix}hold)
+failures=0
+
+for account in "${accounts[@]}"; do
+  if id -u "$account" >/dev/null 2>&1; then
+    pkill -9 -u "$account" 2>/dev/null || true
+    sleep 1
+    userdel -r "$account" 2>/dev/null || true
+  fi
+done
+
+pkill -f "sshd_config_$prefix-" 2>/dev/null || true
+sleep 1
+rm -f "/etc/ssh/sshd_config_$prefix-ecdsa" "/etc/ssh/sshd_config_$prefix-kex" \
+  "/etc/ssh/sshd_config_$prefix-cipher"
+rm -f /var/log/sshd-$prefix-*.log /run/sshd-$prefix-*.pid
+rm -f "$hostile_key" "$hostile_key.pub"
+rm -rf "$forced_dir"
+
+# The journal verbosity and the observation identity are the two mutations this
+# perimeter made outside its own files.
+rm -f "$log_fragment"
+systemctl restart ssh
+if [[ -f /root/.ssh/authorized_keys ]]; then
+  sed -i "/$prefix-observer/d" /root/.ssh/authorized_keys
+  [[ -s /root/.ssh/authorized_keys ]] || rm -f /root/.ssh/authorized_keys
+fi
+
+# A removal that cannot prove the absence is a failure, not a warning.
+for account in "${accounts[@]}"; do
+  if id -u "$account" >/dev/null 2>&1; then
+    echo "account still present: $account" >&2
+    failures=$((failures + 1))
+  fi
+done
+if pgrep -f "sshd_config_$prefix-" >/dev/null; then
+  echo "a hostile server is still running" >&2
+  failures=$((failures + 1))
+fi
+for path in "$forced_dir" "$log_fragment" "$hostile_key"; do
+  if [[ -e "$path" ]]; then
+    echo "residue still present: $path" >&2
+    failures=$((failures + 1))
+  fi
+done
+if [[ -f /root/.ssh/authorized_keys ]] && grep -q "$prefix-observer" /root/.ssh/authorized_keys; then
+  echo "the observation identity is still authorised" >&2
+  failures=$((failures + 1))
+fi
+
+[[ $failures -eq 0 ]] || exit 1
+echo "REMOVE_SERVER_OK" >&2

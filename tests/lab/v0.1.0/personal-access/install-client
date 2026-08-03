@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Mount the client side of the personal access perimeter: keys, agent, names.
+set -euo pipefail
+
+[[ $# -eq 3 ]] || { echo "usage: install-client <server-address> <self-address> <server-host-key>" >&2; exit 2; }
+server_address=$1
+self_address=$2
+server_host_key=$3
+
+[[ $(id -u) -eq 0 ]] || { echo "install-client must run as root" >&2; exit 1; }
+command -v ssh-agent >/dev/null || { echo "ssh-agent is required" >&2; exit 1; }
+[[ -f "$server_host_key" && ! -L "$server_host_key" ]] \
+  || { echo "server host key is missing or symbolic: $server_host_key" >&2; exit 1; }
+ssh-keygen -l -f "$server_host_key" >/dev/null \
+  || { echo "not an OpenSSH public key: $server_host_key" >&2; exit 1; }
+
+prefix=ycpa
+state=/root/lab-personal-access
+# RFC 5737 documentation addresses. They are never routed, never dialled and
+# never a LAB address: one is what a rebinding attacker would make the name
+# answer, the others crowd a single name past the frozen-address bound.
+rebound_address=192.0.2.66
+crowd_prefix=192.0.2.
+crowd_count=9
+
+[[ ! -e "$state" ]] || { echo "$state already exists; run remove-client first" >&2; exit 1; }
+
+install -d -m 0700 "$state" "$state/keys" "$state/agent" "$state/needle" "$state/restore"
+
+# Synthetic identities, generated here and nowhere else. Two are submitted to
+# the agent; the third is the harness's own observation identity.
+ssh-keygen -q -t ed25519 -N '' -C "$prefix-authorized" -f "$state/keys/authorized"
+ssh-keygen -q -t ed25519 -N '' -C "$prefix-stranger" -f "$state/keys/stranger"
+ssh-keygen -q -t ed25519 -N '' -C "$prefix-observer" -f "$state/keys/observer"
+
+# The raw private scalar of the authorised identity is the canary the suite
+# searches for. It exists only while the perimeter does.
+python3 - "$state/keys/authorized" >"$state/needle/authorized-seed.hex" <<'PY'
+import base64, struct, sys
+
+body = []
+keep = False
+for line in open(sys.argv[1]):
+    if line.startswith('-----BEGIN'):
+        keep = True
+        continue
+    if line.startswith('-----END'):
+        break
+    if keep:
+        body.append(line.strip())
+raw = base64.b64decode(''.join(body))
+
+
+def take(buffer, offset):
+    (length,) = struct.unpack('>I', buffer[offset:offset + 4])
+    return buffer[offset + 4:offset + 4 + length], offset + 4 + length
+
+
+# openssh-key-v1\0 | ciphername | kdfname | kdfoptions | count | public | private
+offset = len('openssh-key-v1') + 1
+for _ in range(3):
+    _, offset = take(raw, offset)
+offset += 4
+_, offset = take(raw, offset)
+private, offset = take(raw, offset)
+inner = 8                      # two check integers
+_, inner = take(private, inner)
+_, inner = take(private, inner)
+seed, inner = take(private, inner)
+print(seed[:32].hex())
+PY
+chmod 0600 "$state/needle/authorized-seed.hex"
+
+# A real agent, holding real keys, on a socket whose parent directory is what
+# actually protects it.
+ssh-agent -a "$state/agent/agent.sock" >"$state/agent/env"
+SSH_AUTH_SOCK="$state/agent/agent.sock" ssh-add -q "$state/keys/authorized" "$state/keys/stranger"
+# From here on the agent is the only holder of these two identities: the suite
+# proves the client authenticates without ever exporting a private key.
+shred -u "$state/keys/authorized" "$state/keys/stranger"
+
+# The observation bridge. It carries the server address so no test file has to,
+# and it pins the host key observed through the managed LAB channel rather than
+# trusting the first answer.
+ssh-keygen -l -f "$server_host_key" >/dev/null
+printf '%s %s\n' "$server_address" "$(cat -- "$server_host_key")" >"$state/bridge_known_hosts"
+chmod 0600 "$state/bridge_known_hosts"
+cat >"$state/server-command" <<EOF
+#!/bin/sh
+# One command on the synthetic server, as root, under a fixed bound.
+exec ssh -n -i "$state/keys/observer" -o IdentitiesOnly=yes \\
+  -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$state/bridge_known_hosts" \\
+  -o LogLevel=ERROR -o ConnectTimeout=5 "root@$server_address" "\$@"
+EOF
+chmod 0700 "$state/server-command"
+
+# Synthetic names. A resolver that returns only the first address would make
+# the crowded name meaningless, so multiple answers are enabled explicitly.
+[[ -f /etc/host.conf ]] || : >/etc/host.conf
+cp -a /etc/host.conf "$state/restore/host.conf"
+cp -a /etc/hosts "$state/restore/hosts"
+grep -q '^multi on' /etc/host.conf || echo 'multi on' >>/etc/host.conf
+sed -i "/$prefix-/d" /etc/hosts
+{
+  echo "$server_address $prefix-target.test"
+  echo "$self_address $prefix-self.test"
+  echo "127.0.0.1 $prefix-loop.test"
+  for index in $(seq "$crowd_count"); do
+    echo "$crowd_prefix$index $prefix-many.test"
+  done
+} >>/etc/hosts
+
+resolved=$(getent ahostsv4 "$prefix-target.test" | awk '{print $1}' | sort -u)
+[[ "$resolved" == "$server_address" ]] \
+  || { echo "the synthetic name resolves to [$resolved] instead of $server_address" >&2; exit 1; }
+crowd=$(getent ahostsv4 "$prefix-many.test" | awk '{print $1}' | sort -u | wc -l)
+[[ "$crowd" -eq "$crowd_count" ]] \
+  || { echo "the crowded name answers $crowd addresses instead of $crowd_count" >&2; exit 1; }
+
+printf 'NAME=%s\n' "$prefix-target.test"
+printf 'MANY_NAME=%s\n' "$prefix-many.test"
+printf 'SELF_NAME=%s\n' "$prefix-self.test"
+printf 'LOOPBACK_NAME=%s\n' "$prefix-loop.test"
+printf 'HOSTS_FILE=%s\n' /etc/hosts
+printf 'REBOUND_ADDRESS=%s\n' "$rebound_address"
+printf 'AUTHORIZED=%s\n' "$(ssh-keygen -l -f "$state/keys/authorized.pub" | awk '{print $2}')"
+printf 'STRANGER=%s\n' "$(ssh-keygen -l -f "$state/keys/stranger.pub" | awk '{print $2}')"
+printf 'SERVER_COMMAND=%s\n' "$state/server-command"
+printf 'KEY_NEEDLE=%s\n' "$state/needle/authorized-seed.hex"
+printf 'SCRATCH=%s\n' "$state/scratch"
+printf 'KNOWN_HOSTS=%s\n' "$state/known_hosts"
+echo "INSTALL_CLIENT_OK" >&2

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Run the personal access contract suite against the mounted perimeter.
+set -euo pipefail
+
+[[ $(id -u) -eq 0 ]] || { echo "run must run as root" >&2; exit 1; }
+
+state=/root/lab-personal-access
+perimeter="$state/perimeter.env"
+sources=/root/work/src-tauri
+toolchain=1.94.1
+
+[[ -f "$perimeter" ]] || { echo "no perimeter at $perimeter; mount it first" >&2; exit 1; }
+[[ -d "$sources" ]] || { echo "no sources at $sources; synchronise them first" >&2; exit 1; }
+
+# shellcheck source=/dev/null
+. "$perimeter"
+export SSH_AUTH_SOCK="$state/agent/agent.sock"
+[[ -S "$SSH_AUTH_SOCK" ]] || { echo "the synthetic agent is not listening" >&2; exit 1; }
+ssh-add -l >/dev/null || { echo "the synthetic agent holds nothing" >&2; exit 1; }
+
+# Each run starts from no scratch, no recorded trust and no probe left behind
+# by a previous one.
+rm -rf "$YOUR_CLOUD_LAB_SCRATCH"
+install -d -m 0700 "$YOUR_CLOUD_LAB_SCRATCH"
+rm -f "$YOUR_CLOUD_LAB_KNOWN_HOSTS"
+"$YOUR_CLOUD_LAB_SERVER_COMMAND" \
+  "pkill -u $YOUR_CLOUD_LAB_HELD_USERNAME cat || true" >/dev/null 2>&1 || true
+
+# shellcheck source=/dev/null
+. /root/.cargo/env
+cd "$sources"
+# One job everywhere: these machines hold about two gibibytes of memory.
+CARGO_BUILD_JOBS=1 cargo "+$toolchain" test --locked -j 1 \
+  -p your-cloud-native-bootstrap-assistant \
+  --features personal-access-contract-test \
+  --test personal-access-contract \
+  "$@" -- --test-threads=1

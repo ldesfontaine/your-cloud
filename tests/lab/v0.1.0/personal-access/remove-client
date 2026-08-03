@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Remove the client side of the personal access perimeter.
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { echo "usage: remove-client" >&2; exit 2; }
+[[ $(id -u) -eq 0 ]] || { echo "remove-client must run as root" >&2; exit 1; }
+
+prefix=ycpa
+state=/root/lab-personal-access
+failures=0
+
+pkill -f "ssh-agent -a $state" 2>/dev/null || true
+pkill -f 'your-cloud-personal-access-fixture' 2>/dev/null || true
+
+# Every private byte is destroyed rather than merely unlinked.
+for path in "$state/keys/authorized" "$state/keys/stranger" "$state/keys/observer" \
+  "$state/needle/authorized-seed.hex"; do
+  if [[ -f "$path" ]]; then
+    shred -u "$path"
+  fi
+done
+
+# The resolver tables are returned to the files this perimeter saved.
+if [[ -f "$state/restore/hosts" ]]; then
+  cp -a "$state/restore/hosts" /etc/hosts
+else
+  sed -i "/$prefix-/d" /etc/hosts
+fi
+if [[ -f "$state/restore/host.conf" ]]; then
+  cp -a "$state/restore/host.conf" /etc/host.conf
+fi
+
+rm -rf "$state"
+
+if [[ -e "$state" ]]; then
+  echo "residue still present: $state" >&2
+  failures=$((failures + 1))
+fi
+if pgrep -f "ssh-agent -a $state" >/dev/null; then
+  echo "the synthetic agent is still running" >&2
+  failures=$((failures + 1))
+fi
+if grep -q "$prefix-" /etc/hosts; then
+  echo "the resolver table still names the perimeter" >&2
+  failures=$((failures + 1))
+fi
+# Only what this perimeter could have written is searched: the toolchain and
+# the synchronised sources carry their own unrelated fixtures.
+residual=$(grep -rl 'BEGIN OPENSSH PRIVATE KEY' /root \
+  --exclude-dir=.cargo --exclude-dir=.rustup --exclude-dir=work \
+  --exclude-dir=your-cloud-lab-personal-access 2>/dev/null || true)
+if [[ -n "$residual" ]]; then
+  echo "private key material left under /root: $residual" >&2
+  failures=$((failures + 1))
+fi
+
+[[ $failures -eq 0 ]] || exit 1
+echo "REMOVE_CLIENT_OK" >&2

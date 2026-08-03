@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Drive the personal access contract suite: mount, synchronise, run, remove.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [setup | sync | run [filtre...] | remove | all [filtre...]]
+
+  setup   mount the two-VM perimeter and write its description
+  sync    copy the Console sources into lab-console, keeping its build cache
+  run     run the personal access contract suite against the mounted perimeter
+  remove  remove the perimeter from both VM and prove its absence
+  all     the four above in order, removing even when the suite fails (default)
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -eq 0 ]] || shift
+case "$command" in
+  setup | sync | run | remove | all) ;;
+  *) usage ;;
+esac
+[[ $# -eq 0 || "$command" == run || "$command" == all ]] || usage
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.0/personal-access"
+console_vm=lab-console
+server_vm=lab-machine-1
+expected_origin=your-cloud/labctl
+remote_harness=/root/your-cloud-lab-personal-access
+remote_state=/root/lab-personal-access
+remote_sources=/root/work
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+# Every name the suite reads from the environment. A perimeter that does not
+# describe all of them is refused before anything is run.
+required_names=(
+  TARGET NAME PORT USERNAME HOST_KEY AUTHORIZED STRANGER UID KNOWN_HOSTS
+  OVERSIZED_STDOUT_USERNAME OVERSIZED_STDERR_USERNAME EXACT_BOUND_USERNAME
+  HELD_USERNAME ECDSA_PORT KEX_PORT CIPHER_PORT MANY_NAME SELF_NAME
+  LOOPBACK_NAME HOSTS_FILE REBOUND_ADDRESS SERVER_COMMAND KEY_NEEDLE SCRATCH
+)
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+copy_harness() {
+  local vm=$1 script
+  shift
+  "$labctl" ssh "$vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  for script in "$@"; do
+    "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+  done
+  "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/*"
+}
+
+setup() {
+  local console_address server_address host_key_fingerprint declared
+  console_address=$(inventory "$console_vm")
+  server_address=$(inventory "$server_vm")
+  echo "perimeter: client $console_vm, server $server_vm"
+
+  copy_harness "$console_vm" install-client remove-client run
+  copy_harness "$server_vm" install-server remove-server
+
+  # The server's real host key, read through the managed channel. It anchors
+  # the observation bridge and is cross-checked against what the server itself
+  # reports, so no side of this harness trusts a first answer.
+  "$labctl" copy-from "$server_vm" /etc/ssh/ssh_host_ed25519_key.pub \
+    "$workdir/server-host-key.pub" >/dev/null
+  host_key_fingerprint=$(ssh-keygen -l -f "$workdir/server-host-key.pub" | awk '{print $2}')
+  "$labctl" copy-to "$console_vm" "$workdir/server-host-key.pub" \
+    "$remote_harness/server-host-key.pub" >/dev/null
+
+  "$labctl" ssh "$console_vm" -- "$remote_harness/install-client" \
+    "$server_address" "$console_address" "$remote_harness/server-host-key.pub" \
+    >"$workdir/client.env"
+
+  for key in authorized observer; do
+    "$labctl" copy-from "$console_vm" "$remote_state/keys/$key.pub" \
+      "$workdir/$key.pub" >/dev/null
+    "$labctl" copy-to "$server_vm" "$workdir/$key.pub" \
+      "$remote_harness/$key.pub" >/dev/null
+  done
+
+  "$labctl" ssh "$server_vm" -- "$remote_harness/install-server" \
+    "$remote_harness/authorized.pub" "$remote_harness/observer.pub" \
+    >"$workdir/server.env"
+
+  declared=$(awk -F= '$1 == "HOST_KEY" {print $2}' "$workdir/server.env")
+  [[ "$declared" == "$host_key_fingerprint" ]] \
+    || fail "the server announces the host key $declared, the LAB channel read $host_key_fingerprint"
+
+  {
+    echo "TARGET=$server_address"
+    cat "$workdir/client.env" "$workdir/server.env"
+  } >"$workdir/values"
+  : >"$workdir/perimeter.env"
+  for name in "${required_names[@]}"; do
+    local value
+    value=$(awk -F= -v name="$name" '$1 == name {print substr($0, length(name) + 2)}' \
+      "$workdir/values")
+    [[ -n "$value" ]] || fail "the mounted perimeter never described $name"
+    printf 'export YOUR_CLOUD_LAB_%s=%s\n' "$name" "$value" >>"$workdir/perimeter.env"
+  done
+  "$labctl" copy-to "$console_vm" "$workdir/perimeter.env" \
+    "$remote_state/perimeter.env" >/dev/null
+  echo "perimeter described by ${#required_names[@]} names"
+}
+
+sync() {
+  # The build cache of lab-console is deliberately preserved: rebuilding this
+  # workspace from nothing costs far more than the copy it would replace.
+  tar -C "$root/console" --exclude=target -czf "$workdir/src-tauri.tgz" src-tauri
+  "$labctl" copy-to "$console_vm" "$workdir/src-tauri.tgz" \
+    "$remote_harness/src-tauri.tgz" >/dev/null
+  "$labctl" ssh "$console_vm" -- "
+set -e
+install -d $remote_sources
+if [ -d $remote_sources/src-tauri ]; then
+  find $remote_sources/src-tauri -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} +
+fi
+tar -C $remote_sources -xzf $remote_harness/src-tauri.tgz
+rm -f $remote_harness/src-tauri.tgz"
+  echo "sources synchronised into $console_vm:$remote_sources"
+}
+
+run_suite() {
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run" "$@"
+}
+
+remove() {
+  local status=0
+  "$labctl" ssh "$server_vm" -- "$remote_harness/remove-server" || status=1
+  "$labctl" ssh "$console_vm" -- "$remote_harness/remove-client" || status=1
+  "$labctl" ssh "$server_vm" -- "rm -rf $remote_harness" || status=1
+  "$labctl" ssh "$console_vm" -- "rm -rf $remote_harness" || status=1
+  [[ $status -eq 0 ]] || fail "the perimeter removal is not proven"
+  echo "perimeter removed from both machines"
+}
+
+case "$command" in
+  setup) setup ;;
+  sync) sync ;;
+  run) run_suite "$@" ;;
+  remove) remove ;;
+  all)
+    setup
+    sync
+    status=0
+    run_suite "$@" || status=$?
+    remove
+    [[ $status -eq 0 ]] || fail "the personal access contract suite failed with $status"
+    echo "PROVE_PERSONAL_ACCESS_OK"
+    ;;
+esac
