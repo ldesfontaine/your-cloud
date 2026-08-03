@@ -33,6 +33,13 @@ les adresses de la machine locale. Ce harnais monte ce périmètre sur les deux 
 - [`run`](personal-access/run) exécute la suite dans `lab-console` contre le
   périmètre monté, en repartant d'un répertoire de travail vide, d'aucune
   confiance enregistrée et d'aucune sonde héritée d'une exécution précédente.
+  Elle l'exécute **deux fois**. D'abord sans le moindre affichage : le client,
+  l'agent et le transport ne doivent rien à une session graphique, et c'est de
+  ne pas en avoir qui le dit. Ensuite sous un `Xvfb` isolé, avec `--ignored`,
+  pour les seuls cas dont l'affichage est l'objet : un helper lancé par le
+  superviseur de la Console elle-même, observé par la fenêtre qu'il ouvre.
+  `LC_ALL` y est fixé parce que GTK écrit sur la sortie d'erreur sous une
+  locale absente.
 - [`remove-client`](personal-access/remove-client) et
   [`remove-server`](personal-access/remove-server) rendent les deux machines à
   leur état initial et échouent visiblement s'ils ne peuvent pas prouver

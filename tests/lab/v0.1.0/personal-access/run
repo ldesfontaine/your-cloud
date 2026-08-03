@@ -29,9 +29,24 @@ rm -f "$YOUR_CLOUD_LAB_KNOWN_HOSTS"
 # shellcheck source=/dev/null
 . /root/.cargo/env
 cd "$sources"
+
 # One job everywhere: these machines hold about two gibibytes of memory.
-CARGO_BUILD_JOBS=1 cargo "+$toolchain" test --locked -j 1 \
-  -p your-cloud-native-bootstrap-assistant \
-  --features personal-access-contract-test \
-  --test personal-access-contract \
-  "$@" -- --test-threads=1
+export CARGO_BUILD_JOBS=1
+suite=(
+  cargo "+$toolchain" test --locked -j 1
+  -p your-cloud-native-bootstrap-assistant
+  --features personal-access-contract-test
+  --test personal-access-contract
+)
+
+# The suite proper, with no display at all: the client, the agent and the
+# transport owe nothing to a graphical session, and running them without one is
+# what says so.
+"${suite[@]}" "$@" -- --test-threads=1
+
+# The cases a display is the whole point of: a helper launched by the Console's
+# own supervisor, observed through the window it opens. `LC_ALL` is fixed
+# because GTK writes on standard error under an unset locale, and the Console
+# forwards to the helper exactly the locale it holds itself.
+LC_ALL=C.UTF-8 xvfb-run -a env NO_AT_BRIDGE=1 \
+  "${suite[@]}" "$@" -- --ignored --test-threads=1

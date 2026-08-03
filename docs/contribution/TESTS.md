@@ -411,10 +411,19 @@ forcées, trois `sshd` hors listes positives, les noms du résolveur, un
 `ssh-agent` à deux identités et le pont d'observation du serveur — exécute la
 suite `personal-access-contract`, puis démonte et prouve l'absence. Les
 identités sont générées au montage ; aucune matière de clé, aucun secret et
-aucune adresse de LAB ne vit dans le dépôt. Le rejeu du 3 août 2026 depuis ce
-harnais rend ses dix-sept tests verts. Il porte sur l'arbre de travail de la
-branche `assistant-personal-access-transport` et non sur un candidat publié : il
-documente le harnais, il ne ferme pas #52.
+aucune adresse de LAB ne vit dans le dépôt. Il porte sur l'arbre de travail de
+la branche `assistant-personal-access-transport` et non sur un candidat publié :
+il documente le harnais, il ne ferme pas #52.
+
+La suite y est exécutée deux fois. Sans affichage d'abord — le client, l'agent
+et le transport ne doivent rien à une session graphique — puis sous un `Xvfb`
+isolé avec `--ignored`, pour les deux cas dont l'affichage est l'objet : un
+helper lancé par le superviseur de la Console elle-même atteint réellement
+l'agent personnel et ouvre sa fenêtre, tandis qu'une fenêtre d'élévation lancée
+par le même superviseur ne reçoit jamais l'endpoint de cet agent. Le rejeu du
+3 août 2026 rend verts vingt-deux tests sans affichage et deux sous `Xvfb` ; les
+vingt-deux comprennent les cinq tests unitaires du superviseur de la Console,
+que l'inclusion de sa source dans la suite amène avec elle.
 
 #42 est découpée dans l'ordre en #51 pour les bornes KDF et la politique
 `sudo`, #52 pour l'agent personnel contre une cible exacte, #53 pour la clé

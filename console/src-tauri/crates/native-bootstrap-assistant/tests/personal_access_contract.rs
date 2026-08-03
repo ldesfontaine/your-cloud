@@ -30,6 +30,16 @@ mod bounded_process;
 /// mean the same thing by "the canary is absent".
 #[path = "support/canary_scan.rs"]
 mod canary_scan;
+/// The Console's own supervisor, compiled from the Console's own source the
+/// way the parent contract already does it.
+///
+/// Nothing below re-implements how a helper is launched. The claim being made
+/// — that a helper started by the *product* reaches the personal agent — is
+/// only worth something if the launcher under test is the shipped one,
+/// `env_clear` and environment allowlist included.
+#[allow(dead_code)]
+#[path = "../../../src/native_assistant.rs"]
+mod native_assistant;
 
 use std::{
     fs,
@@ -52,6 +62,11 @@ use bounded_process::{
     collect_output_bounded, terminate_and_reap_bounded, wait_bounded, REAP_TIMEOUT,
 };
 use canary_scan::file_contains;
+use native_assistant::{NativeAssistantPoll, NativeAssistantSupervisor};
+use your_cloud_bootstrap_protocol::{
+    AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
+    BootstrapTarget, NativePromptKind,
+};
 use your_cloud_native_bootstrap_assistant::personal_access::{
     agent_client::{
         AgentRefusal, BoundedAgentStream, PersonalAgent, SigningRefusal, StreamRefusal,
@@ -1134,4 +1149,304 @@ fn capture_local(command: &str) -> String {
         .and_then(|child| collect_output_bounded(child, SERVER_TIMEOUT))
         .expect("the local capture must be bounded");
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+// -------------------------------------------------- launched by the Console
+
+/// Request identifier of the supervised personal access launch.
+const SUPERVISED_REQUEST_ID: &str = "0123456789abcdef0123456789abcdef";
+/// Request identifier of the escalation launch used as the control.
+const ESCALATION_REQUEST_ID: &str = "fedcba9876543210fedcba9876543210";
+/// Lease the Console gives a supervised helper here. It is generous on
+/// purpose: the window only appears once the resolution, the address freeze,
+/// the agent endpoint observation and the identity listing have all happened.
+const SUPERVISED_LEASE_MILLIS: u64 = 60_000;
+const SUPERVISED_LEASE: Duration = Duration::from_millis(SUPERVISED_LEASE_MILLIS);
+/// Longest a supervised window may take to become observable.
+const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
+/// Title GTK gives the personal access window, and no other window.
+const PERSONAL_ACCESS_TITLE: &str = "Your Cloud — autoriser l’accès personnel";
+/// Title of the escalation window, which needs no agent at all.
+const ESCALATION_TITLE: &str = "Your Cloud — mot de passe sudo";
+/// The single environment name that can carry a Linux agent endpoint.
+const ENDPOINT_VARIABLE: &str = "SSH_AUTH_SOCK";
+
+/// The scope the Console submits for a real personal access against the LAB.
+///
+/// The host is the synthetic *name*, not the address, so reaching a window
+/// also means the name was resolved once and its addresses frozen before
+/// anything was displayed.
+fn supervised_personal_access_scope() -> AssistantScopeV1 {
+    AssistantScopeV1 {
+        schema_version: 1,
+        request_id: SUPERVISED_REQUEST_ID.into(),
+        mode: BootstrapMode::Create,
+        target: BootstrapTarget {
+            host: required(NAME),
+            port: required_port(PORT),
+            username: required(USERNAME),
+            host_key_sha256: required(HOST_KEY),
+            access_kind: BootstrapAccessKind::Administrator,
+        },
+        step: BootstrapStep::PersonalAccess,
+        actions: [BootstrapAction::AuditTargetReadOnly],
+        prompt: NativePromptKind::ConfirmPersonalAccess,
+        target_addresses: Vec::new(),
+        // Both stamps are the launcher's to fill: it re-samples the shared
+        // clock and recomputes what is left of the lease before transmitting.
+        issued_at_monotonic_nanos: 0,
+        remaining_millis: SUPERVISED_LEASE_MILLIS,
+    }
+}
+
+/// The same launch, for the step that must never see an agent. It carries a
+/// synthetic host because the escalation window opens without resolving
+/// anything at all.
+fn supervised_escalation_scope() -> AssistantScopeV1 {
+    AssistantScopeV1 {
+        request_id: ESCALATION_REQUEST_ID.into(),
+        target: BootstrapTarget {
+            host: "controller.example.test".into(),
+            port: 22,
+            username: "infra_admin".into(),
+            host_key_sha256: required(HOST_KEY),
+            access_kind: BootstrapAccessKind::Administrator,
+        },
+        step: BootstrapStep::PrivilegeEscalation,
+        prompt: NativePromptKind::SudoPassword,
+        ..supervised_personal_access_scope()
+    }
+}
+
+/// One visible window, and the process the X server says owns it.
+struct SupervisedWindow {
+    pid: u32,
+    title: String,
+}
+
+/// A helper launched by `supervisor`, observed through the window it opened.
+///
+/// The window is found by *ownership* and only then read: every visible window
+/// is asked who owns it, and the one whose owner is a direct child of this
+/// process is the supervised helper. The title is an assertion afterwards,
+/// never the filter, so a window that opened under the wrong title fails the
+/// case instead of being skipped over.
+fn await_supervised_window(
+    supervisor: &mut NativeAssistantSupervisor,
+    request_id: &str,
+) -> SupervisedWindow {
+    let deadline = Instant::now() + WINDOW_TIMEOUT;
+    loop {
+        assert_eq!(
+            supervisor.poll(request_id),
+            Ok(NativeAssistantPoll::Running),
+            "the supervised helper ended before opening a window"
+        );
+        if let Some(window) = visible_window_owned_by_a_child() {
+            return window;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no visible window owned by a child of this Console appeared"
+        );
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn visible_window_owned_by_a_child() -> Option<SupervisedWindow> {
+    let listing = xdotool(&["search", "--onlyvisible", "--name", "."])?;
+    for window_id in listing.lines() {
+        let window_id = window_id.trim();
+        if window_id.is_empty() {
+            continue;
+        }
+        let Some(pid) =
+            xdotool(&["getwindowpid", window_id]).and_then(|pid| pid.trim().parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if parent_of(pid) != Some(std::process::id()) {
+            continue;
+        }
+        let title = xdotool(&["getwindowname", window_id])?.trim().to_owned();
+        return Some(SupervisedWindow { pid, title });
+    }
+    None
+}
+
+/// Runs one bounded `xdotool` query, or answers nothing when it matched
+/// nothing. A failing query is never a failing proof by itself: the caller
+/// polls until its deadline.
+fn xdotool(arguments: &[&str]) -> Option<String> {
+    let child = Command::new("xdotool")
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("xdotool must be installed where a window is observed");
+    let output = collect_output_bounded(child, REAP_TIMEOUT).expect("xdotool must be bounded");
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The parent this process table reports for `pid`.
+///
+/// The command field can itself contain spaces and parentheses, so the split
+/// starts after its closing parenthesis: state is then the first field and the
+/// parent identifier the second.
+fn parent_of(pid: u32) -> Option<u32> {
+    let status = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, after_command) = status.rsplit_once(')')?;
+    after_command.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// What the supervised helper actually received, read from the kernel rather
+/// than from the launcher's intentions.
+fn environment_of(pid: u32) -> Vec<String> {
+    let environment = fs::read(format!("/proc/{pid}/environ"))
+        .unwrap_or_else(|error| panic!("the helper environment must be observable: {error}"));
+    environment
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| String::from_utf8_lossy(entry).into_owned())
+        .collect()
+}
+
+/// A helper the *Console* launched really reaches the personal agent.
+///
+/// This is the case a unit test of the allowlist cannot make. The list of
+/// names the launcher forwards can be asserted in isolation and still leave
+/// the path unreachable in production, because what decides reachability is
+/// the value arriving in a process that was started with `env_clear`, then
+/// found by `observe_linux_endpoint`, then answered by a live agent.
+///
+/// The window is the observable form of all of that. `serve_personal_access`
+/// opens one only after `Prepared::open` has resolved the name once, frozen
+/// its addresses, read the endpoint from the environment, judged the socket
+/// and obtained the identities the agent really holds — so a window carrying
+/// the personal access title, owned by a child of this Console, is a proof
+/// that the endpoint crossed the process boundary and led to a live agent.
+/// The environment read back from the kernel then names the value itself.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_console_launched_helper_reaches_the_personal_agent_and_opens_its_window() {
+    let endpoint = std::env::var(ENDPOINT_VARIABLE)
+        .expect("this process must itself hold a live agent endpoint");
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
+    let name = path
+        .file_name()
+        .expect("the helper binary must be a file")
+        .to_owned();
+    let mut supervisor = NativeAssistantSupervisor::default();
+    supervisor
+        .start_with_path(
+            &path,
+            &name,
+            supervised_personal_access_scope(),
+            Instant::now() + SUPERVISED_LEASE,
+        )
+        .expect("the Console supervisor must launch the helper");
+
+    let window = await_supervised_window(&mut supervisor, SUPERVISED_REQUEST_ID);
+    assert_eq!(
+        window.title, PERSONAL_ACCESS_TITLE,
+        "the supervised helper opened a window that is not the personal access one"
+    );
+
+    let environment = environment_of(window.pid);
+    assert!(
+        environment.contains(&format!("{ENDPOINT_VARIABLE}={endpoint}")),
+        "the helper reached its window without the endpoint the Console holds: {environment:?}"
+    );
+
+    // Cancelling from the Console closes the window, the helper and the agent
+    // connection it opened, exactly as any other terminal path would.
+    supervisor
+        .cancel(SUPERVISED_REQUEST_ID)
+        .expect("the Console must be able to cancel its own helper");
+    let deadline = Instant::now() + SETTLE_TIMEOUT;
+    while process_alive(window.pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the cancelled helper is still alive at pid {}",
+            window.pid
+        );
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// No other window is handed the user's signing oracle.
+///
+/// The endpoint is granted per step, not once per process: an escalation
+/// window asks for a `sudo` password and has no use for an agent, so it must
+/// not be able to reach one even though the Console that launched it can. The
+/// same launch is otherwise identical, which is what makes the absence below
+/// a decision rather than an accident of the environment.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_window_that_needs_no_agent_is_never_given_one() {
+    assert!(
+        std::env::var_os(ENDPOINT_VARIABLE).is_some(),
+        "the control is meaningless unless this process holds an endpoint to withhold"
+    );
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
+    let name = path
+        .file_name()
+        .expect("the helper binary must be a file")
+        .to_owned();
+    let mut supervisor = NativeAssistantSupervisor::default();
+    supervisor
+        .start_with_path(
+            &path,
+            &name,
+            supervised_escalation_scope(),
+            Instant::now() + SUPERVISED_LEASE,
+        )
+        .expect("the Console supervisor must launch the helper");
+
+    let window = await_supervised_window(&mut supervisor, ESCALATION_REQUEST_ID);
+    assert_eq!(
+        window.title, ESCALATION_TITLE,
+        "the control must really be the escalation window"
+    );
+
+    let environment = environment_of(window.pid);
+    assert!(
+        environment
+            .iter()
+            .any(|entry| entry.starts_with("DISPLAY=")),
+        "the control window did receive the graphical allowlist: {environment:?}"
+    );
+    assert!(
+        !environment
+            .iter()
+            .any(|entry| entry.starts_with(&format!("{ENDPOINT_VARIABLE}="))),
+        "an escalation window was handed the personal agent endpoint: {environment:?}"
+    );
+
+    supervisor
+        .cancel(ESCALATION_REQUEST_ID)
+        .expect("the Console must be able to cancel its own helper");
+    let deadline = Instant::now() + SETTLE_TIMEOUT;
+    while process_alive(window.pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the cancelled helper is still alive at pid {}",
+            window.pid
+        );
+        thread::sleep(POLL_INTERVAL);
+    }
 }
