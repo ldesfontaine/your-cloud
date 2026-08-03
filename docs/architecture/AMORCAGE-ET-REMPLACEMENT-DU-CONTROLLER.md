@@ -196,6 +196,25 @@ implicite d'un autre format. L'ouverture est bornée et ne réécrit pas le fich
 Les octets lus, la passphrase et la clé déchiffrée sont zéroïsés sur les sorties
 contrôlées.
 
+Le format, le chiffrement, le KDF et le nombre de rounds sont lus **avant**
+toute dérivation. Une enveloppe hors contrat est donc refusée sans demander de
+passphrase et sans dépenser de temps. Le nombre de rounds accepté est borné à
+2048 : la [calibration LAB](../lab/v0.1.0-personal-access-bounds.md) mesure
+environ 4,6 ms par round sur l'hôte Console de référence, soit 9,4 s à cette
+borne contre les 300 s de l'échéance, tout en restant très au-dessus du défaut
+OpenSSH de 16. Cette borne est un garde-fou : la garantie reste l'échéance
+monotone appliquée pendant la dérivation. Aucun minimum de politique n'est
+imposé, seul le chiffrement effectif est exigé.
+
+La journalisation d'entrée `sudo` est traitée en amont du secret. Un préflight
+non secret `sudo -N -n -l -l`, sans PTY, entrée fermée, sous `LC_ALL=C` et à
+sortie bornée, doit produire un listing attestable ; `log_input` et `log_stdin`
+y sont des refus durs. Une sortie absente, tronquée, traduite ou exigeant elle-même
+une authentification échoue fermé. La décision ne s'appuie jamais sur le
+masquage de mot de passe de `sudo`, dont la regex de prompt est configurable :
+le prompt sentinelle du produit n'est pas celui que la regex par défaut décrit,
+et la journalisation est donc refusée plutôt que supposée masquée.
+
 L'exécution de #42 suit quatre contrats successifs. #51 mesure et ferme les
 bornes du KDF ainsi que la politique de journalisation `sudo` ; #52
 authentifie une cible exacte par l'agent personnel ; #53 ouvre le seul format

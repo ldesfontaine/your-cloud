@@ -123,6 +123,16 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — bornes KDF et politique `sudo` de l'accès personnel](v0.1.0-personal-access-bounds.md) :
+  passage `quick` du 3 août 2026 pour #51. La calibration `bcrypt_pbkdf` sur
+  `lab-console` rend environ 4,6 ms par round, identiques pour Ed25519 et RSA
+  3072, et fixe `MAX_BCRYPT_ROUNDS = 2048`, vérifié à 9355 ms sur les 300 s de
+  l'échéance. La matrice `sudo` réelle sur Debian 13 valide les refus de
+  `log_input` et `log_stdin` et révèle que les entrées Defaults sont réparties
+  sur plusieurs lignes ; les cinq captures sont figées comme fixtures. 65 tests
+  verts, secrets exclusivement synthétiques, compte et politiques retirés. Ce
+  passage ne prouve ni SSH, ni signature d'agent, ni envoi de mot de passe : ils
+  restent à #52, #53 et #54.
 - [`v0.1.0` — consentement natif et mémoire secrète Linux/Windows](v0.1.0-native-secret-consent-linux-windows.md) :
   #45 prouvée sur `c0569d0` par `30779157351` puis fermée le 3 août 2026 ;
   `ae550470bcff08c08624988c17d16db6cb62070a` reste un candidat intermédiaire et

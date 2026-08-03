@@ -6,6 +6,7 @@ mod native_prompt;
 #[cfg(target_os = "windows")]
 mod native_prompt_windows;
 mod parent;
+pub mod personal_access;
 mod secret;
 mod watchdog;
 
