@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Mesure la consommation GitHub Actions et garde les matrices coûteuses.
+
+Cet outil n'exécute ni le produit, ni un test, ni un build : il interroge
+l'API GitHub en lecture seule et calcule les minutes réellement facturées à
+partir des durées de jobs, en appliquant le facteur de plateforme.
+
+Il existe parce que le quota mensuel a été épuisé sans avertissement : la
+facture n'était visible qu'après la dépense.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import subprocess
+import sys
+from collections import defaultdict
+
+# Facteurs de facturation GitHub Actions pour les runners hébergés.
+# Windows coûte le double d'Ubuntu, macOS dix fois ; seuls les deux premiers
+# sont utilisés par ce dépôt.
+PLATFORM_FACTORS = {"ubuntu": 1, "windows": 2, "macos": 10}
+
+# Minutes incluses par mois sur le plan gratuit pour un dépôt privé.
+DEFAULT_INCLUDED_MINUTES = 2000
+
+# Garde-fou de pagination : bien au-delà du volume mensuel observé.
+MAX_RUNS = 400
+
+
+class UsageError(RuntimeError):
+    pass
+
+
+def gh_api(path: str) -> object:
+    """Appelle `gh api` en lecture seule et rend la réponse décodée."""
+    try:
+        completed = subprocess.run(
+            ["gh", "api", path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except FileNotFoundError as error:
+        raise UsageError("gh est introuvable ; installez la CLI GitHub") from error
+    except subprocess.TimeoutExpired as error:
+        raise UsageError(f"délai dépassé sur {path}") from error
+    if completed.returncode != 0:
+        raise UsageError(f"{path} : {completed.stderr.strip().splitlines()[:1]}")
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise UsageError(f"réponse illisible pour {path}") from error
+
+
+def platform_factor(runner_labels: list[str], job_name: str) -> int:
+    """Déduit le facteur de facturation d'un job.
+
+    L'étiquette du runner fait autorité ; le nom du job ne sert que de repli
+    lorsque l'API ne rend aucune étiquette.
+    """
+    haystack = " ".join(runner_labels + [job_name]).lower()
+    for platform, factor in PLATFORM_FACTORS.items():
+        if platform in haystack:
+            return factor
+    return 1
+
+
+def job_minutes(job: dict) -> tuple[float, int]:
+    started, completed = job.get("started_at"), job.get("completed_at")
+    if not started or not completed:
+        return 0.0, 1
+    begin = dt.datetime.fromisoformat(started.replace("Z", "+00:00"))
+    end = dt.datetime.fromisoformat(completed.replace("Z", "+00:00"))
+    minutes = max(0.0, (end - begin).total_seconds() / 60)
+    factor = platform_factor(job.get("labels") or [], job.get("name") or "")
+    return minutes, factor
+
+
+def collect(since: str) -> dict:
+    runs = gh_api(f"repos/:owner/:repo/actions/runs?created=%3E%3D{since}&per_page=100")
+    if not isinstance(runs, dict):
+        raise UsageError("réponse inattendue pour la liste des runs")
+    workflow_runs = runs.get("workflow_runs", [])[:MAX_RUNS]
+
+    per_day: dict[str, float] = defaultdict(float)
+    per_platform: dict[str, float] = defaultdict(float)
+    per_run: list[tuple[str, int, str, float]] = []
+    total = 0.0
+
+    for run in workflow_runs:
+        jobs = gh_api(f"repos/:owner/:repo/actions/runs/{run['id']}/jobs")
+        billed = 0.0
+        for job in jobs.get("jobs", []):
+            minutes, factor = job_minutes(job)
+            billed += minutes * factor
+            label = next(
+                (p for p, f in PLATFORM_FACTORS.items() if f == factor and p != "ubuntu"),
+                "ubuntu",
+            )
+            per_platform[label] += minutes * factor
+        day = run["created_at"][:10]
+        per_day[day] += billed
+        total += billed
+        per_run.append((run["created_at"][:16], run["id"], run.get("event", "?"), billed))
+
+    return {
+        "total": total,
+        "per_day": dict(per_day),
+        "per_platform": dict(per_platform),
+        "per_run": per_run,
+        "runs": len(workflow_runs),
+    }
+
+
+def month_start(today: dt.date) -> str:
+    return today.replace(day=1).isoformat()
+
+
+def render(usage: dict, included: int, since: str) -> None:
+    total = usage["total"]
+    remaining = included - total
+    print(f"Consommation GitHub Actions depuis le {since}")
+    print(f"  runs inspectés     : {usage['runs']}")
+    print(f"  minutes facturées  : {total:.0f} sur {included} incluses")
+    print(f"  reste              : {remaining:.0f} min")
+    print()
+    print("  par plateforme (facteur appliqué) :")
+    for platform, minutes in sorted(usage["per_platform"].items(), key=lambda i: -i[1]):
+        share = 100 * minutes / total if total else 0
+        print(f"    {platform:8s} : {minutes:7.0f} min  ({share:.0f} %)")
+    print()
+    print("  par jour :")
+    for day, minutes in sorted(usage["per_day"].items()):
+        print(f"    {day} : {minutes:7.0f} min")
+
+    costly = sorted(usage["per_run"], key=lambda r: -r[3])[:5]
+    if costly:
+        print()
+        print("  runs les plus coûteux :")
+        for created, run_id, event, minutes in costly:
+            print(f"    {created}  {run_id}  {event:18s} {minutes:6.0f} min")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Mesure la consommation GitHub Actions du dépôt courant.",
+    )
+    parser.add_argument(
+        "--since",
+        help="date ISO de début (par défaut le premier jour du mois courant)",
+    )
+    parser.add_argument(
+        "--included",
+        type=int,
+        default=DEFAULT_INCLUDED_MINUTES,
+        help=f"minutes incluses par cycle (défaut {DEFAULT_INCLUDED_MINUTES})",
+    )
+    parser.add_argument(
+        "--guard",
+        type=int,
+        metavar="MINUTES",
+        help=(
+            "échoue si moins de MINUTES restent ; à exécuter avant toute "
+            "matrice native pour ne pas la découvrir après la dépense"
+        ),
+    )
+    arguments = parser.parse_args()
+
+    since = arguments.since or month_start(dt.date.today())
+    try:
+        usage = collect(since)
+    except UsageError as error:
+        print(f"ci-usage: {error}", file=sys.stderr)
+        return 2
+
+    render(usage, arguments.included, since)
+
+    if arguments.guard is not None:
+        remaining = arguments.included - usage["total"]
+        print()
+        if remaining < arguments.guard:
+            print(
+                f"ci-usage: REFUS — {remaining:.0f} min restantes, "
+                f"{arguments.guard} exigées",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"ci-usage: OK — {remaining:.0f} min restantes pour {arguments.guard} exigées")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
