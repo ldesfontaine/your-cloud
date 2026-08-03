@@ -215,6 +215,42 @@ Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation
 de conformité.
 
+## Budget des runners hébergés
+
+Le quota mensuel inclus a été épuisé le 3 août 2026, sans avertissement : la
+dépense n'était visible qu'après coup. Les mesures ci-dessous existent pour que
+cela ne se reproduise pas.
+
+**Le coût est dominé par Windows.** Sur le mois, 1469 des 2129 minutes
+facturées viennent du runner Windows, facturé au double. Depuis l'ajout de
+`russh`, une matrice native complète coûte environ 98 minutes facturées : 21
+sous Linux et 38 sous Windows doublées. À 2000 minutes incluses, cela plafonne
+à une vingtaine de matrices par cycle.
+
+**Une matrice par palier, pas par pull request.** La décision de réserver les
+builds natifs au candidat final vaut aussi entre les sous-issues d'un même
+palier. Une fusion intermédiaire s'appuie sur sa preuve LAB et enregistre
+explicitement quel SHA porte la dernière preuve native. Ce que la preuve ne
+s'hérite pas d'un SHA à l'autre n'implique pas que chaque fusion exige sa
+propre matrice : cela impose seulement de ne jamais attribuer une preuve à un
+SHA qu'elle n'a pas couvert.
+
+**Mesurer avant de dépenser.** [`tools/ci-usage`](../../tools/ci-usage) calcule
+les minutes réellement facturées du cycle et refuse en dessous d'une marge
+donnée :
+
+```text
+tools/ci-usage --guard 100
+```
+
+Cette commande précède tout `workflow_dispatch` de la matrice native. Elle
+n'exécute rien et ne consomme aucune minute.
+
+**Ce qu'une preuve LAB ne remplace pas.** Le LAB couvre Linux : compilation,
+tests et scénarios. Il ne couvre ni la compilation Windows, ni les paquets, ni
+les gardes ELF et PE, ni les smokes après installation. Une fusion sur preuve
+LAB seule reste donc intermédiaire et le déclare.
+
 ## Menaces prises en compte
 
 Le contenu d'une pull request est considéré comme non fiable. Il peut modifier

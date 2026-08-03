@@ -11,6 +11,11 @@ aucun scénario de test.
   LAB encore persistant à la clôture.
 - [`check-docs`](check-docs) vérifie la structure et les liens de la
   documentation sans lancer le produit.
+- [`ci-usage`](ci-usage) mesure les minutes GitHub Actions réellement
+  facturées du cycle courant, en appliquant le facteur de plateforme, et sert
+  de garde avant une matrice native : `tools/ci-usage --guard 100` échoue
+  lorsque la marge restante est insuffisante. Il interroge l'API en lecture
+  seule et n'exécute rien.
 
 Une image CI ordinaire fournit un système de fichiers et des dépendances
 préinstallées, pas automatiquement la topologie multi-VM `v1-full` ni l'accès
