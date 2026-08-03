@@ -14,6 +14,7 @@ secret-crash-contract-test = []
 windows-parent-spoof-contract-test = ["native-prompt-contract-test"]
 windows-live-prompt-contract-test = ["native-prompt-contract-test"]
 delayed-start-contract-test = ["native-prompt-contract-test"]
+personal-access-contract-test = []
 
 [[bin]]
 name = "your-cloud-native-bootstrap-assistant"
@@ -33,6 +34,11 @@ required-features = ["windows-parent-spoof-contract-test"]
 name = "your-cloud-delayed-start-fixture"
 path = "src/delayed_start_fixture.rs"
 required-features = ["delayed-start-contract-test"]
+
+[[bin]]
+name = "your-cloud-personal-access-fixture"
+path = "src/personal_access_fixture.rs"
+required-features = ["personal-access-contract-test"]
 
 [[test]]
 name = "windows-job-contract"
@@ -69,6 +75,11 @@ required-features = ["windows-live-prompt-contract-test"]
 name = "delayed-start-contract"
 path = "tests/delayed_start_contract.rs"
 required-features = ["delayed-start-contract-test"]
+
+[[test]]
+name = "personal-access-contract"
+path = "tests/personal_access_contract.rs"
+required-features = ["personal-access-contract-test"]
 
 [dependencies]
 # Client SSH du chemin d'accès personnel. Épinglé exactement, sans features
