@@ -123,6 +123,33 @@ cadré. Le laptop peut éditer, inspecter Git, contrôler l'inventaire et pilote
 `labctl`, conformément aux
 [règles LAB](../lab/README.md).
 
+### Où vit chaque famille de preuve
+
+La décision
+[`#67`](https://github.com/ldesfontaine/your-cloud/issues/67) place chaque
+famille de preuve là où seul cet environnement peut la produire. Le
+[contrat CI](CI.md) en conserve le détail, les deux rythmes de validation et ce
+qu'une fusion intermédiaire doit prouver.
+
+- **Poste de développement** : les contrôles statiques seulement —
+  `tools/check-docs`, le contrat des sources Console, `cargo fmt --check` et le
+  garde de politique du workflow. Ils lisent les sources sans exécuter de
+  build, de test ni de serveur du produit, donc sans contredire la règle de
+  placement LAB.
+- **LAB** : tout le fonctionnel Linux — compilation, tests du helper, `.deb`,
+  garde ELF, installation, smoke et scénarios multi-VM — ainsi que la
+  validation continue du helper Windows dans la VM d'évaluation manuelle
+  ouverte par la même décision.
+- **CI hébergée** : ce que ni le poste ni le LAB ne produisent — la matrice
+  native Windows avec ses paquets, signatures et gates, et l'attestation du
+  candidat de palier.
+
+Une ligne de ces matrices remplie par le LAB n'attend donc aucun run hébergé.
+Une ligne propre à Windows empaqueté, signé ou attesté n'est remplie que par la
+matrice native `workflow_dispatch`, déclenchée une seule fois par palier sur le
+candidat exact. Une observation du LAB Windows local reste une validation
+continue : elle ne ferme aucune ligne à elle seule.
+
 L'arborescence rend cette frontière visible :
 
 - [`tests/checks/`](../../tests/checks/) contient les contrôles génériques,

@@ -2,12 +2,59 @@
 
 Cette CI sépare la validation rapide de chaque pull request de la matrice native
 Linux/Windows réservée à un candidat final explicitement déclenché. Elle ne
-déploie rien, ne pilote pas le LAB et ne publie aucun artefact produit.
+déploie rien, ne pilote pas le LAB et ne publie aucun artefact produit. Son
+rôle est borné à ce que ni le poste de développement ni le LAB ne produisent :
+Windows et l'attestation d'un candidat de palier.
 
 Une **CI générique** exécute des contrôles reproductibles dans une machine
 jetable fournie par GitHub. Un **runner LAB dédié** serait au contraire une
 machine administrée pour piloter KVM/libvirt et la topologie `v1-full`. Une
 image CI préconstruite fournit des outils, pas cette topologie ni son autorité.
+
+## Placement des preuves
+
+Une preuve vit là où seul cet environnement peut la produire ; tout le reste
+descend à l'endroit le moins cher et le plus reproductible. La décision
+[`#67`](https://github.com/ldesfontaine/your-cloud/issues/67), prise le 3 août
+2026 après l'épuisement du quota Actions, fixe ce placement en trois étages.
+
+| Étage | Preuves | Coût |
+|---|---|---|
+| poste de développement | contrôles statiques : `tools/check-docs`, contrat des sources Console, `cargo fmt --check`, garde de politique du workflow | secondes, aucune minute facturée |
+| LAB | tout le fonctionnel Linux : compilation, tests du helper, paquet `.deb`, garde ELF, installation, smoke, scénarios multi-VM | aucune minute facturée ; le LAB est ici plus capable que la CI |
+| CI hébergée | ce que ni le poste ni le LAB ne produisent : Windows, et l'attestation du candidat de palier — matrice complète, signature, artefacts | environ 98 minutes facturées par matrice |
+
+Le LAB Windows local ouvert par la même décision sert la validation continue du
+helper Windows ; il ne déplace pas l'attestation. La CI hébergée reste
+l'autorité qui atteste un candidat de palier et la porte native
+`workflow_dispatch` reste exigée pour fermer un palier. Les
+[règles LAB](../lab/README.md) décrivent sa forme manuelle et ses limites.
+
+Descendre une preuve d'un étage ne consiste jamais à la retirer. Aucune garde,
+aucun refus hostile et aucun contrôle statique n'est affaibli pour réduire un
+coût ; le garde versionné `tests/checks/ci-workflow-policy.py` en particulier
+reste intégral.
+
+### Deux rythmes de validation
+
+- **À chaque changement.** Les contrôles statiques s'exécutent sur le poste et
+  la preuve fonctionnelle dans le LAB : Linux, et Windows local pour le helper.
+  Ce rythme est quotidien et ne consomme aucune minute hébergée.
+- **À chaque candidat de palier.** Une seule matrice native `workflow_dispatch`
+  est déclenchée sur le candidat de fusion, précédée de
+  `tools/ci-usage --guard 100`. Jamais de matrice par pull request, jamais par
+  fusion intermédiaire.
+
+### Ce qu'une fusion intermédiaire doit prouver
+
+Une fusion intermédiaire prouve deux choses : les contrôles statiques verts sur
+le poste, et une preuve LAB enregistrée avec le SHA qu'elle couvre réellement.
+Elle a le droit de ne pas repayer une matrice native : la preuve native
+appartient au candidat de palier, et le SHA attesté est noté explicitement,
+comme pratiqué depuis
+[`#45`](https://github.com/ldesfontaine/your-cloud/issues/45). Une preuve ne
+s'hérite pas d'un SHA à l'autre ; ne pas rejouer la matrice n'autorise donc pas
+à attribuer une preuve native à un SHA qu'elle n'a pas couvert.
 
 ## État actuel
 
@@ -233,7 +280,8 @@ palier. Une fusion intermédiaire s'appuie sur sa preuve LAB et enregistre
 explicitement quel SHA porte la dernière preuve native. Ce que la preuve ne
 s'hérite pas d'un SHA à l'autre n'implique pas que chaque fusion exige sa
 propre matrice : cela impose seulement de ne jamais attribuer une preuve à un
-SHA qu'elle n'a pas couvert.
+SHA qu'elle n'a pas couvert. C'est le second des deux rythmes fixés plus haut
+par [`#67`](https://github.com/ldesfontaine/your-cloud/issues/67).
 
 **Mesurer avant de dépenser.** [`tools/ci-usage`](../../tools/ci-usage) calcule
 les minutes réellement facturées du cycle et refuse en dessous d'une marge
@@ -247,9 +295,11 @@ Cette commande précède tout `workflow_dispatch` de la matrice native. Elle
 n'exécute rien et ne consomme aucune minute.
 
 **Ce qu'une preuve LAB ne remplace pas.** Le LAB couvre Linux : compilation,
-tests et scénarios. Il ne couvre ni la compilation Windows, ni les paquets, ni
-les gardes ELF et PE, ni les smokes après installation. Une fusion sur preuve
-LAB seule reste donc intermédiaire et le déclare.
+tests, paquet `.deb`, garde ELF, installation, smoke et scénarios multi-VM. Le
+LAB Windows minimal y ajoute une évaluation manuelle et un smoke scripté du
+helper. Aucun des deux ne produit le `.msi`, sa signature Authenticode, le gate
+PE ni l'attestation d'un candidat de palier : ces preuves restent hébergées.
+Une fusion sur preuve LAB seule reste donc intermédiaire et le déclare.
 
 ## Menaces prises en compte
 

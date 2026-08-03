@@ -202,6 +202,27 @@ hébergé porte uniquement la différence native : tests propres à la plateform
 build et signature synthétique du `.msi`, installation, lancement, absence de
 listener et smoke WebView2. Il ne reçoit aucune VM, route ou doublure de
 Controller, Relay ou Daemon. Les flux, identités distribuées, pannes, reprises
-et scénarios multi-VM restent sous l'autorité du LAB Linux. Un nouveau LAB
-Windows ne serait ouvert que pour un défaut fonctionnel réellement propre à
-Windows, jamais pour simuler la topologie dans la CI générique.
+et scénarios multi-VM restent sous l'autorité du LAB Linux.
+
+## LAB Windows
+
+Ce document n'ouvrait auparavant un LAB Windows que pour un défaut fonctionnel
+réellement propre à Windows. Cette position reposait sur une prémisse devenue
+fausse le 3 août 2026, jour de l'épuisement du quota Actions : la CI hébergée
+ne couvre pas Windows sans contrainte. La décision de placement des preuves
+[`#67`](https://github.com/ldesfontaine/your-cloud/issues/67) remplace donc
+cette position.
+
+Un LAB Windows local est ouvert, sous forme minimale : une VM d'évaluation
+demandant environ 60 Gio de disque et 4 à 6 Gio de mémoire, provisionnée
+manuellement, avec un smoke scripté. Elle reste hors `labctl`, qui ne connaît
+aujourd'hui qu'une image Debian datée et vérifiée par SHA512 ; une
+automatisation complète attend que sa valeur soit démontrée. Cette VM sert la
+validation continue du helper Windows pendant le développement, au même titre
+que le LAB Linux pour sa moitié.
+
+Elle ne devient pas une autorité d'attestation. La CI hébergée conserve ce
+rôle : la porte native `workflow_dispatch` sur le candidat de palier reste
+exigée pour fermer un palier, selon le [contrat CI](../contribution/CI.md). Une
+observation faite dans ce LAB Windows ne ferme donc rien à elle seule, et elle
+ne simule jamais la topologie multi-VM, qui reste propre au LAB Linux.
