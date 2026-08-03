@@ -13,7 +13,7 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 
 | Élément | État | Autorité |
 |---|---|---|
-| porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974` | états des jobs `Contrôles génériques` et `Politique Plumber` |
+| porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974`. Le contrat des sources Console y est exécuté depuis #60, afin qu'une violation échoue en secondes plutôt qu'après la matrice native | états des jobs `Contrôles génériques` et `Politique Plumber` |
 | matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
 | bornage IPC #43 | porte rapide `30753208857` puis matrice manuelle `30753216798` entièrement vertes sur le candidat produit exact `f3fef79` ; Linux et Windows exécutent le helper compagnon, Windows ajoute son Job Object, son paquet, son gate PE et le dispatch Tauri vivant | états des jobs, journaux et artefact expurgé liés depuis le rapport #43 |
 | consentement et mémoire secrète #45 | preuve fonctionnelle acquise dans `30770893733` sur `b76ded8` ; `30775430141` valide le garde raster Linux, puis `30777209723` valide la correction `EBWebView` et tout le job Windows mais échoue sous Linux sur le réglage de timeout WebDriver, avant l'appel async mutant ; le candidat ne rejoue que ce réglage idempotent et doit être rejoué sur son SHA exact | états des quatre jobs, ordre bloquant du test WER, validation machine des rasters, attribution du listener et inspection des artefacts expurgés |
@@ -293,7 +293,13 @@ hostiles avant activation.
 Le job `Contrôles génériques` fait d'abord analyser le script Windows par le
 parseur PowerShell de l'image Linux, sans exécuter la preuve native, puis isole
 et exerce le contrat de son agrégateur de nettoyage avec une liste vide et une
-erreur synthétique. Il installe ensuite Go `1.26.5` et appelle
+erreur synthétique. Il exécute ensuite le contrat des sources Console avec le
+Node.js déjà présent sur le runner : le script n'importe que des modules Node
+natifs et un module local, donc ni installation, ni dépendance frontend ne sont
+nécessaires. Ce placement est délibéré. Ce contrat était auparavant exercé
+seulement dans la matrice native, si bien qu'une violation rendue en quelques
+secondes n'était découverte qu'après avoir consommé les deux jobs natifs, dont
+Windows facturé au double. Il installe ensuite Go `1.26.5` et appelle
 `tests/checks/source-v0.0.1 ci` sous une identité non root. Cette entrée vérifie
 formatage, syntaxe, schémas structurés, documentation, tests Go, `go vet` et
 build statique, ainsi que le garde de politique du workflow. Le binaire

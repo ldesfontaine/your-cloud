@@ -26,6 +26,13 @@ jobs:
         shell: pwsh
         run: ./tests/checks/console-windows-ci-contract.ps1
 
+      # Le script n'importe que des modules Node natifs et un module local ; il
+      # s'exécute donc avec le Node.js déjà présent sur le runner, sans
+      # installation ni dépendance frontend. Le placer ici fait échouer une
+      # violation en quelques secondes plutôt qu'après la matrice native.
+      - name: Vérifier le contrat des sources Console
+        run: node console/tests/check-source-contract.mjs
+
       - name: Installer Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
