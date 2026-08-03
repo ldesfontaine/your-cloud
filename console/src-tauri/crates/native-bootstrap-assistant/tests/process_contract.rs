@@ -58,6 +58,15 @@ impl MutationKind {
     }
 }
 
+/// The scope these fixtures submit, deliberately not the personal access one.
+///
+/// `ConfirmPersonalAccess` no longer opens a window by itself: it first
+/// resolves the target, freezes its addresses and reads the agent, and against
+/// a synthetic unreachable host it fails before any window exists. The
+/// properties proven here belong to the window — its watchdog, the descriptors
+/// it does not inherit, the mutations it refuses while live — so the scope
+/// carries the escalation couple, which still goes straight to the native
+/// prompt with the same administrator target.
 fn scope(remaining_millis: u64) -> AssistantScopeV1 {
     AssistantScopeV1 {
         schema_version: 1,
@@ -70,9 +79,9 @@ fn scope(remaining_millis: u64) -> AssistantScopeV1 {
             host_key_sha256: HOST_KEY.into(),
             access_kind: BootstrapAccessKind::Administrator,
         },
-        step: BootstrapStep::PersonalAccess,
+        step: BootstrapStep::PrivilegeEscalation,
         actions: [BootstrapAction::AuditTargetReadOnly],
-        prompt: NativePromptKind::ConfirmPersonalAccess,
+        prompt: NativePromptKind::SudoPassword,
         target_addresses: Vec::new(),
         issued_at_monotonic_nanos: monotonic_nanos().expect("shared monotonic clock"),
         remaining_millis,
@@ -286,6 +295,9 @@ fn mutation_frame(initial: &AssistantScopeV1, mutation_kind: MutationKind) -> Ve
             frame(&mutation)
         }
         MutationKind::Step => {
+            // Another admissible step, carrying the prompt that step requires:
+            // the frame must be refused because it arrives after the scope, not
+            // because it is malformed.
             let mut mutation = initial.clone();
             mutation.step = BootstrapStep::UnlockPersonalKey;
             mutation.prompt = NativePromptKind::KeyPassphrase;

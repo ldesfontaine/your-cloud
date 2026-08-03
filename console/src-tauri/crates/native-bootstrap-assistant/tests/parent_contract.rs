@@ -38,6 +38,23 @@ fn scope() -> AssistantScopeV1 {
     }
 }
 
+/// The scope used when the helper must really hold a window open.
+///
+/// `ConfirmPersonalAccess` no longer opens one by itself: it resolves the
+/// target, freezes its addresses and reads the agent first, and against a
+/// synthetic unreachable host it never reaches a window. What is proven below
+/// is that the parent bounds a live helper until it cancels it, so the scope
+/// carries the escalation couple, which still goes straight to the native
+/// prompt with the same administrator target.
+#[cfg(target_os = "linux")]
+fn windowed_scope() -> AssistantScopeV1 {
+    AssistantScopeV1 {
+        step: BootstrapStep::PrivilegeEscalation,
+        prompt: NativePromptKind::SudoPassword,
+        ..scope()
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn console_parent_launches_the_exact_helper_and_refuses_to_invent_success() {
@@ -117,7 +134,7 @@ fn console_parent_keeps_the_gtk_helper_bounded_until_cancelled() {
         .start_with_path(
             path,
             expected_name,
-            scope(),
+            windowed_scope(),
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap();
