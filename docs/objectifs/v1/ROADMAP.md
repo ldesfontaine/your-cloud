@@ -80,8 +80,10 @@ La licence du dépôt public ([`#11`](https://github.com/ldesfontaine/your-cloud
 et la signature Windows publique gratuite
 ([`#12`](https://github.com/ldesfontaine/your-cloud/issues/12)) peuvent avancer
 en parallèle, mais doivent être fermées avant la release `v0.1.0`. Le routage CI par
-domaines ([`#10`](https://github.com/ldesfontaine/your-cloud/issues/10)) reste
-un chantier transverse non bloquant pour le contrat produit.
+domaines ([`#10`](https://github.com/ldesfontaine/your-cloud/issues/10)) a été
+fermé sans implémentation le 3 août 2026 : la décision de placement des preuves
+([`#67`](https://github.com/ldesfontaine/your-cloud/issues/67)) conserve une
+porte rapide uniforme et bon marché, le levier de coût étant le placement.
 
 Dans l'amorçage, l'accès personnel `#42` est désormais découpé en quatre
 contrats exécutables : [`#51`](https://github.com/ldesfontaine/your-cloud/issues/51)
