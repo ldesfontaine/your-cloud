@@ -51,6 +51,118 @@ pub fn transport_parent_contract_main() -> u8 {
     }
 }
 
+/// Names the personal access contract fixture and its suite agree on.
+///
+/// The perimeter is read entirely from the environment: this crate carries no
+/// lab address, no account name and no key material, and the harness that sets
+/// these variables is documented with the run itself.
+#[cfg(all(feature = "personal-access-contract-test", target_os = "linux"))]
+pub mod personal_access_contract {
+    /// Name or numeric address of the machine running the synthetic `sshd`.
+    pub const TARGET: &str = "YOUR_CLOUD_LAB_TARGET";
+    /// Port that `sshd` listens on, decimal.
+    pub const PORT: &str = "YOUR_CLOUD_LAB_PORT";
+    /// Synthetic account the fixture authenticates as.
+    pub const USERNAME: &str = "YOUR_CLOUD_LAB_USERNAME";
+    /// `SHA256:…` fingerprint of that machine's real Ed25519 host key.
+    pub const HOST_KEY: &str = "YOUR_CLOUD_LAB_HOST_KEY";
+    /// Fingerprint of the agent identity the server accepts.
+    pub const AUTHORIZED: &str = "YOUR_CLOUD_LAB_AUTHORIZED";
+
+    /// File created once a `linger` session has completed, so the suite knows
+    /// the process it is about to search really finished a session. It is a
+    /// file rather than a line on standard output for the same reason the
+    /// delayed start fixture uses one: a readiness signal must be observable
+    /// without a blocking read that has no deadline of its own.
+    pub const READY_PATH: &str = "YOUR_CLOUD_LAB_READY_PATH";
+
+    /// Stay inside a session the server holds open, until something kills us.
+    pub const MODE_HOLD: &str = "hold";
+    /// Finish one nominal session, then stay alive to be searched.
+    pub const MODE_LINGER: &str = "linger";
+
+    /// Longest a fixture session may last before its own lease cuts it.
+    pub const LEASE_SECONDS: u64 = 100;
+}
+
+/// Feature-only entry point for the personal access process contract.
+///
+/// This is the helper's own hardened process — parent death signal, no core,
+/// non-dumpable, every inherited descriptor above stdio closed — wrapped
+/// around one real personal access session and nothing else. Killing it
+/// therefore proves what killing the helper mid-session proves, and what
+/// cannot be found in its memory afterwards is what the helper never holds
+/// either.
+#[cfg(all(feature = "personal-access-contract-test", target_os = "linux"))]
+#[doc(hidden)]
+pub fn personal_access_contract_main() -> u8 {
+    use personal_access::session::{AuthenticationRequest, GuardVerdict, Prepared};
+    use personal_access_contract as names;
+    use std::io::Write as _;
+
+    // Hardened first, exactly as `process_main` does, and before anything is
+    // read: a fixture that hardened itself late would prove a weaker claim.
+    if hardening::apply().is_err() {
+        return EXIT_INTERNAL_FAILURE;
+    }
+
+    let read = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let (Some(mode), Some(target), Some(username), Some(host_key), Some(authorized)) = (
+        std::env::args().nth(1),
+        read(names::TARGET),
+        read(names::USERNAME),
+        read(names::HOST_KEY),
+        read(names::AUTHORIZED),
+    ) else {
+        return EXIT_INVALID_INVOCATION;
+    };
+    let Some(port) = read(names::PORT).and_then(|port| port.parse::<u16>().ok()) else {
+        return EXIT_INVALID_INVOCATION;
+    };
+    if mode != names::MODE_HOLD && mode != names::MODE_LINGER {
+        return EXIT_INVALID_INVOCATION;
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(names::LEASE_SECONDS);
+    let Ok(prepared) = Prepared::open(&target, port, deadline) else {
+        return EXIT_UNAVAILABLE;
+    };
+    let request = AuthenticationRequest {
+        username: &username,
+        approved_host_key_fingerprint: &host_key,
+        selected_fingerprint: &authorized,
+    };
+    // A `hold` session never returns from here: the server holds the probe
+    // open and only the deadline, or being killed, ends it.
+    let observation = prepared.run(&request, deadline, &|| GuardVerdict::Continue);
+    let Ok(report) = observation.outcome else {
+        return EXIT_UNAVAILABLE;
+    };
+    // The probe result stays a value here too; only the fact that a session
+    // completed is announced, so the suite knows what it is searching.
+    drop(report);
+    if mode == names::MODE_LINGER {
+        let Some(ready_path) = read(names::READY_PATH) else {
+            return EXIT_INVALID_INVOCATION;
+        };
+        let ready = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(ready_path);
+        let Ok(mut ready) = ready else {
+            return EXIT_IO_FAILURE;
+        };
+        if ready.write_all(b"session complete").is_err() || ready.flush().is_err() {
+            return EXIT_IO_FAILURE;
+        }
+        drop(ready);
+        // Stay alive, holding whatever this process accumulated, until the
+        // suite has finished searching it and kills us.
+        std::thread::sleep(Duration::from_secs(names::LEASE_SECONDS));
+    }
+    0
+}
+
 pub fn process_main() -> u8 {
     // This origin precedes every local operation: hardening, parent attestation and
     // protocol reading all consume, and can never renew, the Console-provided TTL.
@@ -325,7 +437,9 @@ fn serve_personal_access(
         approved_host_key_fingerprint: &scope.target.host_key_sha256,
         selected_fingerprint: &selected,
     };
-    match prepared.run(&request, deadline, &guard) {
+    // Only the outcome is consulted here: how much of the signature budget the
+    // session left is a contract observation, not a decision this path makes.
+    match prepared.run(&request, deadline, &guard).outcome {
         Ok(report) => {
             // The probe result stays internal at this palier: it is dropped
             // here rather than travelling to any public event.

@@ -42,7 +42,9 @@ use tokio::{
 };
 
 use super::{
-    agent_client::{AgentRefusal, BudgetedAgentSigner, PersonalAgent, SigningRefusal},
+    agent_client::{
+        AgentRefusal, BudgetedAgentSigner, PersonalAgent, SigningRefusal, StreamRefusal,
+    },
     agent_endpoint::{self, EndpointRefusal},
     algorithms::HostKeyType,
     host_key::{self, HostKeyRefusal},
@@ -148,6 +150,25 @@ pub struct AuthenticationRequest<'a> {
     pub selected_fingerprint: &'a str,
 }
 
+/// Everything one session leaves behind: its outcome, and what the agent was
+/// actually asked for while it ran.
+///
+/// The budget is reported beside the outcome rather than dropped with the
+/// signer, because the central claim of this palier — "a refused
+/// authentication spends no signature" — is not observable from a result that
+/// only says the authentication failed. The same holds for the stream refusal:
+/// an agent cut off for oversizing or volunteering a frame must be
+/// distinguishable from one that simply declined.
+///
+/// It is a value like [`ProbeReport`], and like it announces nothing.
+#[derive(Debug)]
+pub struct RunObservation {
+    pub outcome: Result<ProbeReport, PersonalAccessRefusal>,
+    /// Signatures the selected identity had left when the session ended.
+    pub remaining_signatures: usize,
+    pub stream_refusal: Option<StreamRefusal>,
+}
+
 impl Prepared {
     /// Performs, once, every observation the consent window depends on.
     pub fn open(name: &str, port: u16, deadline: Instant) -> Result<Self, PersonalAccessRefusal> {
@@ -191,34 +212,72 @@ impl Prepared {
     ///
     /// `guard` is consulted between every step and on every idle tick. The
     /// transport and the channel are closed explicitly whatever it answers.
+    ///
+    /// The signer is borrowed rather than consumed by the session, so that the
+    /// budget it holds can still be read once the session is over — refusal
+    /// included — and reported in the returned [`RunObservation`].
     pub fn run(
         self,
         request: &AuthenticationRequest<'_>,
         deadline: Instant,
         guard: &(dyn Fn() -> GuardVerdict + Sync),
-    ) -> Result<ProbeReport, PersonalAccessRefusal> {
-        let mut signer = self
-            .agent
-            .select(request.selected_fingerprint)
-            .map_err(PersonalAccessRefusal::Agent)?;
+    ) -> RunObservation {
+        let mut signer = match self.agent.select(request.selected_fingerprint) {
+            Ok(signer) => signer,
+            // A selection that never happened spent nothing, and reached no
+            // stream: the untouched budget is reported as such.
+            Err(refusal) => {
+                return RunObservation {
+                    outcome: Err(PersonalAccessRefusal::Agent(refusal)),
+                    remaining_signatures: MAX_AUTHENTICATION_SIGNATURES,
+                    stream_refusal: None,
+                }
+            }
+        };
 
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(PersonalAccessRefusal::Transport(TransportRefusal::Expired));
+        let outcome = if remaining.is_zero() {
+            Err(TransportRefusal::Expired)
+        } else {
+            self.runtime.block_on(async {
+                match timeout(
+                    remaining,
+                    run_session(&mut signer, &self.target, request, guard),
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(_elapsed) => Err(TransportRefusal::Expired),
+                }
+            })
+        };
+        RunObservation {
+            outcome: outcome.map_err(PersonalAccessRefusal::Transport),
+            remaining_signatures: signer.remaining_signatures(),
+            stream_refusal: signer.stream_refusal(),
         }
+    }
 
-        let outcome = self.runtime.block_on(async {
-            match timeout(
-                remaining,
-                run_session(&mut signer, &self.target, request, guard),
-            )
-            .await
-            {
-                Ok(outcome) => outcome,
-                Err(_elapsed) => Err(TransportRefusal::Expired),
-            }
-        });
-        outcome.map_err(PersonalAccessRefusal::Transport)
+    /// Hands the selected signer, and the runtime it must be driven on, to the
+    /// contract suite.
+    ///
+    /// It opens no transport on purpose. Two claims of this palier are about
+    /// the agent and the budget alone — a substituted identity is refused, a
+    /// second signature is refused — and proving them through a whole session
+    /// would hide them behind a server's own verdict on the authentication.
+    ///
+    /// Compiled in only under the contract feature: a release build keeps
+    /// exactly one way to reach the agent, which is [`Prepared::run`].
+    #[cfg(feature = "personal-access-contract-test")]
+    pub fn into_signer(
+        self,
+        fingerprint: &str,
+    ) -> Result<(Runtime, BudgetedAgentSigner<UnixStream>), PersonalAccessRefusal> {
+        let signer = self
+            .agent
+            .select(fingerprint)
+            .map_err(PersonalAccessRefusal::Agent)?;
+        Ok((self.runtime, signer))
     }
 }
 
@@ -791,168 +850,5 @@ mod tests {
             refusal,
             PersonalAccessRefusal::Resolution(ResolutionRefusal::TimedOut)
         );
-    }
-
-    /// Proofs that need what no unit test can synthesise: a live `ssh-agent`
-    /// really holding a key, and a live `sshd` on a *different* machine — the
-    /// target guard refuses this machine's own addresses, so a loopback server
-    /// would never be dialled at all.
-    ///
-    /// They are ignored by default and driven entirely from the environment,
-    /// so this crate carries no lab address, no account name and no key
-    /// material. The harness that sets those variables is documented with the
-    /// run itself.
-    mod lab {
-        use super::*;
-
-        /// Numeric address of the machine running the synthetic `sshd`.
-        const TARGET: &str = "YOUR_CLOUD_LAB_TARGET";
-        /// Synthetic account that holds the authorised key.
-        const USERNAME: &str = "YOUR_CLOUD_LAB_USERNAME";
-        /// `SHA256:…` fingerprint of that machine's real Ed25519 host key.
-        const HOST_KEY: &str = "YOUR_CLOUD_LAB_HOST_KEY";
-        /// Fingerprint of the agent identity the server accepts.
-        const AUTHORIZED: &str = "YOUR_CLOUD_LAB_AUTHORIZED";
-        /// Fingerprint of an agent identity the server has never heard of.
-        const STRANGER: &str = "YOUR_CLOUD_LAB_STRANGER";
-        /// Numeric uid the fixed probe must report for the account above.
-        const EXPECTED_UID: &str = "YOUR_CLOUD_LAB_UID";
-        /// Where a trust-on-first-use would be recorded, if any existed.
-        const KNOWN_HOSTS: &str = "YOUR_CLOUD_LAB_KNOWN_HOSTS";
-
-        const LEASE: Duration = Duration::from_secs(30);
-
-        fn required(name: &str) -> String {
-            std::env::var(name).unwrap_or_else(|_| panic!("{name} must describe the LAB perimeter"))
-        }
-
-        fn always_continue() -> impl Fn() -> GuardVerdict + Sync {
-            || GuardVerdict::Continue
-        }
-
-        /// The whole nominal path, end to end, against a real server: one
-        /// transport, one authentication, one probe — and exactly one
-        /// signature taken from the agent.
-        #[test]
-        #[ignore = "requires a live ssh-agent and a live sshd on a second machine"]
-        fn a_nominal_personal_access_spends_exactly_one_signature() {
-            let deadline = Instant::now() + LEASE;
-            let prepared = Prepared::open(&required(TARGET), 22, deadline)
-                .expect("the LAB target must be observable");
-
-            let authorized = required(AUTHORIZED);
-            assert!(
-                prepared
-                    .identities()
-                    .iter()
-                    .any(|identity| identity.fingerprint == authorized),
-                "the agent must really hold the authorised identity"
-            );
-
-            let username = required(USERNAME);
-            let host_key = required(HOST_KEY);
-            let request = AuthenticationRequest {
-                username: &username,
-                approved_host_key_fingerprint: &host_key,
-                selected_fingerprint: &authorized,
-            };
-            let report = prepared
-                .run(&request, deadline, &always_continue())
-                .expect("the nominal access must succeed");
-
-            assert_eq!(report.exit_status, 0);
-            assert_eq!(
-                String::from_utf8_lossy(&report.stdout).trim(),
-                required(EXPECTED_UID),
-                "the probe must report the synthetic account's own uid"
-            );
-            assert!(report.stderr.is_empty());
-            assert_eq!(report.host_key_type, HostKeyType::Ed25519);
-            assert_eq!(
-                report.signatures_spent, MAX_AUTHENTICATION_SIGNATURES,
-                "one access costs one signature, never two"
-            );
-        }
-
-        /// The property the whole agent design rests on: an identity the
-        /// server refuses is refused *before* anything is signed.
-        ///
-        /// The public entry point drops the signer along with its budget, so
-        /// the same steps are taken here with the budget kept in hand — the
-        /// claim is precisely about what the budget looks like afterwards.
-        #[test]
-        #[ignore = "requires a live ssh-agent and a live sshd on a second machine"]
-        fn an_identity_the_server_refuses_costs_no_signature_at_all() {
-            let deadline = Instant::now() + LEASE;
-            let prepared = Prepared::open(&required(TARGET), 22, deadline)
-                .expect("the LAB target must be observable");
-
-            let stranger = required(STRANGER);
-            let username = required(USERNAME);
-            let host_key = required(HOST_KEY);
-            let request = AuthenticationRequest {
-                username: &username,
-                approved_host_key_fingerprint: &host_key,
-                selected_fingerprint: &stranger,
-            };
-
-            let mut signer = prepared
-                .agent
-                .select(&stranger)
-                .expect("the agent must hold the unauthorised identity too");
-            let outcome = prepared.runtime.block_on(run_session(
-                &mut signer,
-                &prepared.target,
-                &request,
-                &always_continue(),
-            ));
-
-            assert_eq!(outcome, Err(TransportRefusal::AuthenticationRefused));
-            assert_eq!(
-                signer.remaining_signatures(),
-                MAX_AUTHENTICATION_SIGNATURES,
-                "a refused authentication must leave the budget untouched"
-            );
-        }
-
-        /// No trust on first use, proved against a server whose real key is
-        /// simply not the approved one.
-        #[test]
-        #[ignore = "requires a live ssh-agent and a live sshd on a second machine"]
-        fn a_diverging_host_key_refuses_and_records_no_trust() {
-            let known_hosts = std::path::PathBuf::from(required(KNOWN_HOSTS));
-            assert!(
-                !known_hosts.exists(),
-                "the proof only means something starting from no recorded trust"
-            );
-
-            let deadline = Instant::now() + LEASE;
-            let prepared = Prepared::open(&required(TARGET), 22, deadline)
-                .expect("the LAB target must be observable");
-
-            // A well-formed fingerprint that is certainly not this server's:
-            // an identity fingerprint is never a host key fingerprint.
-            let authorized = required(AUTHORIZED);
-            let username = required(USERNAME);
-            let request = AuthenticationRequest {
-                username: &username,
-                approved_host_key_fingerprint: &authorized,
-                selected_fingerprint: &authorized,
-            };
-            let refusal = prepared
-                .run(&request, deadline, &always_continue())
-                .expect_err("a diverging host key must never authenticate");
-
-            assert_eq!(
-                refusal,
-                PersonalAccessRefusal::Transport(TransportRefusal::HostKey(
-                    HostKeyRefusal::KeyMismatch
-                ))
-            );
-            assert!(
-                !known_hosts.exists(),
-                "no path of this assistant may record a host key"
-            );
-        }
     }
 }
