@@ -10,12 +10,25 @@
 //! appends to `known_hosts`, because an assistant that records trust would
 //! turn a single mistaken approval into a durable one.
 //!
-//! The comparison works on the OpenSSH textual encoding, which is what both
-//! the approved perimeter and the server key render to. Only the algorithm
-//! name and the key material take part; a trailing comment never does, since
-//! it is arbitrary text the server operator chooses.
+//! Two encodings meet here, and confusing them was a real gap. The approved
+//! perimeter carries a SHA-256 *fingerprint* — `SHA256:` followed by the
+//! base64 digest, exactly what OpenSSH prints — while a stored public key file
+//! carries an OpenSSH *line*. [`attest_presented`] is the one the transport
+//! uses: it takes the key the server actually presented, computes its
+//! fingerprint and compares that to the perimeter. [`attest`] compares two
+//! OpenSSH lines and stays available for the file-to-file case. Neither of
+//! them ever accepts an unapproved key.
+//!
+//! Attesting the key is not by itself enough. A key type and the signature
+//! algorithms it may use are different namespaces, so the algorithm the
+//! transport actually negotiated is confronted with the positive list of the
+//! attested key type. Without that check a server could present an approved
+//! key and still have signed the exchange with an algorithm this palier
+//! refuses.
 
-use super::algorithms::HostKeyType;
+use russh::keys::{HashAlg, PublicKey};
+
+use super::algorithms::{HostKeyAlgorithm, HostKeyType};
 
 /// Largest accepted OpenSSH public key line. A 3072-bit RSA key encodes to
 /// roughly 570 bytes; this leaves room without accepting an unbounded field.
@@ -33,6 +46,51 @@ pub enum HostKeyRefusal {
     AlgorithmRefused,
     /// A well-formed key that is not the approved one.
     KeyMismatch,
+    /// The negotiated signature algorithm is not one this key type may use.
+    SignatureAlgorithmMismatch,
+}
+
+/// Exact length of a rendered SHA-256 fingerprint: `SHA256:` and 43 base64
+/// characters, the unpadded encoding of a 32-byte digest.
+pub const HOST_KEY_FINGERPRINT_BYTES: usize = 7 + 43;
+
+/// Confronts the key a server really presented with the approved fingerprint.
+///
+/// `negotiated_signature_algorithm` is the wire name the transport settled on
+/// for the host key signature. It is checked against the positive list of the
+/// attested key type, because a key type and a signature algorithm are two
+/// different namespaces and only their pairing is meaningful.
+pub fn attest_presented(
+    approved_fingerprint: &str,
+    presented: &PublicKey,
+    negotiated_signature_algorithm: &str,
+) -> Result<HostKeyType, HostKeyRefusal> {
+    if approved_fingerprint.trim().is_empty() {
+        return Err(HostKeyRefusal::NoApprovedKey);
+    }
+    // The perimeter already bounds this field; checking again keeps the module
+    // usable on its own without inheriting someone else's validation.
+    if approved_fingerprint.len() != HOST_KEY_FINGERPRINT_BYTES {
+        return Err(HostKeyRefusal::ApprovedMalformed);
+    }
+
+    // The blob announces the *key type*: `ssh-ed25519` or `ssh-rsa`, never a
+    // signature algorithm name.
+    let presented_type = HostKeyType::from_key_type_name(presented.algorithm().as_str())
+        .ok_or(HostKeyRefusal::AlgorithmRefused)?;
+    if presented.fingerprint(HashAlg::Sha256).to_string() != approved_fingerprint {
+        return Err(HostKeyRefusal::KeyMismatch);
+    }
+
+    let negotiated = HostKeyAlgorithm::from_wire_name(negotiated_signature_algorithm)
+        .ok_or(HostKeyRefusal::AlgorithmRefused)?;
+    if !presented_type
+        .accepted_signature_algorithms()
+        .contains(&negotiated)
+    {
+        return Err(HostKeyRefusal::SignatureAlgorithmMismatch);
+    }
+    Ok(presented_type)
 }
 
 /// Compares the presented host key with the approved one.
@@ -225,6 +283,121 @@ mod tests {
         assert_eq!(
             attest(REAL_ED25519, "ssh-ed25519 not!base64"),
             Err(HostKeyRefusal::OfferedMalformed)
+        );
+    }
+
+    fn public_key(line: &str) -> PublicKey {
+        PublicKey::from_openssh(line).expect("real OpenSSH public key line")
+    }
+
+    fn fingerprint(line: &str) -> String {
+        public_key(line).fingerprint(HashAlg::Sha256).to_string()
+    }
+
+    /// The bridge the perimeter actually needs: what the server presents is
+    /// reduced to a fingerprint and compared with the approved one.
+    #[test]
+    fn the_presented_key_of_a_lab_machine_matches_its_own_fingerprint() {
+        let key = public_key(REAL_ED25519);
+        let approved = fingerprint(REAL_ED25519);
+        assert_eq!(
+            attest_presented(&approved, &key, "ssh-ed25519"),
+            Ok(HostKeyType::Ed25519)
+        );
+
+        let rsa = public_key(REAL_RSA);
+        let approved_rsa = fingerprint(REAL_RSA);
+        for negotiated in ["rsa-sha2-512", "rsa-sha2-256"] {
+            assert_eq!(
+                attest_presented(&approved_rsa, &rsa, negotiated),
+                Ok(HostKeyType::Rsa),
+                "{negotiated} is a signature algorithm an RSA host key may use"
+            );
+        }
+    }
+
+    /// The perimeter renders exactly what OpenSSH renders, so the two sides
+    /// compare as strings without any conversion in between.
+    #[test]
+    fn a_rendered_fingerprint_has_the_shape_the_perimeter_carries() {
+        for line in [REAL_ED25519, REAL_RSA] {
+            let rendered = fingerprint(line);
+            assert_eq!(rendered.len(), HOST_KEY_FINGERPRINT_BYTES);
+            assert!(rendered.starts_with("SHA256:"));
+            assert!(rendered[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/'));
+        }
+    }
+
+    /// The man-in-the-middle case, on the encoding the transport really sees.
+    #[test]
+    fn a_presented_key_that_is_not_the_approved_one_is_refused() {
+        let approved = fingerprint(REAL_ED25519);
+        assert_eq!(
+            attest_presented(&approved, &public_key(OTHER_ED25519), "ssh-ed25519"),
+            Err(HostKeyRefusal::KeyMismatch)
+        );
+        assert_eq!(
+            attest_presented(&approved, &public_key(REAL_RSA), "rsa-sha2-512"),
+            Err(HostKeyRefusal::KeyMismatch),
+            "two real keys of the same machine are not interchangeable"
+        );
+    }
+
+    /// No trust on first use, on this path either.
+    #[test]
+    fn an_absent_approved_fingerprint_is_a_refusal_not_a_first_use() {
+        let key = public_key(REAL_ED25519);
+        for approved in ["", "   ", "\n"] {
+            assert_eq!(
+                attest_presented(approved, &key, "ssh-ed25519"),
+                Err(HostKeyRefusal::NoApprovedKey)
+            );
+        }
+        assert_eq!(
+            attest_presented("SHA256:short", &key, "ssh-ed25519"),
+            Err(HostKeyRefusal::ApprovedMalformed)
+        );
+    }
+
+    /// The ECDSA key the same LAB machine really serves, refused on the key
+    /// type before its fingerprint is ever compared.
+    #[test]
+    fn a_presented_key_of_a_refused_type_never_reaches_the_comparison() {
+        let ecdsa = public_key(REAL_ECDSA);
+        assert_eq!(
+            attest_presented(&fingerprint(REAL_ECDSA), &ecdsa, "ssh-ed25519"),
+            Err(HostKeyRefusal::AlgorithmRefused),
+            "a server offering only ECDSA must be refused even about itself"
+        );
+    }
+
+    /// The gap this pairing closes: an approved key presented alongside a
+    /// signature algorithm that key type may not use.
+    #[test]
+    fn an_approved_key_with_a_foreign_signature_algorithm_is_refused() {
+        let key = public_key(REAL_ED25519);
+        let approved = fingerprint(REAL_ED25519);
+        for negotiated in ["rsa-sha2-512", "rsa-sha2-256"] {
+            assert_eq!(
+                attest_presented(&approved, &key, negotiated),
+                Err(HostKeyRefusal::SignatureAlgorithmMismatch),
+                "an Ed25519 host key signs only as ssh-ed25519"
+            );
+        }
+        for negotiated in ["ssh-rsa", "ecdsa-sha2-nistp256", "ssh-dss", ""] {
+            assert_eq!(
+                attest_presented(&approved, &key, negotiated),
+                Err(HostKeyRefusal::AlgorithmRefused),
+                "{negotiated} is outside the positive list entirely"
+            );
+        }
+
+        let rsa = public_key(REAL_RSA);
+        assert_eq!(
+            attest_presented(&fingerprint(REAL_RSA), &rsa, "ssh-ed25519"),
+            Err(HostKeyRefusal::SignatureAlgorithmMismatch)
         );
     }
 
