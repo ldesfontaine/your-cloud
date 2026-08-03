@@ -803,6 +803,7 @@ mod tests {
             step: BootstrapStep::PersonalAccess,
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt: NativePromptKind::ConfirmPersonalAccess,
+            target_addresses: Vec::new(),
             issued_at_monotonic_nanos: 1,
             remaining_millis: 5_000,
         }

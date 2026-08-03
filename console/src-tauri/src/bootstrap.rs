@@ -183,6 +183,10 @@ impl BootstrapState {
                 step,
                 actions: [BootstrapAction::AuditTargetReadOnly],
                 prompt,
+                // The launcher never resolves a name and therefore never freezes an
+                // address. Only the assistant's single resolution fills this, and only
+                // before its own consent window renders it.
+                target_addresses: Vec::new(),
                 // The launcher replaces this safe placeholder immediately before transport.
                 issued_at_monotonic_nanos: 0,
                 remaining_millis,

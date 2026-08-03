@@ -439,6 +439,7 @@ mod tests {
             step,
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt,
+            target_addresses: Vec::new(),
             issued_at_monotonic_nanos: 1,
             remaining_millis: 5_000,
         }

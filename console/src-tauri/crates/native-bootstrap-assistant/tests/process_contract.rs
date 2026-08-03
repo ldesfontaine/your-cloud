@@ -68,6 +68,7 @@ fn scope(remaining_millis: u64) -> AssistantScopeV1 {
         step: BootstrapStep::PersonalAccess,
         actions: [BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::ConfirmPersonalAccess,
+        target_addresses: Vec::new(),
         issued_at_monotonic_nanos: monotonic_nanos().expect("shared monotonic clock"),
         remaining_millis,
     }

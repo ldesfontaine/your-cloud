@@ -16,6 +16,9 @@ pub const MAX_USERNAME_BYTES: usize = 32;
 pub const HOST_KEY_BYTES: usize = 32;
 pub const HOST_KEY_ENCODED_BYTES: usize = 43;
 pub const MAX_ASSISTANT_REMAINING_MILLIS: u64 = 300_000;
+/// Largest frozen address set a scope may carry. A name is resolved exactly
+/// once, and what that resolution froze is displayed before consent.
+pub const MAX_ASSISTANT_TARGET_ADDRESSES: usize = 8;
 pub const MAX_ASSISTANT_SCOPE_FRAME_BYTES: usize = 4_096;
 pub const MAX_ASSISTANT_EVENT_FRAME_BYTES: usize = 1_024;
 pub const ASSISTANT_EXIT_INVALID_INVOCATION: u8 = 64;
@@ -124,6 +127,11 @@ pub struct AssistantScopeV1 {
     pub step: BootstrapStep,
     pub actions: [BootstrapAction; 1],
     pub prompt: NativePromptKind,
+    /// The numeric addresses the single name resolution froze, in resolution
+    /// order. The launcher never freezes anything and always emits this empty:
+    /// only the assistant's own resolution fills it, and only before the
+    /// consent window renders it beside the name.
+    pub target_addresses: Vec<String>,
     pub issued_at_monotonic_nanos: u64,
     pub remaining_millis: u64,
 }
@@ -134,12 +142,43 @@ impl AssistantScopeV1 {
             || !canonical_request_id(&self.request_id)
             || !(1..=MAX_ASSISTANT_REMAINING_MILLIS).contains(&self.remaining_millis)
             || !prompt_matches_scope(self.prompt, self.step, self.target.access_kind)
+            || !valid_target_addresses(&self.target_addresses)
         {
             return Err(ProtocolError::InvalidInput);
         }
         self.target = validate_target(self.target)?;
         Ok(self)
     }
+}
+
+/// Bounds the frozen address set: at most eight entries, each a canonical
+/// numeric address of a reachability class a remote host may actually hold,
+/// and no repetition. An empty set means the resolution has not happened yet.
+fn valid_target_addresses(addresses: &[String]) -> bool {
+    if addresses.len() > MAX_ASSISTANT_TARGET_ADDRESSES {
+        return false;
+    }
+    let mut seen: Vec<IpAddr> = Vec::with_capacity(addresses.len());
+    for entry in addresses {
+        let Ok(address) = IpAddr::from_str(entry) else {
+            return false;
+        };
+        // An IPv4-mapped form is the same host spelled twice. Refusing it here
+        // keeps the displayed set free of two names for one peer.
+        if matches!(address, IpAddr::V6(v6) if v6.to_ipv4_mapped().is_some()) {
+            return false;
+        }
+        // Rendering back to text refuses every non-canonical spelling of the
+        // same address, so what is displayed is what is dialled.
+        if address.to_string() != *entry
+            || !valid_target_address(address)
+            || seen.contains(&address)
+        {
+            return false;
+        }
+        seen.push(address);
+    }
+    true
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -348,6 +387,7 @@ mod tests {
             step,
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt,
+            target_addresses: Vec::new(),
             issued_at_monotonic_nanos: 1,
             remaining_millis: MAX_ASSISTANT_REMAINING_MILLIS,
         }
@@ -536,6 +576,65 @@ mod tests {
             event: AssistantEventKind::Unavailable,
         };
         assert_eq!(wrong_schema.validate(), Err(ProtocolError::InvalidInput));
+    }
+
+    /// The scope is what the native window renders, so the address set it
+    /// carries is bounded, canonical and free of anything that does not mean a
+    /// remote host. An empty set is the launcher's own state: nothing frozen yet.
+    #[test]
+    fn assistant_scope_bounds_the_frozen_address_set() {
+        let base = scope(
+            NativePromptKind::ConfirmPersonalAccess,
+            BootstrapAccessKind::Administrator,
+        );
+        assert!(
+            base.clone().validate().is_ok(),
+            "an unresolved scope carries no address"
+        );
+
+        let mut frozen = base.clone();
+        frozen.target_addresses = vec!["192.168.1.10".into(), "2001:db8::1".into()];
+        assert_eq!(
+            frozen.clone().validate().unwrap().target_addresses,
+            frozen.target_addresses,
+            "validation canonicalises the host, never the frozen addresses"
+        );
+
+        let mut maximal = base.clone();
+        maximal.target_addresses = (1..=MAX_ASSISTANT_TARGET_ADDRESSES)
+            .map(|last| format!("192.168.1.{last}"))
+            .collect();
+        assert!(maximal.validate().is_ok());
+
+        let mut too_many = base.clone();
+        too_many.target_addresses = (1..=MAX_ASSISTANT_TARGET_ADDRESSES + 1)
+            .map(|last| format!("192.168.1.{last}"))
+            .collect();
+        assert_eq!(too_many.validate(), Err(ProtocolError::InvalidInput));
+
+        for hostile in [
+            vec!["controller.example.test".to_string()],
+            vec!["127.0.0.1".to_string()],
+            vec!["::1".to_string()],
+            vec!["169.254.169.254".to_string()],
+            vec!["0.0.0.0".to_string()],
+            vec!["224.0.0.1".to_string()],
+            vec!["255.255.255.255".to_string()],
+            vec!["::ffff:192.168.1.10".to_string()],
+            vec!["192.168.001.010".to_string()],
+            vec!["2001:DB8::1".to_string()],
+            vec!["192.168.1.10".to_string(), "192.168.1.10".to_string()],
+            vec![" 192.168.1.10".to_string()],
+            vec![String::new()],
+        ] {
+            let mut invalid = base.clone();
+            invalid.target_addresses = hostile.clone();
+            assert_eq!(
+                invalid.validate(),
+                Err(ProtocolError::InvalidInput),
+                "{hostile:?} must never reach the consent window"
+            );
+        }
     }
 
     #[test]
