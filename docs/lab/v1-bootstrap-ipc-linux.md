@@ -218,7 +218,9 @@ Le gabarit minimal recréé pour le correctif final possédait Xvfb mais pas
 - le parent lance le binaire exact avec un argument fixe, des pipes anonymes,
   un environnement vidé puis une liste positive limitée à l'affichage et à la
   locale ; les variables de chargement et `SSH_AUTH_SOCK` ne sont pas transmis
-  dans ce palier ;
+  dans ce palier. Cette observation reste celle de `#43` et n'a pas été
+  réécrite : depuis, `#52` transmet `SSH_AUTH_SOCK` à la seule fenêtre d'accès
+  personnel, les variables de chargement demeurant interdites ;
 - le dialogue GTK3 répète en texte simple le parcours, la cible, la route,
   l'empreinte complète, l'étape, l'action, la demande et l'expiration ; refus,
   fermeture et expiration restent terminaux, tandis qu'une autorisation rend
