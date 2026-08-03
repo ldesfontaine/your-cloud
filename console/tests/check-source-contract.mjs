@@ -491,6 +491,8 @@ for (const [name, source, fragments] of [
       "document.fonts?.ready",
       "requestAnimationFrame",
       "capture_attempts",
+      "def set_script_timeout(",
+      "self.set_script_timeout(timeout_seconds)",
       "capture raster has too few distinct RGB colors",
       "capture raster is dominated by one RGB color",
       "capture raster contains too much exact black",
@@ -514,7 +516,12 @@ for (const fragment of [
   "corrupt_crc",
   "dimensions differ",
   "exercise_screenshot_retry",
+  "exercise_async_retry_boundary",
   '"not-base64!"',
+  "synthetic timeout disconnect",
+  "synthetic mutating disconnect",
+  "only the idempotent script timeout may be retried",
+  "a mutating async request was retried after disconnection",
   "remained invalid after 5 attempts",
   "target.exists()",
   "for filter_type in range(1, 5)",
@@ -524,6 +531,11 @@ for (const fragment of [
   if (!installedUiRasterContract.includes(fragment)) {
     failures.push(`preuve hostile du raster UI absente (${fragment})`);
   }
+}
+if (
+  [...installedUiRasterContract.matchAll(/\bexercise_async_retry_boundary\(\)/gu)].length !== 2
+) {
+  failures.push("preuve UI installée: la frontière async doit être définie puis exécutée");
 }
 if (
   !genericSourceGate.includes("tests/checks/test-console-ui-raster.py") ||

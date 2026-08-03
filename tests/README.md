@@ -86,8 +86,18 @@ SHA.
 valides dès la première tentative et dix PNG inspectés. Le run reste rouge sous
 Windows, car le harnais fournissait déjà `EBWebView` dans la racine que WebView2
 suffixe lui-même. Le candidat suivant transmet le parent au runtime et lit le
-fichier dans l'UDF suffixé exact. Cette correction doit encore être rejouée ; le
-résultat Linux ne revendique pas la comparaison responsive exhaustive à 200 %.
+fichier dans l'UDF suffixé exact. Cette correction devait alors encore être
+rejouée ; le résultat Linux ne revendique pas la comparaison responsive
+exhaustive à 200 %.
+
+`30777209723` valide le modèle corrigé sous Windows jusqu'au smoke et au
+nettoyage, mais reste rouge sous Linux. La coupure survient sur le réglage
+idempotent du timeout de script, avant l'appel async qui peut lancer une action.
+Le candidat suivant permet donc au seul réglage d'être retenté une fois. Deux
+fixtures synthétiques doivent vérifier qu'une coupure à cet endroit produit
+deux réglages identiques puis un seul appel async, et qu'une coupure de l'appel
+async est propagée sans aucun rejeu. Une nouvelle matrice exacte reste
+nécessaire.
 
 Le registre détaillé reste
 [`docs/contribution/TESTS.md`](../docs/contribution/TESTS.md). Le placement, les

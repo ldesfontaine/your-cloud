@@ -16,7 +16,7 @@ image CI préconstruite fournit des outils, pas cette topologie ni son autorité
 | porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974` | états des jobs `Contrôles génériques` et `Politique Plumber` |
 | matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
 | bornage IPC #43 | porte rapide `30753208857` puis matrice manuelle `30753216798` entièrement vertes sur le candidat produit exact `f3fef79` ; Linux et Windows exécutent le helper compagnon, Windows ajoute son Job Object, son paquet, son gate PE et le dispatch Tauri vivant | états des jobs, journaux et artefact expurgé liés depuis le rapport #43 |
-| consentement et mémoire secrète #45 | preuve fonctionnelle acquise dans `30770893733` sur `b76ded8` ; `30772674819` révèle deux oracles fragiles, puis `30775430141` valide le nouveau garde raster sous Linux mais cherche `DevToolsActivePort` depuis une mauvaise racine WebView2 sous Windows ; le candidat corrige cette relation parent–`EBWebView` et doit être rejoué sur son SHA exact | états des quatre jobs, ordre bloquant du test WER, validation machine des rasters, attribution du listener et inspection des artefacts expurgés |
+| consentement et mémoire secrète #45 | preuve fonctionnelle acquise dans `30770893733` sur `b76ded8` ; `30775430141` valide le garde raster Linux, puis `30777209723` valide la correction `EBWebView` et tout le job Windows mais échoue sous Linux sur le réglage de timeout WebDriver, avant l'appel async mutant ; le candidat ne rejoue que ce réglage idempotent et doit être rejoué sur son SHA exact | états des quatre jobs, ordre bloquant du test WER, validation machine des rasters, attribution du listener et inspection des artefacts expurgés |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
 | frontière du garde Plumber | 23 cas unitaires — 20 refus et 3 acceptations contrôlées — plus un refus Plumber intégré exécutés dans le LAB | rapports structurés et codes de sortie |
 | exécution GitHub Actions réelle | [run final `30710037004`](https://github.com/ldesfontaine/your-cloud/actions/runs/30710037004) entièrement vert sur le candidat produit exact `3b8f81f`, avec les deux gardes et les variantes natives ; l'issue `#9` conserve le SHA, les liens et les empreintes | états des jobs, journaux et artefact de smoke du run |
@@ -185,8 +185,23 @@ dépasse le bord de deux captures. Windows construit, signe et installe le MSI,
 mais ne trouve pas `DevToolsActivePort`. Le harnais fournissait déjà le suffixe
 `EBWebView` à `WEBVIEW2_USER_DATA_FOLDER`, alors que WebView2 ajoute ce suffixe
 au dossier hôte. Le correctif suivant fournit le parent éphémère et dérive
-séparément l'UDF `EBWebView` où le fichier est lu. Il reste à prouver par une
-nouvelle matrice exacte.
+séparément l'UDF `EBWebView` où le fichier est lu. Il restait alors à le prouver
+par une nouvelle matrice exacte.
+
+La matrice
+[`30777209723`](https://github.com/ldesfontaine/your-cloud/actions/runs/30777209723)
+sur `d7232fe` prouve cette correction sous Windows : WER, scénarios hostiles,
+construction, signature, installation, découverte du fichier exact,
+attribution du listener et smoke réussissent. L'artefact Windows `8842782989`,
+de digest
+`sha256:281eedc9e12bdf6038810955966585c9c0d324906beea9bacddc12c12a03fff9`,
+et les dix PNG sont inspectés. Le run reste invalide pour fermer #45 : Linux
+perd la connexion WebDriver pendant le `POST /timeouts` de préparation, avant
+le `POST /execute/async` qui pourrait muter l'état, puis refuse de déclarer son
+nettoyage complet. Aucun artefact Linux n'est publié. Le candidat autorise deux
+essais seulement pour ce réglage idempotent ; la requête async suivante reste
+unique et toute déconnexion après son envoi demeure terminale. Deux cas
+synthétiques doivent verrouiller cette frontière au prochain rejeu exact.
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation

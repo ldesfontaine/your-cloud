@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Hostile standard-library checks for the installed Console screenshot oracle."""
+"""Hostile standard-library checks for the installed Console UI proof oracles."""
 
 from __future__ import annotations
 
 import base64
+import http.client
 import importlib.util
 import pathlib
 import struct
@@ -157,6 +158,90 @@ def exercise_screenshot_retry(
         raise AssertionError("each screenshot retry must cross one paint barrier and issue one GET")
 
 
+def exercise_async_retry_boundary() -> None:
+    driver = object.__new__(PROOF.Driver)
+    driver.base_url = "http://127.0.0.1:4444"
+    driver.session_id = "synthetic"
+    calls: list[tuple[str, str, object | None]] = []
+    timeout_attempts = 0
+
+    def timeout_disconnect_request(
+        base_url,
+        method,
+        path,
+        payload=None,
+        timeout_seconds=30,
+    ):
+        nonlocal timeout_attempts
+        if base_url != driver.base_url or method != "POST" or timeout_seconds != 30:
+            raise AssertionError("async retry boundary called an unexpected WebDriver endpoint")
+        calls.append((method, path, payload))
+        if path == "/session/synthetic/timeouts":
+            timeout_attempts += 1
+            if timeout_attempts == 1:
+                raise http.client.RemoteDisconnected("synthetic timeout disconnect")
+            return None
+        if path == "/session/synthetic/execute/async":
+            return {"ok": True}
+        raise AssertionError("async retry boundary called an unknown WebDriver path")
+
+    original_request = PROOF.request
+    PROOF.request = timeout_disconnect_request
+    try:
+        outcome = driver.execute_async("return arguments[0];", ["synthetic"], 45)
+    finally:
+        PROOF.request = original_request
+    expected_timeout_payload = {"script": 45000}
+    if outcome != {"ok": True} or calls != [
+        ("POST", "/session/synthetic/timeouts", expected_timeout_payload),
+        ("POST", "/session/synthetic/timeouts", expected_timeout_payload),
+        (
+            "POST",
+            "/session/synthetic/execute/async",
+            {"script": "return arguments[0];", "args": ["synthetic"]},
+        ),
+    ]:
+        raise AssertionError("only the idempotent script timeout may be retried")
+
+    calls = []
+
+    def mutating_disconnect_request(
+        base_url,
+        method,
+        path,
+        payload=None,
+        timeout_seconds=30,
+    ):
+        if base_url != driver.base_url or method != "POST" or timeout_seconds != 30:
+            raise AssertionError("mutating retry boundary called an unexpected WebDriver endpoint")
+        calls.append((method, path, payload))
+        if path == "/session/synthetic/timeouts":
+            return None
+        if path == "/session/synthetic/execute/async":
+            raise http.client.RemoteDisconnected("synthetic mutating disconnect")
+        raise AssertionError("mutating retry boundary called an unknown WebDriver path")
+
+    PROOF.request = mutating_disconnect_request
+    try:
+        try:
+            driver.execute_async("return arguments[0];", ["synthetic"], 45)
+        except http.client.RemoteDisconnected:
+            pass
+        else:
+            raise AssertionError("a disconnected mutating async request was hidden or retried")
+    finally:
+        PROOF.request = original_request
+    if calls != [
+        ("POST", "/session/synthetic/timeouts", expected_timeout_payload),
+        (
+            "POST",
+            "/session/synthetic/execute/async",
+            {"script": "return arguments[0];", "args": ["synthetic"]},
+        ),
+    ]:
+        raise AssertionError("a mutating async request was retried after disconnection")
+
+
 def main() -> int:
     width = 320
     height = 200
@@ -238,8 +323,11 @@ def main() -> int:
         expected_attempts=PROOF.MAX_SCREENSHOT_ATTEMPTS,
         should_succeed=False,
     )
+    exercise_async_retry_boundary()
 
-    print("PASS: damaged rasters fail closed and screenshot retries write only valid PNGs")
+    print(
+        "PASS: damaged rasters fail closed, screenshots retry safely and async mutations do not"
+    )
     return 0
 
 

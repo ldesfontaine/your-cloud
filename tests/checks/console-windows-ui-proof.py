@@ -255,18 +255,20 @@ class Driver:
             {"script": script, "args": arguments or []},
         )
 
+    def set_script_timeout(self, timeout_seconds: int) -> None:
+        self.safe_request(
+            "POST",
+            f"/session/{self.session_id}/timeouts",
+            {"script": timeout_seconds * 1000},
+        )
+
     def execute_async(
         self,
         script: str,
         arguments: list[object] | None = None,
         timeout_seconds: int = 45,
     ) -> object:
-        request(
-            self.base_url,
-            "POST",
-            f"/session/{self.session_id}/timeouts",
-            {"script": timeout_seconds * 1000},
-        )
+        self.set_script_timeout(timeout_seconds)
         return request(
             self.base_url,
             "POST",

@@ -56,9 +56,19 @@ valides dès la première tentative et les dix PNG sont inspectés. Le run reste
 rouge parce que Windows cherche le fichier dans le chemin fourni déjà suffixé
 `EBWebView`. WebView2 ajoute lui-même ce suffixe ; le candidat suivant fournit
 donc le parent à `WEBVIEW2_USER_DATA_FOLDER` et conserve le chemin suffixé exact
-pour la lecture. Cette correction reste à exécuter sur son nouveau SHA. Le run
-Linux ne prouve pas l'absence générale de texte rogné à 200 % ; cette comparaison
-responsive exhaustive reste planifiée dans le registre ci-dessous.
+pour la lecture. Cette correction devait alors être exécutée sur son nouveau
+SHA. Le run Linux ne prouve pas l'absence générale de texte rogné à 200 % ; cette
+comparaison responsive exhaustive reste planifiée dans le registre ci-dessous.
+
+Le run `30777209723` sur `d7232fe` valide ensuite le chemin WebView2 corrigé et
+le job Windows complet. Il reste rouge : Linux reçoit une déconnexion pendant
+le réglage idempotent du timeout de script, avant l'appel async mutant, puis son
+nettoyage échoue fermé. Le candidat sépare maintenant les deux opérations : le
+réglage peut être tenté deux fois après une coupure transport, tandis que
+`/execute/async` n'est envoyé qu'une fois et ne peut jamais être rejoué. L'oracle
+synthétique doit reproduire les deux coupures et compter exactement les
+requêtes. Cette correction reste à exécuter dans une nouvelle matrice sur son
+SHA exact.
 
 ## Vocabulaire de travail
 

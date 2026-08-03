@@ -733,6 +733,16 @@ foreach ($requiredUiFragment in @(
         throw "live Windows Tauri bootstrap proof is incomplete at $requiredUiFragment"
     }
 }
+$setScriptTimeout = [regex]::Match(
+    $uiProofSource,
+    '(?ms)^    def set_script_timeout\(.*?^    def execute_async\('
+)
+if (-not $setScriptTimeout.Success -or
+    -not $setScriptTimeout.Value.Contains('self.safe_request(') -or
+    -not $setScriptTimeout.Value.Contains('f"/session/{self.session_id}/timeouts"') -or
+    -not $setScriptTimeout.Value.Contains('{"script": timeout_seconds * 1000}')) {
+    throw "only the idempotent WebDriver script-timeout setup may retry"
+}
 $startHandshakeIndex = $uiProofSource.IndexOf(
     'driver.execute_async(BOOTSTRAP_IPC_PROOF_SCRIPT, ["start"])'
 )
@@ -750,9 +760,22 @@ $executeAsync = [regex]::Match(
 )
 if (-not $executeAsync.Success -or
     $executeAsync.Value.Contains('self.safe_request(') -or
+    -not $executeAsync.Value.Contains('self.set_script_timeout(timeout_seconds)') -or
     -not $executeAsync.Value.Contains('return request(') -or
+    -not $executeAsync.Value.Contains('f"/session/{self.session_id}/execute/async"') -or
     -not $executeAsync.Value.Contains('self.base_url')) {
     throw "the mutating async WebDriver proof must use one non-retried request"
+}
+$asyncTimeoutIndex = $executeAsync.Value.IndexOf(
+    'self.set_script_timeout(timeout_seconds)',
+    [StringComparison]::Ordinal
+)
+$asyncMutationIndex = $executeAsync.Value.IndexOf(
+    'f"/session/{self.session_id}/execute/async"',
+    [StringComparison]::Ordinal
+)
+if ($asyncTimeoutIndex -lt 0 -or $asyncMutationIndex -le $asyncTimeoutIndex) {
+    throw "the retryable timeout must precede the single mutating async request"
 }
 $resizeMethod = [regex]::Match(
     $uiProofSource,
