@@ -11,6 +11,7 @@
 
 pub mod agent_endpoint;
 pub mod algorithms;
+pub mod host_key;
 pub mod openssh_key;
 pub mod signature_budget;
 pub mod ssh_algorithms;

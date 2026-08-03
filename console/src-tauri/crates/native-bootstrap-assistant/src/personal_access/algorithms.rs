@@ -54,6 +54,39 @@ impl IdentitySignatureAlgorithm {
     }
 }
 
+/// Key types accepted for a target's host key.
+///
+/// This is a different namespace from [`HostKeyAlgorithm`], and confusing the
+/// two is a real trap: a server's `ssh_host_rsa_key.pub` announces the *key
+/// type* `ssh-rsa`, while `rsa-sha2-512` and `rsa-sha2-256` name the
+/// *signature algorithms* that key may use. Validating a stored host key line
+/// against the signature list would refuse every RSA host key in existence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostKeyType {
+    Ed25519,
+    Rsa,
+}
+
+impl HostKeyType {
+    /// Wire name carried by the host key blob, as written in
+    /// `/etc/ssh/ssh_host_*_key.pub`.
+    pub fn from_key_type_name(name: &str) -> Option<Self> {
+        match name {
+            "ssh-ed25519" => Some(Self::Ed25519),
+            "ssh-rsa" => Some(Self::Rsa),
+            _ => None,
+        }
+    }
+
+    /// Signature algorithms this host key type may use during negotiation.
+    pub fn accepted_signature_algorithms(self) -> &'static [HostKeyAlgorithm] {
+        match self {
+            Self::Ed25519 => &[HostKeyAlgorithm::Ed25519],
+            Self::Rsa => &[HostKeyAlgorithm::RsaSha512, HostKeyAlgorithm::RsaSha256],
+        }
+    }
+}
+
 /// Key types accepted inside a personal OpenSSH private key file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IdentityKeyType {
