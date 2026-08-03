@@ -15,7 +15,7 @@
 /// no other variable can name an endpoint.
 pub const LINUX_ENDPOINT_VARIABLE: &str = "SSH_AUTH_SOCK";
 
-/// The single named pipe accepted on Windows at this palier.
+/// The single named pipe accepted on Windows for `v0.1.0`.
 pub const WINDOWS_PIPE_NAME: &str = r"\\.\pipe\openssh-ssh-agent";
 
 /// Largest accepted endpoint path. A Unix socket path is itself bounded by
