@@ -42,12 +42,18 @@ mod canary_scan;
 mod native_assistant;
 
 use std::{
-    fs,
-    io::{Read, Write},
+    fs::{self, File},
+    io::{self, Read, Write},
     net::IpAddr,
-    os::unix::net::UnixListener,
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::{
+            net::{UnixListener, UnixStream},
+            process::CommandExt,
+        },
+    },
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -59,13 +65,14 @@ use russh::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use bounded_process::{
-    collect_output_bounded, terminate_and_reap_bounded, wait_bounded, REAP_TIMEOUT,
+    collect_output_bounded, read_eof_bounded, terminate_and_reap_bounded, wait_bounded,
+    PIPE_EOF_TIMEOUT, REAP_TIMEOUT,
 };
 use canary_scan::file_contains;
 use native_assistant::{NativeAssistantPoll, NativeAssistantSupervisor};
 use your_cloud_bootstrap_protocol::{
-    AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
-    BootstrapTarget, NativePromptKind,
+    monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1, BootstrapAccessKind,
+    BootstrapAction, BootstrapMode, BootstrapStep, BootstrapTarget, NativePromptKind,
 };
 use your_cloud_native_bootstrap_assistant::personal_access::{
     agent_client::{
@@ -82,6 +89,9 @@ use your_cloud_native_bootstrap_assistant::personal_access::{
     target::TargetRefusal,
 };
 use your_cloud_native_bootstrap_assistant::personal_access_contract as fixture_names;
+use your_cloud_native_bootstrap_assistant::{
+    EXIT_PROTOCOL_REFUSED, EXIT_WATCHDOG_EXPIRED, REQUIRED_MODE_ARGUMENT,
+};
 
 /// Numeric address of the machine running the synthetic `sshd`.
 const TARGET: &str = "YOUR_CLOUD_LAB_TARGET";
@@ -1448,5 +1458,490 @@ fn a_window_that_needs_no_agent_is_never_given_one() {
             window.pid
         );
         thread::sleep(POLL_INTERVAL);
+    }
+}
+
+// ------------------------------------- the window of this entry, as a process
+//
+// The three cases below are the personal access homologues of the window
+// properties the process contract proves on the escalation couple. They are
+// written here rather than there because the window they are about is reached
+// through a different entry: `serve_personal_access` resolves the name, freezes
+// the addresses, reads the agent endpoint and lists the identities *before*
+// calling `prompt_with_identities`, and none of that exists on the escalation
+// path. A proof taken on the simple path therefore says nothing about this one,
+// and the perimeter is what makes this one runnable at all.
+//
+// Each case drives the shipped helper binary directly, over an authenticated
+// socket pair, exactly as the process contract does: the Console's supervisor
+// is deliberately not in between, because what is under test is the helper's
+// own behaviour while its window is up, not the launcher's.
+
+/// Request identifier of the launches this suite drives itself, with no
+/// supervisor in between.
+const DIRECT_REQUEST_ID: &str = "89abcdef0123456789abcdef01234567";
+/// Lease given to a helper whose window this suite ends itself. It only has to
+/// outlast the observation.
+const LIVE_WINDOW_LEASE_MILLIS: u64 = 60_000;
+/// Lease given to the helper the watchdog must cut *inside* its window.
+///
+/// It cannot be the hundred milliseconds the simple path uses: on this entry
+/// the resolution, the address freeze, the endpoint observation and the
+/// identity listing all consume the lease before any window exists, so such a
+/// lease would expire with nothing on screen and the case would pass for the
+/// opposite reason. It is instead long enough that the window is observed alive
+/// with most of the lease still to run, which the case asserts rather than
+/// assumes.
+const WATCHDOG_LEASE_MILLIS: u64 = 12_000;
+/// The grace the watchdog leaves for a controlled cleanup before it forces the
+/// process down itself. A helper that stopped after this grace would have been
+/// killed rather than have cut its own window.
+const FORCED_FALLBACK_GRACE: Duration = Duration::from_secs(1);
+/// Longest a helper may take to stop once its window has been ended.
+const PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The personal access scope, addressed to the helper directly.
+///
+/// The launcher is what normally stamps the shared clock and the remaining
+/// lease; here this process is the launcher, so it stamps them itself.
+fn direct_personal_access_scope(remaining_millis: u64) -> AssistantScopeV1 {
+    AssistantScopeV1 {
+        request_id: DIRECT_REQUEST_ID.into(),
+        issued_at_monotonic_nanos: monotonic_nanos().expect("shared monotonic clock"),
+        remaining_millis,
+        ..supervised_personal_access_scope()
+    }
+}
+
+/// Frames a scope the way the Console's transport does.
+///
+/// The length prefix has the same shape as the agent's, and is deliberately not
+/// the same function: the two protocols are free to diverge, and one helper
+/// serving both would hide the day they do.
+fn scope_frame(scope: &AssistantScopeV1) -> Vec<u8> {
+    payload_frame(&serde_json::to_vec(scope).expect("a scope is serialisable"))
+}
+
+fn payload_frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = u32::try_from(payload.len())
+        .expect("a bounded payload")
+        .to_be_bytes()
+        .to_vec();
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn decode_event(output: &[u8]) -> AssistantEventV1 {
+    assert!(output.len() >= 4, "an event frame carries its own length");
+    let length = u32::from_be_bytes(output[..4].try_into().expect("four bytes")) as usize;
+    assert_eq!(output.len(), length + 4, "exactly one event frame");
+    serde_json::from_slice::<AssistantEventV1>(&output[4..])
+        .expect("a well-formed event")
+        .validate()
+        .expect("a valid event")
+}
+
+/// The shipped helper, invoked exactly as the Console invokes it.
+///
+/// Nothing is removed from the environment: the display and the agent endpoint
+/// this process holds are precisely what the window under test needs.
+fn helper_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
+    command
+        .arg(REQUIRED_MODE_ARGUMENT)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+/// Starts a helper whose standard input is a socket this process owns, which
+/// is what the helper's parent attestation reads.
+fn spawn_authenticated(mut command: Command) -> (Child, UnixStream) {
+    let (child_input, parent_lease) = UnixStream::pair().expect("a socket pair for the lease");
+    command.stdin(Stdio::from(OwnedFd::from(child_input)));
+    (
+        command.spawn().expect("the helper must start"),
+        parent_lease,
+    )
+}
+
+/// Waits for a visible window `child` itself owns, and answers its title.
+///
+/// The lookup is by the helper's own process identifier, and the owner is then
+/// read back from the X server, so no other window on this display can stand in
+/// for it. The helper is checked alive before and after: a window observed on a
+/// process that has already gone would say nothing about a *live* prompt, which
+/// is the only thing the three cases below are about.
+fn await_live_window_of(child: &mut Child, timeout: Duration) -> Result<String, String> {
+    let process_id = child.id().to_string();
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(format!(
+                "the helper exited before any window of its own existed: {status}"
+            ));
+        }
+        if let Some(title) = window_owned_by(&process_id) {
+            return match child.try_wait() {
+                Ok(None) => Ok(title),
+                other => Err(format!(
+                    "the helper exited as its window was read: {other:?}"
+                )),
+            };
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "no visible window owned by the helper appeared within {timeout:?}"
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// The title of one visible window `process_id` owns, when there is one.
+///
+/// `xdotool search` is asked without `--sync` on purpose: a blocking search
+/// would keep waiting on a helper that has already died, and the caller's job
+/// is precisely to tell those two situations apart.
+fn window_owned_by(process_id: &str) -> Option<String> {
+    let listing = xdotool(&["search", "--onlyvisible", "--pid", process_id, "."])?;
+    let window_id = listing.lines().next()?.trim().to_owned();
+    if window_id.parse::<u64>().is_err() {
+        return None;
+    }
+    let owner = xdotool(&["getwindowpid", &window_id])?;
+    if owner.trim() != process_id {
+        return None;
+    }
+    Some(xdotool(&["getwindowname", &window_id])?.trim().to_owned())
+}
+
+/// Ends a helper the case could not observe, and says why it gave up.
+fn abandon(child: &mut Child, reason: &str) -> ! {
+    let cleanup = terminate_and_reap_bounded(child, REAP_TIMEOUT);
+    panic!("{reason}; cleanup: {cleanup:?}");
+}
+
+/// The watchdog cuts the personal access window while it is really open, and
+/// cuts it itself rather than being forced down.
+///
+/// Two failures must never be confused here, and the whole shape of the case is
+/// what separates them. A lease that ran out during the resolution, the endpoint
+/// observation or the identity listing — all of which happen before this entry
+/// has a window — ends the same process with the same exit code, and a case that
+/// only read that code would be green without a window ever having existed. So
+/// the window is observed alive first, and it is required to have been observed
+/// with most of the lease still to run; only then is the expiry awaited.
+///
+/// The second distinction is between the watchdog's own controlled cut and its
+/// forced fallback: both exit with the same status, but only the controlled one
+/// leaves the expurgated `Expired` frame on standard output, and only it happens
+/// inside the cleanup grace. Both are asserted.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn the_watchdog_cuts_a_live_personal_access_window_before_the_forced_fallback() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+    assert!(
+        std::env::var_os(ENDPOINT_VARIABLE).is_some(),
+        "this case needs the live agent endpoint the LAB run provides"
+    );
+
+    let lease = Duration::from_millis(WATCHDOG_LEASE_MILLIS);
+    // Sampled before the scope stamps the shared clock, so the helper's own
+    // deadline can only be later than this origin plus the lease.
+    let started = Instant::now();
+    let scope = direct_personal_access_scope(WATCHDOG_LEASE_MILLIS);
+    let (mut child, mut parent_lease) = spawn_authenticated(helper_command());
+    parent_lease
+        .write_all(&scope_frame(&scope))
+        .expect("the scope must reach the helper");
+    parent_lease.flush().expect("the scope must be flushed");
+
+    let title = match await_live_window_of(&mut child, WINDOW_TIMEOUT) {
+        Ok(title) => title,
+        Err(error) => abandon(
+            &mut child,
+            &format!("the watchdog case never saw the window it must cut: {error}"),
+        ),
+    };
+    let observed_at = started.elapsed();
+    assert_eq!(
+        title, PERSONAL_ACCESS_TITLE,
+        "the helper opened a window that is not the personal access one"
+    );
+    assert!(
+        observed_at * 2 < lease,
+        "the window only became observable at {observed_at:?} of a {lease:?} lease: \
+         what expires afterwards is no longer distinguishable from what never opened"
+    );
+
+    let output = collect_output_bounded(child, lease - observed_at + PROCESS_TIMEOUT)
+        .expect("the expiring helper must stop under a bound");
+    let elapsed = started.elapsed();
+    drop(parent_lease);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_WATCHDOG_EXPIRED.into()),
+        "a window cut by the watchdog exits as expired"
+    );
+    assert!(
+        elapsed >= lease,
+        "the helper stopped at {elapsed:?}, before its {lease:?} lease could have run out"
+    );
+    assert!(
+        elapsed < lease + FORCED_FALLBACK_GRACE,
+        "the helper stopped at {elapsed:?}, past the cleanup grace: it was forced down \
+         rather than having cut its own window"
+    );
+    assert_eq!(
+        decode_event(&output.stdout),
+        AssistantEventV1 {
+            schema_version: 1,
+            request_id: DIRECT_REQUEST_ID.into(),
+            event: AssistantEventKind::Expired,
+        },
+        "only a controlled cut writes the expurgated expiry"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+/// While the personal access window is open, no descriptor above stdio survives
+/// from the launcher.
+///
+/// The closure itself happens when the helper hardens, long before any window
+/// exists; what this case adds over its homologue on the simple path is *when*
+/// it is observed. This entry is the one that opens an agent socket and a
+/// transport of its own after hardening, so the honest question is whether the
+/// leaked descriptor is still gone once all of that has happened and the window
+/// is up. The order below is therefore the claim: window first, end of file
+/// second, helper still running third.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_live_personal_access_window_holds_no_inherited_descriptor_outside_stdio() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let mut inherited = [-1; 2];
+    // SAFETY: storage is valid for both descriptors. O_CLOEXEC keeps every other
+    // process of this run from inheriting either endpoint before the intended
+    // child is forked.
+    assert_eq!(
+        unsafe { libc::pipe2(inherited.as_mut_ptr(), libc::O_CLOEXEC) },
+        0
+    );
+    // SAFETY: pipe2 returned two unique owned descriptors.
+    let mut reader = unsafe { File::from_raw_fd(inherited[0]) };
+    // SAFETY: pipe2 returned two unique owned descriptors.
+    let writer = unsafe { OwnedFd::from_raw_fd(inherited[1]) };
+
+    let writer_descriptor = writer.as_raw_fd();
+    // SAFETY: writer remains owned and open until after spawn.
+    let writer_flags = unsafe { libc::fcntl(writer_descriptor, libc::F_GETFD) };
+    assert!(writer_flags >= 0);
+    let mut helper = helper_command();
+    // SAFETY: fcntl is async-signal-safe. Only the forked child clears CLOEXEC on
+    // its own copy, so exactly this helper receives the hostile descriptor.
+    unsafe {
+        helper.pre_exec(move || {
+            if libc::fcntl(
+                writer_descriptor,
+                libc::F_SETFD,
+                writer_flags & !libc::FD_CLOEXEC,
+            ) < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let (mut child, mut parent_lease) = spawn_authenticated(helper);
+    drop(writer);
+    parent_lease
+        .write_all(&scope_frame(&direct_personal_access_scope(
+            LIVE_WINDOW_LEASE_MILLIS,
+        )))
+        .expect("the scope must reach the helper");
+    parent_lease.flush().expect("the scope must be flushed");
+
+    let title = match await_live_window_of(&mut child, WINDOW_TIMEOUT) {
+        Ok(title) => title,
+        Err(error) => abandon(
+            &mut child,
+            &format!("the descriptor case never saw a live window: {error}"),
+        ),
+    };
+
+    // A closed inherited writer is observable as end of file without reading
+    // `/proc/<pid>/fd`, which the helper denies to this very user once it has
+    // made itself non-dumpable.
+    // SAFETY: reader remains owned for the whole flag update.
+    let reader_flags = unsafe { libc::fcntl(reader.as_raw_fd(), libc::F_GETFL) };
+    assert!(reader_flags >= 0);
+    // SAFETY: reader remains owned for the whole flag update.
+    assert_eq!(
+        unsafe {
+            libc::fcntl(
+                reader.as_raw_fd(),
+                libc::F_SETFL,
+                reader_flags | libc::O_NONBLOCK,
+            )
+        },
+        0
+    );
+    let inherited_writer_closed = read_eof_bounded(&mut reader, PIPE_EOF_TIMEOUT);
+    let child_was_still_running = matches!(child.try_wait(), Ok(None));
+
+    let reaped = terminate_and_reap_bounded(&mut child, REAP_TIMEOUT);
+    drop(parent_lease);
+
+    assert_eq!(
+        title, PERSONAL_ACCESS_TITLE,
+        "the helper opened a window that is not the personal access one"
+    );
+    assert!(
+        inherited_writer_closed.expect("the inherited descriptor must be observable"),
+        "the personal access window was open while a launcher descriptor was still held"
+    );
+    assert!(
+        child_was_still_running,
+        "the helper died before the observation, so nothing was observed of a live window"
+    );
+    assert!(reaped.is_ok());
+}
+
+/// What a mutation of the agreed scope may change while the window is up.
+#[derive(Clone, Copy)]
+enum MutationKind {
+    Target,
+    Step,
+    Action,
+    Expiration,
+}
+
+impl MutationKind {
+    const ALL: [Self; 4] = [Self::Target, Self::Step, Self::Action, Self::Expiration];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Target => "target",
+            Self::Step => "step",
+            Self::Action => "action",
+            Self::Expiration => "expiration",
+        }
+    }
+}
+
+fn mutation_frame(initial: &AssistantScopeV1, mutation_kind: MutationKind) -> Vec<u8> {
+    match mutation_kind {
+        MutationKind::Target => {
+            // A well-formed host, so the frame is refused for arriving after the
+            // scope rather than for being malformed. It is never resolved: the
+            // addresses this window displays were frozen before it opened.
+            let mut target = initial.clone();
+            target.target.host = "other-controller.example.test".into();
+            scope_frame(&target)
+        }
+        MutationKind::Step => {
+            // Another admissible step, carrying the prompt that step requires:
+            // the frame must be refused because it arrives after the scope, not
+            // because it is malformed.
+            let mut step = initial.clone();
+            step.step = BootstrapStep::UnlockPersonalKey;
+            step.prompt = NativePromptKind::KeyPassphrase;
+            scope_frame(&step)
+        }
+        MutationKind::Action => {
+            let mut action = serde_json::to_value(initial).expect("a scope is serialisable");
+            action["actions"] = serde_json::json!(["install_controller"]);
+            payload_frame(&serde_json::to_vec(&action).expect("a mutated scope is serialisable"))
+        }
+        MutationKind::Expiration => {
+            let mut expiration = initial.clone();
+            expiration.remaining_millis = LIVE_WINDOW_LEASE_MILLIS - 1_000;
+            scope_frame(&expiration)
+        }
+    }
+}
+
+/// A live personal access window refuses every later word from its launcher.
+///
+/// The four mutations are the ones the consent is about: the machine it names,
+/// the step it belongs to, the action it authorises and how long it lasts. Each
+/// is sent *while the window is up* — the window is observed alive first, and
+/// the case abandons rather than sends if it never appeared — so what is proven
+/// is a refusal by a running dialog and not a refusal by a helper that had
+/// already finished with its input.
+///
+/// Nothing is announced in return: the refusal is a bare exit status, with both
+/// streams empty, because a helper that described what it had just refused would
+/// be answering the launcher that tried it.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_live_personal_access_window_refuses_target_step_action_and_expiration_mutations() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    for mutation_kind in MutationKind::ALL {
+        let initial = direct_personal_access_scope(LIVE_WINDOW_LEASE_MILLIS);
+        let mutation = mutation_frame(&initial, mutation_kind);
+        let (mut child, mut parent_lease) = spawn_authenticated(helper_command());
+        parent_lease
+            .write_all(&scope_frame(&initial))
+            .expect("the scope must reach the helper");
+        parent_lease.flush().expect("the scope must be flushed");
+
+        let title = match await_live_window_of(&mut child, WINDOW_TIMEOUT) {
+            Ok(title) => title,
+            Err(error) => abandon(
+                &mut child,
+                &format!(
+                    "the {} mutation never reached a live window: {error}",
+                    mutation_kind.name()
+                ),
+            ),
+        };
+        assert_eq!(
+            title,
+            PERSONAL_ACCESS_TITLE,
+            "the {} mutation was aimed at a window that is not the personal access one",
+            mutation_kind.name()
+        );
+
+        parent_lease
+            .write_all(&mutation)
+            .expect("the mutation must reach the helper");
+        parent_lease.flush().expect("the mutation must be flushed");
+        let output = collect_output_bounded(child, PROCESS_TIMEOUT).unwrap_or_else(|error| {
+            panic!(
+                "the {} mutation left the helper running: {error}",
+                mutation_kind.name()
+            )
+        });
+        drop(parent_lease);
+
+        assert_eq!(
+            output.status.code(),
+            Some(EXIT_PROTOCOL_REFUSED.into()),
+            "the {} mutation must be refused as extra protocol input",
+            mutation_kind.name()
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "the {} mutation was answered on standard output",
+            mutation_kind.name()
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "the {} mutation was answered on standard error",
+            mutation_kind.name()
+        );
     }
 }
