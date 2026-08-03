@@ -1,7 +1,13 @@
 #![cfg(any(target_os = "linux", target_os = "windows"))]
 
+/// The streaming canary search, shared with the personal access contract so
+/// both suites mean the same thing by "the canary is absent".
+#[path = "support/canary_scan.rs"]
+mod canary_scan;
 #[path = "../src/crash_canary.rs"]
 mod crash_canary;
+
+use canary_scan::{contains_subslice, file_contains};
 
 use crash_canary::CANARY_BYTES;
 use std::{
@@ -278,34 +284,6 @@ fn assert_no_canary_output(
 
 fn materialize(pid: u32, byte_at: fn(u32, usize) -> u8) -> Vec<u8> {
     (0..CANARY_BYTES).map(|index| byte_at(pid, index)).collect()
-}
-
-fn file_contains(path: &Path, needle: &[u8]) -> io::Result<bool> {
-    let mut reader = BufReader::with_capacity(1024 * 1024, File::open(path)?);
-    let mut chunk = [0_u8; 64 * 1024];
-    let mut overlap = Vec::with_capacity(needle.len().saturating_sub(1));
-    loop {
-        let read = reader.read(&mut chunk)?;
-        if read == 0 {
-            return Ok(false);
-        }
-        let mut window = Vec::with_capacity(overlap.len() + read);
-        window.extend_from_slice(&overlap);
-        window.extend_from_slice(&chunk[..read]);
-        if contains_subslice(&window, needle) {
-            return Ok(true);
-        }
-        let retained = needle.len().saturating_sub(1).min(window.len());
-        overlap.clear();
-        overlap.extend_from_slice(&window[window.len() - retained..]);
-    }
-}
-
-fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
 }
 
 struct ScratchDirectory {

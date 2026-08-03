@@ -248,7 +248,24 @@ const nativeAssistantParentSpoofContract = await readSourceText(
     "windows_parent_spoof_contract.rs",
   ),
 );
-const nativeAssistantLinuxProcessContract = await readSourceText(
+// Les aides bornées du contrat processus vivent désormais dans un module
+// partagé, inclus par `#[path]` à la fois par ce contrat et par celui de
+// l'accès personnel. La preuve est donc lue sur les deux fichiers réunis :
+// exiger les jetons dans le seul fichier de tests reviendrait à interdire de
+// partager ces bornes, alors que les dupliquer est précisément ce qui les fait
+// diverger.
+const nativeAssistantBoundedProcess = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "tests",
+    "support",
+    "bounded_process.rs",
+  ),
+);
+const nativeAssistantLinuxProcessContract = `${await readSourceText(
   join(
     consoleRoot,
     "src-tauri",
@@ -257,7 +274,7 @@ const nativeAssistantLinuxProcessContract = await readSourceText(
     "tests",
     "process_contract.rs",
   ),
-);
+)}\n${nativeAssistantBoundedProcess}`;
 const nativeAssistantWindowsLivePromptContract = await readSourceText(
   join(
     consoleRoot,

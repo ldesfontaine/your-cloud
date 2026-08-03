@@ -1,9 +1,8 @@
 #![cfg(target_os = "linux")]
 
 use std::{
-    io::{self, Read, Write},
-    process::{Child, Command, ExitStatus, Output, Stdio},
-    thread,
+    io::{self, Write},
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -16,6 +15,15 @@ use std::{
     },
 };
 
+/// The bounded process helpers this suite first needed, now shared with the
+/// personal access contract so both suites bound a subprocess the same way.
+#[path = "support/bounded_process.rs"]
+mod bounded_process;
+
+use bounded_process::{
+    collect_output_bounded, read_eof_bounded, terminate_and_reap_bounded, wait_bounded,
+    REAP_TIMEOUT,
+};
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1, BootstrapAccessKind,
     BootstrapAction, BootstrapMode, BootstrapStep, BootstrapTarget, NativePromptKind,
@@ -30,9 +38,6 @@ const HOST_KEY: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const INITIAL_REMAINING_MILLIS: u64 = 10_000;
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
 const WINDOW_TIMEOUT: Duration = Duration::from_secs(3);
-const REAP_TIMEOUT: Duration = Duration::from_secs(2);
-const PIPE_EOF_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_CAPTURED_OUTPUT: usize = 64 * 1024;
 
 #[derive(Clone, Copy)]
 enum MutationKind {
@@ -438,141 +443,4 @@ fn helper_closes_every_inherited_descriptor_outside_stdio() {
     assert_eq!(inherited_writer_closed.unwrap(), true);
     assert!(child_was_still_running);
     assert!(reaped.is_ok());
-}
-
-#[cfg(target_os = "linux")]
-fn read_eof_bounded(reader: &mut File, timeout: Duration) -> io::Result<bool> {
-    let deadline = Instant::now() + timeout;
-    let mut byte = [0_u8; 1];
-    loop {
-        match reader.read(&mut byte) {
-            Ok(0) => return Ok(true),
-            Ok(_) => return Ok(false),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error)
-                if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
-            {
-                thread::sleep(Duration::from_millis(5));
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn collect_output_bounded(mut child: Child, timeout: Duration) -> io::Result<Output> {
-    let status = wait_bounded(&mut child, timeout)?;
-    let stdout = read_pipe_to_eof_bounded(
-        &mut child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("child stdout was not piped"))?,
-        PIPE_EOF_TIMEOUT,
-    )?;
-    let stderr = read_pipe_to_eof_bounded(
-        &mut child
-            .stderr
-            .take()
-            .ok_or_else(|| io::Error::other("child stderr was not piped"))?,
-        PIPE_EOF_TIMEOUT,
-    )?;
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-fn read_pipe_to_eof_bounded<R>(reader: &mut R, timeout: Duration) -> io::Result<Vec<u8>>
-where
-    R: Read + AsRawFd,
-{
-    let descriptor = reader.as_raw_fd();
-    // SAFETY: reader owns a valid descriptor for the duration of both fcntl calls.
-    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: reader still owns the descriptor and O_NONBLOCK is a valid status flag.
-    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or_else(|| io::Error::other("pipe EOF deadline overflow"))?;
-    let mut output = Vec::new();
-    let mut buffer = [0_u8; 4_096];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => return Ok(output),
-            Ok(length) => {
-                if output.len().saturating_add(length) > MAX_CAPTURED_OUTPUT {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "child output exceeded the bounded capture size",
-                    ));
-                }
-                output.extend_from_slice(&buffer[..length]);
-            }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error)
-                if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
-            {
-                thread::sleep(Duration::from_millis(5));
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "child output did not reach EOF before the deadline",
-                ));
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<ExitStatus> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
-        }
-        if Instant::now() >= deadline {
-            let cleanup = terminate_and_reap_bounded(child, REAP_TIMEOUT);
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("subprocess did not stop before the deadline; cleanup: {cleanup:?}"),
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn terminate_and_reap_bounded(child: &mut Child, timeout: Duration) -> io::Result<ExitStatus> {
-    if let Some(status) = child.try_wait()? {
-        return Ok(status);
-    }
-    if let Err(kill_error) = child.kill() {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
-        }
-        return Err(kill_error);
-    }
-
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or_else(|| io::Error::other("process reap deadline overflow"))?;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
-        }
-        if Instant::now() >= deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "killed subprocess was not reaped before the deadline",
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
 }
