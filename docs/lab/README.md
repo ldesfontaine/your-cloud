@@ -105,6 +105,15 @@ systemd restent propres à la preuve dans les VM LAB. Une erreur après mutation
 sélectionne et vérifie l'état absent ; un succès réinstalle l'état final
 documenté.
 
+Pour `v0.1.0`,
+[`tests/lab/v0.1.0/personal-access/prove`](../../tests/lab/v0.1.0/personal-access/prove)
+est l'entrée d'orchestration du périmètre de l'accès personnel. Elle applique la
+même garde d'inventaire, monte les deux côtés du périmètre sur `lab-console` et
+`lab-machine-1`, exécute la suite `personal-access-contract`, puis démonte et
+prouve l'absence de ce qu'elle a créé, même lorsque la suite échoue. Les
+comptes, clés et agents sont synthétiques et générés au montage ; les deux VM
+restent démarrées et aucune topologie n'est créée ni détruite.
+
 Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
 sur les sources et contrats réutilisables. La **preuve LAB** sous
 [`tests/lab/`](../../tests/lab/) ajoute le placement réel, les processus,

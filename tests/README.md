@@ -14,6 +14,7 @@ a été exécuté.
 | porte rapide sous [`checks/`](checks/) | format, syntaxe, contrat PowerShell de nettoyage attribué par SID, chemins bornés et collecte sans faux candidat nul, cas hostiles du raster PNG, documentation, tests Go, build temporaire, contrats `labctl list`/`assert-clean` et politique CI | runner GitHub Linux jetable sur chaque pull request | codes de sortie et assertions |
 | matrice native sous [`checks/`](checks/) | tests frontend et Rust, consentement GTK3/Win32, fixture de crash avec contrôle ordinaire et canari protégé, paquets `.deb`/`.msi`, signature Authenticode synthétique Windows, installation, lancement, absence de listener, captures validées après peinture et smoke de la WebView installée | runners GitHub Linux et Windows jetables, déclenchés manuellement sur le candidat exact | codes de sortie, dumps synthétiques bornés puis nettoyés et, par plateforme, artefact expurgé de onze fichiers : un JSON, neuf vues et un consentement natif PNG |
 | [`lab/v0.0.1/`](lab/v0.0.1/) | préparation, déploiement, scénarios hostiles multi-VM, nettoyage et restitution P2 | topologie KVM/libvirt `v1-full` pilotée par `labctl` | `result.json` et assertions machine |
+| [`lab/v0.1.0/`](lab/v0.1.0/) | périmètre à deux VM de l'accès personnel : `ssh-agent` et `sshd` réels, comptes et commandes forcées synthétiques, montage, suite `personal-access-contract`, démontage prouvé | topologie KVM/libvirt `quick` pilotée par `labctl` | codes de sortie de la suite et assertions machine |
 | [`artifacts/`](artifacts/) | convention et sorties locales non versionnées des preuves | poste de pilotage après rapatriement d'un résultat LAB | résultat structuré du run exact |
 
 Cette séparation prépare une CI propre sans prétendre qu'un conteneur standard
@@ -34,6 +35,15 @@ explicite : le mode `lab` exige `lab-console` et root isolé pour produire
 `dist/your-cloud`, tandis que le mode `ci` exige un runner distant déclaré et
 non privilégié, puis construit dans un répertoire temporaire. Aucun mode
 n'autorise l'exécution sur le laptop.
+
+Une suite peut exiger un périmètre qu'aucun test unitaire ne synthétise. La
+suite `personal-access-contract` de l'assistant natif est dans ce cas : elle
+demande un `ssh-agent` détenant réellement des clés et un `sshd` sur une autre
+machine, puisque le garde de cible refuse les adresses locales. Elle est donc
+fermée derrière la feature `personal-access-contract-test` plutôt qu'ignorée, et
+son périmètre est monté, exercé puis retiré par
+[`lab/v0.1.0/personal-access/prove`](lab/v0.1.0/personal-access/prove). Ce
+harnais ne prouve rien à lui seul : seule une exécution identifiée le fait.
 
 Les sous-dossiers `lab/<version>/deploy/` figent les unités et scripts
 effectivement exercés par la preuve de ce palier. Ils ne constituent ni un
