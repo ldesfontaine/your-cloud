@@ -140,8 +140,31 @@ Le catalogue exécuté : `secret-crash-contract`, `native-lib`, `protocol`,
 machine : elle arrête puis démarre le service `ssh-agent`, parce que c'est lui
 qui tient ou libère le nom de pipe qu'elle met en cause, et elle repose la
 configuration de démarrage qu'elle a trouvée. Elle exige donc un compte
-administrateur — sans quoi ni le service ni le processus qui sert le pipe ne
-sont interrogeables — et c'est aussi ce que la porte hébergée offrirait.
+administrateur pour *disposer la scène* — c'est aussi ce que la porte hébergée
+offrirait — mais elle n'en exige pas un pour *attester* : sa seconde épreuve
+fait chaque observation sous un jeton dont `Administrators` est désactivé et
+dont tous les privilèges sont retirés, et exige que l'agent vivant y reste
+attesté et qu'un squatteur y reste refusé. C'est la moitié qui compte : mesuré
+sur Windows Server 2025, un simple membre de `Users` se voit refuser
+`OpenProcess` sur le service `ssh-agent` avec `ERROR_ACCESS_DENIED`, pour
+`PROCESS_QUERY_LIMITED_INFORMATION` comme pour `PROCESS_QUERY_INFORMATION`,
+alors que `ssh-add -l` lui répond normalement. Une attestation qui aurait exigé
+ce descripteur aurait fermé l'accès personnel contre l'utilisateur même de
+`ssh-agent` ; c'est le propriétaire de l'objet pipe — lisible par tout compte
+que le pipe laisse entrer — qui porte désormais la décision.
+
+Cette mesure a été faite ici sous un **vrai compte local standard**, synthétique
+et jetable, membre de `Users` seulement, exécuté par une tâche planifiée : une
+session ouverte par OpenSSH est la session 0, dont un compte standard ne peut
+pas ouvrir la station de fenêtres, et un processus créé là y meurt à
+l'initialisation de ses DLL. Sous ce compte, agent vivant : `CreateFileW` sur le
+pipe réussit — `READ_CONTROL` compris —, `GetNamedPipeServerProcessId` répond,
+`OpenProcess` échoue avec `ERROR_ACCESS_DENIED`, `GetSecurityInfo` rend
+`S-1-5-18`, et `ssh-add -l` répond normalement. Le binaire de fixture lancé par
+ce compte rend `ATTESTED owner=S-1-5-18 image=- account=-` face à l'agent et
+`REFUSED ForeignPipeOwner` face à un squatteur créé par ce même compte, sans lui
+avoir envoyé un octet. Le compte a été retiré ensuite ; le harnais versionné ici
+n'en crée aucun.
 
 ### Usage
 

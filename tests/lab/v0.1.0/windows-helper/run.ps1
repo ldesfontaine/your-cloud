@@ -93,13 +93,16 @@ $catalogue = @(
         )
     },
     @{
+        # Les deux épreuves de cette suite pilotent le même service `ssh-agent`
+        # et doivent donc rester sérialisées ; elles sont nommées ensemble
+        # plutôt qu’une seule, parce que celle qui compte le plus est la
+        # seconde — l’attestation vue par un compte sans droit administrateur.
         name = "windows-agent-pipe-contract"
         honoursConfiguration = $true
         arguments = @(
             "-p", $assistant, "--features", "windows-agent-pipe-contract-test",
             "--test", "windows-agent-pipe-contract",
-            "a_pipe_server_that_is_not_the_system_openssh_agent_is_refused",
-            "--", "--exact", "--test-threads=1"
+            "--", "--test-threads=1"
         )
     },
     @{
