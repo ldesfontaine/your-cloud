@@ -222,16 +222,46 @@ ne couvre pas Windows sans contrainte. La décision de placement des preuves
 [`#67`](https://github.com/ldesfontaine/your-cloud/issues/67) remplace donc
 cette position.
 
-Un LAB Windows local est ouvert, sous forme minimale : une VM d'évaluation
-demandant environ 60 Gio de disque et 4 à 6 Gio de mémoire, provisionnée
-manuellement, avec un smoke scripté. Elle reste hors `labctl`, qui ne connaît
-aujourd'hui qu'une image Debian datée et vérifiée par SHA512 ; une
-automatisation complète attend que sa valeur soit démontrée. Cette VM sert la
+Ce LAB Windows minimal existe depuis le 4 août 2026. Il tient dans un seul
+domaine libvirt, `lab-windows` : Windows Server 2025 Standard Évaluation avec
+interface graphique — le même système que le runner `windows-2025` de la porte
+native, délibérément —, 6 Gio de mémoire, 4 processeurs virtuels, un disque de
+80 Gio alloué à la demande et le réseau libvirt `default`. Il porte
+l'outillage épinglé que la porte native emploie : les outils de build MSVC x64
+et le SDK Windows, `rustc` et `rustfmt` `1.94.1` en `x86_64-pc-windows-msvc`,
+Node.js `24.18.0`, le runtime WebView2 Evergreen et OpenSSH.
+
+Cette VM est provisionnée **manuellement** et reste hors `labctl`, qui ne
+connaît aujourd'hui qu'une image Debian datée et vérifiée par SHA512 ; une
+automatisation complète attend que sa valeur soit démontrée. Elle sert la
 validation continue du helper Windows pendant le développement, au même titre
-que le LAB Linux pour sa moitié.
+que le LAB Linux pour sa moitié :
+[`tests/lab/v0.1.0/windows-helper/prove`](../../tests/lab/v0.1.0/windows-helper/prove)
+y synchronise les sources natives de la Console et y exécute les suites de
+contrat propres à Windows — Job Object et handles suspendus, pipe nommé et
+parent déclaré, dialogue Win32 vivant, crash et dump du secret — avec les
+invocations exactes de la porte native. Son adresse et sa clé viennent de
+l'environnement ; aucune ne vit dans le dépôt.
 
 Elle ne devient pas une autorité d'attestation. La CI hébergée conserve ce
 rôle : la porte native `workflow_dispatch` sur le candidat de palier reste
 exigée pour fermer un palier, selon le [contrat CI](../contribution/CI.md). Une
 observation faite dans ce LAB Windows ne ferme donc rien à elle seule, et elle
-ne simule jamais la topologie multi-VM, qui reste propre au LAB Linux.
+ne simule jamais la topologie multi-VM, qui reste propre au LAB Linux. Elle ne
+produit ni `.msi`, ni signature Authenticode, ni gate PE, ni smoke WebView2
+archivé.
+
+**Sa fermeture est explicite.** `tools/labctl assert-clean` ne voit pas ce
+domaine : il refuse les VM portant l'origine `your-cloud/labctl` et les noms
+`lab-*` suspects, mais `lab-windows` n'a été créée ni par le contrôleur ni avec
+ses métadonnées. Un `assert-clean` vert ne dit donc rien de six gibioctets
+encore alloués. La fin d'une tâche qui l'emploie exige la commande suivante,
+nommée dans le compte rendu :
+
+```text
+virsh -c qemu:///system shutdown lab-windows
+```
+
+Pour la même raison de mémoire, cette VM et les VM Debian de `labctl` ne
+tournent jamais ensemble sur le poste ; le harnais refuse de démarrer lorsque
+c'est le cas.
