@@ -16,11 +16,14 @@
 //! Windows is split the same way. [`accept_windows_endpoint`] judges an
 //! [`ObservedPipeServer`] and touches nothing; the module `agent_pipe` opens
 //! the fixed pipe and produces such an observation from the live system, one
-//! platform over. On Windows the endpoint is not a filesystem entry
-//! whose owner can be read, so what carries the decision is the *process*
-//! serving the pipe: a named pipe is squattable by name alone, and only the
-//! identity of its server distinguishes the OpenSSH agent from a listener that
-//! merely chose the same name first.
+//! platform over. A named pipe is squattable by name alone, so the name is
+//! worth nothing on its own — but the *object* behind the name is not a
+//! filesystem entry and yet does carry an owner, written by the kernel from the
+//! token of whoever created it. That owner is what carries the decision, and it
+//! is the same question the Linux side asks of the socket. Where the serving
+//! process can also be opened, its image and its own account are required to
+//! agree; where it cannot — which is every account that is not an
+//! administrator — the owner decides alone.
 
 /// The single environment variable consulted on Linux. It is read once, and
 /// no other variable can name an endpoint.
@@ -37,13 +40,20 @@ pub const WINDOWS_PIPE_NAME: &str = r"\\.\pipe\openssh-ssh-agent";
 /// `Windows` directory name is ever assumed by this crate.
 pub const WINDOWS_AGENT_IMAGE: &str = r"OpenSSH\ssh-agent.exe";
 
-/// The account that image must be running as.
+/// The account the agent runs as, and therefore the account that must own the
+/// pipe object it created.
 ///
 /// The OpenSSH Authentication Agent is registered as a `LocalSystem` service,
 /// whose SID is fixed and identical on every Windows machine. A copy of the
 /// same binary started by an ordinary account is therefore refused here even
 /// though its image is genuine, which is exactly the point: the image says
 /// *which* program serves the pipe, the account says *whose*.
+///
+/// The same SID answers two different questions, and both are asked below. As
+/// the owner of the pipe object it says who *created* the endpoint, which is
+/// readable by any account that may open the pipe at all. As the user of the
+/// server's token it says who is *running* it, which needs a handle on that
+/// process and is therefore only readable by an administrator.
 pub const WINDOWS_AGENT_ACCOUNT: &str = "S-1-5-18";
 
 /// Largest accepted endpoint path. A Unix socket path is itself bounded by
@@ -73,10 +83,14 @@ pub enum EndpointRefusal {
     PipeUnavailable,
     /// What answered under that name is not a named pipe.
     NotANamedPipe,
-    /// The process serving the pipe could not be named, opened or queried, so
-    /// there is nothing to attest. Being unable to look is a refusal, never a
+    /// Nothing could be learned about the endpoint at all: no server named, no
+    /// owner readable on the pipe object, or a process handle that was obtained
+    /// and then answered nothing. Being unable to look is a refusal, never a
     /// reason to proceed.
     ServerNotAttestable,
+    /// The pipe object was created by an account that is not the one the
+    /// OpenSSH agent service runs under.
+    ForeignPipeOwner,
     /// The pipe is served by an image that is not the system OpenSSH agent.
     ForeignPipeServer,
     /// The system OpenSSH agent image is served by the wrong account.
@@ -247,28 +261,76 @@ pub struct ObservedPipeServer<'a> {
     pub is_named_pipe: bool,
     /// Identifier the kernel reports for the process serving *this* instance.
     pub server_process_id: u32,
-    /// Fully normalised image path of that process.
-    pub server_image_path: &'a str,
+    /// String SID of the account that owns the pipe object itself, read from
+    /// the handle already in hand.
+    ///
+    /// This is the fact every account can obtain: opening the pipe at all
+    /// carries `READ_CONTROL`, and the owner of a kernel object is written by
+    /// the kernel from the token of whoever created it. It is therefore what
+    /// the decision below rests on.
+    pub server_object_owner_sid: &'a str,
+    /// What the serving process said about itself, when a handle on it could be
+    /// obtained at all.
+    ///
+    /// `None` where it could not. Windows grants a handle on a `LocalSystem`
+    /// process to `SYSTEM` and to administrators only, so an ordinary account —
+    /// the account `ssh-agent` exists for — never obtains one. That is a
+    /// missing *supplement*, not a missing attestation, and it is the only
+    /// thing this type lets be missing.
+    pub server_process: Option<ObservedServerProcess<'a>>,
     /// Fully normalised path of [`WINDOWS_AGENT_IMAGE`] under this machine's
     /// own system directory, read from the machine rather than assumed.
     pub system_agent_image_path: &'a str,
-    /// String SID of the account that process runs as.
-    pub server_account_sid: &'a str,
     /// The same process was still serving the same live pipe once every answer
     /// above had been collected.
     pub still_serving: bool,
 }
 
+/// What a handle on the serving process yielded, where one could be opened.
+///
+/// Both fields are read through the same handle, so either of them coming back
+/// empty means the handle answered nothing rather than that the query was not
+/// permitted — which is why an empty field here is a refusal while the whole
+/// structure being absent is not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObservedServerProcess<'a> {
+    /// Fully normalised image path of that process.
+    pub image_path: &'a str,
+    /// String SID of the account that process runs as.
+    pub account_sid: &'a str,
+}
+
 /// Judges a Windows agent endpoint.
 ///
-/// Only the fixed OpenSSH pipe is admissible, and only when the process behind
-/// it is the system OpenSSH agent running as the account that service is
-/// registered under. What this attests, exactly: the bytes of this session
-/// will be answered by the image stored at the system path, by a process
-/// running as `LocalSystem`. What it does not attest: that no other process
-/// ever held the name, nor that the identifier reported for the server was
-/// never recycled — see [`ObservedPipeServer::still_serving`], which is how
-/// much of that residue is closed and no more.
+/// Only the fixed OpenSSH pipe is admissible, and only when the object behind
+/// it was created by the account the OpenSSH agent service runs under. That
+/// owner is the load-bearing check and it is never optional. Where a handle on
+/// the serving process can also be obtained, two further facts are required of
+/// it — the image it runs and the account it runs as — and any disagreement
+/// there is fatal.
+///
+/// **What this attests.** The endpoint this session is connected to is a named
+/// pipe object created by `LocalSystem`. The pipe namespace is flat and any
+/// account may create a name into it, but no account may create an object owned
+/// by a SID its token does not carry: an ordinary user's squatter is owned by
+/// that user, and even an administrator's is owned by `Administrators`. So the
+/// owner separates the service from an impostor, which the name alone never
+/// did. Where the process could be opened as well, the bytes of this session
+/// are additionally known to be answered by the file stored at the system
+/// OpenSSH path, executed as `LocalSystem`.
+///
+/// **What this does not attest.** The owner says who *created* the object, not
+/// which file is executing. On a machine where the serving process cannot be
+/// opened — the ordinary case for a user who is not an administrator — this
+/// decision does not distinguish the OpenSSH agent from another `LocalSystem`
+/// service that took the name first. It also says nothing about *past* holders
+/// of the name, nor that the identifier reported for the server was never
+/// recycled; see [`ObservedPipeServer::still_serving`], which is how much of
+/// that residue is closed and no more. An administrator holding
+/// `SeRestorePrivilege` can stamp `LocalSystem` on an object it creates, so
+/// this decision does not defend against an administrator — but an
+/// administrator can replace the agent's own image, so nothing at this layer
+/// could.
 pub fn accept_windows_endpoint(
     declared: &str,
     observed: ObservedPipeServer<'_>,
@@ -280,20 +342,30 @@ pub fn accept_windows_endpoint(
         return Err(EndpointRefusal::NotANamedPipe);
     }
     // A missing answer is never an acceptable one: an identifier of zero, an
-    // unreadable image or an unreadable account all mean the same thing, which
-    // is that nothing was attested.
+    // unreadable owner, or a machine that cannot name its own agent image all
+    // mean the same thing, which is that nothing was attested.
     if observed.server_process_id == 0
-        || observed.server_image_path.is_empty()
+        || observed.server_object_owner_sid.is_empty()
         || observed.system_agent_image_path.is_empty()
-        || observed.server_account_sid.is_empty()
     {
         return Err(EndpointRefusal::ServerNotAttestable);
     }
-    if !same_windows_path(observed.server_image_path, observed.system_agent_image_path) {
-        return Err(EndpointRefusal::ForeignPipeServer);
+    if observed.server_object_owner_sid != WINDOWS_AGENT_ACCOUNT {
+        return Err(EndpointRefusal::ForeignPipeOwner);
     }
-    if observed.server_account_sid != WINDOWS_AGENT_ACCOUNT {
-        return Err(EndpointRefusal::ForeignServerAccount);
+    // Absent, this supplement costs nothing. Present, it is held to the same
+    // standard as before: a handle that was opened and then answered nothing is
+    // a failed attestation, not an absent one.
+    if let Some(process) = observed.server_process {
+        if process.image_path.is_empty() || process.account_sid.is_empty() {
+            return Err(EndpointRefusal::ServerNotAttestable);
+        }
+        if !same_windows_path(process.image_path, observed.system_agent_image_path) {
+            return Err(EndpointRefusal::ForeignPipeServer);
+        }
+        if process.account_sid != WINDOWS_AGENT_ACCOUNT {
+            return Err(EndpointRefusal::ForeignServerAccount);
+        }
     }
     if !observed.still_serving {
         return Err(EndpointRefusal::ServerReplaced);
@@ -487,22 +559,49 @@ mod tests {
 
     const SYSTEM_AGENT: &str = r"C:\Windows\System32\OpenSSH\ssh-agent.exe";
 
+    /// The shape an administrator observes: the owner, plus the two facts a
+    /// handle on the serving process yields.
     fn attested_server() -> ObservedPipeServer<'static> {
         ObservedPipeServer {
             is_named_pipe: true,
             server_process_id: 608,
-            server_image_path: SYSTEM_AGENT,
+            server_object_owner_sid: WINDOWS_AGENT_ACCOUNT,
+            server_process: Some(ObservedServerProcess {
+                image_path: SYSTEM_AGENT,
+                account_sid: WINDOWS_AGENT_ACCOUNT,
+            }),
             system_agent_image_path: SYSTEM_AGENT,
-            server_account_sid: WINDOWS_AGENT_ACCOUNT,
             still_serving: true,
         }
     }
+
+    /// The shape an account with no administrative right observes: the owner,
+    /// and nothing about the process, because Windows refuses it a handle on a
+    /// `LocalSystem` service. Measured on Windows Server 2025 under a plain
+    /// member of `Users`: `OpenProcess` fails with `ERROR_ACCESS_DENIED` for
+    /// `PROCESS_QUERY_INFORMATION` and for `PROCESS_QUERY_LIMITED_INFORMATION`
+    /// alike, while the owner of the pipe object reads back as `S-1-5-18`.
+    fn attested_without_privilege() -> ObservedPipeServer<'static> {
+        ObservedPipeServer {
+            server_process: None,
+            ..attested_server()
+        }
+    }
+
+    /// An unprivileged squatter: a real pipe, alive, named right, and created
+    /// by an ordinary account.
+    const SQUATTER: &str = "S-1-5-21-1830930052-45202436-2080648262-1002";
 
     #[test]
     fn only_the_fixed_openssh_pipe_is_accepted_on_windows() {
         assert_eq!(
             accept_windows_endpoint(WINDOWS_PIPE_NAME, attested_server()),
             Ok(())
+        );
+        assert_eq!(
+            accept_windows_endpoint(WINDOWS_PIPE_NAME, attested_without_privilege()),
+            Ok(()),
+            "an account that cannot open the server process still holds an endpoint",
         );
         for hostile in [
             r"\\.\pipe\openssh-ssh-agent-evil",
@@ -542,9 +641,9 @@ mod tests {
                 EndpointRefusal::ServerNotAttestable,
             ),
             (
-                "server image unreadable",
+                "the owner of the pipe object unreadable",
                 ObservedPipeServer {
-                    server_image_path: "",
+                    server_object_owner_sid: "",
                     ..attested_server()
                 },
                 EndpointRefusal::ServerNotAttestable,
@@ -558,9 +657,23 @@ mod tests {
                 EndpointRefusal::ServerNotAttestable,
             ),
             (
-                "server account unreadable",
+                "a handle on the server that then answered no image",
                 ObservedPipeServer {
-                    server_account_sid: "",
+                    server_process: Some(ObservedServerProcess {
+                        image_path: "",
+                        account_sid: WINDOWS_AGENT_ACCOUNT,
+                    }),
+                    ..attested_server()
+                },
+                EndpointRefusal::ServerNotAttestable,
+            ),
+            (
+                "a handle on the server that then answered no account",
+                ObservedPipeServer {
+                    server_process: Some(ObservedServerProcess {
+                        image_path: SYSTEM_AGENT,
+                        account_sid: "",
+                    }),
                     ..attested_server()
                 },
                 EndpointRefusal::ServerNotAttestable,
@@ -568,7 +681,10 @@ mod tests {
             (
                 "an impostor of its own",
                 ObservedPipeServer {
-                    server_image_path: r"C:\Users\victim\AppData\Local\Temp\ssh-agent.exe",
+                    server_process: Some(ObservedServerProcess {
+                        image_path: r"C:\Users\victim\AppData\Local\Temp\ssh-agent.exe",
+                        account_sid: WINDOWS_AGENT_ACCOUNT,
+                    }),
                     ..attested_server()
                 },
                 EndpointRefusal::ForeignPipeServer,
@@ -576,7 +692,10 @@ mod tests {
             (
                 "the genuine image somewhere else",
                 ObservedPipeServer {
-                    server_image_path: r"C:\Tools\OpenSSH\ssh-agent.exe",
+                    server_process: Some(ObservedServerProcess {
+                        image_path: r"C:\Tools\OpenSSH\ssh-agent.exe",
+                        account_sid: WINDOWS_AGENT_ACCOUNT,
+                    }),
                     ..attested_server()
                 },
                 EndpointRefusal::ForeignPipeServer,
@@ -584,7 +703,10 @@ mod tests {
             (
                 "the genuine image under an ordinary account",
                 ObservedPipeServer {
-                    server_account_sid: "S-1-5-21-1000-1000-1000-1001",
+                    server_process: Some(ObservedServerProcess {
+                        image_path: SYSTEM_AGENT,
+                        account_sid: "S-1-5-21-1000-1000-1000-1001",
+                    }),
                     ..attested_server()
                 },
                 EndpointRefusal::ForeignServerAccount,
@@ -592,7 +714,10 @@ mod tests {
             (
                 "the network service, which is not LocalSystem",
                 ObservedPipeServer {
-                    server_account_sid: "S-1-5-20",
+                    server_process: Some(ObservedServerProcess {
+                        image_path: SYSTEM_AGENT,
+                        account_sid: "S-1-5-20",
+                    }),
                     ..attested_server()
                 },
                 EndpointRefusal::ForeignServerAccount,
@@ -616,10 +741,70 @@ mod tests {
 
     /// The filesystem does not distinguish the case of a path, so neither may
     /// the comparison; everything else must still differ.
+    /// The whole point of the owner: it is the one fact an account without any
+    /// administrative right can still read, and it must still refuse a
+    /// squatter. Every case below is a live, well-named pipe whose server is
+    /// simply beyond reach — which is exactly the position an ordinary user is
+    /// in, and where a rule that gave up would be a name comparison in
+    /// disguise.
+    #[test]
+    fn without_a_handle_on_the_server_the_owner_alone_still_refuses_a_squatter() {
+        for (case, owner) in [
+            ("an ordinary account that took the name first", SQUATTER),
+            ("an elevated administrator's squatter", "S-1-5-32-544"),
+            ("the network service", "S-1-5-20"),
+            ("the local service", "S-1-5-19"),
+            ("everyone", "S-1-1-0"),
+        ] {
+            assert_eq!(
+                accept_windows_endpoint(
+                    WINDOWS_PIPE_NAME,
+                    ObservedPipeServer {
+                        server_object_owner_sid: owner,
+                        ..attested_without_privilege()
+                    }
+                ),
+                Err(EndpointRefusal::ForeignPipeOwner),
+                "{case} must fail closed"
+            );
+        }
+        assert_eq!(
+            accept_windows_endpoint(
+                WINDOWS_PIPE_NAME,
+                ObservedPipeServer {
+                    server_object_owner_sid: "",
+                    ..attested_without_privilege()
+                }
+            ),
+            Err(EndpointRefusal::ServerNotAttestable),
+            "an owner that could not be read leaves nothing to judge",
+        );
+    }
+
+    /// The owner is required of the privileged path too. Reading the image and
+    /// the token must never excuse an object somebody else created — the two
+    /// checks accumulate, they do not stand in for one another.
+    #[test]
+    fn a_readable_server_process_never_excuses_a_foreign_owner() {
+        assert_eq!(
+            accept_windows_endpoint(
+                WINDOWS_PIPE_NAME,
+                ObservedPipeServer {
+                    server_object_owner_sid: SQUATTER,
+                    ..attested_server()
+                }
+            ),
+            Err(EndpointRefusal::ForeignPipeOwner),
+        );
+    }
+
     #[test]
     fn the_system_image_is_compared_without_case_and_without_charity() {
         let shouting = ObservedPipeServer {
-            server_image_path: r"C:\WINDOWS\SYSTEM32\OPENSSH\SSH-AGENT.EXE",
+            server_process: Some(ObservedServerProcess {
+                image_path: r"C:\WINDOWS\SYSTEM32\OPENSSH\SSH-AGENT.EXE",
+                account_sid: WINDOWS_AGENT_ACCOUNT,
+            }),
             ..attested_server()
         };
         assert_eq!(accept_windows_endpoint(WINDOWS_PIPE_NAME, shouting), Ok(()));
@@ -635,7 +820,10 @@ mod tests {
                 accept_windows_endpoint(
                     WINDOWS_PIPE_NAME,
                     ObservedPipeServer {
-                        server_image_path: near_miss,
+                        server_process: Some(ObservedServerProcess {
+                            image_path: near_miss,
+                            account_sid: WINDOWS_AGENT_ACCOUNT,
+                        }),
                         ..attested_server()
                     }
                 ),

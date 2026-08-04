@@ -8,34 +8,49 @@
 //! a name it happened to take, and that another process can take first or take
 //! beside it. Comparing the name alone therefore attests nothing at all.
 //!
-//! What can be attested is the *process* answering on the instance this
-//! session is connected to. Three questions are asked of it, in this order,
-//! and any one of them failing ends the endpoint:
+//! What can be attested is the *object* the name resolves to, and — where the
+//! machine allows it — the process answering on it.
+//!
+//! The one question always asked, because every account that may open the pipe
+//! at all may also ask it, is **who created this object**:
+//! `GetSecurityInfo(OWNER_SECURITY_INFORMATION)` on the handle already in hand.
+//! The kernel writes that owner from the token of the creator, so an ordinary
+//! account's squatter is owned by that account and an elevated
+//! administrator's by `Administrators`; only a `LocalSystem` service leaves
+//! [`WINDOWS_AGENT_ACCOUNT`] there.
+//!
+//! Two further questions are asked of the serving process, and answered only
+//! where Windows grants a handle on it:
 //!
 //! * which process serves this very instance — `GetNamedPipeServerProcessId`
 //!   on the handle already opened, never a second lookup by name;
 //! * which image that process is running — `QueryFullProcessImageNameW`,
 //!   normalised through the filesystem and compared to
-//!   [`WINDOWS_AGENT_IMAGE`] under this machine's own system directory;
-//! * which account it is running as — the user of its token, compared to
-//!   [`WINDOWS_AGENT_ACCOUNT`].
+//!   [`WINDOWS_AGENT_IMAGE`] under this machine's own system directory, and
+//!   which account it is running as, the user of its token.
 //!
-//! **What this proves.** The bytes of this session are answered by the file
-//! stored at the system OpenSSH path, executed by a process running as
-//! `LocalSystem`. Both halves are needed and neither is enough: a genuine
-//! `ssh-agent.exe` copied elsewhere is refused by the path, and the genuine
-//! system image launched by an ordinary account — through a symbolic link, for
-//! instance, which normalises back to the system path — is refused by the
-//! account.
+//! **What this proves.** The endpoint is a pipe object created by
+//! `LocalSystem`, still served by the same process once every answer was
+//! collected. Where the process could be opened, the bytes of this session are
+//! additionally known to be answered by the file stored at the system OpenSSH
+//! path: a genuine `ssh-agent.exe` copied elsewhere is refused by the path, and
+//! the genuine system image launched by an ordinary account — through a
+//! symbolic link, for instance, which normalises back to the system path — is
+//! refused by the account.
 //!
 //! **What this does not prove.** Reading the image path of a `LocalSystem`
-//! service requires a handle on that process, which Windows grants to
-//! `SYSTEM` and to administrators. Where the helper cannot obtain one the
-//! attestation is impossible, and an impossible attestation is refused rather
-//! than skipped: on such a machine this endpoint is simply unavailable. Nor
-//! does it prove anything about *past* holders of the name; it describes the
-//! server of the instance in hand, at the instant it was asked, plus the
-//! re-check below.
+//! service requires a handle on that process, which Windows grants to `SYSTEM`
+//! and to administrators only: measured on Windows Server 2025, a plain member
+//! of `Users` is refused that handle with `ERROR_ACCESS_DENIED`, for
+//! `PROCESS_QUERY_LIMITED_INFORMATION` exactly as for
+//! `PROCESS_QUERY_INFORMATION`. That account is the ordinary user of
+//! `ssh-agent`, so refusing it outright would have closed the endpoint against
+//! the very people it exists for; it is given the owner instead, and the owner
+//! does not say which file is executing. On such a machine this decision does
+//! not separate the OpenSSH agent from another `LocalSystem` service that took
+//! the name first. Nor does anything here prove anything about *past* holders
+//! of the name; it describes the object and the server in hand, at the instant
+//! they were asked, plus the re-check below.
 
 use std::{
     io,
@@ -48,17 +63,19 @@ use std::{
 use tokio::{net::windows::named_pipe::NamedPipeClient, time::timeout};
 use windows_sys::Win32::{
     Foundation::{
-        GetLastError, LocalFree, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, GENERIC_READ,
-        GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH,
+        GetLastError, LocalFree, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY,
+        ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH,
     },
     Security::{
-        Authorization::ConvertSidToStringSidW, GetTokenInformation, TokenUser, PSID, TOKEN_QUERY,
-        TOKEN_USER,
+        Authorization::{ConvertSidToStringSidW, GetSecurityInfo, SE_KERNEL_OBJECT},
+        GetTokenInformation, TokenUser, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        TOKEN_QUERY, TOKEN_USER,
     },
     Storage::FileSystem::{
         CreateFileW, GetFileType, GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS,
         FILE_FLAG_OVERLAPPED, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_PIPE, OPEN_EXISTING, VOLUME_NAME_DOS,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_PIPE, OPEN_EXISTING, READ_CONTROL,
+        VOLUME_NAME_DOS,
     },
     System::{
         Pipes::{GetNamedPipeServerProcessId, PeekNamedPipe, WaitNamedPipeW},
@@ -73,8 +90,8 @@ use windows_sys::Win32::{
 use super::{
     agent_client::{AgentRefusal, PersonalAgent},
     agent_endpoint::{
-        accept_windows_endpoint, EndpointRefusal, ObservedPipeServer, WINDOWS_AGENT_IMAGE,
-        WINDOWS_PIPE_NAME,
+        accept_windows_endpoint, EndpointRefusal, ObservedPipeServer, ObservedServerProcess,
+        WINDOWS_AGENT_IMAGE, WINDOWS_PIPE_NAME,
     },
     signature_budget::OfferedIdentity,
 };
@@ -105,8 +122,14 @@ const PIPE_RETRY_INTERVAL: Duration = Duration::from_millis(20);
 pub struct AttestedPipe {
     handle: OwnedHandle,
     server_process_id: u32,
-    server_image_path: String,
-    server_account_sid: String,
+    server_object_owner_sid: String,
+    server_process: Option<ServerProcessFacts>,
+}
+
+/// The two facts a handle on the serving process yields, where one was granted.
+struct ServerProcessFacts {
+    image_path: String,
+    account_sid: String,
 }
 
 impl AttestedPipe {
@@ -115,14 +138,26 @@ impl AttestedPipe {
         self.server_process_id
     }
 
-    /// Normalised image path that process is running.
-    pub fn server_image_path(&self) -> &str {
-        &self.server_image_path
+    /// String SID of the account that created the pipe object.
+    pub fn server_object_owner_sid(&self) -> &str {
+        &self.server_object_owner_sid
     }
 
-    /// String SID of the account that process runs as.
-    pub fn server_account_sid(&self) -> &str {
-        &self.server_account_sid
+    /// Normalised image path that process is running, where a handle on it
+    /// could be obtained. `None` says the machine refused the handle, never
+    /// that the check was waived.
+    pub fn server_image_path(&self) -> Option<&str> {
+        self.server_process
+            .as_ref()
+            .map(|process| process.image_path.as_str())
+    }
+
+    /// String SID of the account that process runs as, where a handle on it
+    /// could be obtained.
+    pub fn server_account_sid(&self) -> Option<&str> {
+        self.server_process
+            .as_ref()
+            .map(|process| process.account_sid.as_str())
     }
 
     /// Hands the attested handle to the asynchronous runtime.
@@ -155,16 +190,16 @@ pub fn observe_declared_pipe(declared: &str) -> Result<AttestedPipe, EndpointRef
 
     // SAFETY: pipe is a live handle this function owns.
     let is_named_pipe = unsafe { GetFileType(pipe) } == FILE_TYPE_PIPE;
+    let server_object_owner_sid = object_owner_sid(pipe).unwrap_or_default();
     let server_process_id = server_process_id(pipe).unwrap_or(0);
-    let server = open_server_process(server_process_id);
-    let server_image_path = server
-        .as_ref()
-        .and_then(|server| image_path(server.as_raw_handle()))
-        .unwrap_or_default();
-    let server_account_sid = server
-        .as_ref()
-        .and_then(|server| account_sid(server.as_raw_handle()))
-        .unwrap_or_default();
+    // A handle on the server is asked for, and its absence is carried as an
+    // absence rather than flattened into empty strings: refusing to look and
+    // not being allowed to look are different facts, and only the decision may
+    // say what each is worth.
+    let server_process = open_server_process(server_process_id).map(|server| ServerProcessFacts {
+        image_path: image_path(server.as_raw_handle()).unwrap_or_default(),
+        account_sid: account_sid(server.as_raw_handle()).unwrap_or_default(),
+    });
     let system_agent_image_path = system_agent_image_path().unwrap_or_default();
     // Asked last, so it covers every query above: if the attested process had
     // died — the only way its identifier could be recycled — the instance it
@@ -176,9 +211,14 @@ pub fn observe_declared_pipe(declared: &str) -> Result<AttestedPipe, EndpointRef
         ObservedPipeServer {
             is_named_pipe,
             server_process_id,
-            server_image_path: &server_image_path,
+            server_object_owner_sid: &server_object_owner_sid,
+            server_process: server_process
+                .as_ref()
+                .map(|process| ObservedServerProcess {
+                    image_path: &process.image_path,
+                    account_sid: &process.account_sid,
+                }),
             system_agent_image_path: &system_agent_image_path,
-            server_account_sid: &server_account_sid,
             still_serving,
         },
     )?;
@@ -186,8 +226,8 @@ pub fn observe_declared_pipe(declared: &str) -> Result<AttestedPipe, EndpointRef
     Ok(AttestedPipe {
         handle,
         server_process_id,
-        server_image_path,
-        server_account_sid,
+        server_object_owner_sid,
+        server_process,
     })
 }
 
@@ -256,6 +296,15 @@ pub fn list_identities_once(deadline: Instant) -> Result<Vec<OfferedIdentity>, A
 
 /// Connects to the pipe, in overlapped mode so the runtime can drive it.
 ///
+/// `READ_CONTROL` is asked for by name rather than left to the generic mapping,
+/// because reading the owner of the object is the whole attestation and a right
+/// that carries it by accident is a right that can stop carrying it. The real
+/// agent grants it: its pipe gives `Authenticated Users` `READ_CONTROL` among
+/// the rights a client needs, which is why an account with no privilege can
+/// still open this pipe and still learn who made it. A server that will not let
+/// its owner be read is a server this module has nothing to say about, and it
+/// is refused as unattestable rather than talked to.
+///
 /// The OpenSSH agent serves one instance at a time and creates the next one
 /// only after the previous has been taken, so the name is briefly held by
 /// nobody between two clients. That window is waited out, and nothing else is:
@@ -270,7 +319,7 @@ fn open_pipe(name: &str) -> Result<OwnedHandle, EndpointRefusal> {
         let raw = unsafe {
             CreateFileW(
                 wide_name.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
+                GENERIC_READ | GENERIC_WRITE | READ_CONTROL,
                 0,
                 null(),
                 OPEN_EXISTING,
@@ -284,6 +333,9 @@ fn open_pipe(name: &str) -> Result<OwnedHandle, EndpointRefusal> {
         }
         // SAFETY: the call reads the failure this thread just produced.
         let failure = unsafe { GetLastError() };
+        if failure == ERROR_ACCESS_DENIED {
+            return Err(EndpointRefusal::ServerNotAttestable);
+        }
         if failure != ERROR_FILE_NOT_FOUND && failure != ERROR_PIPE_BUSY {
             return Err(EndpointRefusal::PipeUnavailable);
         }
@@ -317,12 +369,53 @@ fn server_process_id(pipe: HANDLE) -> Option<u32> {
     Some(process_id)
 }
 
+/// The account that owns the pipe object, as a string SID.
+///
+/// This is the one question of the attestation that does not need a handle on
+/// anybody else: the answer is written on the object already open here, and the
+/// kernel wrote it from the token of whoever created it. `READ_CONTROL` is what
+/// carries it, and [`open_pipe`] asked for exactly that.
+fn object_owner_sid(pipe: HANDLE) -> Option<String> {
+    let mut owner: PSID = null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+    // SAFETY: pipe is a live handle opened with READ_CONTROL; every output
+    // pointer is either valid storage or the null pointer the call accepts for
+    // a part that is not asked for.
+    let status = unsafe {
+        GetSecurityInfo(
+            pipe,
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS || descriptor.is_null() {
+        return None;
+    }
+    // The owner points inside the descriptor, so it is rendered before the
+    // descriptor is released and never after.
+    let rendered = string_sid(owner);
+    // SAFETY: descriptor is exactly what GetSecurityInfo allocated.
+    let _ = unsafe { LocalFree(descriptor.cast()) };
+    rendered
+}
+
 /// Opens the serving process for query only.
 ///
 /// The wider right is tried first because it implies the narrower one and is
 /// what an administrator holds over a `LocalSystem` service; the narrower one
 /// is the fallback. Neither grants memory access, and no other right is asked
 /// for: this process needs to read two facts, not to touch the agent.
+///
+/// `None` is the *expected* answer for an account that is not an administrator,
+/// not an error: measured on Windows Server 2025, a plain member of `Users` is
+/// refused both rights over the agent service with `ERROR_ACCESS_DENIED`. The
+/// narrower right is still tried because it costs one call and Windows has no
+/// obligation to keep answering the same way on every machine.
 fn open_server_process(process_id: u32) -> Option<OwnedHandle> {
     if process_id == 0 {
         return None;
@@ -509,18 +602,134 @@ fn wide(value: &str) -> Option<Vec<u16>> {
     Some(encoded)
 }
 
+/// Runs the attestation and says what it concluded, on one line.
+///
+/// It exists so the verdict can be reached by a process of its own, under
+/// whichever identity that process was started with. The contract suite uses it
+/// to show that a refusal is not an artifact of the process that arranged the
+/// fixture, and the Windows LAB uses it to run this exact code under a real
+/// account holding no administrative right — the account `ssh-agent` exists
+/// for, and the one this attestation had to stop excluding.
+///
+/// Nothing secret can reach this output: an endpoint carries a name, an owner
+/// and an image path, and no byte of the agent conversation is ever exchanged
+/// here.
+#[cfg(feature = "windows-agent-pipe-contract-test")]
+#[doc(hidden)]
+pub fn attesting_agent_pipe_fixture_main() -> u8 {
+    match observe_windows_endpoint() {
+        Ok(attested) => println!(
+            "ATTESTED owner={} image={} account={}",
+            attested.server_object_owner_sid(),
+            attested.server_image_path().unwrap_or("-"),
+            attested.server_account_sid().unwrap_or("-"),
+        ),
+        Err(refusal) => println!("REFUSED {refusal:?}"),
+    }
+    0
+}
+
+/// Closes this process to every caller but `SYSTEM` and the administrators.
+///
+/// It exists for the hostile fixture alone, and it is what lets that fixture
+/// stand in for the case the attestation had to survive: a pipe server whose
+/// process the helper is not allowed to look at. Only the discretionary list is
+/// replaced, and it is marked protected so nothing inherited puts an entry back.
+#[cfg(feature = "windows-agent-pipe-contract-test")]
+fn hide_this_process() -> bool {
+    use windows_sys::Win32::{
+        Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SetSecurityInfo,
+                SDDL_REVISION_1,
+            },
+            GetSecurityDescriptorDacl, ACL, DACL_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+        },
+        System::Threading::GetCurrentProcess,
+    };
+
+    /// Full access to `SYSTEM` and to the administrators, and to nobody else.
+    const CLOSED: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+
+    let Some(sddl) = wide(CLOSED) else {
+        return false;
+    };
+    let mut descriptor = null_mut();
+    // SAFETY: sddl is a live NUL-terminated wide string, descriptor is valid
+    // output storage, and the size argument is the null pointer the call
+    // accepts when the length is not wanted.
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            null_mut(),
+        )
+    };
+    if converted == 0 || descriptor.is_null() {
+        return false;
+    }
+    let mut present = 0;
+    let mut dacl: *mut ACL = null_mut();
+    let mut defaulted = 0;
+    // SAFETY: descriptor is a live security descriptor and every output is
+    // valid storage.
+    let read =
+        unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) };
+    let applied = read != 0
+        && present != 0
+        && !dacl.is_null()
+        // SAFETY: the pseudo-handle names this process and carries every right;
+        // dacl points inside the live descriptor; the parts not being set are
+        // the null pointers the call accepts.
+        && unsafe {
+            SetSecurityInfo(
+                GetCurrentProcess(),
+                SE_KERNEL_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                dacl,
+                null(),
+            )
+        } == ERROR_SUCCESS;
+    // SAFETY: descriptor is exactly what the conversion allocated, and the
+    // kernel has already copied what it needed out of it.
+    let _ = unsafe { LocalFree(descriptor.cast()) };
+    applied
+}
+
 /// The hostile pipe server the Windows agent pipe contract runs against.
 ///
 /// It takes the exact name the helper opens, as the first and only instance,
 /// so that the client necessarily lands on it; everything else about it is
 /// wrong. Its purpose is to be refused, and to report that nothing was ever
 /// asked of it: a helper that attests before speaking sends no byte.
+///
+/// It also reports the owner the kernel wrote on the object it just created,
+/// which is the fact the whole decision turns on: whatever identity this
+/// fixture is started under, that owner is that identity, and never
+/// [`WINDOWS_AGENT_ACCOUNT`].
+///
+/// Its pipe is deliberately open to everyone. A trap that refused its victim at
+/// the door would be refused for that, and the suite would then prove only that
+/// Windows enforces a discretionary list — which nobody doubts. Granting full
+/// access to `Everyone` is also what an attacker would actually do: the point
+/// of taking the name is to be connected to. So the helper always gets in, and
+/// the refusal it returns is the one this module is about.
 #[cfg(feature = "windows-agent-pipe-contract-test")]
 #[doc(hidden)]
 pub fn hostile_agent_pipe_fixture_main() -> u8 {
     use std::io::{Read, Write};
 
     use windows_sys::Win32::{
+        Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+            },
+            SECURITY_ATTRIBUTES,
+        },
         Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX},
         System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_TYPE_BYTE, PIPE_WAIT},
     };
@@ -530,12 +739,37 @@ pub fn hostile_agent_pipe_fixture_main() -> u8 {
     const ONE_INSTANCE: u32 = 1;
     const BUFFER_BYTES: u32 = 4096;
     const DEFAULT_TIMEOUT_MILLIS: u32 = 0;
+    /// Full access to `Everyone`: the trap holds its door open.
+    const WIDE_OPEN: &str = "D:(A;;FA;;;WD)";
 
     let Some(name) = wide(WINDOWS_PIPE_NAME) else {
         return FIXTURE_FAILED;
     };
-    // SAFETY: name is a live NUL-terminated wide string and the security
-    // argument is the null pointer the call accepts.
+    let Some(sddl) = wide(WIDE_OPEN) else {
+        return FIXTURE_FAILED;
+    };
+    let mut descriptor = null_mut();
+    // SAFETY: sddl is a live NUL-terminated wide string, descriptor is valid
+    // output storage, and the size argument is the null pointer the call
+    // accepts when the length is not wanted.
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            null_mut(),
+        )
+    };
+    if converted == 0 || descriptor.is_null() {
+        return FIXTURE_FAILED;
+    }
+    let security = SECURITY_ATTRIBUTES {
+        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
+        lpSecurityDescriptor: descriptor,
+        bInheritHandle: 0,
+    };
+    // SAFETY: name is a live NUL-terminated wide string and security points at
+    // a live structure holding the descriptor just built.
     let raw = unsafe {
         CreateNamedPipeW(
             name.as_ptr(),
@@ -545,18 +779,40 @@ pub fn hostile_agent_pipe_fixture_main() -> u8 {
             BUFFER_BYTES,
             BUFFER_BYTES,
             DEFAULT_TIMEOUT_MILLIS,
-            null(),
+            &security,
         )
     };
+    // SAFETY: descriptor is exactly what the conversion allocated, and the
+    // kernel has already copied what it needed out of it.
+    let _ = unsafe { LocalFree(descriptor.cast()) };
     if raw.is_null() || raw == INVALID_HANDLE_VALUE {
         return FIXTURE_FAILED;
     }
     // SAFETY: raw is a fresh handle nothing else owns.
     let server = unsafe { OwnedHandle::from_raw_handle(raw) };
 
-    // The suite waits for this line before it lets the helper open anything.
+    // A squatter that leaves its own process readable is a squatter that is not
+    // trying. This one closes itself to everything but `SYSTEM` and the
+    // administrators — which is what a `LocalSystem` service looks like from
+    // outside, and what makes the helper's own `OpenProcess` fail for an
+    // account holding nothing. That is the whole point: with the image path out
+    // of reach, only the owner of the object is left to refuse this pipe, so a
+    // suite that meets this fixture without administrative rights is testing
+    // the owner and nothing else.
+    if !hide_this_process() {
+        return FIXTURE_FAILED;
+    }
+
+    // The owner the kernel wrote on this object, read back through the very
+    // call the helper will make, and announced before the helper is allowed to
+    // look. The suite requires it to differ from the agent's account: a fixture
+    // that could stamp `LocalSystem` on its own pipe would prove the check
+    // worthless, and saying so out loud is how that stays checked.
+    let owner = object_owner_sid(server.as_raw_handle()).unwrap_or_default();
+
+    // The suite waits for these lines before it lets the helper open anything.
     let mut output = std::io::stdout();
-    if output.write_all(b"READY\n").is_err() || output.flush().is_err() {
+    if write!(output, "READY\nOWNER {owner}\n").is_err() || output.flush().is_err() {
         return FIXTURE_FAILED;
     }
 
