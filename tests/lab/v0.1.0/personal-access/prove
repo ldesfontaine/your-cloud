@@ -156,7 +156,13 @@ rm -f $remote_sources/package.json
 if [ -d $remote_sources/src-tauri ]; then
   find $remote_sources/src-tauri -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} +
 fi
-tar -C $remote_sources -xzf $remote_harness/console.tgz
+# -m stamps every extracted file with the extraction time. Without it tar
+# restores the workstation's timestamps, and a source older than the artefact
+# already in the warm target/ lets Cargo skip the rebuild and rerun the previous
+# binary: the pass would be green about code that was never compiled. The cost
+# is a full rebuild after each synchronisation, which is the price of a run
+# that provably tests what was just sent.
+tar -C $remote_sources -xzmf $remote_harness/console.tgz
 rm -f $remote_harness/console.tgz"
   echo "sources synchronised into $console_vm:$remote_sources"
 }
