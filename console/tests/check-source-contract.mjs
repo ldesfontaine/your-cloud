@@ -295,6 +295,28 @@ const nativeAssistantPersonalAccessContract = await readSourceText(
     "personal_access_contract.rs",
   ),
 );
+const nativeAssistantAgentEndpoint = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "personal_access",
+    "agent_endpoint.rs",
+  ),
+);
+const nativeAssistantAgentPipe = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "personal_access",
+    "agent_pipe.rs",
+  ),
+);
 const nativeAssistantDelayedStartFixture = await readSourceText(
   join(
     consoleRoot,
@@ -400,6 +422,7 @@ for (const forbiddenShippingFeature of [
   "windows-parent-spoof-contract-test",
   "windows-live-prompt-contract-test",
   "delayed-start-contract-test",
+  "windows-agent-pipe-contract-test",
 ]) {
   if (nativeAssistantBuild.includes(forbiddenShippingFeature)) {
     failures.push(
@@ -920,6 +943,52 @@ if (
   )
 ) {
   failures.push("Cargo.toml helper: preuve delayed-start absente ou non bornée");
+}
+if (
+  !nativeAssistantManifest.includes("windows-agent-pipe-contract-test = []") ||
+  !/\[\[bin\]\][\s\S]*?name\s*=\s*"your-cloud-agent-pipe-fixture"[\s\S]*?path\s*=\s*"src\/agent_pipe_fixture\.rs"[\s\S]*?required-features\s*=\s*\["windows-agent-pipe-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  ) ||
+  !/\[\[test\]\][\s\S]*?name\s*=\s*"windows-agent-pipe-contract"[\s\S]*?path\s*=\s*"tests\/windows_agent_pipe_contract\.rs"[\s\S]*?required-features\s*=\s*\["windows-agent-pipe-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  )
+) {
+  failures.push("Cargo.toml helper: fixture hostile de pipe agent absente ou non bornée");
+}
+// L'attestation du serveur de pipe ne vaut que par ce qu'elle interroge : sans
+// ces primitives elle retomberait sur une comparaison de nom, que n'importe
+// quel processus peut satisfaire en prenant le nom le premier.
+for (const expected of [
+  '"Win32_Security_Authorization"',
+  '"Win32_System_SystemInformation"',
+]) {
+  if (!nativeAssistantManifest.includes(expected)) {
+    failures.push(`Cargo.toml helper: primitive d’attestation du pipe absente (${expected})`);
+  }
+}
+for (const expected of [
+  "GetNamedPipeServerProcessId",
+  "QueryFullProcessImageNameW",
+  "GetFinalPathNameByHandleW",
+  "ConvertSidToStringSidW",
+  "GetSystemDirectoryW",
+]) {
+  if (!nativeAssistantAgentPipe.includes(expected)) {
+    failures.push(`agent_pipe.rs: attestation du serveur de pipe incomplète (${expected})`);
+  }
+}
+if (
+  !nativeAssistantAgentEndpoint.includes('pub const WINDOWS_AGENT_ACCOUNT: &str = "S-1-5-18"') ||
+  !nativeAssistantAgentEndpoint.includes(
+    'pub const WINDOWS_AGENT_IMAGE: &str = r"OpenSSH\\ssh-agent.exe"',
+  ) ||
+  !nativeAssistantAgentEndpoint.includes("EndpointRefusal::ForeignPipeServer") ||
+  !nativeAssistantAgentEndpoint.includes("EndpointRefusal::ForeignServerAccount") ||
+  !nativeAssistantAgentEndpoint.includes("EndpointRefusal::ServerNotAttestable")
+) {
+  failures.push(
+    "agent_endpoint.rs: le pipe Windows doit rester jugé sur son serveur, pas sur son nom",
+  );
 }
 if (
   !bootstrapProtocol.includes("pub issued_at_monotonic_nanos: u64") ||
