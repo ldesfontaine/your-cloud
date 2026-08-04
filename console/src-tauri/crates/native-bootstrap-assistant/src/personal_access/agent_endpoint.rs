@@ -12,6 +12,15 @@
 //! every rule testable without a live agent, while [`observe_linux_endpoint`]
 //! performs the one environment read and the two `lstat` calls that produce
 //! such an observation on a real machine.
+//!
+//! Windows is split the same way. [`accept_windows_endpoint`] judges an
+//! [`ObservedPipeServer`] and touches nothing; the module `agent_pipe` opens
+//! the fixed pipe and produces such an observation from the live system, one
+//! platform over. On Windows the endpoint is not a filesystem entry
+//! whose owner can be read, so what carries the decision is the *process*
+//! serving the pipe: a named pipe is squattable by name alone, and only the
+//! identity of its server distinguishes the OpenSSH agent from a listener that
+//! merely chose the same name first.
 
 /// The single environment variable consulted on Linux. It is read once, and
 /// no other variable can name an endpoint.
@@ -19,6 +28,23 @@ pub const LINUX_ENDPOINT_VARIABLE: &str = "SSH_AUTH_SOCK";
 
 /// The single named pipe accepted on Windows at this palier.
 pub const WINDOWS_PIPE_NAME: &str = r"\\.\pipe\openssh-ssh-agent";
+
+/// The image, relative to this machine's system directory, that must be the
+/// one serving the pipe: the OpenSSH Authentication Agent Windows ships.
+///
+/// It is kept relative on purpose. The absolute expectation is built from
+/// `GetSystemDirectoryW` on the machine itself, so no drive letter and no
+/// `Windows` directory name is ever assumed by this crate.
+pub const WINDOWS_AGENT_IMAGE: &str = r"OpenSSH\ssh-agent.exe";
+
+/// The account that image must be running as.
+///
+/// The OpenSSH Authentication Agent is registered as a `LocalSystem` service,
+/// whose SID is fixed and identical on every Windows machine. A copy of the
+/// same binary started by an ordinary account is therefore refused here even
+/// though its image is genuine, which is exactly the point: the image says
+/// *which* program serves the pipe, the account says *whose*.
+pub const WINDOWS_AGENT_ACCOUNT: &str = "S-1-5-18";
 
 /// Largest accepted endpoint path. A Unix socket path is itself bounded by
 /// `sun_path`, which is 108 bytes on Linux including the terminator.
@@ -43,6 +69,21 @@ pub enum EndpointRefusal {
     /// The path or its parent could not be observed at all.
     NotObservable,
     UnexpectedPipeName,
+    /// The fixed pipe name answered nothing at all.
+    PipeUnavailable,
+    /// What answered under that name is not a named pipe.
+    NotANamedPipe,
+    /// The process serving the pipe could not be named, opened or queried, so
+    /// there is nothing to attest. Being unable to look is a refusal, never a
+    /// reason to proceed.
+    ServerNotAttestable,
+    /// The pipe is served by an image that is not the system OpenSSH agent.
+    ForeignPipeServer,
+    /// The system OpenSSH agent image is served by the wrong account.
+    ForeignServerAccount,
+    /// The pipe stopped being served by the attested process while it was
+    /// being attested.
+    ServerReplaced,
 }
 
 /// Permission bit meaning "only the owner may unlink an entry here".
@@ -194,14 +235,84 @@ fn lstat(path: &str) -> Option<libc::stat> {
     Some(unsafe { status.assume_init() })
 }
 
-/// Judges a Windows agent endpoint. Only the fixed OpenSSH pipe is admissible;
-/// attesting the process that serves it belongs to the transport pass.
-pub fn accept_windows_pipe(declared: &str) -> Result<(), EndpointRefusal> {
-    if declared == WINDOWS_PIPE_NAME {
-        Ok(())
-    } else {
-        Err(EndpointRefusal::UnexpectedPipeName)
+/// What the caller observed about the process serving the candidate pipe.
+///
+/// Every field is a raw observation, never a verdict already taken: the two
+/// paths are compared here rather than by whoever read them, so the comparison
+/// itself is a rule this module owns and can be exercised without Windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObservedPipeServer<'a> {
+    /// The opened handle really is a named pipe rather than some other object
+    /// reachable under the `\\.\pipe\` namespace.
+    pub is_named_pipe: bool,
+    /// Identifier the kernel reports for the process serving *this* instance.
+    pub server_process_id: u32,
+    /// Fully normalised image path of that process.
+    pub server_image_path: &'a str,
+    /// Fully normalised path of [`WINDOWS_AGENT_IMAGE`] under this machine's
+    /// own system directory, read from the machine rather than assumed.
+    pub system_agent_image_path: &'a str,
+    /// String SID of the account that process runs as.
+    pub server_account_sid: &'a str,
+    /// The same process was still serving the same live pipe once every answer
+    /// above had been collected.
+    pub still_serving: bool,
+}
+
+/// Judges a Windows agent endpoint.
+///
+/// Only the fixed OpenSSH pipe is admissible, and only when the process behind
+/// it is the system OpenSSH agent running as the account that service is
+/// registered under. What this attests, exactly: the bytes of this session
+/// will be answered by the image stored at the system path, by a process
+/// running as `LocalSystem`. What it does not attest: that no other process
+/// ever held the name, nor that the identifier reported for the server was
+/// never recycled — see [`ObservedPipeServer::still_serving`], which is how
+/// much of that residue is closed and no more.
+pub fn accept_windows_endpoint(
+    declared: &str,
+    observed: ObservedPipeServer<'_>,
+) -> Result<(), EndpointRefusal> {
+    if declared != WINDOWS_PIPE_NAME {
+        return Err(EndpointRefusal::UnexpectedPipeName);
     }
+    if !observed.is_named_pipe {
+        return Err(EndpointRefusal::NotANamedPipe);
+    }
+    // A missing answer is never an acceptable one: an identifier of zero, an
+    // unreadable image or an unreadable account all mean the same thing, which
+    // is that nothing was attested.
+    if observed.server_process_id == 0
+        || observed.server_image_path.is_empty()
+        || observed.system_agent_image_path.is_empty()
+        || observed.server_account_sid.is_empty()
+    {
+        return Err(EndpointRefusal::ServerNotAttestable);
+    }
+    if !same_windows_path(observed.server_image_path, observed.system_agent_image_path) {
+        return Err(EndpointRefusal::ForeignPipeServer);
+    }
+    if observed.server_account_sid != WINDOWS_AGENT_ACCOUNT {
+        return Err(EndpointRefusal::ForeignServerAccount);
+    }
+    if !observed.still_serving {
+        return Err(EndpointRefusal::ServerReplaced);
+    }
+    Ok(())
+}
+
+/// Compares two already normalised Windows paths.
+///
+/// Both sides are expected to come out of `GetFinalPathNameByHandleW`, which
+/// resolves short `8.3` names, symbolic links, junctions and mount points and
+/// renders the name the volume itself stores. What remains between two such
+/// paths is the case, which the filesystem does not distinguish.
+///
+/// The fold is ASCII-only and deliberately so: a byte this process cannot fold
+/// with certainty is a byte it refuses to declare equal, which fails closed on
+/// a system directory whose name is not plain ASCII.
+fn same_windows_path(observed: &str, expected: &str) -> bool {
+    observed.eq_ignore_ascii_case(expected)
 }
 
 #[cfg(test)]
@@ -374,9 +485,25 @@ mod tests {
         }
     }
 
+    const SYSTEM_AGENT: &str = r"C:\Windows\System32\OpenSSH\ssh-agent.exe";
+
+    fn attested_server() -> ObservedPipeServer<'static> {
+        ObservedPipeServer {
+            is_named_pipe: true,
+            server_process_id: 608,
+            server_image_path: SYSTEM_AGENT,
+            system_agent_image_path: SYSTEM_AGENT,
+            server_account_sid: WINDOWS_AGENT_ACCOUNT,
+            still_serving: true,
+        }
+    }
+
     #[test]
     fn only_the_fixed_openssh_pipe_is_accepted_on_windows() {
-        assert_eq!(accept_windows_pipe(WINDOWS_PIPE_NAME), Ok(()));
+        assert_eq!(
+            accept_windows_endpoint(WINDOWS_PIPE_NAME, attested_server()),
+            Ok(())
+        );
         for hostile in [
             r"\\.\pipe\openssh-ssh-agent-evil",
             r"\\.\pipe\OpenSSH-SSH-Agent",
@@ -385,11 +512,148 @@ mod tests {
             "",
         ] {
             assert_eq!(
-                accept_windows_pipe(hostile),
+                accept_windows_endpoint(hostile, attested_server()),
                 Err(EndpointRefusal::UnexpectedPipeName),
                 "{hostile:?} must fail closed"
             );
         }
+    }
+
+    /// The name is the cheap half. A listener that took the right name but is
+    /// served by anything other than the system agent is refused, and so is a
+    /// server nothing could be learned about.
+    #[test]
+    fn a_pipe_served_by_anything_but_the_system_openssh_agent_is_refused() {
+        for (case, observed, expected) in [
+            (
+                "not a pipe at all",
+                ObservedPipeServer {
+                    is_named_pipe: false,
+                    ..attested_server()
+                },
+                EndpointRefusal::NotANamedPipe,
+            ),
+            (
+                "no server named",
+                ObservedPipeServer {
+                    server_process_id: 0,
+                    ..attested_server()
+                },
+                EndpointRefusal::ServerNotAttestable,
+            ),
+            (
+                "server image unreadable",
+                ObservedPipeServer {
+                    server_image_path: "",
+                    ..attested_server()
+                },
+                EndpointRefusal::ServerNotAttestable,
+            ),
+            (
+                "no system agent on this machine",
+                ObservedPipeServer {
+                    system_agent_image_path: "",
+                    ..attested_server()
+                },
+                EndpointRefusal::ServerNotAttestable,
+            ),
+            (
+                "server account unreadable",
+                ObservedPipeServer {
+                    server_account_sid: "",
+                    ..attested_server()
+                },
+                EndpointRefusal::ServerNotAttestable,
+            ),
+            (
+                "an impostor of its own",
+                ObservedPipeServer {
+                    server_image_path: r"C:\Users\victim\AppData\Local\Temp\ssh-agent.exe",
+                    ..attested_server()
+                },
+                EndpointRefusal::ForeignPipeServer,
+            ),
+            (
+                "the genuine image somewhere else",
+                ObservedPipeServer {
+                    server_image_path: r"C:\Tools\OpenSSH\ssh-agent.exe",
+                    ..attested_server()
+                },
+                EndpointRefusal::ForeignPipeServer,
+            ),
+            (
+                "the genuine image under an ordinary account",
+                ObservedPipeServer {
+                    server_account_sid: "S-1-5-21-1000-1000-1000-1001",
+                    ..attested_server()
+                },
+                EndpointRefusal::ForeignServerAccount,
+            ),
+            (
+                "the network service, which is not LocalSystem",
+                ObservedPipeServer {
+                    server_account_sid: "S-1-5-20",
+                    ..attested_server()
+                },
+                EndpointRefusal::ForeignServerAccount,
+            ),
+            (
+                "the server left while it was being attested",
+                ObservedPipeServer {
+                    still_serving: false,
+                    ..attested_server()
+                },
+                EndpointRefusal::ServerReplaced,
+            ),
+        ] {
+            assert_eq!(
+                accept_windows_endpoint(WINDOWS_PIPE_NAME, observed),
+                Err(expected),
+                "{case} must fail closed"
+            );
+        }
+    }
+
+    /// The filesystem does not distinguish the case of a path, so neither may
+    /// the comparison; everything else must still differ.
+    #[test]
+    fn the_system_image_is_compared_without_case_and_without_charity() {
+        let shouting = ObservedPipeServer {
+            server_image_path: r"C:\WINDOWS\SYSTEM32\OPENSSH\SSH-AGENT.EXE",
+            ..attested_server()
+        };
+        assert_eq!(accept_windows_endpoint(WINDOWS_PIPE_NAME, shouting), Ok(()));
+
+        for near_miss in [
+            r"C:\Windows\System32\OpenSSH\ssh-agent.exe ",
+            r"C:\Windows\System32\OpenSSH\ssh-agent.ex",
+            r"C:\Windows\System32\OpenSSH\ssh-agent.exe.exe",
+            r"D:\Windows\System32\OpenSSH\ssh-agent.exe",
+            r"C:\Windows\System32\OpenSSH\..\OpenSSH\ssh-agent.exe",
+        ] {
+            assert_eq!(
+                accept_windows_endpoint(
+                    WINDOWS_PIPE_NAME,
+                    ObservedPipeServer {
+                        server_image_path: near_miss,
+                        ..attested_server()
+                    }
+                ),
+                Err(EndpointRefusal::ForeignPipeServer),
+                "{near_miss:?} must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn the_attested_windows_server_is_named_once_and_for_all() {
+        assert_eq!(WINDOWS_PIPE_NAME, r"\\.\pipe\openssh-ssh-agent");
+        assert_eq!(WINDOWS_AGENT_IMAGE, r"OpenSSH\ssh-agent.exe");
+        assert_eq!(WINDOWS_AGENT_ACCOUNT, "S-1-5-18");
+        assert!(
+            !WINDOWS_AGENT_IMAGE.contains(':'),
+            "the expectation must stay relative to the machine's system directory"
+        );
     }
 
     #[test]
