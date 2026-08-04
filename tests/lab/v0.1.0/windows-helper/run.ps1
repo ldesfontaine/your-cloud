@@ -93,6 +93,16 @@ $catalogue = @(
         )
     },
     @{
+        name = "windows-agent-pipe-contract"
+        honoursConfiguration = $true
+        arguments = @(
+            "-p", $assistant, "--features", "windows-agent-pipe-contract-test",
+            "--test", "windows-agent-pipe-contract",
+            "a_pipe_server_that_is_not_the_system_openssh_agent_is_refused",
+            "--", "--exact", "--test-threads=1"
+        )
+    },
+    @{
         name = "windows-live-prompt-contract"
         honoursConfiguration = $true
         arguments = @(

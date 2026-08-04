@@ -133,8 +133,15 @@ exactes de la porte native hébergée.
 
 Le catalogue exécuté : `secret-crash-contract`, `native-lib`, `protocol`,
 `delayed-start-contract`, `parent-contract`,
-`windows-parent-spoof-contract`, `windows-live-prompt-contract`,
-`windows-job-contract` et `win32-dialog`.
+`windows-parent-spoof-contract`, `windows-agent-pipe-contract`,
+`windows-live-prompt-contract`, `windows-job-contract` et `win32-dialog`.
+
+`windows-agent-pipe-contract` est la seule suite du catalogue qui **mute** la
+machine : elle arrête puis démarre le service `ssh-agent`, parce que c'est lui
+qui tient ou libère le nom de pipe qu'elle met en cause, et elle repose la
+configuration de démarrage qu'elle a trouvée. Elle exige donc un compte
+administrateur — sans quoi ni le service ni le processus qui sert le pipe ne
+sont interrogeables — et c'est aussi ce que la porte hébergée offrirait.
 
 ### Usage
 
