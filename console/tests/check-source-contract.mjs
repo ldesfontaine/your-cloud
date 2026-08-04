@@ -317,6 +317,27 @@ const nativeAssistantAgentPipe = await readSourceText(
     "agent_pipe.rs",
   ),
 );
+const nativeAssistantLocalAddresses = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "personal_access",
+    "local_addresses.rs",
+  ),
+);
+const nativeAssistantPersonalAccess = await readSourceText(
+  join(
+    consoleRoot,
+    "src-tauri",
+    "crates",
+    "native-bootstrap-assistant",
+    "src",
+    "personal_access.rs",
+  ),
+);
 const nativeAssistantDelayedStartFixture = await readSourceText(
   join(
     consoleRoot,
@@ -1009,6 +1030,50 @@ if (
   failures.push(
     "agent_endpoint.rs: le propriétaire du pipe doit être obligatoire et le processus facultatif",
   );
+}
+// Le refus de composer une adresse que le poste détient déjà ne vaut que par
+// l’énumération qui l’alimente. Les deux systèmes doivent réellement énumérer :
+// une plateforme qui retomberait sur `Unsupported` rendrait tout le transport
+// personnel inatteignable, et une plateforme qui rendrait un ensemble vide
+// désarmerait le garde sans le dire.
+for (const expected of ["getifaddrs", "GetAdaptersAddresses", "IP_ADAPTER_ADDRESSES_LH"]) {
+  if (!nativeAssistantLocalAddresses.includes(expected)) {
+    failures.push(`local_addresses.rs: énumération réelle absente (${expected})`);
+  }
+}
+if (
+  !nativeAssistantLocalAddresses.includes(
+    '#[cfg(any(target_os = "linux", target_os = "windows"))]\n    pub fn observe()',
+  ) ||
+  !nativeAssistantLocalAddresses.includes("LocalAddressRefusal::EnumerationFailed") ||
+  !nativeAssistantLocalAddresses.includes("LocalAddressRefusal::NothingObserved")
+) {
+  failures.push(
+    "local_addresses.rs: le témoin doit rester produit par une énumération qui a eu lieu",
+  );
+}
+for (const expected of ['"Win32_NetworkManagement_IpHelper"', '"Win32_Networking_WinSock"']) {
+  if (!nativeAssistantManifest.includes(expected)) {
+    failures.push(`Cargo.toml helper: primitive d’énumération locale absente (${expected})`);
+  }
+}
+// Le chemin commun est un seul chemin : le module de session est compilé des
+// deux côtés, et c’est l’endpoint d’agent — socket ou pipe attesté — qui seul
+// diffère.
+if (
+  !nativeAssistantPersonalAccess.includes(
+    '#[cfg(any(target_os = "linux", target_os = "windows"))]\npub mod session;',
+  )
+) {
+  failures.push("personal_access.rs: la session doit être compilée sous Linux comme sous Windows");
+}
+if (
+  !nativeAssistantManifest.includes("windows-personal-transport-contract-test = []") ||
+  !/\[\[test\]\][\s\S]*?name\s*=\s*"windows-personal-transport-contract"[\s\S]*?path\s*=\s*"tests\/windows_personal_transport_contract\.rs"[\s\S]*?required-features\s*=\s*\["windows-personal-transport-contract-test"\]/u.test(
+    nativeAssistantManifest,
+  )
+) {
+  failures.push("Cargo.toml helper: preuve du transport personnel Windows absente ou non bornée");
 }
 if (
   !bootstrapProtocol.includes("pub issued_at_monotonic_nanos: u64") ||
