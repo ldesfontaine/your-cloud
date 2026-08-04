@@ -95,3 +95,95 @@ rejoués autant de fois que voulu, `check` après un simple `sync`, `run` entre 
   La fermeture LAB reste celle de [`docs/lab/README.md`](../../../docs/lab/README.md).
 - La présence de ces sources ne constitue pas une preuve. Seule une exécution
   identifiée en est une.
+
+## [`windows-helper/`](windows-helper/) — moitié Windows du helper natif
+
+Les suites de contrat propres à Windows n'ont pas d'équivalent Linux : le Job
+Object, le pipe nommé et son authentification, la boîte de dialogue Win32 et le
+dump de crash sont des objets du système, pas des abstractions. Le LAB Linux ne
+peut donc rien en dire. Ce harnais les exécute dans la VM d'évaluation Windows
+décrite par les [règles LAB](../../../docs/lab/README.md), avec les invocations
+exactes de la porte native hébergée.
+
+- [`prove`](windows-helper/prove) est l'entrée unique, exécutée depuis le poste
+  de pilotage. Elle commence par la garde d'inventaire obligatoire
+  (`tools/labctl list --format=tsv`), puis enchaîne trois sous-commandes
+  également utilisables seules : `tools`, `sync` et `run`. Sans argument, elle
+  fait les trois dans l'ordre.
+- [`report-tools.ps1`](windows-helper/report-tools.ps1) **rend compte** de
+  l'outillage épinglé que la machine détient : `rustc` et `rustfmt` `1.94.1` en
+  `x86_64-pc-windows-msvc`, Node.js `24.18.0`, l'environnement MSVC x64, le SDK
+  Windows et le runtime WebView2 Evergreen. Il n'installe rien : le
+  provisionnement de cette machine est manuel et hors `labctl`, et un harnais
+  qui la réparerait en silence cacherait le jour où elle dérive du runner
+  hébergé qu'elle pré-valide.
+- [`sync.ps1`](windows-helper/sync.ps1) dépose `console/src-tauri` **et**
+  `console/package.json` dans la machine **sans** détruire le cache de
+  compilation. `package.json` fait partie du voyage parce que `tauri.conf.json`
+  y lit sa version. Chaque fichier extrait reçoit l'heure de l'extraction et
+  non celle du poste de pilotage : Cargo décide de la fraîcheur sur les dates
+  de modification, et des sources rendues plus anciennes que le cache feraient
+  rejouer en silence la synchronisation précédente.
+- [`run.ps1`](windows-helper/run.ps1) entre dans l'environnement MSVC — sans
+  lui `link.exe` est absent et chaque suite échoue pour une raison qui ne dit
+  rien du helper — puis exécute le catalogue, une suite à la fois, et rend un
+  verdict par nom. Les arguments reproduisent ceux de la porte native ; la
+  suite des handles suspendus reste non optimisée parce que la porte hébergée
+  ne l'optimise pas non plus.
+
+Le catalogue exécuté : `secret-crash-contract`, `native-lib`, `protocol`,
+`delayed-start-contract`, `parent-contract`,
+`windows-parent-spoof-contract`, `windows-live-prompt-contract`,
+`windows-job-contract` et `win32-dialog`.
+
+### Usage
+
+La machine est décrite par l'environnement, jamais par ces fichiers :
+
+```text
+export YOUR_CLOUD_WINDOWS_LAB_ADDRESS=…       # adresse de la machine
+export YOUR_CLOUD_WINDOWS_LAB_KEY=…           # chemin de la clé privée, 0600
+export YOUR_CLOUD_WINDOWS_LAB_KNOWN_HOSTS=…   # clés d'hôte épinglées
+tests/lab/v0.1.0/windows-helper/prove                 # outils, sources, suites
+tests/lab/v0.1.0/windows-helper/prove tools
+tests/lab/v0.1.0/windows-helper/prove sync
+tests/lab/v0.1.0/windows-helper/prove run [suite...]
+```
+
+`YOUR_CLOUD_WINDOWS_LAB_USER` (défaut `Administrator`),
+`YOUR_CLOUD_WINDOWS_LAB_DOMAIN` (défaut `lab-windows`) et
+`YOUR_CLOUD_WINDOWS_LAB_PROFILE` (`release` ou `debug`) complètent cette
+description.
+
+### Limites et hygiène
+
+- Aucune adresse, aucun chemin de clé et aucune matière de clé ne vit dans ces
+  fichiers. La garde d'inventaire exige en outre que la machine ne porte **pas**
+  l'origine `your-cloud/labctl` — elle est délibérément hors du contrôleur — et
+  que l'adresse annoncée par l'environnement soit exactement celle que libvirt
+  lui a attribuée.
+- La même garde refuse de démarrer tant qu'une VM `labctl` tourne : six
+  gibioctets de Windows et la topologie Linux ne partagent pas un laptop.
+- La vérification stricte de la clé d'hôte n'est jamais relâchée et le harnais
+  refuse une machine non épinglée. La confiance au premier contact n'en est pas
+  une : la clé d'hôte est épinglée au provisionnement, hors de ce harnais.
+- **Ce que ce transport ne peut pas observer.** Une session ouverte par
+  OpenSSH est la session 0, dont la station de fenêtres n'est pas interactive :
+  un dialogue modal y est bien créé — classe `#32770`, titre présent — mais il
+  n'y gagne jamais le style `WS_VISIBLE`. `windows-live-prompt-contract`, qui
+  cherche une fenêtre **visible** appartenant au processus fils, échoue donc
+  ici sans rien dire du helper ; le reste de son contrat, lui, est vérifié.
+  `run.ps1` imprime le numéro de session pour que ce rouge soit lisible plutôt
+  que subi. Seule la porte native hébergée observe ce cas de bout en bout.
+- `--release` est le défaut parce que la porte hébergée l'emploie.
+  `YOUR_CLOUD_WINDOWS_LAB_PROFILE=debug` existe pour une machine trop étroite,
+  et une exécution en `debug` doit se déclarer comme telle : elle n'observe pas
+  le même code.
+- Cette machine n'est **pas** une autorité d'attestation. Elle ne produit ni
+  `.msi`, ni signature, ni gate PE, et une exécution verte ici ne ferme aucune
+  ligne de palier. La porte native `workflow_dispatch` le reste.
+- La VM reste démarrée : ce harnais ne crée, ne démarre ni n'arrête aucun
+  domaine. `tools/labctl assert-clean` ne la voit pas ; son arrêt est explicite
+  et décrit par les [règles LAB](../../../docs/lab/README.md).
+- La présence de ces sources ne constitue pas une preuve. Seule une exécution
+  identifiée en est une.

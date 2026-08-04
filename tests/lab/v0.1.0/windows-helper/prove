@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Drive the Windows halves of the native helper contract inside the Windows LAB.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [tools | sync | run [suite...] | all [suite...]]
+
+  tools   report the pinned toolchain the evaluation machine holds
+  sync    copy the Console native sources into the machine, keeping its cache
+  run     run the Windows contract suites against the synchronised sources
+  all     the three above in order (default)
+
+The machine is described by the environment, never by this file:
+
+  YOUR_CLOUD_WINDOWS_LAB_ADDRESS      address of the evaluation machine
+  YOUR_CLOUD_WINDOWS_LAB_KEY          path of the private key that opens it
+  YOUR_CLOUD_WINDOWS_LAB_USER         account to open it with (default Administrator)
+  YOUR_CLOUD_WINDOWS_LAB_DOMAIN       libvirt domain to cross-check (default lab-windows)
+  YOUR_CLOUD_WINDOWS_LAB_KNOWN_HOSTS  pinned host keys (default ~/.ssh/known_hosts)
+  YOUR_CLOUD_WINDOWS_LAB_PROFILE      release or debug (default release)
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -eq 0 ]] || shift
+case "$command" in
+  tools | sync | run | all) ;;
+  *) usage ;;
+esac
+[[ $# -eq 0 || "$command" == run || "$command" == all ]] || usage
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.0/windows-helper"
+labctl_origin=your-cloud/labctl
+remote_harness='C:\lab\harness'
+remote_sources='C:\lab\work'
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+address=${YOUR_CLOUD_WINDOWS_LAB_ADDRESS:-}
+key=${YOUR_CLOUD_WINDOWS_LAB_KEY:-}
+user=${YOUR_CLOUD_WINDOWS_LAB_USER:-Administrator}
+domain=${YOUR_CLOUD_WINDOWS_LAB_DOMAIN:-lab-windows}
+known_hosts=${YOUR_CLOUD_WINDOWS_LAB_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}
+profile=${YOUR_CLOUD_WINDOWS_LAB_PROFILE:-release}
+
+[[ -n "$address" ]] || fail "YOUR_CLOUD_WINDOWS_LAB_ADDRESS names nothing"
+[[ -n "$key" ]] || fail "YOUR_CLOUD_WINDOWS_LAB_KEY names nothing"
+[[ "$profile" == release || "$profile" == debug ]] \
+  || fail "YOUR_CLOUD_WINDOWS_LAB_PROFILE is $profile, not release or debug"
+
+# The key opens a machine; it never lives in the repository and it is never
+# readable by anyone else.
+[[ -f "$key" && ! -L "$key" ]] || fail "the private key is missing or symbolic: $key"
+key_path=$(cd -- "$(dirname -- "$key")" && pwd)/$(basename -- "$key")
+[[ "$key_path" != "$root"/* ]] || fail "the private key lives inside the repository: $key_path"
+[[ $(stat -c '%a' "$key_path") == 600 ]] || fail "the private key is not 0600: $key_path"
+
+# First contact is not trust. The host key must already be pinned by whoever
+# provisioned the machine, and strict checking is never relaxed here.
+[[ -f "$known_hosts" ]] || fail "no pinned host keys at $known_hosts"
+ssh-keygen -F "$address" -f "$known_hosts" >/dev/null \
+  || fail "$address is not pinned in $known_hosts; pin its host key before running this"
+
+ssh_options=(
+  -i "$key_path"
+  -o IdentitiesOnly=yes
+  -o StrictHostKeyChecking=yes
+  -o UserKnownHostsFile="$known_hosts"
+  -o ConnectTimeout=30
+  -o ServerAliveInterval=30
+)
+
+remote() { ssh "${ssh_options[@]}" "$user@$address" "$@"; }
+send() { scp "${ssh_options[@]}" -q "$1" "$user@$address:$2"; }
+
+# The mandatory inventory guard: read the LAB before touching any of it. This
+# machine is deliberately outside `labctl`, which knows only a dated Debian
+# image verified by SHA512; the guard therefore asserts that it carries no
+# `labctl` origin, and that no `labctl` machine is running beside it. Six
+# gibibytes of Windows and the Linux topology do not share one laptop.
+inventory() {
+  local line state ips origin others
+  line=$("$labctl" list --format=tsv | awk -v vm="$domain" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$domain is not part of the libvirt inventory"
+  IFS=$'\t' read -r _ state ips _ _ origin <<<"$line"
+  [[ "$origin" != "$labctl_origin" ]] \
+    || fail "$domain carries the $labctl_origin origin; this harness drives the manual machine"
+  [[ "$state" == running ]] || fail "$domain is $state"
+  [[ "$ips" != *,* ]] || fail "$domain holds several addresses: $ips"
+  [[ "$ips" == "$address" ]] \
+    || fail "$domain answers at $ips, the environment announces $address"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$domain holds an address this project never mutates"
+
+  others=$("$labctl" list --format=tsv \
+    | awk -F'\t' -v origin="$labctl_origin" '$6 == origin && $2 == "running" {print $1}')
+  [[ -z "$others" ]] \
+    || fail "the Linux LAB is running beside Windows: $(echo "$others" | tr '\n' ' ')"
+  echo "machine: $domain at $address, outside labctl"
+}
+
+tools() {
+  send "$harness/report-tools.ps1" "$remote_harness\\report-tools.ps1"
+  remote "powershell -NoProfile -ExecutionPolicy Bypass -File $remote_harness\\report-tools.ps1"
+}
+
+sync() {
+  # `package.json` travels with `src-tauri` because `tauri.conf.json` reads its
+  # version from `../package.json`: without it the Console build script refuses
+  # the workspace.
+  #
+  # The build cache of the machine is deliberately preserved: rebuilding this
+  # workspace from nothing costs far more than the copy it would replace.
+  tar -C "$root/console" --exclude=target -czf "$workdir/console.tgz" \
+    src-tauri package.json
+  send "$workdir/console.tgz" "$remote_harness\\console.tgz"
+  send "$harness/sync.ps1" "$remote_harness\\sync.ps1"
+  remote "powershell -NoProfile -ExecutionPolicy Bypass -File $remote_harness\\sync.ps1" \
+    "-Archive $remote_harness\\console.tgz -Destination $remote_sources"
+}
+
+run_suites() {
+  local suites=""
+  [[ $# -eq 0 ]] || suites="-Suite $(printf '%s,' "$@" | sed 's/,$//')"
+  send "$harness/run.ps1" "$remote_harness\\run.ps1"
+  remote "powershell -NoProfile -ExecutionPolicy Bypass -File $remote_harness\\run.ps1" \
+    "-Sources $remote_sources -Configuration $profile $suites"
+}
+
+inventory
+remote "New-Item -ItemType Directory -Force -Path $remote_harness | Out-Null"
+
+case "$command" in
+  tools) tools ;;
+  sync) sync ;;
+  run) run_suites "$@" ;;
+  all)
+    tools
+    sync
+    run_suites "$@"
+    echo "PROVE_WINDOWS_HELPER_OK"
+    ;;
+esac
