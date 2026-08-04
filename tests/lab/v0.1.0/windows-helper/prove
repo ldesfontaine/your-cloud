@@ -19,6 +19,15 @@ The machine is described by the environment, never by this file:
   YOUR_CLOUD_WINDOWS_LAB_DOMAIN       libvirt domain to cross-check (default lab-windows)
   YOUR_CLOUD_WINDOWS_LAB_KNOWN_HOSTS  pinned host keys (default ~/.ssh/known_hosts)
   YOUR_CLOUD_WINDOWS_LAB_PROFILE      release or debug (default release)
+  YOUR_CLOUD_WINDOWS_LAB_SYSTEM_AGENT run the personal transport suite under
+                                      LocalSystem, the only credentialed logon
+                                      this machine offers an agent key to
+
+Any YOUR_CLOUD_LAB_* variable set here is carried to the machine as the
+perimeter of the suites that need one — target address, port, account, host key
+fingerprint, identity fingerprints, expected uid. They are public facts about a
+lab; no key material may ever be named there, and none is: the private keys of
+a run live in the machine's own agent and in the target's authorised keys.
 EOF
   exit 2
 }
@@ -38,7 +47,14 @@ labctl_origin=your-cloud/labctl
 remote_harness='C:\lab\harness'
 remote_sources='C:\lab\work'
 workdir=$(mktemp -d)
-trap 'rm -rf "$workdir"' EXIT
+perimeter_sent=""
+# Whatever ends this script, nothing it created outlives it: not the local
+# staging directory, and not the perimeter file it may have put on the machine.
+cleanup() {
+  rm -rf "$workdir"
+  [[ -z "$perimeter_sent" ]] || drop_perimeter
+}
+trap cleanup EXIT
 
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
@@ -125,12 +141,42 @@ sync() {
     "-Archive $remote_harness\\console.tgz -Destination $remote_sources"
 }
 
+# The perimeter of the suites that need one, taken from this shell and from
+# nowhere else. Only `YOUR_CLOUD_LAB_*` is carried, and a value holding a
+# newline is refused rather than truncated into a line the machine would read
+# as another variable.
+perimeter() {
+  local carried=0
+  : > "$workdir/perimeter.env"
+  while IFS= read -r name; do
+    local value=${!name}
+    [[ -n "$value" ]] || continue
+    [[ "$value" != *$'\n'* ]] || fail "$name holds a newline"
+    printf '%s=%s\n' "$name" "$value" >> "$workdir/perimeter.env"
+    carried=$((carried + 1))
+  done < <(compgen -v | grep '^YOUR_CLOUD_LAB_' || true)
+  [[ $carried -ne 0 ]] || return 1
+  send "$workdir/perimeter.env" "$remote_harness\\perimeter.env"
+  echo "perimeter: $carried variables carried"
+}
+
+# The perimeter file never outlives the run that needed it.
+drop_perimeter() {
+  remote "powershell -NoProfile -Command Remove-Item -LiteralPath" \
+    "$remote_harness\\perimeter.env -Force -ErrorAction SilentlyContinue"
+}
+
 run_suites() {
-  local suites=""
+  local suites="" carried="" as_system=""
   [[ $# -eq 0 ]] || suites="-Suite $(printf '%s,' "$@" | sed 's/,$//')"
+  if perimeter; then
+    carried="-Perimeter $remote_harness\\perimeter.env"
+    perimeter_sent=1
+  fi
+  [[ -z "${YOUR_CLOUD_WINDOWS_LAB_SYSTEM_AGENT:-}" ]] || as_system="-SystemAgent"
   send "$harness/run.ps1" "$remote_harness\\run.ps1"
   remote "powershell -NoProfile -ExecutionPolicy Bypass -File $remote_harness\\run.ps1" \
-    "-Sources $remote_sources -Configuration $profile $suites"
+    "-Sources $remote_sources -Configuration $profile $suites $carried $as_system"
 }
 
 inventory
