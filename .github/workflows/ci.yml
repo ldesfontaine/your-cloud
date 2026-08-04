@@ -207,7 +207,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: console/src-tauri
         run: >-
-          xvfb-run -a env NO_AT_BRIDGE=1
+          xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1
           cargo +1.94.1 test --release --locked
           --package your-cloud-native-bootstrap-assistant
           native_prompt::tests::gtk_dialog_handles_consent_secret_and_lease_states
@@ -217,7 +217,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: console/src-tauri
         run: >-
-          xvfb-run -a env NO_AT_BRIDGE=1
+          xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1
           cargo +1.94.1 test --release --locked
           --package your-cloud-native-bootstrap-assistant
           --features native-prompt-contract-test
@@ -229,7 +229,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: console/src-tauri
         run: >-
-          xvfb-run -a env NO_AT_BRIDGE=1
+          xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1
           cargo +1.94.1 test --release --locked
           --package your-cloud-native-bootstrap-assistant
           --features native-prompt-contract-test
@@ -241,7 +241,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: console/src-tauri
         run: >-
-          xvfb-run -a env NO_AT_BRIDGE=1
+          xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1
           cargo +1.94.1 test --release --locked
           --package your-cloud-native-bootstrap-assistant
           --features native-prompt-contract-test
@@ -253,7 +253,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: console/src-tauri
         run: >-
-          xvfb-run -a env NO_AT_BRIDGE=1
+          xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1
           cargo +1.94.1 test --release --locked
           --package your-cloud-native-bootstrap-assistant
           --features native-prompt-contract-test
@@ -276,7 +276,7 @@ jobs:
       - name: Construire, installer et lancer le .deb
         if: runner.os == 'Linux'
         run: >-
-          dbus-run-session -- xvfb-run -a env NO_AT_BRIDGE=1
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1
           ./tests/checks/console-linux-ci
 
       - name: Construire, signer, installer et lancer le .msi

@@ -412,7 +412,9 @@ if (
     "cargo +1.94.1 fetch --manifest-path src-tauri/Cargo.toml --locked",
   ) ||
   !continuousIntegration.includes("npm run build:native-assistant") ||
-  !continuousIntegration.includes("xvfb-run -a env NO_AT_BRIDGE=1") ||
+  !continuousIntegration.includes(
+    'xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1',
+  ) ||
   !continuousIntegration.includes(
     "native_prompt::tests::gtk_dialog_handles_consent_secret_and_lease_states",
   ) ||
@@ -454,7 +456,7 @@ if (
   !continuousIntegration.includes("imagemagick") ||
   !continuousIntegration.includes("console-linux-webkitgtk-smoke") ||
   !continuousIntegration.includes(
-    "dbus-run-session -- xvfb-run -a env NO_AT_BRIDGE=1",
+    'dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" env NO_AT_BRIDGE=1',
   ) ||
   continuousIntegration.indexOf("npm run build:native-assistant") >
     continuousIntegration.indexOf("cargo +1.94.1 test --release --locked --workspace")
