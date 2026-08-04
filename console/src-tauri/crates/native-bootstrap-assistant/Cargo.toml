@@ -15,6 +15,7 @@ windows-parent-spoof-contract-test = ["native-prompt-contract-test"]
 windows-live-prompt-contract-test = ["native-prompt-contract-test"]
 delayed-start-contract-test = ["native-prompt-contract-test"]
 personal-access-contract-test = []
+windows-agent-pipe-contract-test = []
 
 [[bin]]
 name = "your-cloud-native-bootstrap-assistant"
@@ -39,6 +40,11 @@ required-features = ["delayed-start-contract-test"]
 name = "your-cloud-personal-access-fixture"
 path = "src/personal_access_fixture.rs"
 required-features = ["personal-access-contract-test"]
+
+[[bin]]
+name = "your-cloud-agent-pipe-fixture"
+path = "src/agent_pipe_fixture.rs"
+required-features = ["windows-agent-pipe-contract-test"]
 
 [[test]]
 name = "windows-job-contract"
@@ -81,6 +87,11 @@ name = "personal-access-contract"
 path = "tests/personal_access_contract.rs"
 required-features = ["personal-access-contract-test"]
 
+[[test]]
+name = "windows-agent-pipe-contract"
+path = "tests/windows_agent_pipe_contract.rs"
+required-features = ["windows-agent-pipe-contract-test"]
+
 [dependencies]
 # Client SSH du chemin d'accès personnel. Épinglé exactement, sans features
 # par défaut : `Preferred::DEFAULT` reste inutilisable et chaque champ négocié
@@ -105,14 +116,18 @@ libc = "=0.2.183"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_System_Console",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_ErrorReporting",
+  "Win32_System_IO",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Pipes",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",

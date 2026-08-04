@@ -9,16 +9,22 @@
 //! every bound testable without a live agent or a live server.
 //!
 //! The **observing and acting** half — [`local_addresses`], [`resolver`],
-//! [`agent_endpoint`]'s system read, [`agent_client`], [`session`] — performs
-//! the exact operations the decisions were written for, and nothing else: one
-//! interface enumeration, one name resolution, one `stat`, one agent
-//! connection, one transport, one channel. Each of them hands its observation
-//! back to the deciding half rather than judging it on the spot.
+//! [`agent_endpoint`]'s system read, `agent_pipe`, [`agent_client`],
+//! [`session`] — performs the exact operations the decisions were written for,
+//! and nothing else: one interface enumeration, one name resolution, one
+//! `stat` or one pipe attestation, one agent connection, one transport, one
+//! channel. Each of them hands its observation back to the deciding half
+//! rather than judging it on the spot.
 //!
 //! Opening an encrypted key file belongs to #53 and any elevation to #54.
 
 pub mod agent_client;
 pub mod agent_endpoint;
+/// The Windows endpoint: the fixed OpenSSH pipe, and the attestation of the
+/// process serving it. It has no Linux counterpart because a Unix socket
+/// carries its own owner and mode, which [`agent_endpoint`] reads directly.
+#[cfg(target_os = "windows")]
+pub mod agent_pipe;
 pub mod algorithms;
 pub mod host_key;
 pub mod local_addresses;
