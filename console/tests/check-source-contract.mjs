@@ -972,6 +972,12 @@ for (const expected of [
   "GetFinalPathNameByHandleW",
   "ConvertSidToStringSidW",
   "GetSystemDirectoryW",
+  // Le propriétaire de l’objet pipe est le seul fait qu’un compte sans droit
+  // administrateur peut lire ; sans lui l’attestation redevient inutilisable
+  // pour l’utilisateur normal de `ssh-agent`, donc fermée pour rien.
+  "GetSecurityInfo",
+  "OWNER_SECURITY_INFORMATION",
+  "READ_CONTROL",
 ]) {
   if (!nativeAssistantAgentPipe.includes(expected)) {
     failures.push(`agent_pipe.rs: attestation du serveur de pipe incomplète (${expected})`);
@@ -982,12 +988,26 @@ if (
   !nativeAssistantAgentEndpoint.includes(
     'pub const WINDOWS_AGENT_IMAGE: &str = r"OpenSSH\\ssh-agent.exe"',
   ) ||
+  !nativeAssistantAgentEndpoint.includes("EndpointRefusal::ForeignPipeOwner") ||
   !nativeAssistantAgentEndpoint.includes("EndpointRefusal::ForeignPipeServer") ||
   !nativeAssistantAgentEndpoint.includes("EndpointRefusal::ForeignServerAccount") ||
   !nativeAssistantAgentEndpoint.includes("EndpointRefusal::ServerNotAttestable")
 ) {
   failures.push(
     "agent_endpoint.rs: le pipe Windows doit rester jugé sur son serveur, pas sur son nom",
+  );
+}
+// Le propriétaire n’est jamais facultatif : c’est le seul contrôle que tout
+// compte peut faire. Le chemin d’image, lui, l’est — Windows ne prête pas de
+// descripteur sur un processus `SYSTEM` à un utilisateur ordinaire — et c’est
+// cette asymétrie que le type doit porter, sinon elle se perdrait en une
+// comparaison de nom déguisée.
+if (
+  !nativeAssistantAgentEndpoint.includes("pub server_object_owner_sid: &'a str") ||
+  !nativeAssistantAgentEndpoint.includes("pub server_process: Option<ObservedServerProcess<'a>>")
+) {
+  failures.push(
+    "agent_endpoint.rs: le propriétaire du pipe doit être obligatoire et le processus facultatif",
   );
 }
 if (
