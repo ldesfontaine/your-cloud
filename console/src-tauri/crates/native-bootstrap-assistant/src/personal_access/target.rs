@@ -284,10 +284,11 @@ mod tests {
     /// disabled it without any signal. The witness is now the only way in, and
     /// a real enumeration of this machine refuses this machine's own addresses.
     ///
-    /// Only Linux enumerates. Elsewhere the witness cannot be produced at all,
-    /// which the companion case below states as the refusal it is rather than
-    /// leaving this one to fail as if the guard were broken.
-    #[cfg(target_os = "linux")]
+    /// Both platforms this palier targets enumerate, so both run this against
+    /// their own live interfaces. Elsewhere the witness cannot be produced at
+    /// all, which the companion case below states as the refusal it is rather
+    /// than leaving this one to fail as if the guard were broken.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn the_local_guard_cannot_be_disabled_by_omission() {
         let observed = LocalAddresses::observe().expect("this machine has interfaces");
@@ -311,12 +312,12 @@ mod tests {
         }
     }
 
-    /// Off Linux the enumeration does not exist, and the witness it alone can
-    /// produce is therefore unobtainable. That is the intended fail-closed
-    /// behaviour and it is asserted here: a platform without enumeration must
-    /// refuse to observe rather than hand back an empty set that would silently
-    /// make every address of this machine dialable again.
-    #[cfg(not(target_os = "linux"))]
+    /// Off Linux and Windows the enumeration does not exist, and the witness it
+    /// alone can produce is therefore unobtainable. That is the intended
+    /// fail-closed behaviour and it is asserted here: a platform without
+    /// enumeration must refuse to observe rather than hand back an empty set
+    /// that would silently make every address of this machine dialable again.
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     #[test]
     fn a_platform_without_enumeration_refuses_to_produce_the_witness() {
         assert_eq!(

@@ -11,6 +11,13 @@
 //! fails, or that returns nothing at all, is a refusal rather than a permissive
 //! empty set — even a machine with no network still holds a loopback address,
 //! so an empty result means the observation is not trustworthy.
+//!
+//! Two operating systems answer the question, through the primitive each of
+//! them offers: `getifaddrs` on Linux, `GetAdaptersAddresses` on Windows. They
+//! are two readings of the same fact and are held to the same rule — a call
+//! that fails is [`LocalAddressRefusal::EnumerationFailed`], never an empty
+//! observation quietly handed to [`LocalAddresses::from_observation`], which
+//! would have turned a failure into a permissive answer one layer down.
 
 use std::net::IpAddr;
 
@@ -58,15 +65,15 @@ impl LocalAddresses {
     }
 
     /// Enumerates every address currently configured on this machine.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn observe() -> Result<Self, LocalAddressRefusal> {
         Self::from_observation(observe_interface_addresses()?)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     pub fn observe() -> Result<Self, LocalAddressRefusal> {
-        // Failing closed keeps the Windows pass of this palier from believing
-        // the guard is in force before its own enumeration exists.
+        // Failing closed keeps a platform with no enumeration of its own from
+        // believing the guard is in force.
         Err(LocalAddressRefusal::Unsupported)
     }
 
@@ -137,11 +144,161 @@ fn observe_interface_addresses() -> Result<Vec<IpAddr>, LocalAddressRefusal> {
     Ok(addresses)
 }
 
+/// Smallest buffer `GetAdaptersAddresses` is offered. Microsoft's own guidance
+/// is to start at fifteen kibibytes, which holds every ordinary machine in one
+/// call; the growth below exists for the ones it does not.
+#[cfg(target_os = "windows")]
+const INITIAL_ADAPTER_BYTES: usize = 15 * 1024;
+
+/// Largest buffer this module will ever hand the enumeration.
+///
+/// Refused rather than grown further: the size comes from the system, and a
+/// bound is what keeps an implausible answer from becoming an allocation this
+/// process makes on its behalf.
+#[cfg(target_os = "windows")]
+const MAX_ADAPTER_BYTES: usize = 4 * 1024 * 1024;
+
+/// How many times the enumeration may be asked again for a larger buffer.
+///
+/// Adapters can appear between two calls, which is the whole reason the loop
+/// exists; a loop that never gave up would hand a machine reconfiguring itself
+/// an unbounded number of tries.
+#[cfg(target_os = "windows")]
+const MAX_ADAPTER_ATTEMPTS: usize = 4;
+
+/// Walks the `GetAdaptersAddresses` list once and keeps every unicast IPv4 and
+/// IPv6 address.
+///
+/// It is the Windows reading of what `getifaddrs` reads on Linux, and it keeps
+/// exactly the same things for exactly the same reason: loopback and link-local
+/// addresses are addresses this machine holds, and dropping a class here would
+/// reopen the case the guard exists for. Anycast, multicast and the adapter's
+/// DNS servers and friendly name are asked not to be built at all — the first
+/// two are not addresses this machine answers on as itself, and the last two
+/// are cost with no bearing on the question.
+///
+/// Adapters are enumerated whatever their operational state: an interface that
+/// is down still holds its address, and a target matching it is still this
+/// machine.
+#[cfg(target_os = "windows")]
+fn observe_interface_addresses() -> Result<Vec<IpAddr>, LocalAddressRefusal> {
+    use std::{
+        mem::size_of,
+        net::{Ipv4Addr, Ipv6Addr},
+        ptr::null,
+    };
+
+    use windows_sys::Win32::{
+        Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS},
+        NetworkManagement::IpHelper::{
+            GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
+            GAA_FLAG_SKIP_FRIENDLY_NAME, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
+        },
+        Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN, SOCKADDR_IN6},
+    };
+
+    let flags = GAA_FLAG_SKIP_ANYCAST
+        | GAA_FLAG_SKIP_MULTICAST
+        | GAA_FLAG_SKIP_DNS_SERVER
+        | GAA_FLAG_SKIP_FRIENDLY_NAME;
+
+    let mut offered = INITIAL_ADAPTER_BYTES;
+    let mut attempt = 0;
+    // Held as words so the storage is aligned for the linked structures the
+    // system writes into it.
+    let storage: Vec<u64> = loop {
+        let mut storage = vec![0_u64; offered.div_ceil(size_of::<u64>())];
+        let mut size =
+            u32::try_from(offered).map_err(|_| LocalAddressRefusal::EnumerationFailed)?;
+        // SAFETY: storage is writable and aligned for the list the call builds,
+        // size announces exactly its length, and the reserved argument is the
+        // null pointer the call accepts.
+        let status = unsafe {
+            GetAdaptersAddresses(
+                u32::from(AF_UNSPEC),
+                flags,
+                null(),
+                storage.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        if status == ERROR_SUCCESS {
+            break storage;
+        }
+        if status != ERROR_BUFFER_OVERFLOW {
+            return Err(LocalAddressRefusal::EnumerationFailed);
+        }
+        let needed = usize::try_from(size).map_err(|_| LocalAddressRefusal::EnumerationFailed)?;
+        attempt += 1;
+        // A system that asks for no more than it was already given, for more
+        // than this module will ever allocate, or once too often, has not
+        // answered the question: that is a failed enumeration, not an empty one.
+        if attempt >= MAX_ADAPTER_ATTEMPTS || needed <= offered || needed > MAX_ADAPTER_BYTES {
+            return Err(LocalAddressRefusal::EnumerationFailed);
+        }
+        offered = needed;
+    };
+
+    let mut addresses: Vec<IpAddr> = Vec::new();
+    let mut adapter: *const IP_ADAPTER_ADDRESSES_LH = storage.as_ptr().cast();
+    while !adapter.is_null() {
+        // SAFETY: adapter points at a live node of the list the call built,
+        // which stays valid as long as storage does.
+        let entry = unsafe { &*adapter };
+        adapter = entry.Next;
+        let mut unicast = entry.FirstUnicastAddress;
+        while !unicast.is_null() {
+            // SAFETY: unicast points at a live node of the same list.
+            let held = unsafe { &*unicast };
+            unicast = held.Next;
+            let socket_address = held.Address.lpSockaddr;
+            if socket_address.is_null() {
+                continue;
+            }
+            let length = usize::try_from(held.Address.iSockaddrLength).unwrap_or(0);
+            // SAFETY: lpSockaddr points at a sockaddr whose family field the
+            // system always initialises.
+            let family = unsafe { (*socket_address).sa_family };
+            // The announced length is checked against the storage each family
+            // implies, so a truncated entry is skipped rather than read past.
+            let address = if family == AF_INET && length >= size_of::<SOCKADDR_IN>() {
+                // SAFETY: AF_INET and the length above guarantee a sockaddr_in.
+                let raw = unsafe { &*socket_address.cast::<SOCKADDR_IN>() };
+                // SAFETY: the union holds the address as its four bytes.
+                let octets = unsafe { raw.sin_addr.S_un.S_addr };
+                Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(octets))))
+            } else if family == AF_INET6 && length >= size_of::<SOCKADDR_IN6>() {
+                // SAFETY: AF_INET6 and the length above guarantee a sockaddr_in6.
+                let raw = unsafe { &*socket_address.cast::<SOCKADDR_IN6>() };
+                // SAFETY: the union holds the address as its sixteen bytes.
+                let octets = unsafe { raw.sin6_addr.u.Byte };
+                Some(IpAddr::V6(Ipv6Addr::from(octets)))
+            } else {
+                None
+            };
+            if let Some(address) = address {
+                if !addresses.contains(&address) {
+                    addresses.push(address);
+                }
+            }
+            // Bounding inside the walk keeps a hostile adapter count from
+            // allocating without limit before the check the caller applies.
+            if addresses.len() > MAX_LOCAL_ADDRESSES {
+                return Ok(addresses);
+            }
+        }
+    }
+    Ok(addresses)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "linux")]
+    /// Both enumerations are held to this, on the machine running the test.
+    /// It is what a platform guard used to hide: an `observe` that refuses by
+    /// construction passes no assertion, it only skips them.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn a_live_machine_always_observes_at_least_its_loopback() {
         let local = LocalAddresses::observe().expect("this machine has interfaces");
@@ -155,7 +312,7 @@ mod tests {
         assert!(local.addresses().len() <= MAX_LOCAL_ADDRESSES);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn the_observation_is_deduplicated_and_reproducible() {
         let first = LocalAddresses::observe().expect("observation");

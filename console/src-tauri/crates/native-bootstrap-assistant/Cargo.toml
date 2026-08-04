@@ -16,6 +16,7 @@ windows-live-prompt-contract-test = ["native-prompt-contract-test"]
 delayed-start-contract-test = ["native-prompt-contract-test"]
 personal-access-contract-test = []
 windows-agent-pipe-contract-test = []
+windows-personal-transport-contract-test = []
 
 [[bin]]
 name = "your-cloud-native-bootstrap-assistant"
@@ -92,6 +93,11 @@ name = "windows-agent-pipe-contract"
 path = "tests/windows_agent_pipe_contract.rs"
 required-features = ["windows-agent-pipe-contract-test"]
 
+[[test]]
+name = "windows-personal-transport-contract"
+path = "tests/windows_personal_transport_contract.rs"
+required-features = ["windows-personal-transport-contract-test"]
+
 [dependencies]
 # Client SSH du chemin d'accès personnel. Épinglé exactement, sans features
 # par défaut : `Preferred::DEFAULT` reste inutilisable et chaque champ négocié
@@ -116,6 +122,14 @@ libc = "=0.2.183"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
+  # Énumération réelle des adresses de ce poste : `GetAdaptersAddresses` est à
+  # Windows ce que `getifaddrs` est à Linux, et sans elle le refus de composer
+  # une adresse que la machine détient déjà n'aurait aucune entrée à juger.
+  "Win32_NetworkManagement_IpHelper",
+  # `IP_ADAPTER_ADDRESSES_LH` porte un champ décrit par `Ndis` ; sans lui la
+  # structure entière n'est pas compilée et l'énumération n'existe pas.
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinSock",
   "Win32_Security",
   "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
