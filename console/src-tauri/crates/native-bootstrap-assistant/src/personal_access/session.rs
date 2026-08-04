@@ -23,8 +23,9 @@
 //! one. Nothing here announces a verified access: the probe result is returned
 //! as a value to the caller, which is expected to discard it at this palier.
 
+#[cfg(target_os = "linux")]
+use std::future::Future;
 use std::{
-    future::Future,
     net::SocketAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -35,17 +36,17 @@ use russh::{
     keys::{Algorithm, HashAlg, PublicKey},
     Channel, ChannelMsg, Disconnect, Names,
 };
-use tokio::{
-    net::{TcpStream, UnixStream},
-    runtime::Runtime,
-    time::timeout,
-};
+use tokio::{net::TcpStream, runtime::Runtime, time::timeout};
 
+#[cfg(target_os = "linux")]
+use super::agent_endpoint;
+#[cfg(target_os = "windows")]
+use super::agent_pipe::{self, AgentPipeRefusal};
 use super::{
     agent_client::{
         AgentRefusal, BudgetedAgentSigner, PersonalAgent, SigningRefusal, StreamRefusal,
     },
-    agent_endpoint::{self, EndpointRefusal},
+    agent_endpoint::EndpointRefusal,
     algorithms::HostKeyType,
     host_key::{self, HostKeyRefusal},
     local_addresses::{LocalAddressRefusal, LocalAddresses},
@@ -55,7 +56,24 @@ use super::{
     target::{self, FrozenTarget, TargetRefusal},
 };
 
+/// The stream the personal agent is spoken to over.
+///
+/// It is the one thing about a session that the operating system decides: a
+/// Unix socket whose owner and mode the Linux rule reads, or the Windows named
+/// pipe whose object owner `agent_pipe` attests. Everything downstream — the
+/// bounded framing, the signature budget, the transport, the probe — is
+/// written once against this alias and is therefore literally the same code on
+/// both platforms.
+#[cfg(target_os = "linux")]
+pub type AgentStream = tokio::net::UnixStream;
+
+#[cfg(target_os = "windows")]
+pub type AgentStream = tokio::net::windows::named_pipe::NamedPipeClient;
+
 /// The single fixed probe. It is a constant, never assembled from input.
+///
+/// The target of a personal access is a Linux machine on both platforms: what
+/// Windows changes is the administrator's own workstation, never the far side.
 pub const PROBE_COMMAND: &str = "/usr/bin/id -u";
 
 /// Largest accepted size of each probe stream, separately.
@@ -64,10 +82,15 @@ pub const MAX_PROBE_STREAM_BYTES: usize = 4096;
 /// How often the guard is consulted while the session waits.
 const GUARD_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Longest the agent endpoint may take to accept a connection.
+/// Longest the agent endpoint may take to accept a connection. The Windows
+/// endpoint holds the same two ceilings, declared beside the code that applies
+/// them in `agent_pipe`, because opening a pipe and connecting a socket are not
+/// the same operation and each must be bounded where it happens.
+#[cfg(target_os = "linux")]
 const AGENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Longest the agent may take to answer the single identity listing.
+#[cfg(target_os = "linux")]
 const AGENT_LIST_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Longest one transport connection attempt may take.
@@ -89,6 +112,23 @@ pub enum PersonalAccessRefusal {
     /// nothing about the agent, the resolver or the target — only that there
     /// was no time left to ask them.
     Expired,
+}
+
+/// The Windows agent step refuses in the same three ways the Linux one does,
+/// and is carried into the same variants rather than into new ones. A caller
+/// reading a refusal must not be able to tell which endpoint produced it: an
+/// unavailable agent is an unavailable agent on both platforms, and the reasons
+/// that differ — a socket's owner, a pipe object's creator — already live
+/// inside [`EndpointRefusal`].
+#[cfg(target_os = "windows")]
+impl From<AgentPipeRefusal> for PersonalAccessRefusal {
+    fn from(refusal: AgentPipeRefusal) -> Self {
+        match refusal {
+            AgentPipeRefusal::Endpoint(endpoint) => Self::Endpoint(endpoint),
+            AgentPipeRefusal::Agent(agent) => Self::Agent(agent),
+            AgentPipeRefusal::Expired => Self::Expired,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,7 +178,7 @@ pub enum GuardVerdict {
 /// Everything observed before the user is asked anything.
 pub struct Prepared {
     runtime: Runtime,
-    agent: PersonalAgent<UnixStream>,
+    agent: PersonalAgent<AgentStream>,
     target: FrozenTarget,
     identities: Vec<OfferedIdentity>,
 }
@@ -180,6 +220,9 @@ impl Prepared {
         let target =
             target::freeze(name, port, &resolved, &local).map_err(PersonalAccessRefusal::Target)?;
 
+        // The endpoint next, and by the rule its own operating system allows.
+        // On Linux it is a filesystem entry, judged before any runtime exists.
+        #[cfg(target_os = "linux")]
         let endpoint =
             agent_endpoint::observe_linux_endpoint().map_err(PersonalAccessRefusal::Endpoint)?;
 
@@ -188,7 +231,15 @@ impl Prepared {
             .build()
             .map_err(|_| PersonalAccessRefusal::Transport(TransportRefusal::RuntimeUnavailable))?;
 
+        #[cfg(target_os = "linux")]
         let (agent, identities) = runtime.block_on(open_agent(&endpoint, deadline))?;
+        // On Windows the endpoint is a pipe object, and attesting it *is*
+        // opening it: the handle that was attested is the handle the agent is
+        // spoken to over, and it is registered with this runtime rather than
+        // reopened. That is why the whole step lives one module over and is
+        // called, not repeated, here.
+        #[cfg(target_os = "windows")]
+        let (agent, identities) = runtime.block_on(agent_pipe::open_personal_agent(deadline))?;
 
         Ok(Self {
             runtime,
@@ -272,7 +323,7 @@ impl Prepared {
     pub fn into_signer(
         self,
         fingerprint: &str,
-    ) -> Result<(Runtime, BudgetedAgentSigner<UnixStream>), PersonalAccessRefusal> {
+    ) -> Result<(Runtime, BudgetedAgentSigner<AgentStream>), PersonalAccessRefusal> {
         let signer = self
             .agent
             .select(fingerprint)
@@ -281,21 +332,23 @@ impl Prepared {
     }
 }
 
-/// Connects to the agent and asks it, once, what it holds.
+/// Connects to the Linux agent socket and asks it, once, what it holds.
 ///
 /// Both waits are capped by the session lease, exactly like the resolution
 /// before them: a socket that never accepts and an agent that never answers
 /// must each cost at most what is left of the bail, never their own ceiling on
-/// top of it.
+/// top of it. Its Windows counterpart applies the same two ceilings, for the
+/// same reason, inside `agent_pipe::open_personal_agent`.
+#[cfg(target_os = "linux")]
 async fn open_agent(
     endpoint: &str,
     deadline: Instant,
-) -> Result<(PersonalAgent<UnixStream>, Vec<OfferedIdentity>), PersonalAccessRefusal> {
+) -> Result<(PersonalAgent<AgentStream>, Vec<OfferedIdentity>), PersonalAccessRefusal> {
     let stream = await_bounded(
         deadline,
         AGENT_CONNECT_TIMEOUT,
         PersonalAccessRefusal::Agent(AgentRefusal::ConnectionFailed),
-        UnixStream::connect(endpoint),
+        AgentStream::connect(endpoint),
     )
     .await?
     .map_err(|_| PersonalAccessRefusal::Agent(AgentRefusal::ConnectionFailed))?;
@@ -314,11 +367,16 @@ async fn open_agent(
 
 /// Awaits one preparation step under two bounds at once, and tells them apart.
 ///
+/// It serves the Linux agent socket, which is the only step of this module that
+/// waits on something outside the transport. The Windows endpoint applies the
+/// same two bounds where it opens its pipe.
+///
 /// The step keeps its own ceiling, which describes what that operation may
 /// reasonably cost; the lease keeps its absolute one. Whichever is shorter
 /// wins. Which of the two fired is not a detail: a lease that ran out is the
 /// session expiring, and must be reported as such rather than blamed on the
 /// step that happened to be waiting when it did.
+#[cfg(target_os = "linux")]
 async fn await_bounded<F: Future>(
     deadline: Instant,
     ceiling: Duration,
@@ -421,7 +479,7 @@ impl Handler for PersonalAccessHandler {
 /// authentication spends nothing" is only provable if something can still be
 /// asked how much was spent after the refusal.
 async fn run_session(
-    signer: &mut BudgetedAgentSigner<UnixStream>,
+    signer: &mut BudgetedAgentSigner<AgentStream>,
     target: &FrozenTarget,
     request: &AuthenticationRequest<'_>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
@@ -482,7 +540,7 @@ async fn connect_to_frozen_address(
 
 async fn authenticate_and_probe(
     handle: &mut Handle<PersonalAccessHandler>,
-    signer: &mut BudgetedAgentSigner<UnixStream>,
+    signer: &mut BudgetedAgentSigner<AgentStream>,
     request: &AuthenticationRequest<'_>,
     verdict: &Arc<Mutex<HostKeyVerdict>>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
@@ -745,6 +803,7 @@ mod tests {
         assert_eq!(attested_host_key_type(&verdict), Ok(HostKeyType::Ed25519));
     }
 
+    #[cfg(target_os = "linux")]
     fn runtime() -> Runtime {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -755,6 +814,7 @@ mod tests {
     /// The preparation steps must be capped by the lease and not only by their
     /// own ceilings, otherwise a stalled agent adds its full timeout on top of
     /// a bail that had already run out.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_step_that_outlives_the_lease_is_an_expiration_not_a_step_failure() {
         runtime().block_on(async {
@@ -779,6 +839,7 @@ mod tests {
 
     /// The two bounds stay distinguishable: a step slower than its own ceiling
     /// while the lease still holds is that step's failure, not an expiration.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_step_that_outlives_only_its_own_ceiling_keeps_its_own_reason() {
         runtime().block_on(async {
@@ -798,6 +859,7 @@ mod tests {
     }
 
     /// An exhausted lease refuses before the step is even polled once.
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_exhausted_lease_never_starts_a_step() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -825,6 +887,7 @@ mod tests {
     }
 
     /// A step that answers inside both bounds is carried through untouched.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_step_within_both_bounds_returns_its_own_answer() {
         runtime().block_on(async {

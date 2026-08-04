@@ -30,11 +30,13 @@ pub mod host_key;
 pub mod local_addresses;
 pub mod openssh_key;
 pub mod resolver;
-/// The acting half is wired to Linux only for now: it connects to the agent
-/// through a Unix socket and reads the endpoint the Linux rule judges. The
-/// Windows pass of this palier brings its own named pipe endpoint, and until
-/// it exists nothing here may pretend to be portable.
-#[cfg(target_os = "linux")]
+/// The acting half, on both platforms the palier targets. The session is one
+/// sequence — local addresses, one resolution, one agent endpoint, one
+/// transport, one probe — and only the endpoint differs: a Unix socket the
+/// Linux rule judges, or the attested OpenSSH pipe `agent_pipe` opens. What
+/// the two share is everything after it, so a bound proved on one is the bound
+/// the other runs.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod session;
 pub mod signature_budget;
 pub mod ssh_algorithms;
