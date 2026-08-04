@@ -221,7 +221,16 @@ elle ne fait que la porter ; l'admissibilité — chemin absolu et borné, socke
 réel appartenant à l'utilisateur, répertoire parent que personne d'autre ne peut
 réarranger — est décidée par le helper, seul à observer le système de fichiers
 auquel il va ensuite se connecter. Sous Windows, `v0.1.0` accepte seulement le pipe OpenSSH
-`\\.\pipe\openssh-ssh-agent`. Une seule clé est sélectionnée et un budget fini
+`\\.\pipe\openssh-ssh-agent`. Ce nom ne protège rien : n'importe quel
+processus peut le prendre. Le helper atteste donc l'objet lui-même, dont le
+noyau porte le créateur, et exige qu'il appartienne au compte du service. Il
+lit en supplément le fichier exécuté et le compte du serveur lorsque ce
+processus peut être ouvert, ce qu'un utilisateur non administrateur ne peut pas
+faire pour un service système — exiger cette lecture rendrait l'accès personnel
+inutilisable pour l'usage courant, alors que l'agent, lui, le sert. Limite
+assumée et non refermée : là où le processus reste inobservable, l'attestation
+distingue le compte créateur, pas le programme, et un autre service du même
+compte qui prendrait le nom en premier passerait ce contrôle. Une seule clé est sélectionnée et un budget fini
 de signatures est limité à l'authentification SSH de cette opération ; une
 deuxième signature ou un message hors de cette capacité est refusé. Les logs du
 client d'agent restent désactivés afin qu'aucun tampon de protocole n'y entre.
