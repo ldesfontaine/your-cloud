@@ -163,6 +163,15 @@ impl MutationKind {
     }
 }
 
+/// The scope this suite submits, deliberately not the personal access one.
+///
+/// `ConfirmPersonalAccess` no longer opens a window by itself on this system
+/// either: it first resolves the target, freezes its addresses and attests the
+/// agent pipe, and against a synthetic unreachable host it fails before any
+/// window exists. The properties proven here belong to the window — the
+/// mutations it refuses while live — so the scope carries the escalation
+/// couple, which still goes straight to the native prompt with the same
+/// administrator target. This mirrors the Linux homologue exactly.
 fn scope(remaining_millis: u64) -> AssistantScopeV1 {
     AssistantScopeV1 {
         schema_version: 1,
@@ -175,9 +184,9 @@ fn scope(remaining_millis: u64) -> AssistantScopeV1 {
             host_key_sha256: HOST_KEY.into(),
             access_kind: BootstrapAccessKind::Administrator,
         },
-        step: BootstrapStep::PersonalAccess,
+        step: BootstrapStep::PrivilegeEscalation,
         actions: [BootstrapAction::AuditTargetReadOnly],
-        prompt: NativePromptKind::ConfirmPersonalAccess,
+        prompt: NativePromptKind::SudoPassword,
         target_addresses: Vec::new(),
         issued_at_monotonic_nanos: monotonic_nanos().expect("shared monotonic clock"),
         remaining_millis,
