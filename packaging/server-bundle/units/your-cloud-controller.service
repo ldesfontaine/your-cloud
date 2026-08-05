@@ -1,0 +1,61 @@
+[Unit]
+Description=Your Cloud Controller
+Documentation=https://github.com/ldesfontaine/your-cloud
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The account is allocated by systemd for the lifetime of the service. No
+# persistent account with a shell, a password or a home is ever created, and
+# the Daemon's and the Relay's units name different ones.
+DynamicUser=yes
+User=your-cloud-controller
+StateDirectory=your-cloud-controller
+StateDirectoryMode=0700
+RuntimeDirectory=your-cloud-controller
+RuntimeDirectoryMode=0700
+UMask=0077
+# Machine-specific, non-secret, root-owned and written by the Assistant. The
+# package carries no configuration of its own: this file is what makes the same
+# package usable on any machine without the package knowing any of them.
+EnvironmentFile=/etc/your-cloud/controller.env
+# The operational keys stay root-owned on disk and are handed to this one
+# service at start. They never travel through the command line, the environment
+# or the Console.
+LoadCredential=controller-reader.crt:/etc/your-cloud/controller-credentials/controller-reader.crt
+LoadCredential=controller-reader.key:/etc/your-cloud/controller-credentials/controller-reader.key
+LoadCredential=relay-reader-ca.crt:/etc/your-cloud/controller-credentials/relay-reader-ca.crt
+ExecStart=/usr/lib/your-cloud/your-cloud controller serve -state-dir=/var/lib/private/your-cloud-controller -listen=${CONTROLLER_LISTEN} -allowed-source=${CONTROLLER_ALLOWED_SOURCE} -relay-endpoint=${CONTROLLER_RELAY_ENDPOINT}
+# The Controller is what must still be there when the laptop is closed, so it
+# restarts on failure rather than waiting for someone to notice.
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# The budgets. They are here rather than in a drop-in so that the package
+# delivers them and the LAB can read them back off the running service.
+TasksMax=128
+MemoryMax=384M
+
+[Install]
+WantedBy=multi-user.target

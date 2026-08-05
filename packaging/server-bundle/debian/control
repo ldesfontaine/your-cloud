@@ -1,0 +1,11 @@
+Package: your-cloud-server
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Lucas Desfontaine <lucas.desfontaine1@gmail.com>
+Section: admin
+Priority: optional
+Depends: systemd
+Description: Your Cloud server binary and its static unit definitions
+ Delivers the your-cloud binary and the three role units. It carries no
+ configuration, no secret, no identity, no role activation and no authority
+ transfer: those remain typed operations of the Assistant after approval.

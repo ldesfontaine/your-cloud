@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Build the embedded server bundle: the single Debian 13 amd64 .deb and the
+# manifest that binds its version, target, size and SHA-256.
+#
+# It runs inside a LAB machine that holds Go and dpkg-deb, never on the
+# workstation. It signs nothing: the detached signature over the manifest bytes
+# is produced separately by the signer that holds the anchor, exactly as the
+# Console's own candidate manifest is signed out of band. A manifest without
+# that signature is refused by the Assistant, which is the point.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: build-server-bundle VERSION SOURCE_ROOT OUTPUT_DIR
+
+  VERSION      the exact version the manifest will bind, e.g. 0.0.3
+  SOURCE_ROOT  a checkout holding go.mod, cmd/ and internal/
+  OUTPUT_DIR   an existing directory receiving the .deb and the manifest
+EOF
+  exit 2
+}
+
+[[ $# -eq 3 ]] || usage
+version=$1
+source_root=$2
+output_dir=$3
+
+# The one target v0.1.0 distributes. It is not a parameter: a builder that could
+# be pointed at another architecture would produce a bundle no proof covers.
+target=debian-13-amd64
+package=your-cloud-server
+binary_path=usr/lib/your-cloud/your-cloud
+unit_directory=usr/lib/systemd/system
+units=(your-cloud-controller.service your-cloud-daemon.service your-cloud-relay.service)
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+[[ -f "$source_root/go.mod" ]] || fail "no go.mod under $source_root"
+[[ -d "$output_dir" ]] || fail "no output directory $output_dir"
+command -v go >/dev/null || fail "go is required to build the server binary"
+command -v dpkg-deb >/dev/null || fail "dpkg-deb is required to build the package"
+
+packaging="$source_root/packaging/server-bundle"
+[[ -d "$packaging" ]] || fail "no packaging definitions under $packaging"
+
+staging=$(mktemp -d)
+trap 'rm -rf "$staging"' EXIT
+root="$staging/root"
+
+# The binary. Static and trimmed: the package's dependency closure must be
+# satisfiable offline from the Debian 13 base, and a cgo build would put the
+# host's libc into that closure.
+install -d -m 0755 "$root/$(dirname "$binary_path")"
+( cd "$source_root" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -mod=readonly -trimpath -o "$root/$binary_path" ./cmd/your-cloud )
+chmod 0755 "$root/$binary_path"
+
+# The three units, delivered inactive. Nothing here enables or starts one.
+install -d -m 0755 "$root/$unit_directory"
+for unit in "${units[@]}"; do
+  [[ -f "$packaging/units/$unit" ]] || fail "no unit definition for $unit"
+  install -m 0644 "$packaging/units/$unit" "$root/$unit_directory/$unit"
+done
+
+install -d -m 0755 "$root/DEBIAN"
+sed "s/@VERSION@/$version/" "$packaging/debian/control" >"$root/DEBIAN/control"
+chmod 0644 "$root/DEBIAN/control"
+for script in postinst postrm; do
+  install -m 0755 "$packaging/debian/$script" "$root/DEBIAN/$script"
+done
+
+# --root-owner-group is what makes every packaged file root:root without the
+# build needing root itself.
+artifact="$output_dir/${package}_${version}_amd64.deb"
+dpkg-deb --build --root-owner-group "$root" "$artifact" >/dev/null
+
+size=$(stat -c '%s' "$artifact")
+digest=$(sha256sum "$artifact" | cut -d' ' -f1)
+
+# The manifest is exactly the bytes the signature will cover, so it is written
+# once, compactly and without a trailing newline: any re-rendering downstream
+# would break the signature it is about to receive.
+printf '{"schema_version":1,"kind":"your-cloud-server-bundle","version":"%s","target":"%s","size":%s,"sha256":"%s"}' \
+  "$version" "$target" "$size" "$digest" >"$output_dir/bundle-manifest.json"
+chmod 0644 "$output_dir/bundle-manifest.json"
+
+echo "ARTIFACT=$artifact"
+echo "SIZE=$size"
+echo "SHA256=$digest"

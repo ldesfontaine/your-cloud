@@ -1,0 +1,11 @@
+#!/bin/sh
+# Minimal, non-interactive and idempotent, as the distribution contract
+# requires. It downloads nothing, generates no secret, activates no role and
+# removes no persistent state: it only tells systemd that three unit files
+# appeared. The units are delivered inactive and stay that way until the
+# Assistant enables the one that was approved.
+set -e
+
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi

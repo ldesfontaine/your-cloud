@@ -1,0 +1,45 @@
+[Unit]
+Description=Your Cloud Relay
+Documentation=https://github.com/ldesfontaine/your-cloud
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=your-cloud-relay
+StateDirectory=your-cloud-relay
+StateDirectoryMode=0700
+RuntimeDirectory=your-cloud-relay
+RuntimeDirectoryMode=0700
+UMask=0077
+EnvironmentFile=/etc/your-cloud/relay.env
+ExecStart=/usr/lib/your-cloud/your-cloud relay
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+TasksMax=96
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

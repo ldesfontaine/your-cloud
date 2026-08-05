@@ -1,0 +1,9 @@
+#!/bin/sh
+# The symmetric half. Removing the package never removes configuration,
+# secrets, identities or state: their removal belongs to an explicit operation
+# that knows which authority is live.
+set -e
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi
