@@ -361,6 +361,10 @@ const nativeAssistantDelayedStartContract = await readSourceText(
 const bootstrapProtocol = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "lib.rs"),
 );
+const approvalProtocol = await readSourceText(
+  join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "approval.rs"),
+);
+const approvalRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "approval.rs"));
 const bootstrapProtocolManifest = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "Cargo.toml"),
 );
@@ -1797,6 +1801,79 @@ if (!invokeHandler) {
   failures.push("lib.rs: registre des commandes Tauri introuvable");
 } else if (/\b(?:ssh\w*|\w*agent\w*|sign(?:ature)?\w*)\b/iu.test(invokeHandler)) {
   failures.push("lib.rs: une primitive SSH, agent ou signature générale est enregistrée");
+} else if (/\b\w*approv\w*\b/iu.test(invokeHandler)) {
+  failures.push("lib.rs: une commande d’approbation est exposée sans sa fenêtre de confirmation");
+}
+
+// L’approbation humaine ne doit jamais devenir un oracle de signature. La seule
+// entrée décrit une approbation par ses champs typés ; elle ne reçoit ni octets
+// à signer, ni transcription déjà construite, ni privilège choisi par l’appelant.
+if (
+  !approvalRuntime.includes("pub fn sign_approval(") ||
+  !approvalRuntime.includes("association: &AssociationRecord,") ||
+  !approvalRuntime.includes("request: ApprovalRequest<'_>,") ||
+  !approvalRuntime.includes(
+    "infrastructure_id: association.summary.infrastructure_id.clone(),",
+  ) ||
+  !approvalRuntime.includes("privileges: request.operation.required_privileges().to_vec(),") ||
+  !approvalRuntime.includes("plan_sha256: hex::encode(Sha256::digest(request.plan)),") ||
+  !approvalRuntime.includes(
+    "rollback_sha256: hex::encode(Sha256::digest(request.rollback)),",
+  )
+) {
+  failures.push("approval.rs: l’unique signature n’est plus dérivée d’une demande typée");
+}
+if (/fn\s+\w*sign\w*\s*(?:<[^>]*>)?\s*\([^)]*(?:&\[u8\]|Vec<u8>|transcript|digest)/u.test(
+  approvalRuntime.replace(/\n/gu, " "),
+)) {
+  failures.push("approval.rs: une primitive de signature libre est exposée");
+}
+if (
+  !/pub\s+struct\s+ApprovalRequest<'a>\s*\{[\s\S]*?\n\}/u
+    .exec(approvalRuntime)?.[0]
+    ?.includes("operation: ApprovalOperation") ||
+  /pub\s+struct\s+ApprovalRequest<'a>\s*\{[\s\S]*?\n\}/u
+    .exec(approvalRuntime)?.[0]
+    ?.match(/\b(privileges|infrastructure_id|approval_public_key|signature|transcript)\b/u)
+) {
+  failures.push("approval.rs: la demande d’approbation laisse choisir un champ dérivé");
+}
+
+// L’enveloppe canonique lie tout ce qu’une approbation signifie. Chaque champ
+// est écrit sous sa propre longueur, dans cet ordre exact, et le côté Auxiliaire
+// écrit la même table dans internal/approval/envelope.go.
+for (const bound of [
+  'pub const APPROVAL_TRANSCRIPT_DOMAIN: &[u8] = b"your-cloud/approval-envelope.v1\\0";',
+  "append_field(&mut transcript, self.infrastructure_id.as_bytes())?;",
+  "append_field(&mut transcript, self.machine_id.as_bytes())?;",
+  "transcript.extend_from_slice(&self.approval_epoch.to_be_bytes());",
+  "transcript.extend_from_slice(&self.sequence.to_be_bytes());",
+  "append_field(&mut transcript, self.operation.as_str().as_bytes())?;",
+  "append_field(&mut transcript, &plan)?;",
+  "append_field(&mut transcript, &rollback)?;",
+  "append_field(&mut transcript, privilege.as_str().as_bytes())?;",
+  "transcript.extend_from_slice(&self.issued_at_unix_seconds.to_be_bytes());",
+  "transcript.extend_from_slice(&self.expires_at_unix_seconds.to_be_bytes());",
+  "append_field(&mut transcript, &public_key)?;",
+  "self.privileges != self.operation.required_privileges()",
+]) {
+  if (!approvalProtocol.includes(bound)) {
+    failures.push(`approval.rs (protocole): lien signé absent (${bound})`);
+  }
+}
+// Le protocole partagé construit des octets et ne signe jamais : il n’a ni
+// primitive, ni type de clé, ni dépendance de signature. Une transcription est
+// sans valeur pour qui ne peut pas la signer, et c’est ce qui autorise ce
+// contrat à être public des deux côtés.
+for (const forbidden of ["SigningKey", "signing_key", "private_key", "secret", "Signer"]) {
+  if (approvalProtocol.includes(forbidden)) {
+    failures.push(`approval.rs (protocole): une notion de clé privée y apparaît (${forbidden})`);
+  }
+}
+for (const forbidden of ["ed25519", "signature ="]) {
+  if (bootstrapProtocolManifest.includes(forbidden)) {
+    failures.push(`bootstrap-protocol: dépendance de signature interdite (${forbidden})`);
+  }
 }
 
 for (const forbidden of ["request_id", "step", "actions", "ttl_seconds", "expires_in_seconds"]) {
