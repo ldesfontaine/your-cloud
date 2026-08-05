@@ -79,11 +79,14 @@ use your_cloud_native_bootstrap_assistant::personal_access::{
         AgentRefusal, BoundedAgentStream, PersonalAgent, SigningRefusal, StreamRefusal,
         MAX_AGENT_FRAME_BYTES,
     },
-    algorithms::HostKeyType,
+    algorithms::{HostKeyType, IdentityKeyType},
     host_key::HostKeyRefusal,
+    key_file::{self, KeyFileRefusal},
+    key_unlock::{self, UnlockRefusal},
+    openssh_key::{MAX_BCRYPT_ROUNDS, MAX_KEY_FILE_BYTES},
     session::{
-        AuthenticationRequest, GuardVerdict, PersonalAccessRefusal, Prepared, TransportRefusal,
-        MAX_PROBE_STREAM_BYTES,
+        AuthenticationRequest, GuardVerdict, PersonalAccessRefusal, Prepared, RunObservation,
+        TransportRefusal, MAX_PROBE_STREAM_BYTES,
     },
     signature_budget::{BudgetRefusal, MAX_AUTHENTICATION_SIGNATURES},
     target::TargetRefusal,
@@ -1944,4 +1947,737 @@ fn a_live_personal_access_window_refuses_target_step_action_and_expiration_mutat
             mutation_kind.name()
         );
     }
+}
+
+// ------------------------------------------- the encrypted key file fallback
+//
+// Everything below is the other half of the same palier: when the agent is not
+// retained, the *same* state machine opens an encrypted OpenSSH key the user
+// selected, derives it in memory under the same deadline, and uses it for the
+// same single approved connection. The proofs are therefore written against the
+// same server, the same accounts, the same probe and the same budget as the
+// agent path above — a fallback proven against a perimeter of its own would say
+// nothing about the session it is supposed to join.
+//
+// Every key file is synthetic, generated when the perimeter is mounted and
+// destroyed when it is removed. Every refusal below is paired with the control
+// that shows the same call succeeding on a file that is in contract: a refusal
+// that refuses everything proves nothing.
+
+/// Directory holding the synthetic key files.
+///
+/// The names *inside* it are this harness's own layout and are written here
+/// rather than exported one by one: they carry no address, no account and no
+/// key material, only which shape each file has.
+const KEY_DIR: &str = "YOUR_CLOUD_LAB_KEY_DIR";
+/// File holding the synthetic passphrase of every encrypted key file.
+const KEY_PASSPHRASE: &str = "YOUR_CLOUD_LAB_KEY_PASSPHRASE";
+/// File holding, in hexadecimal, the raw private scalar of the nominal Ed25519
+/// key *file*. It is the second canary of this suite: unlike the agent's, this
+/// one really does enter the process, so its absence afterwards is a claim
+/// about zeroisation rather than about never having held it.
+const KEY_SEED_NEEDLE: &str = "YOUR_CLOUD_LAB_KEY_SEED_NEEDLE";
+/// Fingerprint the nominal Ed25519 key file carries.
+const KEY_ED25519_FINGERPRINT: &str = "YOUR_CLOUD_LAB_KEY_ED25519_FINGERPRINT";
+/// Fingerprint the nominal RSA 3072 key file carries.
+const KEY_RSA_FINGERPRINT: &str = "YOUR_CLOUD_LAB_KEY_RSA_FINGERPRINT";
+
+/// The nominal Ed25519 file, encrypted with the default sixteen rounds.
+const NOMINAL_ED25519: &str = "ed25519";
+/// The nominal RSA file, at the smallest modulus the perimeter accepts.
+const NOMINAL_RSA: &str = "rsa3072";
+/// A second Ed25519 file, same passphrase, different key.
+const REPLACEMENT: &str = "replacement";
+/// A file whose declared round count sits exactly on the accepted bound.
+const BOUND_ROUNDS: &str = "bound";
+/// A file whose derivation is slow enough to still be running when a short
+/// lease fires, and quick enough to finish under a full one.
+const SLOW: &str = "slow";
+
+/// Longest a derivation on the reference host may take, with room to spare.
+const DERIVATION_TIMEOUT: Duration = Duration::from_secs(60);
+/// A lease far too short for the slow file's derivation to complete under it.
+const SHORT_DERIVATION_LEASE: Duration = Duration::from_millis(200);
+
+fn key_directory() -> PathBuf {
+    PathBuf::from(required(KEY_DIR))
+}
+
+fn key_file(name: &str) -> PathBuf {
+    key_directory().join(name)
+}
+
+fn key_passphrase() -> Vec<u8> {
+    let passphrase = fs::read(required(KEY_PASSPHRASE)).expect("the passphrase must be readable");
+    assert!(
+        passphrase.len() >= 32,
+        "the synthetic passphrase must really have been generated"
+    );
+    passphrase
+}
+
+/// Opens and derives one key file, under a lease long enough for the bound.
+fn open_key(name: &str) -> key_unlock::PersonalKey {
+    let selected = key_file::open_and_validate(&key_file(name))
+        .unwrap_or_else(|refusal| panic!("{name} must be openable: {refusal:?}"));
+    key_unlock::unlock_with_passphrase(
+        selected,
+        &key_passphrase(),
+        Instant::now() + DERIVATION_TIMEOUT,
+    )
+    .unwrap_or_else(|refusal| panic!("{name} must derive: {refusal:?}"))
+}
+
+/// Sha256 of every file of the perimeter's key directory, read on this machine.
+fn key_directory_digest() -> String {
+    capture_local(&format!(
+        "find {} -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum",
+        key_directory().display()
+    ))
+}
+
+/// Runs one whole personal access authenticated by an opened key file.
+fn run_with_key_file(name: &str, username: &str) -> RunObservation {
+    let key = open_key(name);
+    let fingerprint = key.fingerprint().to_owned();
+    let host_key = required(HOST_KEY);
+    prepare().run_with_key(
+        key,
+        &AuthenticationRequest {
+            username,
+            approved_host_key_fingerprint: &host_key,
+            selected_fingerprint: &fingerprint,
+        },
+        lease(),
+        &always_continue(),
+    )
+}
+
+/// The whole fallback, end to end, against the real server: one file opened
+/// once, one derivation, one transport, one probe — and exactly one signature.
+///
+/// It is deliberately asserted with the same values as the agent's nominal
+/// case: the same uid from the same fixed probe, the same host key type, the
+/// same single signature. That is the claim — not that a second path works,
+/// but that it is the same path.
+#[test]
+fn a_nominal_ed25519_key_file_spends_exactly_one_signature() {
+    let before = key_directory_digest();
+    let username = required(USERNAME);
+    let observation = run_with_key_file(NOMINAL_ED25519, &username);
+    let report = observation
+        .outcome
+        .expect("the nominal key file access must succeed");
+
+    assert_eq!(report.exit_status, 0);
+    assert_eq!(
+        String::from_utf8_lossy(&report.stdout).trim(),
+        required(EXPECTED_UID),
+        "the probe must report the synthetic account's own uid"
+    );
+    assert!(report.stderr.is_empty());
+    assert_eq!(report.host_key_type, HostKeyType::Ed25519);
+    assert_eq!(
+        report.signatures_spent, MAX_AUTHENTICATION_SIGNATURES,
+        "one access costs one signature, whoever holds the key"
+    );
+    assert_eq!(observation.remaining_signatures, 0);
+    assert_eq!(
+        observation.stream_refusal, None,
+        "no agent stream exists on this path at all"
+    );
+    assert_eq!(
+        key_directory_digest(),
+        before,
+        "the personal file must stay bit for bit unchanged"
+    );
+}
+
+/// The same, with RSA at the smallest accepted modulus.
+///
+/// The signature it produces can only be `rsa-sha2-512`: the session names that
+/// hash and the budget refuses every other pairing, so a server that accepted
+/// this authentication accepted a SHA-2 signature and never a SHA-1 one.
+#[test]
+fn a_nominal_rsa_3072_key_file_authenticates_and_never_signs_with_sha1() {
+    let before = key_directory_digest();
+    let username = required(USERNAME);
+    let key = open_key(NOMINAL_RSA);
+    assert!(
+        matches!(key.algorithm(), russh::keys::Algorithm::Rsa { .. }),
+        "the RSA file must really open as an RSA key"
+    );
+    assert_eq!(key.fingerprint(), required(KEY_RSA_FINGERPRINT));
+    drop(key);
+
+    let observation = run_with_key_file(NOMINAL_RSA, &username);
+    let report = observation
+        .outcome
+        .expect("the RSA 3072 key file access must succeed");
+    assert_eq!(report.exit_status, 0);
+    assert_eq!(
+        String::from_utf8_lossy(&report.stdout).trim(),
+        required(EXPECTED_UID)
+    );
+    assert_eq!(report.signatures_spent, MAX_AUTHENTICATION_SIGNATURES);
+    assert_eq!(observation.remaining_signatures, 0);
+    assert_eq!(key_directory_digest(), before);
+}
+
+/// Every envelope outside the contract is refused, and refused before a
+/// passphrase could ever be asked for.
+///
+/// The ordering is structural rather than asserted by a timer: opening and
+/// validating is one call, asking for the passphrase is another, and the second
+/// is only reachable through an `Ok` of the first. What the table proves is
+/// that each of these files stops at the first.
+#[test]
+fn every_envelope_outside_the_contract_is_refused_before_any_passphrase() {
+    use your_cloud_native_bootstrap_assistant::personal_access::openssh_key::EnvelopeRefusal;
+
+    for (name, expected) in [
+        // The single most important one: a key in the clear. OpenSSH writes
+        // `none` for both the cipher and the key derivation, and the cipher is
+        // the first of the two to be read — the unit tests of `openssh_key`
+        // hold each of them separately.
+        ("clear", KeyFileRefusal::Envelope(EnvelopeRefusal::Cipher)),
+        // The foreign formats, written by the tools that really write them.
+        (
+            "pkcs1",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::PemEnvelope),
+        ),
+        (
+            "pkcs8",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::PemEnvelope),
+        ),
+        (
+            "sec1",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::PemEnvelope),
+        ),
+        (
+            "ppk",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::PemEnvelope),
+        ),
+        // An RSA key one step below the accepted modulus.
+        (
+            "rsa2048",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::RsaTooSmall),
+        ),
+        // Declarations rewritten out of contract.
+        (
+            "wrong-cipher",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::Cipher),
+        ),
+        ("wrong-kdf", KeyFileRefusal::Envelope(EnvelopeRefusal::Kdf)),
+        (
+            "rounds-zero",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::Rounds),
+        ),
+        (
+            "rounds-over",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::Rounds),
+        ),
+        (
+            "trailing",
+            KeyFileRefusal::Envelope(EnvelopeRefusal::TrailingData),
+        ),
+        // And a file larger than the bound, refused before it is parsed.
+        ("oversized", KeyFileRefusal::TooLarge),
+    ] {
+        let path = key_file(name);
+        assert!(path.is_file(), "the perimeter never wrote {name}");
+        let refusal = key_file::open_and_validate(&path)
+            .err()
+            .unwrap_or_else(|| panic!("{name} must never be opened as a personal key"));
+        assert_eq!(refusal, expected, "{name} was refused for the wrong reason");
+    }
+
+    // The controls. The same call, on the two files that are in contract, and
+    // it accepts them — with the envelope it really read.
+    let nominal = key_file::open_and_validate(&key_file(NOMINAL_ED25519))
+        .expect("the nominal Ed25519 file must be accepted");
+    assert_eq!(nominal.envelope().key_type, IdentityKeyType::Ed25519);
+    assert_eq!(nominal.envelope().rsa_modulus_bits, None);
+    assert!(nominal.envelope().rounds >= 1 && nominal.envelope().rounds <= MAX_BCRYPT_ROUNDS);
+
+    let rsa = key_file::open_and_validate(&key_file(NOMINAL_RSA))
+        .expect("the nominal RSA file must be accepted");
+    assert_eq!(rsa.envelope().key_type, IdentityKeyType::Rsa);
+    assert_eq!(rsa.envelope().rsa_modulus_bits, Some(3072));
+
+    // And the bound the oversized file is refused against is the decided one.
+    assert_eq!(
+        fs::metadata(key_file("oversized"))
+            .expect("the oversized sample must exist")
+            .len(),
+        MAX_KEY_FILE_BYTES as u64 + 1,
+        "one byte past the bound, and not a byte more"
+    );
+}
+
+/// A symbolic link is refused rather than followed, and so is anything that is
+/// not a regular file.
+///
+/// The link points at a file that is perfectly valid, which is the point: what
+/// is refused is the indirection, not the target.
+#[test]
+fn a_symbolic_link_is_refused_rather_than_followed() {
+    let directory = scratch().join("key-links");
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("the link directory must be creatable");
+
+    let link = directory.join("linked-key");
+    std::os::unix::fs::symlink(key_file(NOMINAL_ED25519), &link)
+        .expect("the synthetic link must be creatable");
+    assert_eq!(
+        key_file::open_and_validate(&link).err(),
+        Some(KeyFileRefusal::SymbolicLink),
+        "a link is an instruction to read elsewhere, never a key file"
+    );
+
+    // The control: the very same bytes, copied rather than linked, open.
+    let copy = directory.join("copied-key");
+    fs::copy(key_file(NOMINAL_ED25519), &copy).expect("the copy must be writable");
+    assert!(
+        key_file::open_and_validate(&copy).is_ok(),
+        "the refusal above is about the link and not about the key"
+    );
+
+    assert_eq!(
+        key_file::open_and_validate(&directory).err(),
+        Some(KeyFileRefusal::NotRegularFile)
+    );
+}
+
+/// The central property: a file replaced between validation and use is refused.
+///
+/// The replacement is a *valid* encrypted key with the very same passphrase, so
+/// nothing about it would fail on its own. What must fail is that it is not the
+/// file the user selected and the one that was validated. The control runs the
+/// identical sequence without the replacement and derives.
+#[test]
+fn a_file_replaced_between_validation_and_use_is_refused() {
+    let directory = scratch().join("key-substitution");
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("the substitution directory must be creatable");
+    let passphrase = key_passphrase();
+
+    // The control first, so "refused" below cannot be a broken perimeter.
+    let control = directory.join("control-key");
+    fs::copy(key_file(NOMINAL_ED25519), &control).expect("the control must be writable");
+    let selected = key_file::open_and_validate(&control).expect("the control must be accepted");
+    assert!(
+        key_unlock::unlock_with_passphrase(
+            selected,
+            &passphrase,
+            Instant::now() + DERIVATION_TIMEOUT
+        )
+        .is_ok(),
+        "the same sequence without a replacement must derive"
+    );
+
+    // And now the same sequence, with another key moved on top of the name
+    // between the validation and the use.
+    let subject = directory.join("subject-key");
+    fs::copy(key_file(NOMINAL_ED25519), &subject).expect("the subject must be writable");
+    let selected = key_file::open_and_validate(&subject).expect("the subject must be accepted");
+
+    let substitute = directory.join("substitute-key");
+    fs::copy(key_file(REPLACEMENT), &substitute).expect("the substitute must be writable");
+    fs::rename(&substitute, &subject).expect("the substitution must succeed");
+
+    assert_eq!(
+        key_unlock::unlock_with_passphrase(
+            selected,
+            &passphrase,
+            Instant::now() + DERIVATION_TIMEOUT
+        )
+        .err(),
+        Some(UnlockRefusal::File(KeyFileRefusal::Substituted)),
+        "the file that was validated is no longer the file this path names"
+    );
+
+    // A file rewritten in place under a stable inode is the same refusal, and
+    // it is the one a device-and-inode comparison alone would miss.
+    let rewritten = directory.join("rewritten-key");
+    fs::copy(key_file(NOMINAL_ED25519), &rewritten).expect("the subject must be writable");
+    let selected = key_file::open_and_validate(&rewritten).expect("the subject must be accepted");
+    let replacement_bytes = fs::read(key_file(REPLACEMENT)).expect("the replacement must be read");
+    fs::write(&rewritten, &replacement_bytes).expect("the rewrite must succeed");
+    assert_eq!(
+        key_unlock::unlock_with_passphrase(
+            selected,
+            &passphrase,
+            Instant::now() + DERIVATION_TIMEOUT
+        )
+        .err(),
+        Some(UnlockRefusal::File(KeyFileRefusal::Substituted)),
+        "an inode that kept its number while its content moved is still a substitution"
+    );
+}
+
+/// A wrong passphrase is one refusal, with no retry and nothing kept.
+///
+/// "Nothing kept" is enforced by the type rather than asserted: the derivation
+/// consumes both the opened file and the passphrase, so the value that would
+/// have to be retried no longer exists once this call has returned. What the
+/// case adds is that the refusal is real — the same file, with the right
+/// passphrase, derives — and that the file on disk did not move either.
+#[test]
+fn a_wrong_passphrase_refuses_without_retry_and_keeps_nothing() {
+    let before = key_directory_digest();
+    let mut wrong = key_passphrase();
+    wrong.push(b'x');
+
+    let selected =
+        key_file::open_and_validate(&key_file(NOMINAL_ED25519)).expect("the nominal file opens");
+    assert_eq!(
+        key_unlock::unlock_with_passphrase(selected, &wrong, Instant::now() + DERIVATION_TIMEOUT)
+            .err(),
+        Some(UnlockRefusal::Passphrase)
+    );
+
+    // The control: the same file, the same call, the right passphrase.
+    let selected =
+        key_file::open_and_validate(&key_file(NOMINAL_ED25519)).expect("the nominal file opens");
+    let key = key_unlock::unlock_with_passphrase(
+        selected,
+        &key_passphrase(),
+        Instant::now() + DERIVATION_TIMEOUT,
+    )
+    .expect("the right passphrase must open the same file");
+    assert_eq!(key.fingerprint(), required(KEY_ED25519_FINGERPRINT));
+
+    assert_eq!(
+        key_directory_digest(),
+        before,
+        "a refused passphrase must not have touched the file"
+    );
+}
+
+/// A lease that runs out *during* the derivation is an expiration.
+///
+/// The refusal and its control differ by one thing only: the deadline. The very
+/// same file, with the very same passphrase, derives when the lease can pay for
+/// it — which is what says the refusal is the deadline firing rather than the
+/// file being unusable. And the timings separate the two failures that would
+/// otherwise look alike: the expiry is reported when the lease fires, long
+/// before the derivation could have finished, so what was cut was a derivation
+/// that had really started.
+#[test]
+fn a_lease_that_runs_out_during_the_derivation_is_an_expiry() {
+    let passphrase = key_passphrase();
+
+    // The highest round count the perimeter accepts is a real file, and its
+    // envelope is accepted on the bound rather than one step inside it.
+    let on_the_bound =
+        key_file::open_and_validate(&key_file(BOUND_ROUNDS)).expect("the bound file opens");
+    assert_eq!(
+        on_the_bound.envelope().rounds,
+        MAX_BCRYPT_ROUNDS,
+        "the bound file must declare exactly the accepted maximum"
+    );
+    drop(on_the_bound);
+
+    let selected = key_file::open_and_validate(&key_file(SLOW)).expect("the slow file opens");
+    let started = Instant::now();
+    assert_eq!(
+        key_unlock::unlock_with_passphrase(
+            selected,
+            &passphrase,
+            Instant::now() + SHORT_DERIVATION_LEASE
+        )
+        .err(),
+        Some(UnlockRefusal::Expired),
+        "a derivation the lease cannot pay for is an expiry"
+    );
+    let refused_after = started.elapsed();
+    assert!(
+        refused_after >= SHORT_DERIVATION_LEASE,
+        "the expiry was reported at {refused_after:?}, before the lease could have fired"
+    );
+
+    // The control: the same file, the same passphrase, a lease that can pay.
+    let selected = key_file::open_and_validate(&key_file(SLOW)).expect("the slow file opens");
+    let started = Instant::now();
+    let key = key_unlock::unlock_with_passphrase(
+        selected,
+        &passphrase,
+        Instant::now() + DERIVATION_TIMEOUT,
+    )
+    .expect("the same file must derive under a lease that can pay");
+    let derived_after = started.elapsed();
+    assert!(key.fingerprint().starts_with("SHA256:"));
+    assert!(
+        derived_after > refused_after * 2,
+        "the derivation finished in {derived_after:?} and the expiry fired at \
+         {refused_after:?}: the lease cut nothing that was still running"
+    );
+}
+
+/// A key file access changes nothing: not the file, not the accounts, not the
+/// authorised keys, not what the agent holds.
+#[test]
+fn a_key_file_access_leaves_the_file_and_the_perimeter_identical() {
+    let inventory = "sha256sum /etc/passwd /etc/shadow /home/*/.ssh/authorized_keys | sort";
+    let server_before = server(inventory);
+    assert!(server_before.contains("authorized_keys"));
+    let agent_before = capture_local("ssh-add -l | sort");
+    let files_before = key_directory_digest();
+    assert!(
+        files_before.contains(NOMINAL_ED25519),
+        "the digest must really observe the key files"
+    );
+
+    let username = required(USERNAME);
+    run_with_key_file(NOMINAL_ED25519, &username)
+        .outcome
+        .expect("the nominal key file access must succeed");
+
+    assert_eq!(
+        key_directory_digest(),
+        files_before,
+        "the personal key file must stay bit for bit unchanged"
+    );
+    assert_eq!(
+        server(inventory),
+        server_before,
+        "a key file access changed an account, a shadow entry or an authorised key"
+    );
+    assert_eq!(
+        capture_local("ssh-add -l | sort"),
+        agent_before,
+        "a key file access must not have touched the agent at all"
+    );
+}
+
+/// Reads the canary of the key *file*: the private scalar the derivation really
+/// produces inside the process.
+fn key_seed_needle() -> Vec<u8> {
+    let hex = fs::read_to_string(required(KEY_SEED_NEEDLE)).expect("the canary must be readable");
+    let hex = hex.trim();
+    assert!(
+        hex.len() >= 64 && hex.len() % 2 == 0,
+        "the canary must be a full private scalar in hexadecimal"
+    );
+    (0..hex.len() / 2)
+        .map(|index| u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).expect("hexadecimal"))
+        .collect()
+}
+
+/// What a finished key file session leaves behind, and what it does not.
+///
+/// This is the sharper form of the agent's canary case. There, the private key
+/// never entered the process at all, so its absence was almost a tautology.
+/// Here it did: the file was opened, the passphrase was typed into the
+/// process's own protected memory, the derivation produced the scalar and the
+/// transport used it. Two claims are therefore separated, because they are not
+/// the same claim.
+///
+/// The **passphrase** must be absent everywhere, the core included. It only
+/// ever lives in the protected allocation — locked, excluded from dumps — and
+/// it is wiped when the derivation lets go of it. A privileged debugger's core
+/// is searched for it, and the search is shown not to be blind by finding, in
+/// that same core, something this process really does hold in ordinary memory.
+///
+/// The **private key** must be absent from everything this process *emits*:
+/// its environment, its command line, both journals, every file it could have
+/// written and both of its streams. It is deliberately not claimed absent from
+/// a core taken while the process still exists. A decrypted key is in memory
+/// for as long as the session lasts — that is what using a key means, and it is
+/// as true of `ssh` — and this palier's own copies are the only ones it can
+/// wipe. The measured residue, and the fact that it outlives our own drop
+/// because the decoding buffers of the pinned RustCrypto stack are not
+/// zeroised, is named in the report rather than hidden by a narrower search.
+/// The passphrase reaches the fixture on its standard input precisely so that
+/// `environ` and `cmdline` can be read back and found clean.
+#[test]
+fn a_finished_key_file_session_emits_no_trace_of_the_key_or_its_passphrase() {
+    let seed = key_seed_needle();
+    let passphrase = key_passphrase();
+    let directory = scratch().join("key-canary");
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("the canary directory must be creatable");
+
+    let control = directory.join("control");
+    let mut planted = seed.clone();
+    planted.extend_from_slice(&passphrase);
+    fs::write(&control, &planted).expect("the control must be writable");
+    for needle in [&seed, &passphrase] {
+        assert!(
+            file_contains(&control, needle).expect("scan the control"),
+            "the search must be able to find a canary when it is really there"
+        );
+    }
+
+    let ready = directory.join("ready");
+    let mut fixture = Command::new(fixture_path())
+        .arg(fixture_names::MODE_LINGER)
+        .env(fixture_names::TARGET, required(TARGET))
+        .env(fixture_names::PORT, required(PORT))
+        .env(fixture_names::USERNAME, required(USERNAME))
+        .env(fixture_names::HOST_KEY, required(HOST_KEY))
+        .env(fixture_names::AUTHORIZED, required(AUTHORIZED))
+        .env(fixture_names::KEY_PATH, key_file(NOMINAL_ED25519))
+        .env(fixture_names::READY_PATH, &ready)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the fixture must start");
+    {
+        let mut input = fixture
+            .stdin
+            .take()
+            .expect("the fixture reads its passphrase");
+        input
+            .write_all(&passphrase)
+            .expect("the passphrase must reach the fixture");
+    }
+
+    let deadline = Instant::now() + SETTLE_TIMEOUT + DERIVATION_TIMEOUT;
+    while !ready.exists() {
+        if Instant::now() >= deadline {
+            let _ = terminate_and_reap_bounded(&mut fixture, REAP_TIMEOUT);
+            panic!("the fixture never completed a key file session");
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    let pid = fixture.id();
+
+    let dumped = Command::new("gcore")
+        .arg("-o")
+        .arg(directory.join("core"))
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    let core_path = fs::read_dir(&directory)
+        .expect("read the canary directory")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("core"))
+        });
+    assert!(
+        !dumped || core_path.is_some(),
+        "the debugger reported a dump it did not produce"
+    );
+
+    let client_journal = directory.join("client-journal");
+    capture(&client_journal, "journalctl -b --no-pager");
+    let server_journal = directory.join("server-journal");
+    capture(
+        &server_journal,
+        &format!("{} 'journalctl -b --no-pager'", required(SERVER_COMMAND)),
+    );
+
+    let mut emitted: Vec<PathBuf> = vec![
+        PathBuf::from(format!("/proc/{pid}/environ")),
+        PathBuf::from(format!("/proc/{pid}/cmdline")),
+        client_journal,
+        server_journal,
+    ];
+    for entry in fs::read_dir(&directory).expect("read the canary directory") {
+        let path = entry.expect("directory entry").path();
+        let is_core = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("core"));
+        if path != control && path.is_file() && !is_core {
+            emitted.push(path);
+        }
+    }
+    for path in &emitted {
+        for (needle, what) in [(&seed, "private key"), (&passphrase, "passphrase")] {
+            assert!(
+                !file_contains(path, needle).unwrap_or(false),
+                "the {what} surfaced in {}",
+                path.display()
+            );
+        }
+    }
+
+    // The core, for the passphrase alone — and only once the search has been
+    // shown to work on it. The account name is a string this process really
+    // holds in ordinary memory, so finding it is what says the core was read.
+    if let Some(core_path) = core_path {
+        let ordinary = required(USERNAME).into_bytes();
+        assert!(
+            file_contains(&core_path, &ordinary).expect("scan the core"),
+            "the core search found nothing this process certainly holds"
+        );
+        assert!(
+            !file_contains(&core_path, &passphrase).unwrap_or(true),
+            "the passphrase left the protected allocation and reached a dump"
+        );
+    }
+
+    let output = {
+        let _ = terminate_and_reap_bounded(&mut fixture, REAP_TIMEOUT);
+        collect_output_bounded(fixture, REAP_TIMEOUT).expect("the fixture output must be bounded")
+    };
+    for stream in [&output.stdout, &output.stderr] {
+        for needle in [&seed, &passphrase] {
+            assert!(
+                !canary_scan::contains_subslice(stream, needle),
+                "a canary surfaced on a fixture stream"
+            );
+        }
+    }
+}
+
+/// A helper authenticated by a key file, whose parent dies mid-session, leaves
+/// nothing behind either.
+///
+/// It is the homologue of the agent case, on the same held account and read
+/// from the same server-side journal. The passphrase arrives as the fixture's
+/// standard input — redirected from the perimeter's own file, so it never
+/// reaches any command line — and the derived key dies with the process.
+#[test]
+fn a_dead_parent_removes_a_key_authenticated_helper_and_its_probe() {
+    let held = required(HELD_USERNAME);
+    await_held_probes(0);
+    let before = held_channel_closures();
+
+    let pid_path = scratch().join("held-key-fixture.pid");
+    let _ = fs::remove_file(&pid_path);
+    let mut parent = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(r#""$1" hold < "$3" & echo "$!" > "$2"; wait"#)
+        .arg("sh")
+        .arg(fixture_path())
+        .arg(&pid_path)
+        .arg(required(KEY_PASSPHRASE))
+        .env(fixture_names::TARGET, required(TARGET))
+        .env(fixture_names::PORT, required(PORT))
+        .env(fixture_names::USERNAME, &held)
+        .env(fixture_names::HOST_KEY, required(HOST_KEY))
+        .env(fixture_names::AUTHORIZED, required(AUTHORIZED))
+        .env(fixture_names::KEY_PATH, key_file(NOMINAL_ED25519))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the intermediate parent must start");
+
+    let pid = read_pid_bounded(&pid_path);
+    await_held_probes(1);
+    assert!(process_alive(pid), "the fixture must still be running");
+
+    terminate_and_reap_bounded(&mut parent, REAP_TIMEOUT).expect("the parent must be reaped");
+
+    let deadline = Instant::now() + SETTLE_TIMEOUT;
+    while process_alive(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the helper outlived its parent at pid {pid}"
+        );
+        thread::sleep(POLL_INTERVAL);
+    }
+    assert_session_closed(before);
+    let _ = fs::remove_file(&pid_path);
 }
