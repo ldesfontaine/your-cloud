@@ -80,15 +80,20 @@ use your_cloud_native_bootstrap_assistant::personal_access::{
         MAX_AGENT_FRAME_BYTES,
     },
     algorithms::{HostKeyType, IdentityKeyType},
+    elevation::{
+        self, AccessRoute, Elevation, ElevationRefusal, FixedCommand, ELEVATE_WITHOUT_PASSWORD,
+        ELEVATE_WITH_PASSWORD,
+    },
     host_key::HostKeyRefusal,
     key_file::{self, KeyFileRefusal},
     key_unlock::{self, UnlockRefusal},
     openssh_key::{MAX_BCRYPT_ROUNDS, MAX_KEY_FILE_BYTES},
     session::{
-        AuthenticationRequest, GuardVerdict, PersonalAccessRefusal, Prepared, RunObservation,
-        TransportRefusal, MAX_PROBE_STREAM_BYTES,
+        AuthenticationRequest, GuardVerdict, LiveSession, PersonalAccessRefusal, Prepared,
+        RunObservation, TransportRefusal, MAX_EXEC_CHANNELS, MAX_PROBE_STREAM_BYTES,
     },
     signature_budget::{BudgetRefusal, MAX_AUTHENTICATION_SIGNATURES},
+    sudo_policy::SudoRefusal,
     target::TargetRefusal,
 };
 use your_cloud_native_bootstrap_assistant::personal_access_contract as fixture_names;
@@ -144,6 +149,32 @@ const LOOPBACK_NAME: &str = "YOUR_CLOUD_LAB_LOOPBACK_NAME";
 const HOSTS_FILE: &str = "YOUR_CLOUD_LAB_HOSTS_FILE";
 /// Address the name is made to answer with, after consent.
 const REBOUND_ADDRESS: &str = "YOUR_CLOUD_LAB_REBOUND_ADDRESS";
+
+/// Account whose policy is listable without a secret and whose elevation costs
+/// exactly one password. It is the only shape in which a password ever travels.
+const SUDO_PASSWORD_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_PASSWORD_USERNAME";
+/// Account whose policy waives authentication entirely.
+const SUDO_NOPASSWD_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_NOPASSWD_USERNAME";
+/// Account whose policy cannot be listed without first authenticating.
+const SUDO_UNLISTABLE_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_UNLISTABLE_USERNAME";
+/// Account whose policy would write the standard input into the I/O log.
+const SUDO_LOG_INPUT_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_LOG_INPUT_USERNAME";
+/// Account whose policy demands a terminal this session never allocates.
+const SUDO_REQUIRETTY_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_REQUIRETTY_USERNAME";
+/// Account whose policy authorises another command entirely.
+const SUDO_DIVERGENT_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_DIVERGENT_USERNAME";
+/// Account whose policy carries two entries.
+const SUDO_AMBIGUOUS_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_AMBIGUOUS_USERNAME";
+/// Account whose listing is far past the bound it is read under.
+const SUDO_OVERSIZED_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_OVERSIZED_USERNAME";
+/// Numeric uid of the password account, so "not root" is asserted against the
+/// account the perimeter really created rather than against a guess.
+const SUDO_UID: &str = "YOUR_CLOUD_LAB_SUDO_UID";
+/// File holding the synthetic `sudo` password. It is a path, never a value:
+/// nothing this suite starts carries the password in its environment.
+const SUDO_PASSWORD: &str = "YOUR_CLOUD_LAB_SUDO_PASSWORD";
+/// The account the root route authenticates as.
+const ROOT_USERNAME: &str = "YOUR_CLOUD_LAB_ROOT_USERNAME";
 
 /// Program that runs one command on the server and prints its output. It is
 /// the only way this suite observes the far side, and it carries the server's
@@ -4115,4 +4146,620 @@ fn a_crash_during_the_derivation_of_the_shipped_helper_leaves_nothing_of_it() {
         "a derivation that was killed still opened a connection"
     );
     assert_eq!(key_directory_digest(), before);
+}
+
+// ------------------------------------------------------------- the elevation
+//
+// The three channels of #54, against a real `sshd` and a real `sudo`. Every
+// case below drives the same sequence the helper drives — identity, policy,
+// then at most one elevation — on the one session #52 opened and #53 can also
+// open. The hostile matrices are produced by the *server's* policy, never by a
+// modified client: what is under test is what this client refuses to do with a
+// policy it was handed.
+
+/// Where a run of the elevation stopped, and why. It is deliberately not a
+/// single flattened refusal: "the policy could not be attested" and "the
+/// elevated command answered something else" are different claims, and a suite
+/// that could not tell them apart would pass on the wrong one.
+#[derive(Debug, PartialEq, Eq)]
+enum Stop {
+    Transport(TransportRefusal),
+    Identity(ElevationRefusal),
+    Policy(ElevationRefusal),
+    Elevation(ElevationRefusal),
+}
+
+/// One whole administrator elevation, and what it cost.
+#[derive(Debug)]
+struct ElevationRun {
+    outcome: Result<Elevation, Stop>,
+    channels_spent: usize,
+    /// The command the attested policy chose, when it got that far.
+    command: Option<FixedCommand>,
+    password_required: Option<bool>,
+}
+
+fn sudo_password() -> Vec<u8> {
+    let password = fs::read(required(SUDO_PASSWORD)).expect("the sudo password must be readable");
+    assert!(
+        password.len() >= 32,
+        "the synthetic sudo password must really have been generated"
+    );
+    password
+}
+
+/// Establishes one session on the nominal server, by numeric address, with the
+/// agent identity the server accepts.
+fn establish_as(username: &str) -> Result<LiveSession, PersonalAccessRefusal> {
+    let host_key = required(HOST_KEY);
+    let authorized = required(AUTHORIZED);
+    prepare()
+        .establish(
+            &AuthenticationRequest {
+                username,
+                approved_host_key_fingerprint: &host_key,
+                selected_fingerprint: &authorized,
+            },
+            lease(),
+            &always_continue(),
+        )
+        .outcome
+}
+
+/// The same, authenticated by an encrypted key file instead of the agent.
+fn establish_with_key_as(name: &str, username: &str) -> Result<LiveSession, PersonalAccessRefusal> {
+    let key = open_key(name);
+    let fingerprint = key.fingerprint().to_owned();
+    let host_key = required(HOST_KEY);
+    prepare()
+        .establish_with_key(
+            key,
+            &AuthenticationRequest {
+                username,
+                approved_host_key_fingerprint: &host_key,
+                selected_fingerprint: &fingerprint,
+            },
+            lease(),
+            &always_continue(),
+        )
+        .outcome
+}
+
+/// Drives the administrator route on an already established session, in the
+/// order and with the bounds the helper itself uses.
+///
+/// `password` is what the native window would have answered. It is only ever
+/// reached when the attested policy says one is required, which is the whole
+/// claim: a password that is never asked for is a password that never travels.
+fn elevate(live: &mut LiveSession, password: Option<&[u8]>) -> ElevationRun {
+    let mut command = None;
+    let mut password_required = None;
+    let outcome = drive_elevation(live, password, &mut command, &mut password_required);
+    ElevationRun {
+        outcome,
+        channels_spent: live.channels_spent(),
+        command,
+        password_required,
+    }
+}
+
+/// The three stages, in order, each reporting where it stopped.
+///
+/// It is written with `?` rather than with a state machine so that reading it
+/// beside `prove_administrator_elevation` is enough to see that the suite drives
+/// the same sequence the helper does.
+fn drive_elevation(
+    live: &mut LiveSession,
+    password: Option<&[u8]>,
+    command: &mut Option<FixedCommand>,
+    password_required: &mut Option<bool>,
+) -> Result<Elevation, Stop> {
+    let probe = live
+        .probe(lease(), &always_continue())
+        .map_err(Stop::Transport)?;
+    elevation::attest_identity(
+        AccessRoute::Administrator,
+        probe.exit_status,
+        &probe.stdout,
+        &probe.stderr,
+    )
+    .map_err(Stop::Identity)?;
+
+    let preflight = live
+        .run_channel(elevation::PREFLIGHT, None, lease(), &always_continue())
+        .map_err(Stop::Transport)?;
+    let succeeded = preflight.exit_status == 0;
+    let capture = if succeeded {
+        &preflight.stdout
+    } else {
+        &preflight.stderr
+    };
+    let attested = elevation::attest_policy(succeeded, capture, false).map_err(Stop::Policy)?;
+    *command = Some(attested.command);
+    *password_required = Some(attested.password_required);
+
+    // A password travels exactly when the attested policy asked for one, and a
+    // case that offered none where one was required is a broken case rather
+    // than a refusal to report.
+    let standard_input = if attested.password_required {
+        Some(password.expect("this case must offer the password its policy demands"))
+    } else {
+        None
+    };
+    let elevated = live
+        .run_channel(
+            attested.command,
+            standard_input,
+            lease(),
+            &always_continue(),
+        )
+        .map_err(Stop::Transport)?;
+    elevation::elevated(elevated.exit_status, &elevated.stdout, &elevated.stderr)
+        .map_err(Stop::Elevation)
+}
+
+/// Establishes, elevates and closes, which is what the helper does.
+fn elevate_as(username: &str, password: Option<&[u8]>) -> ElevationRun {
+    let mut live = establish_as(username).expect("the LAB session must open");
+    let run = elevate(&mut live, password);
+    live.close();
+    run
+}
+
+/// The nominal password route, end to end: three channels, one password, one
+/// proven elevation.
+///
+/// The account's policy is listable without a secret and its action is not,
+/// which is the only configuration in which #51 lets a password travel at all.
+/// The account is asserted to be a non-root one first, because an elevation
+/// that started from `root` would prove nothing.
+#[test]
+fn a_password_protected_policy_spends_exactly_one_password_and_proves_the_elevation() {
+    let username = required(SUDO_PASSWORD_USERNAME);
+    let expected_uid: u32 = required(SUDO_UID).parse().expect("a decimal uid");
+    assert_ne!(expected_uid, 0, "the perimeter must not have created root");
+
+    let mut live = establish_as(&username).expect("the LAB session must open");
+    let probe = live
+        .probe(lease(), &always_continue())
+        .expect("the fixed probe must answer");
+    assert_eq!(
+        elevation::attest_identity(
+            AccessRoute::Administrator,
+            probe.exit_status,
+            &probe.stdout,
+            &probe.stderr,
+        ),
+        Ok(expected_uid)
+    );
+    live.close();
+
+    let run = elevate_as(&username, Some(&sudo_password()));
+    assert!(
+        run.outcome.is_ok(),
+        "the nominal password elevation must be proven: {:?}",
+        run.outcome
+    );
+    assert_eq!(run.outcome.unwrap().route(), AccessRoute::Administrator);
+    assert_eq!(run.password_required, Some(true));
+    assert_eq!(run.command, Some(ELEVATE_WITH_PASSWORD));
+    assert_eq!(
+        run.channels_spent, MAX_EXEC_CHANNELS,
+        "the whole conversation is three channels, and it used all three"
+    );
+}
+
+/// The passwordless route: the attested policy waives authentication, so no
+/// password is asked for and none exists in this process at any point.
+#[test]
+fn a_policy_that_waives_authentication_elevates_without_any_password() {
+    let run = elevate_as(&required(SUDO_NOPASSWD_USERNAME), None);
+    assert!(
+        run.outcome.is_ok(),
+        "the passwordless elevation must be proven: {:?}",
+        run.outcome
+    );
+    assert_eq!(run.password_required, Some(false));
+    assert_eq!(run.command, Some(ELEVATE_WITHOUT_PASSWORD));
+    assert_eq!(run.channels_spent, MAX_EXEC_CHANNELS);
+}
+
+/// The same elevation, on the fallback of #53. It is the same three channels of
+/// the same session; only the signer changed.
+#[test]
+fn the_encrypted_key_file_reaches_the_same_proven_elevation() {
+    let username = required(SUDO_PASSWORD_USERNAME);
+    let mut live =
+        establish_with_key_as(NOMINAL_ED25519, &username).expect("the key session must open");
+    let run = elevate(&mut live, Some(&sudo_password()));
+    live.close();
+
+    assert!(
+        run.outcome.is_ok(),
+        "the key file must reach the same elevation: {:?}",
+        run.outcome
+    );
+    assert_eq!(run.command, Some(ELEVATE_WITH_PASSWORD));
+    assert_eq!(run.channels_spent, MAX_EXEC_CHANNELS);
+}
+
+/// The password is sent once and never again. `sudo` answers a wrong one by
+/// printing the sentinel a second time, and that second prompt is exactly what
+/// this client refuses: there is no answer left to give it.
+#[test]
+fn a_wrong_password_is_refused_on_its_second_prompt_and_never_retried() {
+    let username = required(SUDO_PASSWORD_USERNAME);
+    let run = elevate_as(&username, Some(b"synthetic-wrong-password"));
+    assert_eq!(
+        run.outcome,
+        Err(Stop::Elevation(ElevationRefusal::UnexpectedPrompt)),
+        "a second prompt is sudo asking again, and there is no second answer"
+    );
+    assert_eq!(
+        run.channels_spent, MAX_EXEC_CHANNELS,
+        "the refusal must not have cost a fourth channel"
+    );
+
+    // The control, on the same account and the same policy, with the password
+    // the perimeter really generated.
+    let control = elevate_as(&username, Some(&sudo_password()));
+    assert!(control.outcome.is_ok(), "{:?}", control.outcome);
+}
+
+/// Every hostile policy of #51, each with the positive control beside it.
+///
+/// The refusals are read at the stage that produced them, so a case that failed
+/// earlier than it should — a transport that broke before the policy was even
+/// listed — fails this test instead of passing it.
+#[test]
+fn every_hostile_policy_fails_closed_at_the_stage_that_judged_it() {
+    let hostile: [(&str, Stop); 5] = [
+        (
+            SUDO_UNLISTABLE_USERNAME,
+            Stop::Policy(ElevationRefusal::Policy(
+                SudoRefusal::AuthenticationRequired,
+            )),
+        ),
+        (
+            SUDO_REQUIRETTY_USERNAME,
+            Stop::Policy(ElevationRefusal::Policy(
+                SudoRefusal::AuthenticationRequired,
+            )),
+        ),
+        (
+            SUDO_LOG_INPUT_USERNAME,
+            Stop::Policy(ElevationRefusal::Policy(SudoRefusal::InputLoggingActive)),
+        ),
+        (
+            SUDO_DIVERGENT_USERNAME,
+            Stop::Policy(ElevationRefusal::DivergentCommand),
+        ),
+        (
+            SUDO_AMBIGUOUS_USERNAME,
+            Stop::Policy(ElevationRefusal::AmbiguousPolicy),
+        ),
+    ];
+    for (name, expected) in hostile {
+        let username = required(name);
+        // The password is offered on every one of them. None may reach a
+        // channel: a policy that was refused never asks for one.
+        let run = elevate_as(&username, Some(&sudo_password()));
+        assert_eq!(
+            run.outcome,
+            Err(expected),
+            "{username} did not fail closed where it should have"
+        );
+        assert_eq!(
+            run.password_required, None,
+            "{username} decided about a password despite an unattestable policy"
+        );
+        assert_eq!(
+            run.channels_spent, 2,
+            "{username} opened an elevation channel it had no policy for"
+        );
+    }
+
+    // A listing past the bound is cut by the channel that reads it, before any
+    // policy is judged at all.
+    let oversized = required(SUDO_OVERSIZED_USERNAME);
+    let run = elevate_as(&oversized, Some(&sudo_password()));
+    assert_eq!(
+        run.outcome,
+        Err(Stop::Transport(TransportRefusal::ProbeOutputTooLarge))
+    );
+    assert_eq!(run.password_required, None);
+
+    // The control: the same three channels, on a policy that is attestable.
+    let control = elevate_as(&required(SUDO_NOPASSWD_USERNAME), None);
+    assert!(control.outcome.is_ok(), "{:?}", control.outcome);
+}
+
+/// A session that has spent its three channels opens no fourth one, and the
+/// refusal is the budget's rather than the server's.
+#[test]
+fn a_fourth_channel_is_refused_by_the_session_budget() {
+    let username = required(SUDO_NOPASSWD_USERNAME);
+    let mut live = establish_as(&username).expect("the LAB session must open");
+    let run = elevate(&mut live, None);
+    assert!(run.outcome.is_ok(), "{:?}", run.outcome);
+    assert_eq!(live.channels_spent(), MAX_EXEC_CHANNELS);
+
+    assert_eq!(
+        live.run_channel(elevation::IDENTITY, None, lease(), &always_continue()),
+        Err(TransportRefusal::ChannelBudgetSpent),
+        "a session that spent its budget must refuse rather than negotiate"
+    );
+    assert_eq!(live.channels_spent(), MAX_EXEC_CHANNELS);
+    live.close();
+}
+
+/// The administrator route never arrives at `root`.
+///
+/// The session really authenticates as `root` here — the perimeter authorises
+/// the same identity on root's own `authorized_keys` — and the route still
+/// refuses, at the identity probe, before a policy is even listed. That is the
+/// implicit root attempt this palier forbids, taken against a session on which
+/// it would otherwise have succeeded.
+#[test]
+fn an_account_that_is_already_root_is_refused_by_the_administrator_route() {
+    let run = elevate_as(&required(ROOT_USERNAME), Some(&sudo_password()));
+    assert_eq!(
+        run.outcome,
+        Err(Stop::Identity(ElevationRefusal::AlreadyRoot))
+    );
+    assert_eq!(
+        run.channels_spent, 1,
+        "the refusal must happen on the identity probe and cost nothing more"
+    );
+}
+
+/// The root route: one channel, uid exactly zero, and its own consent.
+///
+/// The same probe of the same session is read three ways here. With the
+/// dedicated consent it is an access; without it, it is not an access at all
+/// even though every byte of the session is identical; and offered to the
+/// administrator route it is refused outright.
+#[test]
+fn the_root_route_needs_its_own_consent_and_nothing_else_grants_it() {
+    let username = required(ROOT_USERNAME);
+    let mut live = establish_as(&username).expect("the root session must open");
+    let probe = live
+        .probe(lease(), &always_continue())
+        .expect("the fixed probe must answer");
+    live.close();
+
+    assert_eq!(
+        elevation::attest_identity(
+            AccessRoute::Root,
+            probe.exit_status,
+            &probe.stdout,
+            &probe.stderr,
+        ),
+        Ok(0),
+        "the root route must really have reached uid zero"
+    );
+    assert_eq!(
+        elevation::root_access(true, probe.exit_status, &probe.stdout, &probe.stderr)
+            .map(Elevation::route),
+        Ok(AccessRoute::Root)
+    );
+    assert_eq!(
+        elevation::root_access(false, probe.exit_status, &probe.stdout, &probe.stderr),
+        Err(ElevationRefusal::NotRoot),
+        "the very same session is not an access without its own consent"
+    );
+    assert_eq!(
+        elevation::attest_identity(
+            AccessRoute::Administrator,
+            probe.exit_status,
+            &probe.stdout,
+            &probe.stderr,
+        ),
+        Err(ElevationRefusal::AlreadyRoot)
+    );
+}
+
+/// A non-root account is never mistaken for the root route.
+#[test]
+fn the_root_route_refuses_a_session_that_is_not_root() {
+    let username = required(SUDO_NOPASSWD_USERNAME);
+    let mut live = establish_as(&username).expect("the LAB session must open");
+    let probe = live
+        .probe(lease(), &always_continue())
+        .expect("the fixed probe must answer");
+    live.close();
+
+    assert_eq!(
+        elevation::root_access(true, probe.exit_status, &probe.stdout, &probe.stderr),
+        Err(ElevationRefusal::NotRoot),
+        "a consent to a root access does not make a session root"
+    );
+}
+
+/// Cancellation and expiry at each of the three transitions.
+///
+/// The guard is what a released lease and a fired watchdog reach the session
+/// through, and it is consulted between every step and on every idle tick. Each
+/// case lets exactly as many consultations pass as it takes to be *inside* the
+/// numbered channel, then fires, and the server's own journal is what says the
+/// session really closed — on the client and on the far side.
+#[test]
+fn cancelling_or_expiring_at_each_transition_closes_the_whole_session() {
+    let username = required(SUDO_NOPASSWD_USERNAME);
+    let host_key = required(HOST_KEY);
+    let authorized = required(AUTHORIZED);
+
+    for verdict in [GuardVerdict::Cancelled, GuardVerdict::Expired] {
+        let expected = match verdict {
+            GuardVerdict::Cancelled => TransportRefusal::Cancelled,
+            _ => TransportRefusal::Expired,
+        };
+        // Nought lets the guard fire before the first channel is even opened;
+        // the larger counts land inside a running one.
+        for consultations in [0, 2, 8] {
+            let guard = guard_firing_after(consultations, verdict);
+            let established = prepare().establish(
+                &AuthenticationRequest {
+                    username: &username,
+                    approved_host_key_fingerprint: &host_key,
+                    selected_fingerprint: &authorized,
+                },
+                lease(),
+                &guard,
+            );
+            let mut live = match established.outcome {
+                Ok(live) => live,
+                // The guard fired during the authentication itself, which is
+                // the earliest transition of all and still a closed session.
+                Err(refusal) => {
+                    assert_eq!(refusal, PersonalAccessRefusal::Transport(expected));
+                    continue;
+                }
+            };
+            let mut refusals = Vec::new();
+            for command in [
+                elevation::IDENTITY,
+                elevation::PREFLIGHT,
+                ELEVATE_WITHOUT_PASSWORD,
+            ] {
+                if let Err(refusal) = live.run_channel(command, None, lease(), &guard) {
+                    refusals.push(refusal);
+                }
+            }
+            live.close();
+            assert!(
+                refusals.contains(&expected),
+                "a guard firing after {consultations} consultations left the session running: \
+                 {refusals:?}"
+            );
+        }
+    }
+}
+
+/// A cancellation while the far side is really holding a channel open closes it
+/// on both sides, with the server's own account of the closure as the witness.
+///
+/// It is taken on the held account of #52 rather than on a `sudo` one because
+/// only that account keeps a channel alive long enough to be interrupted, and
+/// what is under test is the session's teardown rather than the policy.
+#[test]
+fn a_guard_firing_between_two_channels_leaves_nothing_running_on_the_server() {
+    let held = required(HELD_USERNAME);
+    let host_key = required(HOST_KEY);
+    let authorized = required(AUTHORIZED);
+    await_held_probes(0);
+    let before = held_channel_closures();
+
+    let established = prepare().establish(
+        &AuthenticationRequest {
+            username: &held,
+            approved_host_key_fingerprint: &host_key,
+            selected_fingerprint: &authorized,
+        },
+        lease(),
+        &always_continue(),
+    );
+    let mut live = established.outcome.expect("the held session must open");
+    // The first channel is the forced command that holds the transport, and it
+    // is cut from under the session by the guard.
+    let refusal = live
+        .run_channel(
+            elevation::IDENTITY,
+            None,
+            lease(),
+            &guard_firing_after(8, GuardVerdict::Cancelled),
+        )
+        .expect_err("a cancelled channel cannot answer");
+    assert_eq!(refusal, TransportRefusal::Cancelled);
+    live.close();
+
+    assert_session_closed(before);
+}
+
+/// Nothing of the elevation perimeter is left changed by any of the above.
+///
+/// The accounts, their policies, their `authorized_keys` and the synthetic
+/// password's own hash are read on the server and compared with themselves. A
+/// suite that had written anywhere — a timestamp file, a retry counter, a
+/// changed password — would be seen here.
+#[test]
+fn the_sudo_accounts_and_their_policies_are_identical_before_and_after() {
+    let accounts = [
+        SUDO_PASSWORD_USERNAME,
+        SUDO_NOPASSWD_USERNAME,
+        SUDO_UNLISTABLE_USERNAME,
+        SUDO_LOG_INPUT_USERNAME,
+        SUDO_REQUIRETTY_USERNAME,
+        SUDO_DIVERGENT_USERNAME,
+        SUDO_AMBIGUOUS_USERNAME,
+        SUDO_OVERSIZED_USERNAME,
+    ]
+    .map(required);
+    // Built from the perimeter's own names rather than from a prefix written
+    // here: this file carries no account name of its own.
+    let inventory = format!(
+        "for account in {}; do \
+           sha256sum /etc/sudoers.d/*\"$account\" \"/home/$account/.ssh/authorized_keys\"; \
+           getent shadow \"$account\" | sha256sum; \
+         done 2>/dev/null | sort",
+        accounts.join(" ")
+    );
+    let before = server(&inventory);
+    assert!(
+        before.lines().count() >= accounts.len(),
+        "the elevation perimeter must really be mounted: {before}"
+    );
+
+    let run = elevate_as(&required(SUDO_NOPASSWD_USERNAME), None);
+    assert!(run.outcome.is_ok(), "{:?}", run.outcome);
+    let refused = elevate_as(
+        &required(SUDO_PASSWORD_USERNAME),
+        Some(b"synthetic-wrong-password"),
+    );
+    assert!(refused.outcome.is_err());
+
+    assert_eq!(
+        server(&inventory),
+        before,
+        "the elevation changed the perimeter it ran against"
+    );
+}
+
+/// No trace of the synthetic `sudo` password anywhere the far side keeps one.
+///
+/// The far side's own account of what happened is *fetched back* and searched
+/// here rather than searched there: a `grep` carrying the password would put it
+/// on the server's command line and in its journal, which is the very leak this
+/// case is about. What comes back is `sudo`'s log of the authentication, the
+/// I/O log directory listing, and whatever those logs hold — and none of it may
+/// contain a byte of the password that was really sent.
+#[test]
+fn no_byte_of_the_sent_password_survives_on_the_server() {
+    let password = sudo_password();
+    let run = elevate_as(&required(SUDO_PASSWORD_USERNAME), Some(&password));
+    assert!(run.outcome.is_ok(), "{:?}", run.outcome);
+
+    let account = required(SUDO_PASSWORD_USERNAME);
+    let logged = server(&format!(
+        "journalctl -t sudo --since '-30 min' --no-pager 2>/dev/null | grep -F {account} || true"
+    ));
+    assert!(
+        logged.contains("/usr/bin/id"),
+        "sudo must really have logged the one command it ran: {logged}"
+    );
+    let io_logs = server("ls -AR /var/log/sudo-io 2>/dev/null | head -50 || true");
+    assert!(
+        io_logs.is_empty(),
+        "an I/O log exists for a policy this palier attested: {io_logs}"
+    );
+
+    for haystack in [&logged, &io_logs] {
+        assert!(
+            !haystack
+                .as_bytes()
+                .windows(password.len())
+                .any(|window| window == password.as_slice()),
+            "the password survived on the server"
+        );
+    }
 }
