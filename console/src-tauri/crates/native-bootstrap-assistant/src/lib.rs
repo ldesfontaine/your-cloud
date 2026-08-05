@@ -76,6 +76,19 @@ pub mod personal_access_contract {
     /// without a blocking read that has no deadline of its own.
     pub const READY_PATH: &str = "YOUR_CLOUD_LAB_READY_PATH";
 
+    /// Absolute path of the synthetic encrypted key file the fallback opens.
+    ///
+    /// It is what selects the credential: present, the fixture authenticates
+    /// with the key file of #53; absent, with the agent of #52. Both modes
+    /// above work either way, so the teardown and the canary search are taken
+    /// on the same fixture rather than on a second one.
+    ///
+    /// Only the *path* travels through the environment. The passphrase never
+    /// does: the fixture reads it from its own standard input, precisely so
+    /// that the canary search of this suite can look at `environ` and at the
+    /// command line and find nothing.
+    pub const KEY_PATH: &str = "YOUR_CLOUD_LAB_KEY_PATH";
+
     /// Stay inside a session the server holds open, until something kills us.
     pub const MODE_HOLD: &str = "hold";
     /// Finish one nominal session, then stay alive to be searched.
@@ -127,14 +140,31 @@ pub fn personal_access_contract_main() -> u8 {
     let Ok(prepared) = Prepared::open(&target, port, deadline) else {
         return EXIT_UNAVAILABLE;
     };
+    // The key path opens its file and derives *before* the transport, exactly
+    // as the product does, so what a debugger finds in this process afterwards
+    // is what it would find in the helper.
+    let opened = match read(names::KEY_PATH) {
+        Some(key_path) => match open_contract_key(std::path::Path::new(&key_path), deadline) {
+            Ok(key) => Some(key),
+            Err(code) => return code,
+        },
+        None => None,
+    };
+    let selected = match opened.as_ref() {
+        Some(key) => key.fingerprint().to_owned(),
+        None => authorized,
+    };
     let request = AuthenticationRequest {
         username: &username,
         approved_host_key_fingerprint: &host_key,
-        selected_fingerprint: &authorized,
+        selected_fingerprint: &selected,
     };
     // A `hold` session never returns from here: the server holds the probe
     // open and only the deadline, or being killed, ends it.
-    let observation = prepared.run(&request, deadline, &|| GuardVerdict::Continue);
+    let observation = match opened {
+        Some(key) => prepared.run_with_key(key, &request, deadline, &|| GuardVerdict::Continue),
+        None => prepared.run(&request, deadline, &|| GuardVerdict::Continue),
+    };
     let Ok(report) = observation.outcome else {
         return EXIT_UNAVAILABLE;
     };
@@ -161,6 +191,59 @@ pub fn personal_access_contract_main() -> u8 {
         std::thread::sleep(Duration::from_secs(names::LEASE_SECONDS));
     }
     0
+}
+
+/// Opens the contract's synthetic key file with a passphrase read from this
+/// process's own standard input.
+///
+/// Standard input is used rather than an argument or an environment entry
+/// because both of those are exactly what the canary search reads back from
+/// `/proc`. It is read through the *unbuffered* descriptor rather than through
+/// `io::stdin`, which keeps an eight kibibyte buffer of its own on the heap and
+/// never wipes it — the passphrase would land there before reaching the
+/// protected allocation, and the search of this suite finds it. The product
+/// never has that problem, because its passphrase comes from the native window
+/// straight into the protected allocation; the fixture must not weaken what it
+/// is used to prove.
+#[cfg(all(feature = "personal-access-contract-test", target_os = "linux"))]
+fn open_contract_key(
+    path: &std::path::Path,
+    deadline: Instant,
+) -> Result<personal_access::key_unlock::PersonalKey, u8> {
+    use personal_access::{key_file, key_unlock};
+    use std::io::Read as _;
+
+    let Ok(selected) = key_file::open_and_validate(path) else {
+        return Err(EXIT_UNAVAILABLE);
+    };
+
+    let Ok(mut passphrase) = secret::ProtectedSecret::new() else {
+        return Err(EXIT_INTERNAL_FAILURE);
+    };
+    let Ok(mut stdin) = UnbufferedStandardInput::open() else {
+        return Err(EXIT_INTERNAL_FAILURE);
+    };
+    let buffer = passphrase.raw_mut();
+    let mut filled = 0;
+    loop {
+        match stdin.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(_) => return Err(EXIT_IO_FAILURE),
+        }
+        if filled == buffer.len() {
+            break;
+        }
+    }
+    // A trailing newline belongs to the pipe, not to the passphrase.
+    while filled > 0 && (buffer[filled - 1] == b'\n' || buffer[filled - 1] == b'\r') {
+        filled -= 1;
+    }
+    if passphrase.set_len(filled).is_err() || passphrase.is_empty() {
+        return Err(EXIT_INVALID_INVOCATION);
+    }
+
+    key_unlock::unlock(selected, passphrase, deadline).map_err(|_| EXIT_UNAVAILABLE)
 }
 
 pub fn process_main() -> u8 {
@@ -238,6 +321,10 @@ pub(crate) enum PromptOutcome {
     /// Consent that also names the single agent identity the user selected.
     /// The fingerprint is public material; it is never a secret.
     ConsentWithIdentity(String),
+    /// Consent that names an encrypted key file instead of an agent identity.
+    /// It carries a path and nothing else: the file is not opened by the
+    /// window, and the path came from the helper's own native selector.
+    ConsentWithKeyFile(std::path::PathBuf),
     Secret(secret::ProtectedSecret),
     Refused,
     Cancelled,
@@ -318,9 +405,9 @@ fn terminal_from_prompt(outcome: PromptOutcome) -> SessionTerminal {
         // A verified personal access is deliberately indistinguishable from an
         // unavailable one on the public surface: announcing it belongs to a
         // later issue, not to this one.
-        PromptOutcome::Consent | PromptOutcome::ConsentWithIdentity(_) => {
-            SessionTerminal::Unavailable
-        }
+        PromptOutcome::Consent
+        | PromptOutcome::ConsentWithIdentity(_)
+        | PromptOutcome::ConsentWithKeyFile(_) => SessionTerminal::Unavailable,
         PromptOutcome::Secret(secret) => {
             drop(secret);
             SessionTerminal::Unavailable
@@ -419,6 +506,17 @@ fn serve_personal_access(
         return PromptOutcome::Unavailable;
     };
 
+    // An agent that holds nothing is no longer the end of the step on Linux:
+    // it is exactly the state in which the encrypted key file of #53 is the way
+    // in, and the window below offers it. Windows has no such fallback at this
+    // palier — the selector belongs to the GTK window — so there, an agent that
+    // holds nothing still ends the step before anything is displayed, which is
+    // the behaviour that palier was proved with.
+    #[cfg(target_os = "windows")]
+    if prepared.identities().is_empty() {
+        return PromptOutcome::Unavailable;
+    }
+
     // The scope shown is the received one plus the addresses this process just
     // froze; revalidating it keeps that augmentation inside the same bounds the
     // parent's scope had to satisfy.
@@ -440,8 +538,18 @@ fn serve_personal_access(
         std::sync::Arc::clone(&expired),
         lease.clone(),
     );
-    let PromptOutcome::ConsentWithIdentity(selected) = outcome else {
-        return outcome;
+    // Exactly one credential leaves the window: an agent identity, or a key
+    // file. Both continue into the *same* session below.
+    let credential = match outcome {
+        PromptOutcome::ConsentWithIdentity(selected) => Credential::AgentIdentity(selected),
+        #[cfg(target_os = "linux")]
+        PromptOutcome::ConsentWithKeyFile(path) => {
+            match open_personal_key(&resolved, &path, deadline, &expired, &lease) {
+                Ok(key) => Credential::Key(key),
+                Err(outcome) => return outcome,
+            }
+        }
+        other => return other,
     };
 
     let guard_expired = std::sync::Arc::clone(&expired);
@@ -455,6 +563,7 @@ fn serve_personal_access(
             GuardVerdict::Continue
         }
     };
+    let selected = credential.fingerprint().to_owned();
     let request = AuthenticationRequest {
         username: &scope.target.username,
         approved_host_key_fingerprint: &scope.target.host_key_sha256,
@@ -462,7 +571,12 @@ fn serve_personal_access(
     };
     // Only the outcome is consulted here: how much of the signature budget the
     // session left is a contract observation, not a decision this path makes.
-    match prepared.run(&request, deadline, &guard).outcome {
+    let observation = match credential {
+        Credential::AgentIdentity(_) => prepared.run(&request, deadline, &guard),
+        #[cfg(target_os = "linux")]
+        Credential::Key(key) => prepared.run_with_key(key, &request, deadline, &guard),
+    };
+    match observation.outcome {
         Ok(report) => {
             // The probe result stays internal at this palier: it is dropped
             // here rather than travelling to any public event.
@@ -471,6 +585,85 @@ fn serve_personal_access(
         }
         Err(_refused) => PromptOutcome::Unavailable,
     }
+}
+
+/// The one credential a consent carries into the session.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+enum Credential {
+    /// A fingerprint the agent holds, named by the user.
+    AgentIdentity(String),
+    /// A key opened from the user's own file, held only in this process.
+    #[cfg(target_os = "linux")]
+    Key(personal_access::key_unlock::PersonalKey),
+}
+
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+impl Credential {
+    /// What the signature budget will be bound to, whichever it is.
+    fn fingerprint(&self) -> &str {
+        match self {
+            Self::AgentIdentity(fingerprint) => fingerprint,
+            #[cfg(target_os = "linux")]
+            Self::Key(key) => key.fingerprint(),
+        }
+    }
+}
+
+/// Opens the selected key file, then asks for its passphrase, then derives.
+///
+/// The order is the perimeter's, not a convenience. The envelope — format,
+/// cipher, KDF, rounds, key type and key size — is validated first, on a file
+/// opened once without following a link, so a file that can never be used never
+/// asks the user for a passphrase and never spends a single round of the lease.
+/// Only then does the passphrase window of #45 open, and only then is the
+/// derivation paid for, under the same deadline as everything else.
+///
+/// Every refusal is expurgated into `Unavailable`, exactly like the agent path:
+/// no public surface of this palier may say whether a key was opened, let alone
+/// why one was not.
+#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "linux"))]
+fn open_personal_key(
+    resolved: &AssistantScopeV1,
+    path: &std::path::Path,
+    deadline: Instant,
+    expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: &LeaseState,
+) -> Result<personal_access::key_unlock::PersonalKey, PromptOutcome> {
+    use personal_access::{key_file, key_unlock};
+
+    let Ok(selected) = key_file::open_and_validate(path) else {
+        return Err(PromptOutcome::Unavailable);
+    };
+
+    // The passphrase window of #45, for the step it belongs to. It is derived
+    // from the scope already agreed and revalidated, so the augmentation stays
+    // inside the very bounds the parent's scope had to satisfy.
+    let mut passphrase_scope = resolved.clone();
+    passphrase_scope.step = your_cloud_bootstrap_protocol::BootstrapStep::UnlockPersonalKey;
+    passphrase_scope.prompt = your_cloud_bootstrap_protocol::NativePromptKind::KeyPassphrase;
+    let Ok(passphrase_scope) = passphrase_scope.validate() else {
+        return Err(PromptOutcome::Unavailable);
+    };
+
+    let outcome = native_window::prompt(
+        &passphrase_scope,
+        deadline,
+        std::sync::Arc::clone(expired),
+        lease.clone(),
+    );
+    let PromptOutcome::Secret(passphrase) = outcome else {
+        return Err(outcome);
+    };
+
+    // Both the file and the passphrase are consumed here. A wrong passphrase
+    // leaves nothing behind: no retry, no kept state, no second window.
+    key_unlock::unlock(selected, passphrase, deadline).map_err(|_| PromptOutcome::Unavailable)
 }
 
 #[cfg(all(

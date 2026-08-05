@@ -1,5 +1,8 @@
 use std::{
+    cell::RefCell,
     ffi::CStr,
+    path::PathBuf,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -10,7 +13,8 @@ use std::{
 use gtk::{
     glib::{self, translate::ToGlibPtr, ControlFlow},
     prelude::*,
-    ComboBoxText, Dialog, DialogFlags, Entry, InputPurpose, Label, ResponseType,
+    Button, ComboBoxText, Dialog, DialogFlags, Entry, FileChooserAction, FileChooserDialog,
+    InputPurpose, Label, ResponseType,
 };
 use your_cloud_bootstrap_protocol::{
     AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
@@ -48,10 +52,12 @@ pub(crate) fn prompt(
 }
 
 /// The personal access window: the same public scope, plus the selection of
-/// exactly one identity among those the agent holds.
+/// exactly one credential — an identity the agent holds, or an encrypted key
+/// file chosen through this process's own native selector.
 ///
-/// The acceptance button stays insensitive until an identity is selected, so a
-/// consent can never be given without naming which key it applies to.
+/// The acceptance button stays insensitive until one of the two is named, and
+/// naming one clears the other, so a consent can never be given without saying
+/// which key it applies to and can never apply to two.
 pub(crate) fn prompt_with_identities(
     scope: &AssistantScopeV1,
     identities: &[OfferedIdentity],
@@ -117,6 +123,18 @@ fn run_dialog(
     }
 
     let identity_chooser = build_identity_chooser(&dialog, &content, identities);
+    // The fallback of #53. The path is chosen here, by a selector this process
+    // owns, and never arrives from the WebView: the frontend can open this
+    // named journey, it cannot name a file inside it.
+    let key_file = build_key_file_chooser(
+        &dialog,
+        &content,
+        scope.prompt,
+        identity_chooser.as_ref(),
+        deadline,
+        Arc::clone(&expired),
+        lease.clone(),
+    );
 
     let countdown = Label::new(Some(&countdown_text(deadline)));
     countdown.set_xalign(0.0);
@@ -183,6 +201,7 @@ fn run_dialog(
             response,
             secret_entry.as_ref(),
             identity_chooser.as_ref(),
+            key_file.and_then(|chosen| chosen.borrow_mut().take()),
         )
     };
 
@@ -248,15 +267,157 @@ fn build_identity_chooser(
     Some(chooser)
 }
 
+/// Adds the encrypted key file row to the personal access window.
+///
+/// It is offered whether or not the agent holds anything, because "the agent is
+/// not retained" covers both an agent that offers nothing and a user who would
+/// rather open their own file. What it never does is accept a path from
+/// anywhere but this selector: the WebView opens a named journey, it does not
+/// name files inside it.
+///
+/// Exactly one credential leaves this window. Choosing a file clears the
+/// identity list, choosing an identity clears the file, and acceptance stays
+/// unavailable until one of the two is named.
+fn build_key_file_chooser(
+    dialog: &Dialog,
+    content: &gtk::Box,
+    prompt: NativePromptKind,
+    identity_chooser: Option<&ComboBoxText>,
+    deadline: Instant,
+    expired: Arc<AtomicBool>,
+    lease: LeaseState,
+) -> Option<Rc<RefCell<Option<PathBuf>>>> {
+    if prompt != NativePromptKind::ConfirmPersonalAccess {
+        return None;
+    }
+    // Nothing is named yet, whatever the agent offered.
+    dialog.set_response_sensitive(ResponseType::Accept, false);
+
+    let label = Label::new(Some("Ou clé OpenSSH chiffrée :"));
+    label.set_xalign(0.0);
+    content.pack_start(&label, false, false, 0);
+
+    let button = Button::with_label(NO_KEY_FILE_CHOSEN);
+    content.pack_start(&button, false, false, 0);
+
+    let chosen: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+    let click_dialog = dialog.clone();
+    let click_chosen = Rc::clone(&chosen);
+    let click_identities = identity_chooser.cloned();
+    button.connect_clicked(move |button| {
+        let Some(path) = run_key_file_chooser(&click_dialog, deadline, &expired, &lease) else {
+            return;
+        };
+        if let Some(chooser) = click_identities.as_ref() {
+            chooser.set_active_id(None);
+        }
+        button.set_label(&rendered_path(&path));
+        click_chosen.replace(Some(path));
+        click_dialog.set_response_sensitive(ResponseType::Accept, true);
+    });
+
+    if let Some(chooser) = identity_chooser {
+        let changed_button = button.clone();
+        let changed_chosen = Rc::clone(&chosen);
+        chooser.connect_changed(move |chooser| {
+            if chooser.active_id().is_some() {
+                changed_chosen.replace(None);
+                changed_button.set_label(NO_KEY_FILE_CHOSEN);
+            }
+        });
+    }
+    Some(chosen)
+}
+
+/// Runs the native selector under the same three bounds the window itself has.
+///
+/// A modal child dialog runs its own loop, so the parent's countdown cannot end
+/// it: the expiry, the released lease and the violated protocol are watched
+/// here as well, and each closes the selector with nothing chosen.
+fn run_key_file_chooser(
+    parent: &Dialog,
+    deadline: Instant,
+    expired: &Arc<AtomicBool>,
+    lease: &LeaseState,
+) -> Option<PathBuf> {
+    let chooser = FileChooserDialog::new(
+        Some("Your Cloud — choisir la clé OpenSSH chiffrée"),
+        Some(parent),
+        FileChooserAction::Open,
+    );
+    chooser.add_button("_Annuler", ResponseType::Cancel);
+    chooser.add_button("_Ouvrir", ResponseType::Accept);
+    chooser.set_modal(true);
+    chooser.set_select_multiple(false);
+    // Only what this machine's own file system holds: a remote location would
+    // be fetched into a temporary file, which is exactly what nothing here may
+    // create.
+    chooser.set_local_only(true);
+    chooser.set_create_folders(false);
+    chooser.set_show_hidden(true);
+
+    let timer_chooser = chooser.clone();
+    let timer_expired = Arc::clone(expired);
+    let timer_lease = lease.clone();
+    let timer = glib::source::timeout_add_local(TIMER_INTERVAL, move || {
+        if timer_lease.is_protocol_invalid()
+            || timer_expired.load(Ordering::SeqCst)
+            || Instant::now() >= deadline
+            || timer_lease.is_cancelled()
+        {
+            timer_chooser.response(ResponseType::Cancel);
+            return ControlFlow::Break;
+        }
+        ControlFlow::Continue
+    });
+
+    chooser.show_all();
+    let response = chooser.run();
+    timer.remove();
+    let chosen = (response == ResponseType::Accept)
+        .then(|| chooser.filename())
+        .flatten();
+    chooser.hide();
+    // Nothing is opened here. The path is only a name until `key_file` opens it
+    // once, without following a link, and confirms what it opened.
+    chosen.filter(|path| path.is_absolute())
+}
+
+const NO_KEY_FILE_CHOSEN: &str = "Choisir un fichier de clé…";
+
+/// The tail of a path, bounded like every other public line of this window.
+fn rendered_path(path: &std::path::Path) -> String {
+    let rendered = path.to_string_lossy();
+    let characters: Vec<char> = rendered.chars().collect();
+    if characters.len() <= MAX_PUBLIC_LINE_CHARACTERS {
+        return rendered.into_owned();
+    }
+    let tail: String = characters[characters.len() - (MAX_PUBLIC_LINE_CHARACTERS - 1)..]
+        .iter()
+        .collect();
+    format!("…{tail}")
+}
+
 fn outcome_from_response(
     prompt: NativePromptKind,
     response: ResponseType,
     secret_entry: Option<&Entry>,
     identity_chooser: Option<&ComboBoxText>,
+    key_file: Option<PathBuf>,
 ) -> PromptOutcome {
     match response {
         ResponseType::Reject => PromptOutcome::Refused,
         ResponseType::Accept => match prompt {
+            // A chosen file wins over a chosen identity, and the window makes
+            // choosing one clear the other, so the two can never both be set.
+            NativePromptKind::ConfirmPersonalAccess if key_file.is_some() => {
+                match key_file.filter(|path| path.is_absolute()) {
+                    Some(path) => PromptOutcome::ConsentWithKeyFile(path),
+                    // A selector that answered something relative answered
+                    // nothing this process will open.
+                    None => PromptOutcome::Refused,
+                }
+            }
             NativePromptKind::ConfirmPersonalAccess if identity_chooser.is_some() => {
                 match identity_chooser.and_then(ComboBoxExt::active_id) {
                     // The selected identity travels with the consent: nothing
@@ -771,6 +932,7 @@ mod tests {
                 ResponseType::Accept,
                 None,
                 None,
+                None,
             ),
             PromptOutcome::Consent
         ));
@@ -780,9 +942,68 @@ mod tests {
                 ResponseType::Reject,
                 None,
                 None,
+                None,
             ),
             PromptOutcome::Refused
         ));
+    }
+
+    /// A chosen key file travels with the consent, exactly as a chosen identity
+    /// does, and it is the *path* that travels: nothing is opened by the window.
+    #[test]
+    fn a_chosen_key_file_travels_with_the_consent_and_only_when_absolute() {
+        let outcome = outcome_from_response(
+            NativePromptKind::ConfirmPersonalAccess,
+            ResponseType::Accept,
+            None,
+            None,
+            Some(PathBuf::from("/home/synthetic/.ssh/id_ed25519")),
+        );
+        let PromptOutcome::ConsentWithKeyFile(path) = outcome else {
+            panic!("an absolute selection must reach the consent");
+        };
+        assert_eq!(path, PathBuf::from("/home/synthetic/.ssh/id_ed25519"));
+
+        assert!(
+            matches!(
+                outcome_from_response(
+                    NativePromptKind::ConfirmPersonalAccess,
+                    ResponseType::Accept,
+                    None,
+                    None,
+                    Some(PathBuf::from("relative/id_ed25519")),
+                ),
+                PromptOutcome::Refused
+            ),
+            "a selector that answered something relative answered nothing"
+        );
+        assert!(
+            matches!(
+                outcome_from_response(
+                    NativePromptKind::ConfirmPersonalAccess,
+                    ResponseType::Reject,
+                    None,
+                    None,
+                    Some(PathBuf::from("/home/synthetic/.ssh/id_ed25519")),
+                ),
+                PromptOutcome::Refused
+            ),
+            "a refusal stays a refusal whatever was chosen before it"
+        );
+    }
+
+    /// The displayed path is bounded like every other public line, and keeps
+    /// the end — which is what tells two keys of the same user apart.
+    #[test]
+    fn a_displayed_path_is_bounded_and_keeps_its_tail() {
+        let short = std::path::Path::new("/home/synthetic/.ssh/id_ed25519");
+        assert_eq!(rendered_path(short), "/home/synthetic/.ssh/id_ed25519");
+
+        let long = PathBuf::from(format!("/{}/id_ed25519", "d".repeat(200)));
+        let rendered = rendered_path(&long);
+        assert_eq!(rendered.chars().count(), MAX_PUBLIC_LINE_CHARACTERS);
+        assert!(rendered.starts_with('…'));
+        assert!(rendered.ends_with("/id_ed25519"));
     }
 
     #[test]
