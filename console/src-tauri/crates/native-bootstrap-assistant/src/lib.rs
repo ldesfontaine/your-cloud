@@ -361,7 +361,21 @@ fn show_prompt(
     PromptOutcome::Unavailable
 }
 
+/// The native window of this process, whichever system it runs on.
+///
+/// The two implementations are separate because the surfaces are — a GTK dialog
+/// and a Win32 one share no type — but they answer the same two calls with the
+/// same meaning, which is what lets the personal access step below be one path
+/// rather than two.
 #[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "linux"))]
+use native_prompt as native_window;
+#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "windows"))]
+use native_prompt_windows as native_window;
+
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
 fn show_prompt(
     scope: &AssistantScopeV1,
     deadline: Instant,
@@ -371,7 +385,7 @@ fn show_prompt(
     if scope.prompt == your_cloud_bootstrap_protocol::NativePromptKind::ConfirmPersonalAccess {
         return serve_personal_access(scope, deadline, expired, lease);
     }
-    native_prompt::prompt(scope, deadline, expired, lease)
+    native_window::prompt(scope, deadline, expired, lease)
 }
 
 /// The whole personal access, in the order the perimeter fixes.
@@ -382,7 +396,16 @@ fn show_prompt(
 /// re-derived after consent, and every refusal is expurgated into the same
 /// Unavailable outcome, because no public surface of this palier may reveal
 /// whether an access was verified.
-#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "linux"))]
+///
+/// The step is one path on both systems. Only the agent endpoint differs, and
+/// that difference lives inside `Prepared::open`: a Unix socket judged by its
+/// own rule, or the attested OpenSSH pipe. Everything after it — the frozen
+/// addresses shown, the identity named, the single signature spent, the probe
+/// — is literally the same code here.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
 fn serve_personal_access(
     scope: &AssistantScopeV1,
     deadline: Instant,
@@ -410,7 +433,7 @@ fn serve_personal_access(
         return PromptOutcome::Unavailable;
     };
 
-    let outcome = native_prompt::prompt_with_identities(
+    let outcome = native_window::prompt_with_identities(
         &resolved,
         prepared.identities(),
         deadline,
@@ -448,16 +471,6 @@ fn serve_personal_access(
         }
         Err(_refused) => PromptOutcome::Unavailable,
     }
-}
-
-#[cfg(all(not(feature = "delayed-start-contract-test"), target_os = "windows"))]
-fn show_prompt(
-    scope: &AssistantScopeV1,
-    deadline: Instant,
-    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    lease: LeaseState,
-) -> PromptOutcome {
-    native_prompt_windows::prompt(scope, deadline, expired, lease)
 }
 
 #[cfg(all(
