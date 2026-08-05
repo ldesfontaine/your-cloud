@@ -1,3 +1,4 @@
+mod approval;
 mod monotonic;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
@@ -8,6 +9,13 @@ use std::{
     str::FromStr,
 };
 
+pub use approval::{
+    ApprovalEnvelopeV1, ApprovalOperation, ApprovalPrivilege, SignedApprovalV1,
+    APPROVAL_DIGEST_BYTES, APPROVAL_DIGEST_ENCODED_BYTES, APPROVAL_INFRASTRUCTURE_BYTES,
+    APPROVAL_PUBLIC_KEY_BYTES, APPROVAL_SCHEMA_VERSION, APPROVAL_SIGNATURE_BYTES,
+    APPROVAL_TRANSCRIPT_DOMAIN, MAX_APPROVAL_LIFETIME_SECONDS, MAX_APPROVAL_MACHINE_BYTES,
+    MAX_APPROVAL_PRIVILEGES, MAX_SIGNED_APPROVAL_BYTES,
+};
 pub use monotonic::{monotonic_nanos, MonotonicClockError};
 
 pub const REQUEST_ID_BYTES: usize = 16;
