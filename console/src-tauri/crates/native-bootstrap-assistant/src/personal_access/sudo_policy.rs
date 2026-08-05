@@ -24,10 +24,17 @@ pub const MAX_PREFLIGHT_OUTPUT_BYTES: usize = 4 * 1024;
 /// so a translated or absent anchor means the output cannot be attested.
 const DEFAULTS_ANCHOR: &str = "Matching Defaults entries for";
 const COMMANDS_ANCHOR: &str = "may run the following commands";
-const AUTHENTICATION_MARKERS: [&str; 3] = [
+/// What `sudo` answers instead of a listing. The first three are what it writes
+/// when the answer costs a secret or a terminal it has not got; the fourth is
+/// the one `requiretty` produces, captured verbatim from `sudo 1.9.16p2` on
+/// Debian 13 — that policy refuses even to *list* itself without a terminal,
+/// and a refusal that specific must not be read as a merely unrecognised
+/// listing.
+const AUTHENTICATION_MARKERS: [&str; 4] = [
     "a password is required",
     "a terminal is required",
     "sudo: no tty present",
+    "sorry, you must have a tty",
 ];
 
 /// Boolean sudoers flags that place the standard input in the I/O log.
@@ -193,14 +200,19 @@ mod tests {
 
     #[test]
     fn a_missing_tty_is_refused_rather_than_retried() {
-        assert_eq!(
-            evaluate(
-                false,
-                b"sudo: no tty present and no askpass program specified\n",
-                false
-            ),
-            Err(SudoRefusal::AuthenticationRequired)
-        );
+        for answer in [
+            &b"sudo: no tty present and no askpass program specified\n"[..],
+            // What `requiretty` really answers, on the very listing this
+            // module was going to judge.
+            b"sudo: sorry, you must have a tty to run sudo\n",
+        ] {
+            assert_eq!(
+                evaluate(false, answer, false),
+                Err(SudoRefusal::AuthenticationRequired),
+                "{:?} must be read as the policy refusing to describe itself",
+                String::from_utf8_lossy(answer)
+            );
+        }
     }
 
     #[test]

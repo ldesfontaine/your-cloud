@@ -19,7 +19,13 @@
 //! The fallback of #53 — [`key_file`], [`key_unlock`], [`key_signer`] — follows
 //! the same split, and joins the acting half rather than doubling it: the key it
 //! opens becomes a signer for the very transport, the very probe and the very
-//! signature budget the agent path already uses. Any elevation belongs to #54.
+//! signature budget the agent path already uses.
+//!
+//! The elevation of #54 keeps the split too. [`sudo_policy`] decides on a
+//! listing already captured; [`elevation`] owns the fixed commands, reads what
+//! they answered and holds the single gate an access may be called verified
+//! through; [`session`] runs them, in at most three `exec` channels of the one
+//! transport the two paliers above opened.
 
 pub mod agent_client;
 pub mod agent_endpoint;
@@ -29,6 +35,11 @@ pub mod agent_endpoint;
 #[cfg(target_os = "windows")]
 pub mod agent_pipe;
 pub mod algorithms;
+/// The acting half of the `sudo` bounds [`sudo_policy`] decided, and the one
+/// gate an `access_verified` may ever be earned through. It owns every command
+/// a session may run and reads what they answered; it opens nothing itself.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod elevation;
 pub mod host_key;
 /// Opening the personal key file the native selector answered, on the system
 /// that carries `O_NOFOLLOW` and an inode. It is the observing half of

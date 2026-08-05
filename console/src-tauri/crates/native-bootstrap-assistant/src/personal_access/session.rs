@@ -48,6 +48,7 @@ use super::{
     },
     agent_endpoint::EndpointRefusal,
     algorithms::HostKeyType,
+    elevation::FixedCommand,
     host_key::{self, HostKeyRefusal},
     local_addresses::{LocalAddressRefusal, LocalAddresses},
     resolver::{self, ResolutionRefusal},
@@ -78,6 +79,19 @@ pub const PROBE_COMMAND: &str = "/usr/bin/id -u";
 
 /// Largest accepted size of each probe stream, separately.
 pub const MAX_PROBE_STREAM_BYTES: usize = 4096;
+
+/// Most `exec` channels one session may ever open, whatever it is doing.
+///
+/// The budget belongs to the session rather than to whoever drives it: it is
+/// counted here, spent before a channel is opened rather than after it
+/// succeeded, and never replenished. Three is the whole conversation of #54 —
+/// the identity probe, the policy preflight, the single elevation — and a
+/// fourth request is refused instead of being negotiated.
+pub const MAX_EXEC_CHANNELS: usize = 3;
+
+/// Longest the polite disconnect may take once the session is over. The socket
+/// is released either way; this only bounds the courtesy.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often the guard is consulted while the session waits.
 const GUARD_INTERVAL: Duration = Duration::from_millis(50);
@@ -151,13 +165,26 @@ pub enum TransportRefusal {
     UnexpectedProbeStream,
     /// The probe ended without both an exit status and an end of file.
     ProbeIncomplete,
+    /// The session had already opened every channel it may ever open.
+    ChannelBudgetSpent,
     /// The session deadline elapsed.
     Expired,
     /// The parent lease was released, or the protocol was violated.
     Cancelled,
 }
 
-/// What the fixed probe observed. It is a value, never an announcement.
+/// What one bounded `exec` channel observed. It is a value, never an
+/// announcement, and every channel of a session produces exactly this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelReport {
+    pub exit_status: u32,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+/// What the fixed probe observed, which is one [`ChannelReport`] beside the two
+/// things only the session knows: which host key was attested, and what the
+/// authentication cost.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProbeReport {
     pub exit_status: u32,
@@ -252,6 +279,142 @@ pub struct RunObservation {
     pub stream_refusal: Option<StreamRefusal>,
 }
 
+/// One authenticated session handed back still open, beside what reaching that
+/// state cost. The budget and the stream refusal are reported here, and not
+/// only at the very end, because an authentication that was refused has already
+/// answered both questions and there may be no session left to ask.
+pub struct EstablishedSession {
+    pub outcome: Result<LiveSession, PersonalAccessRefusal>,
+    pub remaining_signatures: usize,
+    pub stream_refusal: Option<StreamRefusal>,
+}
+
+/// One authenticated transport, open, with what is left of its channel budget.
+///
+/// It exists because #54 needs three answers from the same session with a
+/// decision — and possibly a native window — between them. Holding the
+/// transport across those decisions is the whole point: a second connection
+/// would be a second authentication, a second host key attestation and a second
+/// signature, and nothing about the first would carry over to it.
+///
+/// Every channel goes through [`Self::run_channel`], which is the very function
+/// the probe of #52 goes through. There is no second way to open one.
+pub struct LiveSession {
+    runtime: Runtime,
+    handle: Handle<PersonalAccessHandler>,
+    host_key_type: HostKeyType,
+    signatures_spent: usize,
+    channels_spent: usize,
+}
+
+impl LiveSession {
+    /// The host key type this very transport attested. Reported rather than
+    /// re-derived: there is no second handshake to ask.
+    pub fn host_key_type(&self) -> HostKeyType {
+        self.host_key_type
+    }
+
+    /// How many of the [`MAX_EXEC_CHANNELS`] have been spent.
+    pub fn channels_spent(&self) -> usize {
+        self.channels_spent
+    }
+
+    /// Runs one fixed command in one bounded `exec` channel.
+    ///
+    /// The budget is spent before the channel is opened, so a channel that
+    /// failed still counts: a session that could retry by failing would have no
+    /// bound at all. `standard_input`, when present, is the one secret this
+    /// palier ever writes; it is sent once, followed by the single newline the
+    /// far side reads as the end of the answer, and the stream is closed
+    /// immediately so nothing can be asked a second time.
+    pub fn run_channel(
+        &mut self,
+        command: FixedCommand,
+        standard_input: Option<&[u8]>,
+        deadline: Instant,
+        guard: &(dyn Fn() -> GuardVerdict + Sync),
+    ) -> Result<ChannelReport, TransportRefusal> {
+        if self.channels_spent >= MAX_EXEC_CHANNELS {
+            return Err(TransportRefusal::ChannelBudgetSpent);
+        }
+        self.channels_spent += 1;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(TransportRefusal::Expired);
+        }
+        let runtime = &self.runtime;
+        let handle = &mut self.handle;
+        runtime.block_on(async {
+            match timeout(
+                remaining,
+                exec_channel(handle, command, standard_input, guard),
+            )
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(_elapsed) => Err(TransportRefusal::Expired),
+            }
+        })
+    }
+
+    /// The fixed probe of #52, as the first channel of any session.
+    pub fn probe(
+        &mut self,
+        deadline: Instant,
+        guard: &(dyn Fn() -> GuardVerdict + Sync),
+    ) -> Result<ProbeReport, TransportRefusal> {
+        let report = self.run_channel(super::elevation::IDENTITY, None, deadline, guard)?;
+        Ok(ProbeReport {
+            exit_status: report.exit_status,
+            stdout: report.stdout,
+            stderr: report.stderr,
+            host_key_type: self.host_key_type,
+            signatures_spent: self.signatures_spent,
+        })
+    }
+
+    /// Ends the session explicitly: the peer is told, and the socket released
+    /// whether or not it listened. It consumes the session, so a caller cannot
+    /// keep using one it has closed, and every path of this crate ends here.
+    pub fn close(self) {
+        let Self {
+            runtime, handle, ..
+        } = self;
+        runtime.block_on(async {
+            let _ = timeout(CLOSE_TIMEOUT, close_transport(&handle)).await;
+        });
+    }
+}
+
+/// The session of the two paliers before this one: authenticate, run the fixed
+/// probe, close. Written once, used by both credentials.
+fn probe_once(
+    established: EstablishedSession,
+    deadline: Instant,
+    guard: &(dyn Fn() -> GuardVerdict + Sync),
+) -> RunObservation {
+    let EstablishedSession {
+        outcome,
+        remaining_signatures,
+        stream_refusal,
+    } = established;
+    let outcome = match outcome {
+        Ok(mut live) => {
+            let report = live.probe(deadline, guard);
+            // The transport is closed on both paths, before the outcome is
+            // examined.
+            live.close();
+            report.map_err(PersonalAccessRefusal::Transport)
+        }
+        Err(refusal) => Err(refusal),
+    };
+    RunObservation {
+        outcome,
+        remaining_signatures,
+        stream_refusal,
+    }
+}
+
 impl Prepared {
     /// Performs, once, every observation the consent window depends on.
     pub fn open(name: &str, port: u16, deadline: Instant) -> Result<Self, PersonalAccessRefusal> {
@@ -320,26 +483,34 @@ impl Prepared {
         &self.identities
     }
 
-    /// Opens the session, authenticates once and runs the fixed probe.
+    /// Opens the session, authenticates once and hands it back still open.
     ///
     /// `guard` is consulted between every step and on every idle tick. The
-    /// transport and the channel are closed explicitly whatever it answers.
+    /// transport is closed explicitly on every refusal; on the accepting path
+    /// it is the caller's [`LiveSession`] that closes it, and closing it is not
+    /// optional — every entry below ends in [`LiveSession::close`].
     ///
     /// The signer is borrowed rather than consumed by the session, so that the
-    /// budget it holds can still be read once the session is over — refusal
-    /// included — and reported in the returned [`RunObservation`].
-    pub fn run(
+    /// budget it holds can still be read once the authentication is over —
+    /// refusal included — and reported in the returned [`EstablishedSession`].
+    pub fn establish(
         self,
         request: &AuthenticationRequest<'_>,
         deadline: Instant,
         guard: &(dyn Fn() -> GuardVerdict + Sync),
-    ) -> RunObservation {
-        let Some(agent) = self.agent else {
+    ) -> EstablishedSession {
+        let Self {
+            runtime,
+            agent,
+            agent_refusal,
+            target,
+            identities: _,
+        } = self;
+        let Some(agent) = agent else {
             // No agent was retained. Whoever asks for one anyway is told what
             // was observed, and nothing was signed to find out.
-            return RunObservation {
-                outcome: Err(self
-                    .agent_refusal
+            return EstablishedSession {
+                outcome: Err(agent_refusal
                     .unwrap_or(PersonalAccessRefusal::Agent(AgentRefusal::ConnectionFailed))),
                 remaining_signatures: MAX_AUTHENTICATION_SIGNATURES,
                 stream_refusal: None,
@@ -350,7 +521,7 @@ impl Prepared {
             // A selection that never happened spent nothing, and reached no
             // stream: the untouched budget is reported as such.
             Err(refusal) => {
-                return RunObservation {
+                return EstablishedSession {
                     outcome: Err(PersonalAccessRefusal::Agent(refusal)),
                     remaining_signatures: MAX_AUTHENTICATION_SIGNATURES,
                     stream_refusal: None,
@@ -358,15 +529,8 @@ impl Prepared {
             }
         };
 
-        let outcome = drive(
-            &self.runtime,
-            &mut signer,
-            &self.target,
-            request,
-            deadline,
-            guard,
-        );
-        RunObservation {
+        let outcome = establish_with(runtime, &mut signer, &target, request, deadline, guard);
+        EstablishedSession {
             outcome: outcome.map_err(PersonalAccessRefusal::Transport),
             remaining_signatures: signer.remaining_signatures(),
             stream_refusal: signer.stream_refusal(),
@@ -377,8 +541,8 @@ impl Prepared {
     ///
     /// It is the fallback of #53, and it is deliberately three lines long: the
     /// transport, the frozen addresses, the host key attestation, the single
-    /// signature budget and the fixed probe are literally the ones above, and
-    /// the only thing that changes is which signer is handed to them. A bound
+    /// signature budget and every channel are literally the ones above, and the
+    /// only thing that changes is which signer is handed to them. A bound
     /// proved on the agent path is therefore the bound this one runs, and a
     /// second implementation of the session never existed to drift from it.
     ///
@@ -388,23 +552,23 @@ impl Prepared {
     /// another identity is refused by that budget rather than by a check that
     /// could be forgotten.
     #[cfg(target_os = "linux")]
-    pub fn run_with_key(
+    pub fn establish_with_key(
         self,
         key: super::key_unlock::PersonalKey,
         request: &AuthenticationRequest<'_>,
         deadline: Instant,
         guard: &(dyn Fn() -> GuardVerdict + Sync),
-    ) -> RunObservation {
+    ) -> EstablishedSession {
         let mut signer = super::key_signer::BudgetedKeySigner::over(key);
-        let outcome = drive(
-            &self.runtime,
+        let outcome = establish_with(
+            self.runtime,
             &mut signer,
             &self.target,
             request,
             deadline,
             guard,
         );
-        RunObservation {
+        EstablishedSession {
             outcome: outcome.map_err(PersonalAccessRefusal::Transport),
             remaining_signatures: signer.remaining_signatures(),
             // No stream was opened towards any agent, so there is no stream
@@ -412,6 +576,34 @@ impl Prepared {
             // is not the same claim as "nothing went wrong".
             stream_refusal: None,
         }
+    }
+
+    /// The session of #52 and #53 whole: authenticate, run the fixed probe,
+    /// close. It is the two entries above followed by one channel, so nothing
+    /// proved on it is proved on a path the elevation does not also take.
+    pub fn run(
+        self,
+        request: &AuthenticationRequest<'_>,
+        deadline: Instant,
+        guard: &(dyn Fn() -> GuardVerdict + Sync),
+    ) -> RunObservation {
+        probe_once(self.establish(request, deadline, guard), deadline, guard)
+    }
+
+    /// The same, on the key fallback.
+    #[cfg(target_os = "linux")]
+    pub fn run_with_key(
+        self,
+        key: super::key_unlock::PersonalKey,
+        request: &AuthenticationRequest<'_>,
+        deadline: Instant,
+        guard: &(dyn Fn() -> GuardVerdict + Sync),
+    ) -> RunObservation {
+        probe_once(
+            self.establish_with_key(key, request, deadline, guard),
+            deadline,
+            guard,
+        )
     }
 
     /// Hands the selected signer, and the runtime it must be driven on, to the
@@ -440,28 +632,43 @@ impl Prepared {
     }
 }
 
-/// Runs one whole session on the prepared runtime, whatever signs it.
+/// Opens one whole session on the prepared runtime, whatever signs it.
 ///
 /// This is where the agent path and the key path meet, and there is exactly one
 /// of it. The outer bound is the caller's deadline; the guard is consulted
-/// inside; the transport and the channel are closed on every path.
-fn drive<S: PersonalSigner>(
-    runtime: &Runtime,
+/// inside; the transport is closed on every refusing path, and handed to a
+/// [`LiveSession`] — which closes it — on the accepting one.
+fn establish_with<S: PersonalSigner>(
+    runtime: Runtime,
     signer: &mut S,
     target: &FrozenTarget,
     request: &AuthenticationRequest<'_>,
     deadline: Instant,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
-) -> Result<ProbeReport, TransportRefusal> {
+) -> Result<LiveSession, TransportRefusal> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
         return Err(TransportRefusal::Expired);
     }
-    runtime.block_on(async {
-        match timeout(remaining, run_session(signer, target, request, guard)).await {
+    let opened = runtime.block_on(async {
+        match timeout(
+            remaining,
+            open_session(signer, target, request, guard, remaining),
+        )
+        .await
+        {
             Ok(outcome) => outcome,
             Err(_elapsed) => Err(TransportRefusal::Expired),
         }
+    });
+    let (handle, host_key_type) = opened?;
+    Ok(LiveSession {
+        runtime,
+        handle,
+        host_key_type,
+        signatures_spent: MAX_AUTHENTICATION_SIGNATURES
+            .saturating_sub(signer.remaining_signatures()),
+        channels_spent: 0,
     })
 }
 
@@ -615,12 +822,18 @@ impl Handler for PersonalAccessHandler {
 /// It is generic over the signer, and over nothing else, because that is the
 /// only difference between reaching the agent and holding the key: same
 /// transport, same attestation, same probe, same budget.
-async fn run_session<S: PersonalSigner>(
+/// `inactivity` bounds an idle transport. It is what is left of the caller's
+/// lease rather than a ceiling of its own, because a session that holds its
+/// channel open while a native window is answered is idle on purpose, and the
+/// deadline — which the outer timeout, the watchdog and the guard all hold —
+/// is already the answer to "how long may this last".
+async fn open_session<S: PersonalSigner>(
     signer: &mut S,
     target: &FrozenTarget,
     request: &AuthenticationRequest<'_>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
-) -> Result<ProbeReport, TransportRefusal> {
+    inactivity: Duration,
+) -> Result<(Handle<PersonalAccessHandler>, HostKeyType), TransportRefusal> {
     check(guard)?;
 
     let verdict = Arc::new(Mutex::new(HostKeyVerdict::default()));
@@ -632,9 +845,7 @@ async fn run_session<S: PersonalSigner>(
     let socket = connect_to_frozen_address(target, guard).await?;
     let config = Arc::new(client::Config {
         preferred: ssh_algorithms::preferred(),
-        // The session is bounded by the caller's deadline; an idle transport
-        // must not outlive it while waiting for a peer that stopped talking.
-        inactivity_timeout: Some(CONNECT_TIMEOUT),
+        inactivity_timeout: Some(inactivity),
         keepalive_interval: None,
         nodelay: true,
         ..client::Config::default()
@@ -645,10 +856,14 @@ async fn run_session<S: PersonalSigner>(
         Err(_) => return Err(host_key_refusal_or(&verdict, TransportRefusal::ForeignPeer)),
     };
 
-    let outcome = authenticate_and_probe(&mut handle, signer, request, &verdict, guard).await;
-    // The transport is closed on both paths, before the outcome is examined.
-    close_transport(&handle).await;
-    outcome
+    match authenticate(&mut handle, signer, request, &verdict, guard).await {
+        Ok(host_key_type) => Ok((handle, host_key_type)),
+        Err(refusal) => {
+            // A session nobody will hold is closed here rather than dropped.
+            close_transport(&handle).await;
+            Err(refusal)
+        }
+    }
 }
 
 /// Connects to the frozen addresses in order, and to nothing else.
@@ -675,13 +890,13 @@ async fn connect_to_frozen_address(
     Err(TransportRefusal::NoReachableAddress)
 }
 
-async fn authenticate_and_probe<S: PersonalSigner>(
+async fn authenticate<S: PersonalSigner>(
     handle: &mut Handle<PersonalAccessHandler>,
     signer: &mut S,
     request: &AuthenticationRequest<'_>,
     verdict: &Arc<Mutex<HostKeyVerdict>>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
-) -> Result<ProbeReport, TransportRefusal> {
+) -> Result<HostKeyType, TransportRefusal> {
     let host_key_type = attested_host_key_type(verdict)?;
     check(guard)?;
 
@@ -706,38 +921,61 @@ async fn authenticate_and_probe<S: PersonalSigner>(
         return Err(TransportRefusal::AuthenticationRefused);
     }
     check(guard)?;
-
-    let mut probe = probe_identity(handle, guard).await?;
-    probe.host_key_type = host_key_type;
-    probe.signatures_spent =
-        MAX_AUTHENTICATION_SIGNATURES.saturating_sub(signer.remaining_signatures());
-    Ok(probe)
+    Ok(host_key_type)
 }
 
-/// Runs the fixed probe in a single `exec` channel.
-async fn probe_identity(
+/// Runs one fixed command in a single `exec` channel.
+///
+/// It is the only place a channel is opened, on every path of this crate: the
+/// probe of #52, the policy preflight of #51 and the single elevation of #54 all
+/// arrive here, so the bounds below are not three copies that could drift.
+async fn exec_channel(
     handle: &mut Handle<PersonalAccessHandler>,
+    command: FixedCommand,
+    standard_input: Option<&[u8]>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
-) -> Result<ProbeReport, TransportRefusal> {
+) -> Result<ChannelReport, TransportRefusal> {
     let mut channel: Channel<Msg> = handle
         .channel_open_session()
         .await
         .map_err(|_| TransportRefusal::ChannelRefused)?;
-    let outcome = collect_probe(&mut channel, guard).await;
+    let outcome = collect_channel(&mut channel, command, standard_input, guard).await;
     // The channel is closed explicitly on every path, including the refusals.
     let _ = channel.eof().await;
     let _ = channel.close().await;
     outcome
 }
 
-async fn collect_probe(
+async fn collect_channel(
     channel: &mut Channel<Msg>,
+    command: FixedCommand,
+    standard_input: Option<&[u8]>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
-) -> Result<ProbeReport, TransportRefusal> {
+) -> Result<ChannelReport, TransportRefusal> {
+    // No PTY is ever requested. The command is a constant of `elevation`, sent
+    // as it is written there: nothing is appended, quoted or interpolated here.
     channel
-        .exec(true, PROBE_COMMAND)
+        .exec(true, command.as_str())
         .await
         .map_err(|_| TransportRefusal::ChannelRefused)?;
+
+    if let Some(answer) = standard_input {
+        // The one secret this palier writes. Once, then the newline the far
+        // side reads as the end of the answer, then the end of the stream: a
+        // command that asks again finds nothing to read.
+        channel
+            .data(answer)
+            .await
+            .map_err(|_| TransportRefusal::ChannelRefused)?;
+        channel
+            .data(&b"\n"[..])
+            .await
+            .map_err(|_| TransportRefusal::ChannelRefused)?;
+        channel
+            .eof()
+            .await
+            .map_err(|_| TransportRefusal::ChannelRefused)?;
+    }
 
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
@@ -768,19 +1006,16 @@ async fn collect_probe(
         }
     }
 
-    // Both an exit status and an end of file are required: a probe that stops
+    // Both an exit status and an end of file are required: a channel that stops
     // halfway is not a result, it is an unfinished conversation.
     let exit_status = match (exit_status, end_of_file) {
         (Some(exit_status), true) => exit_status,
         _ => return Err(TransportRefusal::ProbeIncomplete),
     };
-    Ok(ProbeReport {
+    Ok(ChannelReport {
         exit_status,
         stdout,
         stderr,
-        // Both are overwritten by the caller, which alone knows them.
-        host_key_type: HostKeyType::Ed25519,
-        signatures_spent: 0,
     })
 }
 
@@ -846,6 +1081,19 @@ mod tests {
         assert!(!PROBE_COMMAND.contains('&'));
         assert!(!PROBE_COMMAND.contains('|'));
         assert!(!PROBE_COMMAND.contains('\n'));
+    }
+
+    /// The whole conversation of a session is three channels, and the budget is
+    /// declared here rather than counted by whoever drives one.
+    #[test]
+    fn a_session_may_open_three_channels_and_no_more() {
+        use super::super::elevation;
+
+        assert_eq!(MAX_EXEC_CHANNELS, 3);
+        // The identity probe, the policy preflight, and exactly one of the two
+        // elevations: four commands exist, three of them ever run together.
+        assert_eq!(elevation::CHANNEL_COMMANDS.len(), MAX_EXEC_CHANNELS + 1);
+        assert_eq!(elevation::IDENTITY.as_str(), PROBE_COMMAND);
     }
 
     #[test]
