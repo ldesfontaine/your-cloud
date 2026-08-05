@@ -1831,7 +1831,12 @@ fn append_field(buffer: &mut Vec<u8>, value: &[u8]) -> Result<(), NetworkError> 
     Ok(())
 }
 
-fn human_signing_key(association: &AssociationRecord) -> Result<SigningKey, NetworkError> {
+/// The human key of one association, opened from the seed the unlocked vault
+/// holds. It stays crate-private: the approval module of the same crate is the
+/// only other caller, and no command surface reaches either of them.
+pub(crate) fn human_signing_key(
+    association: &AssociationRecord,
+) -> Result<SigningKey, NetworkError> {
     let decoded = Zeroizing::new(
         URL_SAFE_NO_PAD
             .decode(association.human_private_seed.as_bytes())
