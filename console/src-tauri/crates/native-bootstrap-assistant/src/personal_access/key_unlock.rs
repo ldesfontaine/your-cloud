@@ -71,8 +71,19 @@ pub enum UnlockRefusal {
 /// It carries its own fingerprint because that is what the signature budget is
 /// bound to, exactly as the agent path binds it to the fingerprint the user
 /// picked in the window.
+///
+/// The key sits behind a box, and that is a measured decision rather than a
+/// stylistic one. A move in Rust is a byte copy that leaves the source frame
+/// untouched: nothing drops it, so nothing wipes it. An unboxed [`PrivateKey`]
+/// travels by value from the derivation to the channel, out of the channel, up
+/// through this module's caller, into the credential the consent carries and
+/// finally into the signer — and a privileged core taken afterwards showed one
+/// stale sixty-four byte `public || private` pair per move, eighteen of them,
+/// long after the single live copy had been wiped by its own drop. Behind a
+/// box, every one of those moves copies a pointer, the secret itself never
+/// changes address, and the drop that wipes it wipes the only copy there was.
 pub struct PersonalKey {
-    key: PrivateKey,
+    key: Box<PrivateKey>,
     fingerprint: String,
 }
 
@@ -189,9 +200,15 @@ fn derive(
     if !encrypted.is_encrypted() {
         return Err(UnlockRefusal::KeyMismatch);
     }
-    let opened = encrypted
-        .decrypt(passphrase.bytes())
-        .map_err(|_| UnlockRefusal::Passphrase)?;
+    // Boxed on the very line that produces it, before anything reads it. Every
+    // step below then borrows the one heap copy instead of moving the secret
+    // once more, and the checks that follow — which are the reason this
+    // function is not three lines long — cost no copy at all.
+    let opened: Box<PrivateKey> = Box::new(
+        encrypted
+            .decrypt(passphrase.bytes())
+            .map_err(|_| UnlockRefusal::Passphrase)?,
+    );
     if opened.is_encrypted() {
         return Err(UnlockRefusal::KeyMismatch);
     }
