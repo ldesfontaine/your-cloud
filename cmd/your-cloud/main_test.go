@@ -21,6 +21,9 @@ func TestRolesRejectEachOthersArguments(t *testing.T) {
 		{"relay", "--machine-id=lab-machine-1"},
 		{"controller", "--machine-id=lab-machine-1"},
 		{"diagnose", "observation", "--machine-id=lab-machine-1"},
+		{"auxiliary", "approve", "--machine-id=lab-machine-1"},
+		{"auxiliary", "observation"},
+		{"auxiliary"},
 		{"daemon", "unexpected"},
 		{"relay", "unexpected"},
 	}

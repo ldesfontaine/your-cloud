@@ -20,7 +20,7 @@ func main() {
 // lifecycle boundaries. Production always uses the fixed candidate path.
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("a role is required: daemon, relay, controller or diagnose")
+		return errors.New("a role is required: daemon, relay, controller, diagnose or auxiliary")
 	}
 	switch arguments[0] {
 	case "daemon":
@@ -31,8 +31,15 @@ func run(arguments []string) error {
 		return runController(arguments[1:])
 	case "diagnose":
 		return runDiagnose(arguments[1:])
+	// The Auxiliary is a one-shot mode of this same binary and never a service:
+	// it is selected here, it does one approved read and it exits.
+	case "auxiliary":
+		return runAuxiliary(arguments[1:])
 	default:
-		return fmt.Errorf("unknown role %q: expected daemon, relay, controller or diagnose", arguments[0])
+		return fmt.Errorf(
+			"unknown role %q: expected daemon, relay, controller, diagnose or auxiliary",
+			arguments[0],
+		)
 	}
 }
 
