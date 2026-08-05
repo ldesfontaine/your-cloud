@@ -17,6 +17,11 @@ mod native_prompt;
 mod native_prompt_windows;
 mod parent;
 pub mod personal_access;
+/// Replacing one Controller explicitly, and leaving the old one no exposed
+/// authority. It is compiled on the two platforms the palier targets, like the
+/// installation and the enrolment whose witnesses it requires.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod replacement;
 mod secret;
 mod watchdog;
 
