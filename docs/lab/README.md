@@ -132,6 +132,25 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — identité SSH bornée par machine, et activation des rôles approuvés](v0.1.0-machine-identity.md) :
+  passage `quick` du 5 août 2026 pour #39. Chaque machine reçoit une paire qui
+  n'est la sienne que sur elle : un **vrai `sshd`** refuse l'identité de
+  `lab-machine-1` sur `lab-console` et l'inverse, et la porte compilée rend
+  `ForeignIdentity`, `Unattributed` et `SharedIdentity` sous leur propre nom. La
+  commande forcée n'ouvre ni shell, ni PTY, ni SFTP, ni fichier rc, ni X11, ni
+  transfert de port ou d'agent, ni argument libre, chaque capacité étant refusée
+  **à côté de son contrôle positif** sur le même serveur au même instant ; la
+  règle `sudo` n'autorise qu'une invocation exacte, sans `SETENV`. Le Controller
+  parcourt lui-même le nouveau chemin avant toute activation, et l'Auxiliaire
+  reste un diagnostic en lecture seule (`changed: false`). Ce passage inclut
+  l'arbitrage sur la frontière laissée ouverte par la passe précédente : **#36
+  place désormais le rôle Agent**, avec ses exigences propres — aucun critère de
+  confidentialité de placement, un plancher de ressources dérivé de sa propre
+  unité — et l'activation d'un Agent explicitement approuvé est prouvée avec son
+  contrôle négatif et le refus d'un chemin non vérifié. Six points d'arrêt
+  rendent un registre que le déroulé reconstruit, une coupure rend `INCOMPLETE`
+  et nomme ce qui reste. Deux épreuves par mutation font rougir la suite. Aucune
+  unité n'est réellement démarrée : l'activation est une décision typée.
 - [`v0.1.0` — installation d'un Controller depuis le lot embarqué](v0.1.0-controller-install.md) :
   passage `quick` du 5 août 2026 pour #38, premier palier qui **mute réellement**
   une machine. Le lot Debian 13 `amd64` est construit par la preuve, son
