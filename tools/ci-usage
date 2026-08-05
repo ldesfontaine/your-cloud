@@ -81,10 +81,28 @@ def job_minutes(job: dict) -> tuple[float, int]:
 
 
 def collect(since: str) -> dict:
-    runs = gh_api(f"repos/:owner/:repo/actions/runs?created=%3E%3D{since}&per_page=100")
-    if not isinstance(runs, dict):
-        raise UsageError("réponse inattendue pour la liste des runs")
-    workflow_runs = runs.get("workflow_runs", [])[:MAX_RUNS]
+    # L'API rend au plus cent runs par page. Sans parcourir les suivantes, la
+    # mesure ne voit que les cent plus récents : chaque nouveau run en chasse un
+    # ancien et le total *baisse* alors que la dépense monte. Une mesure qui
+    # diminue toute seule autoriserait une matrice que le budget ne porte plus.
+    page = 1
+    workflow_runs: list[dict] = []
+    while len(workflow_runs) < MAX_RUNS:
+        runs = gh_api(
+            f"repos/:owner/:repo/actions/runs?created=%3E%3D{since}"
+            f"&per_page=100&page={page}"
+        )
+        if not isinstance(runs, dict):
+            raise UsageError("réponse inattendue pour la liste des runs")
+        batch = runs.get("workflow_runs", [])
+        workflow_runs.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    # Le plafond reste une borne de coût, mais il cesse d'être silencieux :
+    # au-delà, la mesure est déclarée incomplète et ne peut plus rien autoriser.
+    truncated = len(workflow_runs) > MAX_RUNS
+    workflow_runs = workflow_runs[:MAX_RUNS]
 
     per_day: dict[str, float] = defaultdict(float)
     per_platform: dict[str, float] = defaultdict(float)
@@ -113,6 +131,7 @@ def collect(since: str) -> dict:
         "per_platform": dict(per_platform),
         "per_run": per_run,
         "runs": len(workflow_runs),
+        "truncated": truncated,
     }
 
 
@@ -124,7 +143,8 @@ def render(usage: dict, included: int, since: str) -> None:
     total = usage["total"]
     remaining = included - total
     print(f"Consommation GitHub Actions depuis le {since}")
-    print(f"  runs inspectés     : {usage['runs']}")
+    incomplete = "  (MESURE INCOMPLÈTE : plafond atteint)" if usage["truncated"] else ""
+    print(f"  runs inspectés     : {usage['runs']}{incomplete}")
     print(f"  minutes facturées  : {total:.0f} sur {included} incluses")
     print(f"  reste              : {remaining:.0f} min")
     print()
@@ -182,6 +202,13 @@ def main() -> int:
     if arguments.guard is not None:
         remaining = arguments.included - usage["total"]
         print()
+        if usage["truncated"]:
+            print(
+                f"ci-usage: REFUS — plus de {MAX_RUNS} runs sur la période, "
+                "la mesure est incomplète et ne peut rien autoriser",
+                file=sys.stderr,
+            )
+            return 1
         if remaining < arguments.guard:
             print(
                 f"ci-usage: REFUS — {remaining:.0f} min restantes, "
