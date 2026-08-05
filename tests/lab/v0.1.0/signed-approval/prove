@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# Drive the signed-approval perimeter: mount, run, power cycle, run again, remove.
+#
+# The reboot is a real one — the machine is stopped and started through the LAB
+# controller — because the property under proof is that the anti-replay position
+# survives a power cycle, and a process restart does not exercise that.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [setup | run | reboot | verify | remove | all]
+
+  setup   synchronise the sources, build the binary and install the anchor
+  run     every acceptance and refusal of the palier, before the reboot
+  reboot  stop and start the target machine through the LAB controller
+  verify  the refusals that must still hold after the power cycle
+  remove  remove the perimeter from the machine and prove its absence
+  all     the five above in order, removing even when a step fails (default)
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  setup | run | reboot | verify | remove | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.0/signed-approval"
+target_vm=lab-machine-1
+expected_origin=your-cloud/labctl
+remote_harness=/root/your-cloud-lab-signed-approval
+remote_sources=/root/lab-signed-approval-sources
+remote_signer=/root/lab-signed-approval-signer
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+setup() {
+  local address
+  address=$(inventory "$target_vm")
+  echo "perimeter: target $target_vm at $address"
+
+  "$labctl" ssh "$target_vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  for script in install run-before run-after remove; do
+    "$labctl" copy-to "$target_vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    "$labctl" ssh "$target_vm" -- "chmod 0700 $remote_harness/$script"
+  done
+
+  # The product sources this run proves, and the synthetic fixture that stands
+  # in for the Console core. Both are carried from the working tree so that the
+  # machine never proves something it kept from an earlier passage.
+  tar czf "$workdir/sources.tgz" -C "$root" go.mod go.sum cmd internal
+  tar czf "$workdir/signer.tgz" -C "$harness/_signer" main.go
+  "$labctl" copy-to "$target_vm" "$workdir/sources.tgz" /root/lab-signed-approval-sources.tgz >/dev/null
+  "$labctl" copy-to "$target_vm" "$workdir/signer.tgz" /root/lab-signed-approval-signer.tgz >/dev/null
+  "$labctl" ssh "$target_vm" -- \
+    "rm -rf $remote_sources $remote_signer && install -d -m 0700 $remote_sources $remote_signer \
+     && tar xzf /root/lab-signed-approval-sources.tgz -C $remote_sources \
+     && tar xzf /root/lab-signed-approval-signer.tgz -C $remote_signer \
+     && rm -f /root/lab-signed-approval-sources.tgz /root/lab-signed-approval-signer.tgz"
+
+  "$labctl" ssh "$target_vm" -- "$remote_harness/install $remote_sources $remote_signer"
+}
+
+unit() {
+  echo "== the Auxiliary's own suite, on the machine it runs on =="
+  "$labctl" ssh "$target_vm" -- \
+    "cd $remote_sources && LC_ALL=C.UTF-8 go vet ./... && LC_ALL=C.UTF-8 go test -mod=readonly -count=1 ./..."
+}
+
+reboot_target() {
+  local attempt
+  echo "== real power cycle of $target_vm =="
+  "$labctl" stop "$target_vm"
+  "$labctl" start "$target_vm"
+  inventory "$target_vm" >/dev/null
+  # The controller returns as soon as the machine holds an address; its own
+  # channel opens a little later. Waiting here rather than in the assertions
+  # keeps a slow boot from reading as a failed refusal.
+  for attempt in $(seq 1 60); do
+    if "$labctl" ssh "$target_vm" -- true >/dev/null 2>&1; then
+      echo "the machine answers again after ${attempt}s"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "$target_vm never answered after its power cycle"
+}
+
+case "$command" in
+  setup) setup ;;
+  run) unit && "$labctl" ssh "$target_vm" -- "$remote_harness/run-before" ;;
+  reboot) reboot_target ;;
+  verify) "$labctl" ssh "$target_vm" -- "$remote_harness/run-after" ;;
+  remove) "$labctl" ssh "$target_vm" -- "$remote_harness/remove" ;;
+  all)
+    status=0
+    setup || status=$?
+    if [[ $status -eq 0 ]]; then unit || status=$?; fi
+    if [[ $status -eq 0 ]]; then "$labctl" ssh "$target_vm" -- "$remote_harness/run-before" || status=$?; fi
+    if [[ $status -eq 0 ]]; then reboot_target || status=$?; fi
+    if [[ $status -eq 0 ]]; then "$labctl" ssh "$target_vm" -- "$remote_harness/run-after" || status=$?; fi
+    # The perimeter is removed even when a step failed: a machine left carrying
+    # an anchor and a consumed position is not a clean LAB.
+    "$labctl" ssh "$target_vm" -- "$remote_harness/remove" || status=$?
+    "$labctl" ssh "$target_vm" -- "rm -rf $remote_harness"
+    exit "$status"
+    ;;
+esac

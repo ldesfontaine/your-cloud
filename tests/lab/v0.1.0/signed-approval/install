@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Mount the signed-approval perimeter on the target machine.
+#
+# Everything installed here is synthetic and root-owned: one approval anchor
+# built from a synthetic seed, one empty anti-replay directory, the product
+# binary and the fixture that stands in for the Console core. No real key, no
+# real infrastructure and no service are created.
+set -euo pipefail
+
+sources=${1:?usage: install <go-sources> <signer-sources>}
+signer=${2:?usage: install <go-sources> <signer-sources>}
+export LC_ALL=C.UTF-8
+
+state=/root/lab-signed-approval
+anchor_directory=/etc/your-cloud
+replay_directory=/var/lib/your-cloud-auxiliary
+
+command -v go >/dev/null || { echo "FAILED: the target has no Go toolchain" >&2; exit 1; }
+
+# The product binary, built from the sources this run synchronised and from
+# nothing already present on the machine.
+(cd "$sources" && go build -o /usr/local/bin/your-cloud ./cmd/your-cloud)
+(cd "$signer" && go mod init lab-approval-signer >/dev/null 2>&1 || true)
+(cd "$signer" && go build -o /usr/local/bin/lab-approval-signer .)
+
+install -d -m 0700 -o root -g root "$state"
+install -d -m 0755 -o root -g root "$anchor_directory"
+install -d -m 0700 -o root -g root "$replay_directory"
+
+# A perimeter always starts from a machine that consumed nothing, otherwise the
+# first sequence would not be the first.
+rm -f "$replay_directory/approval-state.json" "$replay_directory/approval-state.lock"
+
+lab-approval-signer -anchor -epoch 1 -seed 1 >"$anchor_directory/approval-anchor.json"
+chmod 0600 "$anchor_directory/approval-anchor.json"
+
+printf 'ANCHOR=%s\n' "$anchor_directory/approval-anchor.json"
+printf 'REPLAY=%s\n' "$replay_directory/approval-state.json"
+printf 'STATE=%s\n' "$state"

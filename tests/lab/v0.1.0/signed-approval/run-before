@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Everything the Auxiliary must accept and refuse before the machine is
+# rebooted, each refusal beside the positive control that isolates it.
+#
+# The script asserts the refusal *reason*, not merely a non-zero status: a
+# refusal that fired for another cause would not prove the rule it is named
+# after.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+state=/root/lab-signed-approval
+replay=/var/lib/your-cloud-auxiliary/approval-state.json
+anchor=/etc/your-cloud/approval-anchor.json
+failures=0
+
+report() { printf '%-58s %s\n' "$1" "$2"; }
+fail() { report "$1" "FAILED: $2"; failures=$((failures + 1)); }
+
+# accepts <label> <signer arguments...>
+accepts() {
+  local label=$1 output
+  shift
+  if output=$(lab-approval-signer "$@" | your-cloud auxiliary approve --format=json 2>&1); then
+    case "$output" in
+      *'"changed":false'*) report "$label" "accepted, changed=false" ;;
+      *) fail "$label" "an acceptance did not report changed=false: $output" ;;
+    esac
+  else
+    fail "$label" "the positive control was refused: $output"
+  fi
+}
+
+# refuses <label> <expected reason> <signer arguments...>
+refuses() {
+  local label=$1 expected=$2 output
+  shift 2
+  if output=$(lab-approval-signer "$@" | your-cloud auxiliary approve 2>&1); then
+    fail "$label" "accepted: $output"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) fail "$label" "refused for another reason: $output" ;;
+  esac
+}
+
+echo "== the series opens, and only at its first sequence =="
+refuses "sequence 2 on a machine that consumed none" \
+  "is not the first of a machine that consumed none" -epoch 1 -sequence 2
+accepts "sequence 1" -epoch 1 -sequence 1
+
+echo
+echo "== replay, older, skipped =="
+refuses "sequence 1 replayed" "is not the exact successor of 1" -epoch 1 -sequence 1
+refuses "sequence 3 skipped" "is not the exact successor of 1" -epoch 1 -sequence 3
+accepts "sequence 2, the exact successor" -epoch 1 -sequence 2
+
+echo
+echo "== every wrong target, key, epoch, operation and privilege =="
+refuses "another machine" "names another machine than this one" \
+  -epoch 1 -sequence 3 -machine lab-machine-2
+refuses "another infrastructure" "names another infrastructure" \
+  -epoch 1 -sequence 3 -infrastructure 8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3
+refuses "another authority epoch" "names another authority epoch" -epoch 2 -sequence 3
+refuses "a human key this machine does not anchor" \
+  "signed for a key this machine does not anchor" -epoch 1 -sequence 3 -seed 5
+refuses "a mutating privilege" "requires exactly its own privileges" \
+  -epoch 1 -sequence 3 -privilege mutate_local_state
+refuses "an operation this Auxiliary does not perform" \
+  "is not one this Auxiliary performs" -epoch 1 -sequence 3 -operation install_container
+# Issued long enough ago that its own expiry is already behind the machine's
+# clock, and issued in the future, which is the other side of the same window.
+refuses "an approval that already expired" "has expired" \
+  -epoch 1 -sequence 3 -lifetime 300 -age 400
+refuses "an approval that is not valid yet" "not valid yet" \
+  -epoch 1 -sequence 3 -lifetime 300 -age -400
+
+echo
+echo "== a transport that rewrites one field of a genuine envelope =="
+lab-approval-signer -epoch 1 -sequence 3 >"$state/genuine-3.json"
+for rewrite in 's/"sequence":3/"sequence":4/' \
+  's/"machine_id":"lab-machine-1"/"machine_id":"lab-machine-2"/' \
+  's/"approval_epoch":1/"approval_epoch":2/' \
+  's/dcf1"/dcf0"/'; do
+  if output=$(sed "$rewrite" "$state/genuine-3.json" | your-cloud auxiliary approve 2>&1); then
+    fail "rewritten by the transport ($rewrite)" "accepted: $output"
+  else
+    case "$output" in
+      *"signature does not cover this envelope"* | *"names another machine"* | *"names another authority epoch"*)
+        report "rewritten by the transport ($rewrite)" "refused" ;;
+      *) fail "rewritten by the transport ($rewrite)" "refused for another reason: $output" ;;
+    esac
+  fi
+done
+
+echo
+echo "== two approvals consumed at the same instant =="
+flock -x /var/lib/your-cloud-auxiliary/approval-state.lock -c "sleep 4" &
+held=$!
+sleep 1
+if output=$(your-cloud auxiliary approve <"$state/genuine-3.json" 2>&1); then
+  fail "concurrent consumption" "accepted while another held the position: $output"
+else
+  case "$output" in
+    *"already being consumed"*) report "concurrent consumption" "refused" ;;
+    *) fail "concurrent consumption" "refused for another reason: $output" ;;
+  esac
+fi
+wait "$held"
+
+echo
+echo "== the same envelope once the position is free =="
+if output=$(your-cloud auxiliary approve --format=json <"$state/genuine-3.json" 2>&1); then
+  report "sequence 3 after the lock is released" "accepted"
+else
+  fail "sequence 3 after the lock is released" "$output"
+fi
+
+echo
+echo "== the Auxiliary without local root authority =="
+install -m 0644 "$state/genuine-3.json" /tmp/lab-signed-approval.json
+if output=$(su -s /bin/sh nobody -c "your-cloud auxiliary approve </tmp/lab-signed-approval.json" 2>&1); then
+  fail "unprivileged auxiliary" "accepted: $output"
+else
+  case "$output" in
+    *"requires local root authority"*) report "unprivileged auxiliary" "refused" ;;
+    *) fail "unprivileged auxiliary" "refused for another reason: $output" ;;
+  esac
+fi
+rm -f /tmp/lab-signed-approval.json
+
+echo
+echo "== position that must survive the reboot =="
+cat "$replay"
+sha256sum "$replay" | tee "$state/position-before-reboot.sha256"
+case "$(cat "$replay")" in
+  *'"consumed_sequence":3'*) report "position before the reboot" "epoch 1, sequence 3" ;;
+  *) fail "position before the reboot" "unexpected position" ;;
+esac
+
+# The envelopes the post-reboot run presents. They are written now, before the
+# power cycle, so that nothing signed after the reboot could explain a refusal.
+lab-approval-signer -epoch 1 -sequence 3 -lifetime 900 >"$state/after-replay-3.json"
+lab-approval-signer -epoch 1 -sequence 1 -lifetime 900 >"$state/after-old-1.json"
+lab-approval-signer -epoch 1 -sequence 5 -lifetime 900 >"$state/after-skip-5.json"
+lab-approval-signer -epoch 1 -sequence 4 -lifetime 900 >"$state/after-next-4.json"
+sync
+
+echo
+echo "anchor: $(cat "$anchor")"
+[[ $failures -eq 0 ]] || { echo "FAILED: $failures assertions" >&2; exit 1; }
+echo "PASS: every refusal fired for its own reason, every positive control passed"

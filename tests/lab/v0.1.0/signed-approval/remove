@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Remove the perimeter and prove its absence rather than announce it.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+state=/root/lab-signed-approval
+anchor=/etc/your-cloud/approval-anchor.json
+replay_directory=/var/lib/your-cloud-auxiliary
+failures=0
+
+rm -rf "$state" "$replay_directory" /root/lab-signed-approval-sources /root/lab-signed-approval-signer
+rm -f "$anchor" /usr/local/bin/your-cloud /usr/local/bin/lab-approval-signer /tmp/lab-signed-approval.json
+rmdir /etc/your-cloud 2>/dev/null || true
+
+for path in "$state" "$anchor" "$replay_directory" /usr/local/bin/your-cloud \
+  /usr/local/bin/lab-approval-signer; do
+  if [[ -e "$path" ]]; then
+    echo "FAILED: $path is still present" >&2
+    failures=$((failures + 1))
+  else
+    printf '%-52s absent\n' "$path"
+  fi
+done
+
+[[ $failures -eq 0 ]] || exit 1
+echo "PASS: the signed-approval perimeter left nothing behind"

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# What the machine still refuses after a real power cycle.
+#
+# The four envelopes presented here were signed before the reboot, so nothing
+# produced by this run can explain a refusal. The position is compared to the
+# digest taken before the machine went down: it must be the same file, not a
+# file that merely happens to hold a plausible number.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+state=/root/lab-signed-approval
+replay=/var/lib/your-cloud-auxiliary/approval-state.json
+failures=0
+
+report() { printf '%-58s %s\n' "$1" "$2"; }
+fail() { report "$1" "FAILED: $2"; failures=$((failures + 1)); }
+
+uptime_seconds=$(cut -d. -f1 /proc/uptime)
+echo "boot: $(uptime -s), uptime ${uptime_seconds}s"
+if [[ "$uptime_seconds" -gt 900 ]]; then
+  fail "the machine really rebooted" "uptime is ${uptime_seconds}s"
+else
+  report "the machine really rebooted" "uptime ${uptime_seconds}s"
+fi
+
+echo
+echo "== the position found on disk after the reboot =="
+cat "$replay"
+if sha256sum --check --status "$state/position-before-reboot.sha256"; then
+  report "the position is byte for byte the one written before" "identical"
+else
+  fail "the position is byte for byte the one written before" "$(sha256sum "$replay")"
+fi
+
+refuses() {
+  local label=$1 expected=$2 document=$3 output
+  if output=$(your-cloud auxiliary approve <"$document" 2>&1); then
+    fail "$label" "accepted after the reboot: $output"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) fail "$label" "refused for another reason: $output" ;;
+  esac
+}
+
+echo
+echo "== replay, older and skipped, after the reboot =="
+refuses "sequence 3, consumed before the reboot" \
+  "is not the exact successor of 3" "$state/after-replay-3.json"
+refuses "sequence 1, older" "is not the exact successor of 3" "$state/after-old-1.json"
+refuses "sequence 5, skipped" "is not the exact successor of 3" "$state/after-skip-5.json"
+
+echo
+echo "== the exact successor, which shows the machine is not simply closed =="
+if output=$(your-cloud auxiliary approve --format=json <"$state/after-next-4.json" 2>&1); then
+  case "$output" in
+    *'"consumed_sequence":4'*'"changed":false'*)
+      report "sequence 4, the exact successor" "accepted, changed=false" ;;
+    *) fail "sequence 4, the exact successor" "unexpected report: $output" ;;
+  esac
+else
+  fail "sequence 4, the exact successor" "the positive control was refused: $output"
+fi
+refuses "sequence 4 replayed immediately" \
+  "is not the exact successor of 4" "$state/after-next-4.json"
+
+echo
+echo "== a Console recovered with a new human key stays locked =="
+if output=$(lab-approval-signer -epoch 1 -sequence 5 -seed 5 | your-cloud auxiliary approve 2>&1); then
+  fail "recovered Console before rotation" "accepted: $output"
+else
+  case "$output" in
+    *"does not anchor"*) report "recovered Console before rotation" "refused" ;;
+    *) fail "recovered Console before rotation" "refused for another reason: $output" ;;
+  esac
+fi
+
+echo
+echo "== the personal access rotates the anchor, machine by machine =="
+lab-approval-signer -anchor -epoch 2 -seed 5 >/etc/your-cloud/approval-anchor.json
+chmod 0600 /etc/your-cloud/approval-anchor.json
+if output=$(lab-approval-signer -epoch 2 -sequence 6 -seed 5 | your-cloud auxiliary approve 2>&1); then
+  fail "the new epoch continuing the old series" "accepted: $output"
+else
+  report "the new epoch continuing the old series" "refused"
+fi
+if output=$(lab-approval-signer -epoch 2 -sequence 1 -seed 5 | your-cloud auxiliary approve --format=json 2>&1); then
+  case "$output" in
+    *'"approval_epoch":2'*'"consumed_sequence":1'*) report "the rotated anchor reopens the path" "accepted" ;;
+    *) fail "the rotated anchor reopens the path" "unexpected report: $output" ;;
+  esac
+else
+  fail "the rotated anchor reopens the path" "$output"
+fi
+if output=$(lab-approval-signer -epoch 1 -sequence 4 -seed 1 | your-cloud auxiliary approve 2>&1); then
+  fail "the previous authority after the rotation" "accepted: $output"
+else
+  case "$output" in
+    *"names another authority epoch"*) report "the previous authority after the rotation" "refused" ;;
+    *) fail "the previous authority after the rotation" "refused for another reason: $output" ;;
+  esac
+fi
+
+echo
+echo "final position: $(cat "$replay")"
+[[ $failures -eq 0 ]] || { echo "FAILED: $failures assertions" >&2; exit 1; }
+echo "PASS: the anti-replay position survived a real power cycle"
