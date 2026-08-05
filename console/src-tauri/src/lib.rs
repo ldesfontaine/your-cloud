@@ -239,6 +239,15 @@ fn bootstrap_status(
     };
     match local.native_assistant.poll(&request_id) {
         Ok(NativeAssistantPoll::Running) => Ok(view),
+        // The helper proved its access and is gone. The session is cleared here
+        // because it is over; naming that outcome to the frontend belongs to
+        // the business closure of the palier, not to this one. The frontend
+        // therefore cannot read `access_verified`, and — having no way to write
+        // an event either — cannot produce one.
+        Ok(NativeAssistantPoll::AccessVerified) => {
+            local.bootstrap.clear();
+            Ok(view)
+        }
         Ok(NativeAssistantPoll::Unavailable) => {
             local.bootstrap.clear();
             Err(native_assistant::NativeAssistantError::Unavailable.into())
