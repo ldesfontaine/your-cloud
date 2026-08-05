@@ -256,6 +256,20 @@ implicite d'un autre format. L'ouverture est bornée et ne réécrit pas le fich
 Les octets lus, la passphrase et la clé déchiffrée sont zéroïsés sur les sorties
 contrôlées.
 
+Deux limites de ce repli sont mesurées et assumées plutôt que supposées. La
+dérivation, une fois lancée, n'est pas interruptible : un bail relâché pendant
+qu'elle travaille ne la coupe pas, il la laisse finir dans la borne la plus
+courte entre ce qui reste de la session et le plafond du pas. La clé produite
+n'est alors portée par aucun transport, aucune connexion n'est ouverte et la
+session se termine sur l'annulation expurgée ordinaire : l'état est donc bien
+détruit, dans une borne, et non à l'instant de la demande. Et un arrêt brutal
+n'exécute aucun effacement : ce qui rend le secret introuvable après un tel
+arrêt n'est pas une zéroïsation mais l'absence d'écriture durable — mémoire
+verrouillée hors de l'espace d'échange, clichés interdits. Cette protection
+couvre tout cliché produit par un débogueur ou par le noyau ; elle ne couvre
+pas un lecteur privilégié qui va directement à la mémoire d'un processus
+vivant, exposition dont la borne est la durée de l'opération elle-même.
+
 Le format, le chiffrement, le KDF et le nombre de rounds sont lus **avant**
 toute dérivation. Une enveloppe hors contrat est donc refusée sans demander de
 passphrase et sans dépenser de temps. Le nombre de rounds accepté est borné à
