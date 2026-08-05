@@ -16,6 +16,7 @@ windows-live-prompt-contract-test = ["native-prompt-contract-test"]
 delayed-start-contract-test = ["native-prompt-contract-test"]
 personal-access-contract-test = []
 controller-install-contract-test = []
+machine-identity-contract-test = []
 windows-agent-pipe-contract-test = []
 windows-personal-transport-contract-test = []
 
@@ -47,6 +48,11 @@ required-features = ["personal-access-contract-test"]
 name = "your-cloud-controller-install-fixture"
 path = "src/controller_install_fixture.rs"
 required-features = ["controller-install-contract-test"]
+
+[[bin]]
+name = "your-cloud-machine-identity-fixture"
+path = "src/machine_identity_fixture.rs"
+required-features = ["machine-identity-contract-test"]
 
 [[bin]]
 name = "your-cloud-agent-pipe-fixture"
