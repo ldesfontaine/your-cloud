@@ -83,10 +83,19 @@ impl ProtectedSecret {
     }
 
     #[cfg(test)]
-    fn observe_wipe_for_test(&mut self, observer: impl FnOnce(&[u8]) + 'static) {
+    fn observe_wipe_for_test(&mut self, observer: impl FnOnce(&[u8]) + Send + 'static) {
         self.allocation.wipe_observer = Some(Box::new(observer));
     }
 }
+
+/// A protected secret owns its mapping exclusively: nothing else holds the
+/// pointer, and every accessor borrows through `self`. Moving that ownership to
+/// another thread is therefore sound, and it is what the bounded key derivation
+/// needs — the passphrase is handed to the thread that derives, so that thread
+/// alone owns it and wipes it whether the derivation is used or abandoned.
+///
+/// `Sync` is deliberately not claimed: two threads must never share one secret.
+unsafe impl Send for ProtectedSecret {}
 
 impl fmt::Debug for ProtectedSecret {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -119,7 +128,7 @@ unsafe fn volatile_zero(pointer: *mut u8, len: usize) {
 struct ProtectedAllocation {
     pointer: NonNull<u8>,
     #[cfg(test)]
-    wipe_observer: Option<Box<dyn FnOnce(&[u8])>>,
+    wipe_observer: Option<Box<dyn FnOnce(&[u8]) + Send>>,
 }
 
 impl ProtectedAllocation {
