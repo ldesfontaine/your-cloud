@@ -94,13 +94,35 @@ pub const RELAY_REQUIREMENTS: RoleRequirements = RoleRequirements {
     free_disk_kib: 1_048_576,
 };
 
+/// The Agent's own floor, and the most modest of the three.
+///
+/// It is derived rather than chosen. The memory figure is the smallest whole
+/// power-of-two mebibyte above the `MemoryMax=192M` its own unit already caps
+/// the Daemon at — the same derivation the two floors above answer to, which is
+/// why it lands on the Relay's figure without being copied from it. The disk
+/// figure is the one place the Agent is really cheaper than everything else:
+/// its local buffer is bounded at sixty-four kibibytes by the Daemon's own
+/// limits, so what it needs room for is the shared artefact, its unit and its
+/// journal, and nothing that grows with what the estate holds.
+///
+/// It asks for less than the Controller on every axis, which is the point: a
+/// machine that could not host the private brain is still a machine Your Cloud
+/// must be able to observe.
+pub const AGENT_REQUIREMENTS: RoleRequirements = RoleRequirements {
+    memory_kib: 262_144,
+    processors: 1,
+    free_disk_kib: 262_144,
+};
+
 pub fn requirements(role: Role) -> RoleRequirements {
     match role {
         Role::Relay => RELAY_REQUIREMENTS,
-        // The Agent and the Auxiliary are not placed by this palier. They are
-        // given the Controller's floor rather than a smaller one invented here,
-        // so nothing is ever proposed on a machine that has not cleared the
-        // strictest bound this module knows.
+        Role::Agent => AGENT_REQUIREMENTS,
+        // The Controller, and the Auxiliary — which is never placed at all and
+        // is refused by `propose` before this is ever read. Giving it the
+        // strictest floor this module knows rather than a smaller one invented
+        // here keeps that refusal the only thing standing between it and a
+        // machine.
         _ => CONTROLLER_REQUIREMENTS,
     }
 }
@@ -168,7 +190,12 @@ pub enum PlacementRefusal {
     ControllerBesideRelay,
     /// The Relay was asked for on an endpoint nobody declared a candidate.
     RelayOnUndeclaredCandidate,
-    /// This palier proposes the Controller and the Relay, and nothing else.
+    /// A role no placement ever proposes. The Auxiliary is the only one left:
+    /// it is a one-shot mode of the same artefact rather than something that
+    /// runs on a machine, so there is no placement to approve, and
+    /// `machine_identity::plan::activate` refuses it as a service under its own
+    /// name. The variant still carries the role it refused, so a caller that
+    /// asks for something this module does not place is told which.
     RoleOutsideThisPalier(Role),
     /// The approval names another role, or another endpoint, than the proposal
     /// it was given.
@@ -268,6 +295,25 @@ const RELAY_FLOWS: [Flow; 1] = [Flow {
     port: 443,
 }];
 const RELAY_PRIVILEGES: [&str; 1] = ["one systemd unit, no ambient capability"];
+
+/// The account the Daemon's unit runs under. It is a systemd dynamic user, like
+/// the Controller's, and is named here for the same reason: a user approving a
+/// placement is told which name will appear on the machine, whether or not it
+/// outlives the unit.
+const AGENT_ACCOUNTS: [&str; 1] = ["your-cloud-daemon"];
+const AGENT_ARTIFACTS: [&str; 3] = [
+    "/etc/your-cloud/roles",
+    "/etc/your-cloud/daemon.env",
+    "/var/lib/private/your-cloud-daemon",
+];
+/// The Agent opens no listener. Its one flow is outbound, towards the Relay's
+/// ingestion, and the proposal says so before anything is approved rather than
+/// letting "an agent on every machine" be read as "a port on every machine".
+const AGENT_FLOWS: [Flow; 1] = [Flow {
+    description: "daemon to relay ingestion, outbound only",
+    port: 8443,
+}];
+const AGENT_PRIVILEGES: [&str; 1] = ["one systemd unit, no ambient capability"];
 
 /// Judges one role against one audited machine, and names every reason it does
 /// not fit.
@@ -405,6 +451,23 @@ pub fn propose(
                 return Err(PlacementRefusal::RelayOnUndeclaredCandidate);
             }
         }
+        // **The Agent has no placement rule, and that absence is the rule.**
+        // Every machine this release manages receives one, so there is no endpoint
+        // it is the wrong choice for: an exposed machine is exactly as much in
+        // need of being observed as a private one, an intermittent machine is
+        // one whose absences the observation is there to record, and a machine
+        // already declaring the Relay is a machine whose Relay somebody will
+        // want the health of. The three refusals above are the Controller's
+        // because they protect the *confidentiality and the continuity of the
+        // control plane*; the Agent holds neither, so borrowing them would
+        // refuse it for reasons that are not about it.
+        //
+        // What the Agent is still judged on is `compatibility` below — the same
+        // distribution, architecture, init system and cgroup hierarchy the
+        // audit of #36 knows how to read, against its own resource floor. No
+        // fact is taken on trust for it that would not be taken on trust for
+        // the Controller.
+        Role::Agent => {}
         other => return Err(PlacementRefusal::RoleOutsideThisPalier(other)),
     }
 
@@ -436,6 +499,13 @@ pub fn propose(
             &RELAY_FLOWS[..],
             &RELAY_PRIVILEGES[..],
         ),
+        Role::Agent => (
+            &AGENT_ACCOUNTS[..],
+            &AGENT_ARTIFACTS[..],
+            &AGENT_FLOWS[..],
+            &AGENT_PRIVILEGES[..],
+        ),
+        // The Controller. The Auxiliary never reaches this point.
         _ => (
             &CONTROLLER_ACCOUNTS[..],
             &CONTROLLER_ARTIFACTS[..],
@@ -823,14 +893,159 @@ mod tests {
         assert_eq!(approved.endpoint(), "machine-1");
     }
 
-    /// The two roles this palier places, and no third one by accident.
+    /// The Auxiliary is the one role no placement proposes, and it is refused
+    /// by its own name rather than by an absent branch.
     #[test]
     fn no_other_role_is_placed_by_this_palier() {
-        for role in [Role::Agent, Role::Auxiliary] {
-            assert_eq!(
-                propose(role, &private_endpoint(), &compatible()),
-                Err(PlacementRefusal::RoleOutsideThisPalier(role))
+        assert_eq!(
+            propose(Role::Auxiliary, &private_endpoint(), &compatible()),
+            Err(PlacementRefusal::RoleOutsideThisPalier(Role::Auxiliary))
+        );
+        // And it is refused wherever it is asked for, so no endpoint
+        // declaration lets it in through a side door.
+        let mut anywhere = private_endpoint();
+        anywhere.exposure = Exposure::Exposed;
+        anywhere.availability = Availability::Intermittent;
+        anywhere.relay_candidate = true;
+        assert_eq!(
+            propose(Role::Auxiliary, &anywhere, &compatible()),
+            Err(PlacementRefusal::RoleOutsideThisPalier(Role::Auxiliary))
+        );
+    }
+
+    /// **The Agent runs on every managed machine.** The three placement
+    /// refusals the Controller answers to are refusals about the control plane,
+    /// and none of them applies to an observer: the same machine that is too
+    /// exposed, too intermittent and too busy running the Relay to host the
+    /// Controller still gets an Agent proposed on it.
+    #[test]
+    fn the_agent_is_proposed_where_the_controller_is_refused() {
+        let mut hostile = private_endpoint();
+        hostile.exposure = Exposure::Exposed;
+        hostile.availability = Availability::Intermittent;
+        let mut machine = compatible();
+        machine.installation = Observed::Known(Installation::Declared(vec![Role::Relay]));
+
+        // The Controller, on that very endpoint and that very machine.
+        assert_eq!(
+            propose(Role::Controller, &hostile, &machine),
+            Err(PlacementRefusal::ControllerOnExposedEndpoint)
+        );
+
+        let proposal = propose(Role::Agent, &hostile, &machine)
+            .expect("every managed machine receives an Agent");
+        assert_eq!(proposal.role, Role::Agent);
+        assert_eq!(proposal.endpoint, "machine-1");
+        assert_eq!(proposal.required, AGENT_REQUIREMENTS);
+        // The cohabitation and the fault domain are announced for it exactly as
+        // they are for the other roles.
+        assert_eq!(
+            proposal.cohabitation,
+            Cohabitation::WithDeclaredRoles(vec![Role::Relay])
+        );
+        assert_eq!(proposal.fault_domain, FaultDomain::SharedWithDeclaredRoles);
+        // And so is everything approving it is about.
+        assert_eq!(proposal.accounts, ["your-cloud-daemon"]);
+        assert!(!proposal.artifacts.is_empty());
+        assert!(!proposal.flows.is_empty());
+        assert!(!proposal.privileges.is_empty());
+        assert!(proposal.unverified.is_empty());
+    }
+
+    /// The Agent's floor is its own, and it is more modest than the
+    /// Controller's on every axis rather than on the one that happened to be
+    /// measured.
+    #[test]
+    fn the_agent_asks_for_less_than_the_controller_on_every_axis() {
+        assert!(AGENT_REQUIREMENTS.memory_kib < CONTROLLER_REQUIREMENTS.memory_kib);
+        assert!(AGENT_REQUIREMENTS.free_disk_kib < CONTROLLER_REQUIREMENTS.free_disk_kib);
+        assert!(AGENT_REQUIREMENTS.processors <= CONTROLLER_REQUIREMENTS.processors);
+        assert_eq!(requirements(Role::Agent), AGENT_REQUIREMENTS);
+
+        // A machine that clears the Agent's floor and nothing else hosts the
+        // Agent, and is refused the two roles that ask for more disk.
+        let mut small = compatible();
+        small.memory_kib = Observed::Known(AGENT_REQUIREMENTS.memory_kib);
+        small.free_disk_kib = Observed::Known(AGENT_REQUIREMENTS.free_disk_kib);
+        assert_eq!(compatibility(Role::Agent, &small), Vec::new());
+        assert!(
+            compatibility(Role::Controller, &small).contains(&Incompatibility::Resource {
+                resource: Resource::FreeDisk,
+                observed: AGENT_REQUIREMENTS.free_disk_kib,
+                required: CONTROLLER_REQUIREMENTS.free_disk_kib,
+            })
+        );
+        assert!(
+            compatibility(Role::Relay, &small).contains(&Incompatibility::Resource {
+                resource: Resource::FreeDisk,
+                observed: AGENT_REQUIREMENTS.free_disk_kib,
+                required: RELAY_REQUIREMENTS.free_disk_kib,
+            })
+        );
+    }
+
+    /// Opening the Agent widened no other check. It is judged on the same four
+    /// compatibility facts as everything else, and an unverified one is a
+    /// refusal for it too.
+    #[test]
+    fn the_agent_is_judged_on_the_same_audited_facts_as_the_other_roles() {
+        let mut wrong = compatible();
+        wrong.distribution = Observed::Known(Distribution {
+            id: "ubuntu".into(),
+            version_id: "24.04".into(),
+        });
+        wrong.init = Observed::Known(InitSystem::Other("openrc".into()));
+        wrong.cgroup = Observed::Known(CgroupHierarchy::Legacy);
+        let Err(PlacementRefusal::Incompatible(refusals)) =
+            propose(Role::Agent, &private_endpoint(), &wrong)
+        else {
+            panic!("an incompatible machine must be refused an Agent too");
+        };
+        assert_eq!(refusals.len(), 3);
+
+        let unknown = ObservedMachine::unanswered(Unverified::NotAnswered);
+        let Err(PlacementRefusal::Incompatible(refusals)) =
+            propose(Role::Agent, &private_endpoint(), &unknown)
+        else {
+            panic!("a machine that answered nothing must be refused an Agent");
+        };
+        for fact in FACT_NAMES {
+            assert!(
+                refusals.contains(&Incompatibility::Unverified {
+                    fact,
+                    why: Unverified::NotAnswered
+                }),
+                "{fact} must be refused as unverified for the Agent"
             );
         }
+    }
+
+    /// An approved Agent produces a witness, which is what the palier that
+    /// enrols machines has to be handed. The exactness of [`approve`] is not
+    /// relaxed for it.
+    #[test]
+    fn an_agent_is_approved_exactly_like_every_other_role() {
+        let proposal =
+            propose(Role::Agent, &private_endpoint(), &compatible()).expect("a compatible machine");
+        assert_eq!(
+            approve(
+                &proposal,
+                &Approval {
+                    role: Role::Agent,
+                    endpoint: "machine-2".into(),
+                }
+            ),
+            Err(PlacementRefusal::RoleNotApproved)
+        );
+        let approved = approve(
+            &proposal,
+            &Approval {
+                role: Role::Agent,
+                endpoint: "machine-1".into(),
+            },
+        )
+        .expect("the exact proposal may be approved");
+        assert_eq!(approved.role(), Role::Agent);
+        assert_eq!(approved.endpoint(), "machine-1");
     }
 }
