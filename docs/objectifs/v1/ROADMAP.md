@@ -99,10 +99,17 @@ que l'adresse figée, la clé d'hôte, l'identité choisie et la sonde fixe
 autorisé. Il ne vaut ni audit, ni installation, ni succès d'amorçage. La
 séquence de fermeture est
 `#45 → #51 → #52 → #53 → #54 → #42 → #35`. `#45` et `#51` sont fermées depuis
-le 3 août 2026. `#52` est en cours dans la
-[PR `#69`](https://github.com/ldesfontaine/your-cloud/pull/69) : sa moitié
-Linux est implémentée et prouvée dans le LAB, sa moitié Windows attend le LAB
-ouvert par `#67` et aucune porte native ne l'a couverte.
+le 3 août 2026. `#52`, `#53` et `#54` sont implémentées sur les deux
+plateformes et prouvées dans le LAB — 50 cas contre un vrai `sshd`, un vrai
+agent et un vrai `sudo` synthétiques, plus dix suites vertes dans la VM
+d'évaluation Windows — puis fusionnées dans `main` jusqu'à `5edd48e`.
+
+Le mainteneur a fermé `#42` et `#35` le 5 août 2026 **sur cette preuve LAB
+seule**. Cette fermeture ne vaut pas attestation : aucune matrice native n'a
+couvert ce code et le dernier SHA porteur d'une preuve native reste `8ed2f57`.
+`#52`, `#53` et `#54` restent donc ouvertes et portent cette dette ; une seule
+matrice les couvrira sur un candidat de palier unique à la réinitialisation du
+cycle, vers le 1er septembre 2026. La suite du palier `#13` reprend à `#36`.
 
 ## État de départ
 
