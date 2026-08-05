@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Install the Controller on this machine, in the order the architecture fixes,
+# recording what each step created so a failure knows what it may take back.
+#
+# It runs as root on the machine the user approved, and it is handed a bundle
+# that has *already* been judged: the caller ran the Assistant's own gate on the
+# manifest, the signature and this exact artefact before this script existed in
+# the picture. Nothing here re-judges it, and nothing here would install
+# anything if the caller had not.
+#
+# `YOUR_CLOUD_FAIL_AT` exists for the rollback proof only. It stops the sequence
+# at a named step so the ledger that comes back describes a real partial
+# installation rather than a hand-written list.
+set -euo pipefail
+
+[[ $(id -u) -eq 0 ]] || { echo "install-controller must run as root" >&2; exit 1; }
+
+artifact=${1:?usage: install-controller ARTIFACT LISTEN ALLOWED_SOURCE RELAY_ENDPOINT}
+listen=${2:?missing listen address}
+allowed_source=${3:?missing allowed source}
+relay_endpoint=${4:?missing relay endpoint}
+fail_at=${YOUR_CLOUD_FAIL_AT:-}
+
+binary=/usr/lib/your-cloud/your-cloud
+unit=your-cloud-controller.service
+state=/var/lib/private/your-cloud-controller
+configuration=/etc/your-cloud/controller.env
+credentials=/etc/your-cloud/controller-credentials
+ledger=/root/controller-install-ledger
+
+: >"$ledger"
+
+# One ledger line per item, in the exact vocabulary the Assistant's unwind
+# reads. `record` is called *after* the step looked at the machine, never
+# before, so a provenance is always an observation.
+record() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$ledger"; }
+
+stop_if_requested() {
+  [[ "$fail_at" == "$1" ]] || return 0
+  echo "STOPPED_AT=$1"
+  exit 9
+}
+
+# --- step 1: the package -----------------------------------------------------
+if dpkg-query -W -f='${Status}' your-cloud-server 2>/dev/null | grep -q '^install ok installed$'; then
+  record PACKAGE your-cloud-server FOUND
+else
+  DEBIAN_FRONTEND=noninteractive dpkg --install "$artifact" >/dev/null
+  if dpkg-query -W -f='${Status}' your-cloud-server 2>/dev/null | grep -q '^install ok installed$'; then
+    record PACKAGE your-cloud-server CREATED
+  else
+    # The package is neither absent nor cleanly installed. It is recorded as
+    # unknown rather than as created: nothing here may remove a half-configured
+    # package, and the unwind has to say so.
+    record PACKAGE your-cloud-server UNKNOWN
+    echo "FAILED: the package is neither absent nor installed" >&2
+    exit 1
+  fi
+fi
+stop_if_requested package
+
+# --- step 2: the machine-specific configuration the package never carries ----
+if [[ -e "$configuration" ]]; then
+  record FILE "$configuration" FOUND
+else
+  install -d -m 0755 /etc/your-cloud
+  install -m 0644 /dev/null "$configuration"
+  {
+    echo "CONTROLLER_LISTEN=$listen"
+    echo "CONTROLLER_ALLOWED_SOURCE=$allowed_source"
+    echo "CONTROLLER_RELAY_ENDPOINT=$relay_endpoint"
+  } >"$configuration"
+  record FILE "$configuration" CREATED
+fi
+stop_if_requested configuration
+
+# --- step 3: the private state and the Controller's own identity -------------
+if [[ -d "$state" ]]; then
+  record DIRECTORY "$state" FOUND
+else
+  install -d -m 0700 "$state"
+  record DIRECTORY "$state" CREATED
+fi
+if [[ -f "$state/authority.json" ]]; then
+  record FILE "$state/authority.json" FOUND
+else
+  "$binary" controller init -state-dir="$state" >/root/controller-init.out
+  record FILE "$state/authority.json" CREATED
+fi
+stop_if_requested state
+
+# --- step 4: the root-owned credential sources -------------------------------
+if [[ -d "$credentials" ]]; then
+  record DIRECTORY "$credentials" FOUND
+else
+  install -d -m 0700 "$credentials"
+  record DIRECTORY "$credentials" CREATED
+fi
+for source in controller-reader.crt controller-reader.key relay-reader-ca.crt; do
+  if [[ -f "$credentials/$source" ]]; then
+    record CREDENTIAL_SOURCE "$credentials/$source" FOUND
+  else
+    install -m 0600 "/root/controller-install-credentials/$source" "$credentials/$source"
+    record CREDENTIAL_SOURCE "$credentials/$source" CREATED
+  fi
+done
+stop_if_requested credentials
+
+# --- step 5: the one unit this palier activates ------------------------------
+# The package delivered three units inactive. Exactly one is enabled here, and
+# the two others are left exactly as the package left them.
+if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+  record UNIT_STATE "$unit" FOUND
+else
+  systemctl enable --quiet "$unit"
+  record UNIT_STATE "$unit" CREATED
+fi
+systemctl start "$unit"
+# The unit is asked for, and then the machine is asked whether it really runs.
+# A `start` that returned zero says only that systemd accepted the job.
+for _ in $(seq 1 30); do
+  systemctl is-active --quiet "$unit" && break
+  sleep 1
+done
+if ! systemctl is-active --quiet "$unit"; then
+  echo "FAILED: $unit did not become active" >&2
+  journalctl -u "$unit" -n 20 --no-pager >&2 || true
+  exit 1
+fi
+stop_if_requested unit
+
+echo "INSTALL_OK"
+echo "LEDGER=$ledger"

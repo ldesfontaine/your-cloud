@@ -96,6 +96,67 @@ rejoués autant de fois que voulu, `check` après un simple `sync`, `run` entre 
 - La présence de ces sources ne constitue pas une preuve. Seule une exécution
   identifiée en est une.
 
+## [`controller-install/`](controller-install/) — installation réelle d'un Controller
+
+C'est le premier harnais du palier qui **mute** une machine du LAB. Il joue les
+deux côtés que l'architecture nomme : `lab-console` porte la Console et
+l'Assistant, `lab-machine-1` est la machine privée que le placement de #36 a
+approuvée, et l'unique endpoint déclaré du prévol est `lab-console` elle-même —
+joignable *depuis le Controller*, ce qui est tout l'objet de l'étape.
+
+- [`prove`](controller-install/prove) est l'entrée unique, exécutée depuis le
+  poste de pilotage. Elle commence par la garde d'inventaire obligatoire, puis
+  enchaîne sept sous-commandes : `bundle`, `setup`, `judge`, `install`,
+  `shutdown`, `rollback` et `remove`. Sans argument, elle fait les sept dans
+  l'ordre et démonte le périmètre même lorsqu'une étape échoue. `setup` refuse
+  d'être appelée seule : elle a besoin du lot construit par le même passage.
+- `bundle` construit le `.deb` et son manifeste dans `lab-machine-1`, seule VM
+  du LAB qui porte Go, puis les rapatrie. Rien n'est téléchargé et rien n'est
+  versionné : l'artefact d'une preuve est produit par la preuve.
+- [`judge`](controller-install/judge) exécute dans `lab-console` la matrice
+  complète des refus et de leurs contrôles positifs. Chaque verdict sort du
+  module `installation` compilé, à travers le binaire de fixture : un harnais
+  qui comparerait les empreintes lui-même resterait vert contre un produit ayant
+  cessé de juger.
+- [`install-controller`](controller-install/install-controller) installe dans
+  l'ordre que l'architecture fixe et **enregistre ce que chaque étape a
+  observé**, jamais ce qu'elle espérait. `YOUR_CLOUD_FAIL_AT` arrête la séquence
+  à une étape nommée : c'est ce qui donne au rollback un registre réel plutôt
+  qu'une liste écrite à la main.
+- `shutdown` tue les processus de l'Assistant, vérifie qu'aucun ne survit, puis
+  **arrête réellement** `lab-console` par le contrôleur du LAB et interroge le
+  Controller depuis le poste de pilotage. Le PID est comparé avant et après :
+  une unité morte puis relancée par systemd rendrait elle aussi `active`.
+- [`remove`](controller-install/remove) rend `lab-machine-1` à son état initial
+  et échoue visiblement s'il ne peut pas prouver l'absence de ce qu'il a retiré.
+  Il est aussi la remise à zéro entre les points d'arrêt du rollback, et c'est
+  pourquoi il ne retire pas les entrées du périmètre lui-même.
+- [`_signer/`](controller-install/_signer/) est le signataire synthétique du
+  manifeste. Il signe les octets du fichier verbatim, sans canonicalisation, et
+  son en-tête dit ce qu'il ne prouve pas.
+
+### Usage
+
+```text
+tests/lab/v0.1.0/controller-install/prove            # les sept étapes
+tests/lab/v0.1.0/controller-install/prove judge
+tests/lab/v0.1.0/controller-install/prove rollback
+tests/lab/v0.1.0/controller-install/prove remove
+```
+
+### Limites et hygiène
+
+- Aucune adresse de LAB, aucune matière de clé et aucun secret ne vit dans ces
+  fichiers. Les adresses viennent de `labctl`, l'ancre est générée au montage et
+  détruite au démontage, les certificats sont synthétiques et valables un jour.
+- L'ancre est un **paramètre** de la vérification, pas une constante compilée :
+  ce harnais prouve que l'Assistant refuse ce que l'ancre n'a pas signé, jamais
+  que l'ancre est la bonne. Sceller l'ancre dans l'installateur reste à faire.
+- Le `.deb` est construit à chaque passage et n'est jamais versionné.
+- Les deux VM restent démarrées ; ce harnais ne crée ni ne détruit de topologie.
+- La présence de ces sources ne constitue pas une preuve. Seule une exécution
+  identifiée en est une.
+
 ## [`windows-helper/`](windows-helper/) — moitié Windows du helper natif
 
 Les suites de contrat propres à Windows n'ont pas d'équivalent Linux : le Job

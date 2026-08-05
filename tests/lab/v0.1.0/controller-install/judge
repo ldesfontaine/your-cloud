@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# Run every bundle, preflight and rollback case against the Assistant's own
+# gates, each refusal beside its positive control.
+#
+# It runs in lab-console, which is where the Assistant lives. Every verdict here
+# comes out of the compiled `installation` module through the fixture binary —
+# nothing in this file compares a digest itself, because a harness that judged
+# on its own behalf would stay green against a product that had stopped
+# judging at all.
+set -euo pipefail
+
+state=${YOUR_CLOUD_LAB_CONTROLLER_STATE:-/root/lab-controller-install}
+fixture="$state/fixture"
+signer="$state/signer"
+seed="$state/keys/seed"
+work="$state/work"
+version=0.0.3
+
+[[ -x "$fixture" ]] || { echo "no fixture at $fixture" >&2; exit 1; }
+[[ -x "$signer" ]] || { echo "no signer at $signer" >&2; exit 1; }
+
+rm -rf "$work"
+install -d -m 0700 "$work"
+
+failures=0
+report() { printf 'PASS  %-52s %s\n' "$1" "$2"; }
+fail() { printf 'FAIL  %-52s %s\n' "$1" "$2" >&2; failures=$((failures + 1)); }
+
+# Signs a manifest with the perimeter's anchor and hands back the pair. Hostile
+# manifests are signed too: a case refused for its *meaning* must not be
+# refusable for a missing signature instead.
+sign_as_anchor() {
+  local label=$1 document=$2
+  printf '%s' "$document" >"$work/$label.json"
+  "$signer" -seed "$seed" -manifest "$work/$label.json" \
+    -anchor "$work/$label.anchor" -signature "$work/$label.sig"
+}
+
+# accepts <label> <anchor> <manifest> <signature> <version> <artifact>
+accepts() {
+  local label=$1 output
+  shift
+  if output=$("$fixture" verify-bundle "$@" 2>&1); then
+    case "$output" in
+      VERIFIED*) report "$label" "${output#VERIFIED }" ;;
+      *) fail "$label" "an acceptance did not report a verified bundle: $output" ;;
+    esac
+  else
+    fail "$label" "the positive control was refused: $output"
+  fi
+}
+
+# refuses <label> <expected reason> <fixture arguments...>
+refuses() {
+  local label=$1 expected=$2 output
+  shift 2
+  if output=$("$fixture" "$@" 2>&1); then
+    fail "$label" "accepted: $output"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) fail "$label" "refused for another reason: $output" ;;
+  esac
+}
+
+echo "--- the bundle: version, target, size and digest before any privilege ---"
+
+artifact="$state/bundle/your-cloud-server_${version}_amd64.deb"
+manifest="$state/bundle/bundle-manifest.json"
+anchor="$state/bundle/anchor"
+signature="$state/bundle/bundle-manifest.sig"
+
+accepts "the embedded bundle, unaltered" \
+  "$anchor" "$manifest" "$signature" "$version" "$artifact"
+
+# One byte of the artefact, same length: only the digest can catch this.
+cp "$artifact" "$work/tampered.deb"
+printf '\x00' | dd of="$work/tampered.deb" bs=1 seek=64 count=1 conv=notrunc status=none
+refuses "an artefact altered by one byte" "DigestMismatch" \
+  verify-bundle "$anchor" "$manifest" "$signature" "$version" "$work/tampered.deb"
+
+head -c $(( $(stat -c '%s' "$artifact") - 1 )) "$artifact" >"$work/short.deb"
+refuses "an artefact one byte shorter" "SizeMismatch" \
+  verify-bundle "$anchor" "$manifest" "$signature" "$version" "$work/short.deb"
+
+# The manifest rewritten after signing: the signature answers first.
+sed 's/"size":[0-9]*/"size":1/' "$manifest" >"$work/rewritten.json"
+refuses "a manifest rewritten after signing" "SignatureNotByAnchor" \
+  verify-bundle "$anchor" "$work/rewritten.json" "$signature" "$version" "$artifact"
+
+# A manifest signed by a perfectly good key that is not the anchor.
+head -c 32 /dev/urandom >"$work/stranger.seed"
+"$signer" -seed "$work/stranger.seed" -manifest "$manifest" \
+  -anchor "$work/stranger.anchor" -signature "$work/stranger.sig"
+refuses "a manifest signed by a key that is not the anchor" "SignatureNotByAnchor" \
+  verify-bundle "$anchor" "$manifest" "$work/stranger.sig" "$version" "$artifact"
+
+# Signed by the anchor, but announcing another architecture.
+sign_as_anchor arm64 "$(sed 's/debian-13-amd64/debian-13-arm64/' "$manifest")"
+refuses "a bundle the anchor signed for arm64" "UnsupportedTarget" \
+  verify-bundle "$anchor" "$work/arm64.json" "$work/arm64.sig" "$version" "$artifact"
+
+# Signed by the anchor, but not the version this Assistant installs.
+sign_as_anchor otherversion "$(sed "s/\"version\":\"$version\"/\"version\":\"9.9.9\"/" "$manifest")"
+refuses "a bundle the anchor signed for another version" "UnexpectedVersion" \
+  verify-bundle "$anchor" "$work/otherversion.json" "$work/otherversion.sig" "$version" "$artifact"
+
+# Signed by the anchor, but not a server bundle manifest at all.
+sign_as_anchor foreign "$(sed 's/your-cloud-server-bundle/your-cloud-console-linux-candidate/' "$manifest")"
+refuses "a manifest the anchor signed for another kind" "ForeignKind" \
+  verify-bundle "$anchor" "$work/foreign.json" "$work/foreign.sig" "$version" "$artifact"
+
+echo "--- the preflight: every endpoint, from the Controller ---"
+
+target_name=${YOUR_CLOUD_LAB_CONTROLLER_TARGET_NAME:?missing declared target name}
+target_key=${YOUR_CLOUD_LAB_CONTROLLER_TARGET_KEY:?missing confirmed host key}
+stranger_key="SHA256:${target_key:7:42}X"
+
+printf '%s\t%s\t%s\n' "$target_name" "$target_key" "$target_key" >"$work/preflight-ok"
+if output=$("$fixture" preflight "$work/preflight-ok" 2>&1); then
+  report "every declared endpoint answers its confirmed key" "$output"
+else
+  fail "every declared endpoint answers its confirmed key" "$output"
+fi
+
+printf '%s\t%s\t%s\n' "$target_name" "$target_key" "$stranger_key" >"$work/preflight-hostile-key"
+refuses "an endpoint presenting another host key" "HostKeyMismatch" \
+  preflight "$work/preflight-hostile-key"
+
+printf '%s\t%s\tUNREACHABLE\n' "$target_name" "$target_key" >"$work/preflight-unreachable"
+refuses "an endpoint the Controller cannot reach" "Unreachable" \
+  preflight "$work/preflight-unreachable"
+
+printf '%s\t\t%s\n' "$target_name" "$target_key" >"$work/preflight-unconfirmed"
+refuses "an endpoint whose key was never confirmed" "NeverConfirmed" \
+  preflight "$work/preflight-unconfirmed"
+
+# The property of the issue: one endpoint failing denies the whole clearance,
+# so nothing downstream can touch the one that answered.
+{
+  printf '%s\t%s\t%s\n' "$target_name" "$target_key" "$target_key"
+  printf 'second-endpoint\t%s\tUNREACHABLE\n' "$target_key"
+} >"$work/preflight-partial"
+refuses "one endpoint failing denies the whole clearance" "second-endpoint" \
+  preflight "$work/preflight-partial"
+
+echo "--- the rollback: what a failure may take back ---"
+
+printf 'PACKAGE\tyour-cloud-server\tCREATED\nFILE\t/etc/your-cloud/controller.env\tCREATED\nDIRECTORY\t/var/lib/private/your-cloud-controller\tCREATED\n' \
+  >"$work/unwind-complete"
+if output=$("$fixture" unwind "$work/unwind-complete" 2>&1); then
+  case "$output" in
+    "COMPLETE /var/lib/private/your-cloud-controller,/etc/your-cloud/controller.env,your-cloud-server")
+      report "a fully observed failure unwinds in reverse order" "$output" ;;
+    *) fail "a fully observed failure unwinds in reverse order" "$output" ;;
+  esac
+else
+  fail "a fully observed failure unwinds in reverse order" "$output"
+fi
+
+printf 'PACKAGE\tyour-cloud-server\tFOUND\nDIRECTORY\t/var/lib/private/your-cloud-controller\tCREATED\n' \
+  >"$work/unwind-found"
+if output=$("$fixture" unwind "$work/unwind-found" 2>&1); then
+  case "$output" in
+    *your-cloud-server*) fail "a package that was already there is never removed" "$output" ;;
+    "COMPLETE /var/lib/private/your-cloud-controller")
+      report "a package that was already there is never removed" "$output" ;;
+    *) fail "a package that was already there is never removed" "$output" ;;
+  esac
+else
+  fail "a package that was already there is never removed" "$output"
+fi
+
+printf 'PACKAGE\tyour-cloud-server\tUNKNOWN\nDIRECTORY\t/var/lib/private/your-cloud-controller\tCREATED\n' \
+  >"$work/unwind-unknown"
+refuses "a half-configured package forbids a blind removal" "INCOMPLETE" \
+  unwind "$work/unwind-unknown"
+
+printf 'DIRECTORY\t/var/lib/private/your-cloud-controller\tCREATED\nTRANSFER\t-\t-\n' \
+  >"$work/unwind-transfer"
+refuses "nothing is undone after the authority is transferred" "AFTER_TRANSFER" \
+  unwind "$work/unwind-transfer"
+
+[[ $failures -eq 0 ]] || { echo "FAILED: $failures assertions" >&2; exit 1; }
+echo "PASS: every refusal fired for its own reason, every positive control passed"

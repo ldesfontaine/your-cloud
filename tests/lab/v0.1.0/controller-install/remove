@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Return this machine to the state the perimeter found, and prove it.
+#
+# The order is the reverse of the installation, and every removal is followed by
+# an assertion of absence: a teardown that only issued the commands would leave
+# the next run to discover what it failed to take away.
+#
+# It removes what *this harness* created, including the persistent state and the
+# configuration. That is deliberately more than the package's own `postrm` is
+# allowed to do — the contract forbids a package from erasing configuration,
+# secrets or identities — and it is the harness, which knows it created them,
+# that takes them back.
+set -euo pipefail
+
+[[ $(id -u) -eq 0 ]] || { echo "remove must run as root" >&2; exit 1; }
+
+unit=your-cloud-controller.service
+state=/var/lib/private/your-cloud-controller
+configuration=/etc/your-cloud
+package=your-cloud-server
+status=0
+
+absent() {
+  [[ ! -e "$1" ]] || { echo "FAILED: $1 is still present" >&2; status=1; }
+}
+
+systemctl stop "$unit" >/dev/null 2>&1 || true
+systemctl disable --quiet "$unit" >/dev/null 2>&1 || true
+
+if dpkg-query -W -f='${Status}' "$package" >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive dpkg --purge "$package" >/dev/null 2>&1 || status=1
+fi
+
+# Every private byte the perimeter generated is destroyed rather than merely
+# unlinked: the credential sources and the Controller's own identity lived here.
+if [[ -d "$state" ]]; then
+  find "$state" -type f -exec shred -u {} + 2>/dev/null || true
+  rm -rf "$state"
+fi
+if [[ -d "$configuration" ]]; then
+  find "$configuration" -type f -exec shred -u {} + 2>/dev/null || true
+  rm -rf "$configuration"
+fi
+# The ledger and the init output are products of one installation attempt and go
+# with it. The perimeter's own inputs — the staged bundle, the synthetic
+# credential sources and the build directory — are *not* removed here: this
+# script is also the reset between the rollback proof's stop points, and each of
+# those has to start from the same inputs. `prove remove` takes them away.
+rm -rf /root/controller-install-ledger /root/controller-init.out
+systemctl daemon-reload >/dev/null 2>&1 || true
+
+absent "$state"
+absent "$configuration"
+absent /usr/lib/your-cloud
+absent /usr/lib/systemd/system/your-cloud-controller.service
+absent /usr/lib/systemd/system/your-cloud-daemon.service
+absent /usr/lib/systemd/system/your-cloud-relay.service
+absent /root/controller-install-ledger
+
+if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q '^install ok installed$'; then
+  echo "FAILED: $package is still installed" >&2
+  status=1
+fi
+if systemctl is-active --quiet "$unit" 2>/dev/null; then
+  echo "FAILED: $unit is still active" >&2
+  status=1
+fi
+
+[[ $status -eq 0 ]] || exit 1
+echo "REMOVE_CONTROLLER_OK"
