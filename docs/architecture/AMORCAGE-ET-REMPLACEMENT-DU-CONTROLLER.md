@@ -311,6 +311,16 @@ automatique, ni shell, ni interpolation de commande. L'opération est refusée s
 la politique distante ne permet pas d'établir cette capacité exacte ou si sa
 journalisation d'entrée peut capturer le secret.
 
+Ce refus a une conséquence mesurée qu'il faut assumer plutôt que découvrir :
+sur une machine dont la politique n'autorise pas à lire le listing des droits
+sans mot de passe — ce qui est la configuration par défaut de Debian —
+l'établissement de la capacité exacte est lui-même impossible sans envoyer un
+secret. Or ce palier refuse d'envoyer un secret pour savoir s'il a le droit de
+l'envoyer. L'élévation y est donc refusée, et seule une politique qui rend le
+listing lisible sans authentification, ou qui dispense d'authentifier l'action
+elle-même, permet d'aller au bout. C'est une limite du parcours, pas un défaut
+de la machine visée, et elle est préférée à un essai à l'aveugle.
+
 L'utilisateur peut fournir :
 
 - de préférence, un compte d'administration non-root avec clé SSH et élévation
