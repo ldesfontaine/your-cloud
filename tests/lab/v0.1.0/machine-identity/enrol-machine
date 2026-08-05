@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# Enrol one machine, in the order the architecture fixes, recording what each
+# step *observed* rather than what it hoped.
+#
+# It is run on the target, as root, over the personal SSH access — which is the
+# whole point: this is the last time that access is the administration path.
+#
+# The order is not a convenience. The artefact is installed first and the forced
+# key last, so no instant exists in which a key opens a command that is not
+# there; the script refuses outright to write the key file if the binary is not
+# in place, so that ordering is a precondition rather than a habit of the
+# sequence.
+#
+# Two interruptions can be asked for, and they are different facts:
+#   YOUR_CLOUD_FAIL_AT=<step>  the step never runs; everything before it was
+#                              observed, so the ledger unwinds completely.
+#   YOUR_CLOUD_CUT_AT=<step>   the step runs and is *not* observed; its item is
+#                              UNKNOWN, so the ledger refuses to call itself
+#                              complete and names what a human has to look at.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+artifact=${1:?usage: enrol-machine <artifact> <anchor> <entry> <sudoers>}
+anchor=${2:?usage: enrol-machine <artifact> <anchor> <entry> <sudoers>}
+entry=${3:?usage: enrol-machine <artifact> <anchor> <entry> <sudoers>}
+sudoers=${4:?usage: enrol-machine <artifact> <anchor> <entry> <sudoers>}
+
+fail_at=${YOUR_CLOUD_FAIL_AT:-}
+cut_at=${YOUR_CLOUD_CUT_AT:-}
+
+account=your-cloud-auxiliary
+package_directory=/usr/lib/your-cloud
+binary=$package_directory/your-cloud
+configuration=/etc/your-cloud
+key_directory=$configuration/authorized-keys
+key_file=$key_directory/$account
+anchor_file=$configuration/approval-anchor.json
+replay_directory=/var/lib/your-cloud-auxiliary
+elevation_rule=/etc/sudoers.d/60-your-cloud-auxiliary
+sshd_drop_in=/etc/ssh/sshd_config.d/60-your-cloud-machine-identity.conf
+ledger=/root/lab-machine-identity/ledger
+
+install -d -m 0700 -o root -g root /root/lab-machine-identity
+: >"$ledger"
+
+# record <KIND> <NAME> <was-present-before>
+#
+# Provenance is read from the machine after the act, never assumed. A step that
+# cannot look records UNKNOWN, which is honest, rather than CREATED, which would
+# authorise a removal nothing observed.
+record() {
+  local kind=$1 name=$2 before=$3 provenance
+  if [[ "$before" == present ]]; then
+    provenance=FOUND
+  elif [[ -e "$name" ]]; then
+    provenance=CREATED
+  else
+    provenance=UNKNOWN
+  fi
+  printf '%s\t%s\t%s\n' "$kind" "$name" "$provenance" >>"$ledger"
+}
+
+record_unknown() {
+  printf '%s\t%s\t%s\n' "$1" "$2" UNKNOWN >>"$ledger"
+}
+
+presence() {
+  if [[ -e "$1" ]]; then echo present; else echo absent; fi
+}
+
+account_presence() {
+  if id "$account" >/dev/null 2>&1; then echo present; else echo absent; fi
+}
+
+stop_before() {
+  if [[ "$fail_at" == "$1" ]]; then
+    echo "STOPPED_AT=$1"
+    exit 0
+  fi
+}
+
+cut_here() {
+  [[ "$cut_at" == "$1" ]]
+}
+
+# 1. artifact — first, always.
+stop_before artifact
+before_directory=$(presence "$package_directory")
+before_binary=$(presence "$binary")
+install -d -m 0755 -o root -g root "$package_directory"
+install -m 0755 -o root -g root "$artifact" "$binary"
+if cut_here artifact; then
+  record_unknown DIRECTORY "$package_directory"
+  record_unknown FILE "$binary"
+  echo "CUT_AT=artifact"
+  exit 0
+fi
+record DIRECTORY "$package_directory" "$before_directory"
+record FILE "$binary" "$before_binary"
+
+# 2. account — locked, passwordless, no home, and the one shell `sshd` runs a
+#    forced command through.
+stop_before account
+before_account=$(account_presence)
+if ! id "$account" >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /bin/sh "$account"
+fi
+passwd --lock "$account" >/dev/null
+usermod --shell /bin/sh --home /nonexistent "$account"
+if cut_here account; then
+  record_unknown ACCOUNT "$account"
+  echo "CUT_AT=account"
+  exit 0
+fi
+if [[ "$before_account" == present ]]; then
+  printf '%s\t%s\t%s\n' ACCOUNT "$account" FOUND >>"$ledger"
+else
+  printf '%s\t%s\t%s\n' ACCOUNT "$account" CREATED >>"$ledger"
+fi
+
+# 3. anchor — which key may approve on this machine, under which epoch.
+stop_before anchor
+before_configuration=$(presence "$configuration")
+before_anchor=$(presence "$anchor_file")
+install -d -m 0755 -o root -g root "$configuration"
+install -m 0600 -o root -g root "$anchor" "$anchor_file"
+if cut_here anchor; then
+  record_unknown DIRECTORY "$configuration"
+  record_unknown FILE "$anchor_file"
+  echo "CUT_AT=anchor"
+  exit 0
+fi
+record DIRECTORY "$configuration" "$before_configuration"
+record FILE "$anchor_file" "$before_anchor"
+
+# 4. anti-replay state — empty. A machine that consumed nothing is what makes
+#    the first sequence the first.
+stop_before replay
+before_replay=$(presence "$replay_directory")
+install -d -m 0700 -o root -g root "$replay_directory"
+rm -f "$replay_directory/approval-state.json" "$replay_directory/approval-state.lock"
+if cut_here replay; then
+  record_unknown DIRECTORY "$replay_directory"
+  echo "CUT_AT=replay"
+  exit 0
+fi
+record DIRECTORY "$replay_directory" "$before_replay"
+
+# 5. elevation — one invocation, environment reset, no SETENV, no password.
+stop_before elevation
+before_elevation=$(presence "$elevation_rule")
+install -m 0440 -o root -g root "$sudoers" "$elevation_rule"
+visudo -c -f "$elevation_rule" >/dev/null
+if cut_here elevation; then
+  record_unknown FILE "$elevation_rule"
+  echo "CUT_AT=elevation"
+  exit 0
+fi
+record FILE "$elevation_rule" "$before_elevation"
+
+# 6. forced key — last, and refused outright if the binary it names is absent.
+stop_before key
+if [[ ! -x "$binary" ]]; then
+  echo "REFUSED: the forced key names a binary that is not installed: $binary" >&2
+  exit 1
+fi
+before_key_directory=$(presence "$key_directory")
+before_key=$(presence "$key_file")
+before_drop_in=$(presence "$sshd_drop_in")
+install -d -m 0755 -o root -g root "$key_directory"
+install -m 0644 -o root -g root "$entry" "$key_file"
+cat >"$sshd_drop_in" <<EOF
+# LAB perimeter of the machine-identity proof. Removed by remove-machine.
+LogLevel DEBUG1
+Match User $account
+    AuthorizedKeysFile $key_directory/%u
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    AllowTcpForwarding no
+    PermitTunnel no
+    PermitUserRC no
+EOF
+chmod 0644 "$sshd_drop_in"
+sshd -t
+systemctl reload ssh
+if cut_here key; then
+  record_unknown DIRECTORY "$key_directory"
+  record_unknown FILE "$key_file"
+  record_unknown FILE "$sshd_drop_in"
+  echo "CUT_AT=key"
+  exit 0
+fi
+record DIRECTORY "$key_directory" "$before_key_directory"
+record FILE "$key_file" "$before_key"
+record FILE "$sshd_drop_in" "$before_drop_in"
+
+echo "ENROLLED"
+cat "$ledger"

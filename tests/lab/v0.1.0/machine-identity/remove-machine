@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Return one machine to the state the run found, and prove it rather than
+# announce it.
+#
+# `remove-machine enrolment` takes back only what the enrolment created; it is
+# also the reset between the interruption stop points, which is why it leaves
+# the perimeter's own accounts alone. `remove-machine all` takes the perimeter
+# too, and *compares the personal access with the record taken before any
+# enrolment existed* — the criterion that the user's own access comes out
+# untouched is a comparison, not a claim.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+scope=${1:-enrolment}
+account=your-cloud-auxiliary
+operator=ycoperator
+permissive=ycpermissive
+state=/root/lab-machine-identity
+failures=0
+
+absent() {
+  if [[ -e "$1" ]]; then
+    echo "FAILED: $1 is still present" >&2
+    failures=$((failures + 1))
+  else
+    printf '%-64s absent\n' "$1"
+  fi
+}
+
+rm -f /etc/ssh/sshd_config.d/60-your-cloud-machine-identity.conf
+if sshd -t 2>/dev/null; then
+  systemctl reload ssh
+else
+  echo "FAILED: sshd refuses its configuration after the drop-in was removed" >&2
+  failures=$((failures + 1))
+fi
+
+rm -f /etc/sudoers.d/60-your-cloud-auxiliary
+rm -rf /etc/your-cloud/authorized-keys
+rm -f /etc/your-cloud/approval-anchor.json
+rm -rf /var/lib/your-cloud-auxiliary
+rm -rf /usr/lib/your-cloud
+rmdir /etc/your-cloud 2>/dev/null || true
+if id "$account" >/dev/null 2>&1; then
+  userdel "$account"
+fi
+rm -f /tmp/lab-machine-identity-rc-ran /tmp/lab-machine-identity-shell-canary \
+  /tmp/lab-machine-identity-sftp-canary
+
+for path in /etc/ssh/sshd_config.d/60-your-cloud-machine-identity.conf \
+  /etc/sudoers.d/60-your-cloud-auxiliary /etc/your-cloud/authorized-keys \
+  /etc/your-cloud/approval-anchor.json /var/lib/your-cloud-auxiliary \
+  /usr/lib/your-cloud /tmp/lab-machine-identity-shell-canary; do
+  absent "$path"
+done
+if id "$account" >/dev/null 2>&1; then
+  echo "FAILED: the technical account $account is still declared" >&2
+  failures=$((failures + 1))
+else
+  printf '%-64s absent\n' "account $account"
+fi
+
+if [[ "$scope" == all ]]; then
+  # The criterion the issue names: the personal access comes out of the
+  # enrolment exactly as it went in. It is compared with the record taken
+  # before any enrolment existed, field by field.
+  if [[ -f "$state/personal-access.before" ]]; then
+    {
+      echo "passwd: $(getent passwd "$operator")"
+      echo "shadow-field: $(getent shadow "$operator" | cut -d: -f2)"
+      echo "groups: $(id -nG "$operator")"
+      echo "authorized_keys-sha256: $(sha256sum "/home/$operator/.ssh/authorized_keys" | cut -d' ' -f1)"
+      echo "authorized_keys-fingerprints: $(ssh-keygen -lf "/home/$operator/.ssh/authorized_keys" | tr '\n' ';')"
+      echo "authorized_keys-mode: $(stat -c '%U:%G %a' "/home/$operator/.ssh/authorized_keys")"
+      echo "ssh-dir-mode: $(stat -c '%U:%G %a' "/home/$operator/.ssh")"
+      echo "sudoers-sha256: $(sha256sum /etc/sudoers.d/50-lab-personal-access | cut -d' ' -f1)"
+    } >"$state/personal-access.after"
+    echo "--- the personal access, before and after the enrolment ---"
+    cat "$state/personal-access.after"
+    if diff -u "$state/personal-access.before" "$state/personal-access.after"; then
+      echo "PERSONAL_ACCESS_INTACT"
+    else
+      echo "FAILED: the enrolment changed the personal access" >&2
+      failures=$((failures + 1))
+    fi
+  else
+    echo "FAILED: no record of the personal access was taken before the enrolment" >&2
+    failures=$((failures + 1))
+  fi
+
+  rm -f /etc/sudoers.d/50-lab-personal-access
+  for synthetic in "$operator" "$permissive"; do
+    if id "$synthetic" >/dev/null 2>&1; then
+      # A login leaves a `user@UID` manager behind, and `userdel` refuses an
+      # account something still holds. The teardown asks for it to be released
+      # rather than reporting a machine it did not manage to clean.
+      loginctl terminate-user "$synthetic" 2>/dev/null || true
+      pkill -KILL -u "$synthetic" 2>/dev/null || true
+      systemctl stop "user@$(id -u "$synthetic").service" 2>/dev/null || true
+      # The synthetic private material of these accounts is destroyed, not
+      # merely unlinked.
+      find "/home/$synthetic" -type f -exec shred -u {} + 2>/dev/null || true
+      userdel -rf "$synthetic" 2>/dev/null || userdel -f "$synthetic" 2>/dev/null || true
+    fi
+    if id "$synthetic" >/dev/null 2>&1; then
+      echo "FAILED: the synthetic account $synthetic is still declared" >&2
+      failures=$((failures + 1))
+    else
+      printf '%-64s absent\n' "account $synthetic"
+    fi
+  done
+  rm -rf "$state" /root/your-cloud-lab-machine-identity /root/lab-machine-identity-artifact
+  for path in /etc/sudoers.d/50-lab-personal-access "/home/$operator" "/home/$permissive" \
+    "$state" /root/your-cloud-lab-machine-identity; do
+    absent "$path"
+  done
+fi
+
+[[ $failures -eq 0 ]] || exit 1
+echo "MACHINE_RETURNED_TO_ITS_INITIAL_STATE scope=$scope"

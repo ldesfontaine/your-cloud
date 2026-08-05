@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# Every enrolment refusal and its positive control, decided by the compiled
+# gates rather than by this script.
+#
+# It runs on lab-console — the machine that plays the Controller — because that
+# is where the decisions belong: the target reports what it observed, and the
+# Controller judges. A harness that compared the fields itself would stay green
+# against a product that had stopped judging.
+#
+# Each case asserts the refusal *reason*, never merely a non-zero status.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+fixture=${YOUR_CLOUD_LAB_FIXTURE:?YOUR_CLOUD_LAB_FIXTURE is required}
+state=${YOUR_CLOUD_LAB_STATE:?YOUR_CLOUD_LAB_STATE is required}
+work=$state/judge
+rm -rf "$work"
+install -d -m 0700 "$work"
+failures=0
+
+report() { printf '%-64s %s\n' "$1" "$2"; }
+fail() { report "$1" "FAILED: $2"; failures=$((failures + 1)); }
+
+# accepts <label> <expected prefix> <fixture arguments...>
+accepts() {
+  local label=$1 expected=$2 output
+  shift 2
+  if output=$("$fixture" "$@" 2>&1); then
+    case "$output" in
+      "$expected"*) report "$label" "$output" ;;
+      *) fail "$label" "accepted with an unexpected verdict: $output" ;;
+    esac
+  else
+    fail "$label" "the positive control was refused: $output"
+  fi
+}
+
+# refuses <label> <expected reason> <fixture arguments...>
+refuses() {
+  local label=$1 expected=$2 output
+  shift 2
+  if output=$("$fixture" "$@" 2>&1); then
+    fail "$label" "accepted: $output"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) fail "$label" "refused for another reason: $output" ;;
+  esac
+}
+
+key_one=$(cat "$state/fingerprints/one")
+key_two=$(cat "$state/fingerprints/two")
+machine_one=$(cat "$state/names/one")
+machine_two=$(cat "$state/names/two")
+stranger="SHA256:ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+
+perimeter() {
+  local path=$1 machine=$2
+  shift 2
+  {
+    printf 'machine\t%s\n' "$machine"
+    printf 'identity\t%s\t%s\n' "$machine_one" "$key_one"
+    printf 'identity\t%s\t%s\n' "$machine_two" "$key_two"
+    printf 'cleared\t%s\n' "$machine_one"
+    printf 'cleared\t%s\n' "$machine_two"
+    printf 'placement\trelay\t%s\n' "$machine"
+    printf '%s\n' "$@"
+  } >"$path"
+}
+
+nominal_report() {
+  local machine=$1 key=$2
+  printf 'report\t%s\tdiagnose_protocol_read_only\tfalse\t1\t%s' "$machine" "$key"
+}
+
+perimeter "$work/one" "$machine_one" "$(nominal_report "$machine_one" "$key_one")"
+perimeter "$work/two" "$machine_two" "$(nominal_report "$machine_two" "$key_two")"
+
+echo "== one identity per machine, and the refusal on every other one =="
+accepts "the machine admits its own identity" ADMITTED \
+  admits "$work/one" "$machine_one" "$key_one"
+accepts "the other machine admits its own identity" ADMITTED \
+  admits "$work/two" "$machine_two" "$key_two"
+refuses "the first machine's identity presented to the second" \
+  "ForeignIdentity" admits "$work/two" "$machine_two" "$key_one"
+refuses "the second machine's identity presented to the first" \
+  "ForeignIdentity" admits "$work/one" "$machine_one" "$key_two"
+refuses "a key belonging to no machine of the estate" \
+  "Unattributed" admits "$work/one" "$machine_one" "$stranger"
+
+{
+  printf 'machine\t%s\n' "$machine_one"
+  printf 'identity\t%s\t%s\n' "$machine_one" "$key_one"
+  printf 'identity\t%s\t%s\n' "$machine_two" "$key_one"
+  printf 'cleared\t%s\n' "$machine_one"
+  printf 'placement\trelay\t%s\n' "$machine_one"
+} >"$work/shared"
+refuses "two machines minted the same identity" \
+  "SharedIdentity" enrol "$work/shared"
+
+echo
+echo "== the enrolment, and what it may not be authorised without =="
+accepts "the four witnesses authorise one machine" ENROLLED enrol "$work/one"
+{
+  printf 'machine\t%s\n' "$machine_one"
+  printf 'identity\t%s\t%s\n' "$machine_one" "$key_one"
+  printf 'cleared\t%s\n' "$machine_two"
+  printf 'placement\trelay\t%s\n' "$machine_one"
+} >"$work/not-cleared"
+refuses "a machine the preflight did not clear" \
+  "MachineNotCleared" enrol "$work/not-cleared"
+{
+  printf 'machine\t%s\n' "$machine_one"
+  printf 'identity\t%s\t%s\n' "$machine_one" "$key_one"
+  printf 'cleared\t%s\n' "$machine_one"
+} >"$work/no-role"
+refuses "a machine nobody approved a role on" \
+  "NoApprovedRole" enrol "$work/no-role"
+
+echo
+echo "== what the two machines really hold, read back off them =="
+for machine in "$machine_one" "$machine_two"; do
+  accepts "the entry $machine really holds" BOUNDED entry "$state/observed/$machine.entry"
+  accepts "the rule $machine really holds" BOUNDED elevation "$state/observed/$machine.sudoers"
+  accepts "the account $machine really declares" LOCKED account "$state/observed/$machine.account"
+  accepts "the key chain $machine really has" CUSTODY \
+    custody "$state/observed/$machine.key-chain" "$state/observed/$machine.account"
+  accepts "the binary chain $machine really has" CUSTODY \
+    custody "$state/observed/$machine.binary-chain" "$state/observed/$machine.account"
+done
+
+echo
+echo "== the authorized_keys entry, restriction by restriction =="
+public=$(awk '{print $2}' "$state/identities/$machine_one.pub")
+"$fixture" render-entry ssh-ed25519 "$public" >"$work/entry"
+accepts "the entry this palier writes" BOUNDED entry "$work/entry"
+options=$(sed 's/ ssh-ed25519.*//' "$work/entry")
+for restriction in restrict no-agent-forwarding no-port-forwarding no-pty no-user-rc no-X11-forwarding; do
+  printf '%s ssh-ed25519 %s\n' \
+    "$(echo "$options" | sed "s/,$restriction\\b//")" "$public" >"$work/entry-without"
+  refuses "an entry without $restriction" \
+    "MissingRestriction" entry "$work/entry-without"
+done
+for granted in 'environment="YOUR_CLOUD=1"' 'permitopen="127.0.0.1:5432"' 'tunnel="0"' 'pty'; do
+  printf '%s,%s ssh-ed25519 %s\n' "$options" "$granted" "$public" >"$work/entry-granting"
+  refuses "an entry granting $granted" "UnknownOption" entry "$work/entry-granting"
+done
+printf 'command="/usr/bin/sudo -n /usr/lib/your-cloud/your-cloud auxiliary approve $SSH_ORIGINAL_COMMAND",restrict,no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding ssh-ed25519 %s\n' \
+  "$public" >"$work/entry-free"
+refuses "a forced command that re-injects the client command" \
+  "ForcedCommandCarriesTheClientCommand" entry "$work/entry-free"
+printf 'command="/bin/sh",restrict,no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding ssh-ed25519 %s\n' \
+  "$public" >"$work/entry-shell"
+refuses "a forced command that is a shell" "ForcedCommandNotExact" entry "$work/entry-shell"
+cat "$work/entry" >"$work/entry-second"
+printf 'ssh-ed25519 %s an-unrestricted-second-key\n' "$public" >>"$work/entry-second"
+refuses "a second, unrestricted entry in the same file" \
+  "SeveralEntries" entry "$work/entry-second"
+
+echo
+echo "== the elevation rule =="
+"$fixture" render-elevation >"$work/sudoers"
+accepts "the rule this palier writes" BOUNDED elevation "$work/sudoers"
+{
+  echo "Defaults:your-cloud-auxiliary !setenv, env_reset, !log_input, !log_stdin"
+  echo "your-cloud-auxiliary ALL=(ALL) NOPASSWD: ALL"
+} >"$work/sudoers-broad"
+refuses "a broadened sudo rule" "RunAsIsNotRoot" elevation "$work/sudoers-broad"
+{
+  echo "Defaults:your-cloud-auxiliary !setenv, env_reset, !log_input, !log_stdin"
+  echo "your-cloud-auxiliary ALL=(root) NOPASSWD: ALL"
+} >"$work/sudoers-all"
+refuses "a rule whose command is ALL" "WildcardCommand" elevation "$work/sudoers-all"
+{
+  echo "Defaults:your-cloud-auxiliary !setenv, env_reset, !log_input, !log_stdin"
+  echo "your-cloud-auxiliary ALL=(root) NOPASSWD: SETENV: /usr/lib/your-cloud/your-cloud auxiliary approve"
+} >"$work/sudoers-setenv"
+refuses "a rule granting SETENV" "SetenvGranted" elevation "$work/sudoers-setenv"
+{
+  echo "Defaults:your-cloud-auxiliary !setenv, env_reset, !log_input, !log_stdin"
+  echo "your-cloud-auxiliary ALL=(root) NOPASSWD: /usr/lib/your-cloud/your-cloud"
+} >"$work/sudoers-bare"
+refuses "a command named without its exact arguments" \
+  "CommandNotExact" elevation "$work/sudoers-bare"
+
+echo
+echo "== the technical account, as the machine really declares it =="
+cp "$state/observed/$machine_one.account" "$work/account"
+account_uid=$(cut -f2 "$work/account")
+accepts "a locked, passwordless account with no home" LOCKED account "$work/account"
+printf 'your-cloud-auxiliary\t999\t989\t/bin/sh\t/nonexistent\t!$6$salt$hash\n' >"$work/account-hash"
+refuses "an account locked over a password hash" PasswordSet account "$work/account-hash"
+printf 'your-cloud-auxiliary\t999\t989\t/bin/sh\t/nonexistent\t\n' >"$work/account-empty"
+refuses "an account whose shadow field is empty" \
+  NoPasswordRequired account "$work/account-empty"
+printf 'your-cloud-auxiliary\t999\t989\t/bin/sh\t/home/your-cloud-auxiliary\t!\n' >"$work/account-home"
+refuses "an account given a home a startup file could live in" \
+  HomeIsNotTheAbsentOne account "$work/account-home"
+printf 'your-cloud-auxiliary\t999\t989\t/bin/sh\t/nonexistent\t!\tsudo\n' >"$work/account-group"
+refuses "an account in a supplementary group" \
+  SupplementaryGroup account "$work/account-group"
+
+echo
+echo "== the custody of the key file, its parents and the binary =="
+accepts "the key chain this palier installs" CUSTODY \
+  custody "$state/observed/$machine_one.key-chain" "$work/account"
+accepts "the binary chain this palier installs" CUSTODY \
+  custody "$state/observed/$machine_one.binary-chain" "$work/account"
+# Exactly one component is made writable at a time, so each refusal names the
+# component it fired on rather than the first of many.
+awk -F'\t' -v OFS='\t' 'NR==4 {$4="777"} {print}' "$state/observed/$machine_one.key-chain" \
+  >"$work/chain-writable"
+refuses "a world-writable directory on the way to the key file" \
+  WorldWritable custody "$work/chain-writable" "$work/account"
+awk -F'\t' -v OFS='\t' '$5=="FILE" {$4="777"} {print}' "$state/observed/$machine_one.binary-chain" \
+  >"$work/chain-writable-binary"
+refuses "a world-writable binary" WorldWritable \
+  custody "$work/chain-writable-binary" "$work/account"
+awk -F'\t' -v OFS='\t' '$5=="FILE" {$5="OTHER"} {print}' "$state/observed/$machine_one.key-chain" \
+  >"$work/chain-link"
+refuses "a symbolic link where the key file should be" \
+  SymbolicLink custody "$work/chain-link" "$work/account"
+awk -F'\t' -v OFS='\t' -v uid="$account_uid" '$5=="FILE" {$2=uid; $4="644"} {print}' \
+  "$state/observed/$machine_one.key-chain" >"$work/chain-owned"
+refuses "a key file the technical account owns" \
+  WritableByTheAccount custody "$work/chain-owned" "$work/account"
+
+echo
+echo "== the new path, and what it may not be called verified on =="
+accepts "the read-only diagnostic on the machine's own identity" VERIFIED verify "$work/one"
+perimeter "$work/mutated" "$machine_one" \
+  "$(printf 'report\t%s\tdiagnose_protocol_read_only\ttrue\t1\t%s' "$machine_one" "$key_one")"
+refuses "an Auxiliary reporting a mutation" \
+  AuxiliaryReportedAMutation verify "$work/mutated"
+perimeter "$work/other-operation" "$machine_one" \
+  "$(printf 'report\t%s\tinstall_container\tfalse\t1\t%s' "$machine_one" "$key_one")"
+refuses "an operation this Auxiliary does not perform" \
+  NotTheDiagnosticOperation verify "$work/other-operation"
+perimeter "$work/foreign-session" "$machine_one" \
+  "$(nominal_report "$machine_one" "$key_two")"
+refuses "a session opened with another machine's identity" \
+  ForeignIdentity verify "$work/foreign-session"
+
+echo
+echo "== only the approved roles, and only after the path answered =="
+accepts "the approved Relay" ACTIVATED activate "$work/one" relay
+refuses "an Agent nobody approved" RoleNotApproved activate "$work/one" agent
+refuses "the Auxiliary as a service" AuxiliaryIsNeverAService activate "$work/one" auxiliary
+refuses "the Controller through an enrolment" \
+  ControllerIsNotActivatedByAnEnrolment activate "$work/one" controller
+
+echo
+echo "== the order the sequence fixes =="
+steps=$("$fixture" steps)
+report "the sequence" "$steps"
+artifact_position=$(echo "$steps" | tr ',' '\n' | grep -n '^artifact$' | cut -d: -f1)
+key_position=$(echo "$steps" | tr ',' '\n' | grep -n '^key$' | cut -d: -f1)
+verify_position=$(echo "$steps" | tr ',' '\n' | grep -n '^verify$' | cut -d: -f1)
+roles_position=$(echo "$steps" | tr ',' '\n' | grep -n '^roles$' | cut -d: -f1)
+if [[ $artifact_position -lt $key_position ]]; then
+  report "the binary precedes the forced key" "$artifact_position < $key_position"
+else
+  fail "the binary precedes the forced key" "$artifact_position !< $key_position"
+fi
+if [[ $verify_position -lt $roles_position ]]; then
+  report "the new path is verified before every role" "$verify_position < $roles_position"
+else
+  fail "the new path is verified before every role" "$verify_position !< $roles_position"
+fi
+
+[[ $failures -eq 0 ]] || { echo "FAILED: $failures assertions" >&2; exit 1; }
+echo "PASS: every refusal fired for its own reason, every positive control passed"

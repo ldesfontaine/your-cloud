@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Enrol one machine from the Controller, over the user's personal SSH access.
+#
+# This is the last thing that access is used for. Everything it carries — the
+# artefact, the approval anchor, the `authorized_keys` entry and the `sudoers`
+# rule — is decided on this side and installed on the other by the ordered
+# sequence of `enrol-machine`; after it, the Controller reaches the machine
+# through an identity of its own and the personal access is no longer the
+# administration path.
+#
+# It then reads back what the machine really holds — the account line, the
+# `stat` chain of the key file and of the binary, the entry and the rule — so
+# the gates can judge the machine rather than the intention.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+machine=${1:?usage: enrol-from-controller <machine> <address>}
+address=${2:?usage: enrol-from-controller <machine> <address>}
+
+state=${YOUR_CLOUD_LAB_STATE:?YOUR_CLOUD_LAB_STATE is required}
+harness=${YOUR_CLOUD_LAB_HARNESS:?YOUR_CLOUD_LAB_HARNESS is required}
+fail_at=${YOUR_CLOUD_FAIL_AT:-}
+cut_at=${YOUR_CLOUD_CUT_AT:-}
+
+operator=ycoperator
+account=your-cloud-auxiliary
+key_file=/etc/your-cloud/authorized-keys/$account
+binary=/usr/lib/your-cloud/your-cloud
+elevation_rule=/etc/sudoers.d/60-your-cloud-auxiliary
+
+common=(-o IdentitiesOnly=yes -o UserKnownHostsFile="$state/known_hosts"
+  -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10
+  -i "$state/identities/operator")
+
+personal() { timeout 300 ssh "${common[@]}" "$operator@$address" "$@"; }
+carry() { timeout 300 scp -q "${common[@]}" "$@"; }
+
+install -d -m 0700 "$state/observed"
+
+# The Controller decides the entry and the rule; the machine never composes
+# them. What travels is the exact bytes the gates on this side accepted.
+personal "install -d -m 0700 /home/$operator/enrolment"
+carry "$state/artifact" "$operator@$address:/home/$operator/enrolment/artifact"
+carry "$state/anchors/$machine.json" "$operator@$address:/home/$operator/enrolment/anchor.json"
+carry "$state/entries/$machine" "$operator@$address:/home/$operator/enrolment/entry"
+carry "$state/sudoers" "$operator@$address:/home/$operator/enrolment/sudoers"
+carry "$harness/enrol-machine" "$operator@$address:/home/$operator/enrolment/enrol-machine"
+personal "chmod 0700 /home/$operator/enrolment/enrol-machine"
+
+personal "sudo -n env YOUR_CLOUD_FAIL_AT='$fail_at' YOUR_CLOUD_CUT_AT='$cut_at' \
+  /home/$operator/enrolment/enrol-machine \
+  /home/$operator/enrolment/artifact /home/$operator/enrolment/anchor.json \
+  /home/$operator/enrolment/entry /home/$operator/enrolment/sudoers"
+
+# The ledger of the run, and what the machine really holds afterwards. Nothing
+# below is composed here: each file is the machine's own answer.
+personal "sudo -n cat /root/lab-machine-identity/ledger" >"$state/observed/$machine.ledger" || true
+
+if [[ -n "$fail_at" || -n "$cut_at" ]]; then
+  echo "INTERRUPTED machine=$machine fail_at=$fail_at cut_at=$cut_at"
+  exit 0
+fi
+
+personal "sudo -n cat $key_file" >"$state/observed/$machine.entry"
+personal "sudo -n cat $elevation_rule" >"$state/observed/$machine.sudoers"
+personal "getent passwd $account | awk -F: '{printf \"%s\t%s\t%s\t%s\t%s\t\", \$1, \$3, \$4, \$7, \$6}'; \
+  sudo -n getent shadow $account | cut -d: -f2 | tr -d '\n'; \
+  echo -ne '\t'; id -nG $account | tr ' ' ',' | sed \"s/^$account,*//\"" \
+  >"$state/observed/$machine.account"
+
+# The `stat` chain of the key file and of the binary, from the root directory
+# down. `%a` prints the set-user and set-group bits too, which is why the gate
+# can refuse a setuid binary from this same line.
+chain() { # chain <leaf>
+  local leaf=$1 script
+  script=$(cat <<'REMOTE'
+emit() {
+  local path=$1 kind
+  if [ -L "$path" ]; then kind=OTHER
+  elif [ -d "$path" ]; then kind=DIRECTORY
+  elif [ -f "$path" ]; then kind=FILE
+  else kind=OTHER
+  fi
+  read -r owner group mode <<<"$(stat -c '%u %g %a' "$path")"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$path" "$owner" "$group" "$mode" "$kind"
+}
+leaf="$1"
+path=""
+emit /
+IFS=/ read -ra parts <<<"${leaf#/}"
+for index in "${!parts[@]}"; do
+  path="$path/${parts[$index]}"
+  emit "$path"
+done
+REMOTE
+  )
+  personal "sudo -n bash -c $(printf '%q' "$script") -- $leaf"
+}
+chain "$key_file" >"$state/observed/$machine.key-chain"
+chain "$binary" >"$state/observed/$machine.binary-chain"
+
+# The temporary state that let this run use the personal access. It is
+# destroyed, not merely unlinked, and its absence is asserted.
+personal "find /home/$operator/enrolment -type f -exec shred -u {} + 2>/dev/null || true; \
+  rm -rf /home/$operator/enrolment; test ! -e /home/$operator/enrolment && echo TEMPORARY_STATE_DESTROYED"
+
+echo "ENROLLED machine=$machine"

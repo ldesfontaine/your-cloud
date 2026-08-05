@@ -157,6 +157,88 @@ tests/lab/v0.1.0/controller-install/prove remove
 - La présence de ces sources ne constitue pas une preuve. Seule une exécution
   identifiée en est une.
 
+## [`machine-identity/`](machine-identity/) — identité SSH bornée par machine
+
+C'est le harnais du moment où l'accès personnel de l'utilisateur cesse d'être le
+chemin d'administration. Il joue trois rôles avec deux VM : `lab-console` est le
+**Controller** — il détient les clés privées opérationnelles, décide tout et est
+le seul côté qui ouvre une session avec une identité bornée — et `lab-console`
+comme `lab-machine-1` sont les deux **machines enrôlées**. Deux est le minimum :
+la propriété que ce palier existe pour établir est que l'identité d'une machine
+est **refusée sur l'autre**.
+
+- [`prove`](machine-identity/prove) est l'entrée unique, exécutée depuis le poste
+  de pilotage. Elle commence par la garde d'inventaire obligatoire, puis enchaîne
+  neuf sous-commandes également utilisables seules : `artifact`, `setup`,
+  `enrol`, `judge`, `verify`, `refuse`, `mutate`, `interrupt` et `remove`. Sans
+  argument, elle fait les neuf dans l'ordre et démonte le périmètre même lorsque
+  l'une échoue.
+- [`mount-personal-access`](machine-identity/mount-personal-access) monte sur
+  chaque machine les deux comptes contre lesquels l'enrôlement est mesuré :
+  `ycoperator`, qui tient lieu d'accès personnel de l'utilisateur et dont tout
+  est enregistré **avant** qu'un enrôlement existe, et `ycpermissive`, le
+  **contrôle positif** — même machine, même `sshd`, même algorithme, aucune
+  restriction. Sans lui, « SFTP est refusé » et « ce serveur n'a pas SFTP »
+  seraient la même observation.
+- [`enrol-from-controller`](machine-identity/enrol-from-controller) enrôle une
+  machine **par l'accès personnel**, puis relit sur la machine ce qu'elle détient
+  vraiment : la ligne de compte, la chaîne `stat` du fichier de clés et du
+  binaire, l'entrée et la règle. Rien n'est composé de ce côté-là.
+- [`enrol-machine`](machine-identity/enrol-machine) exécute la séquence dans
+  l'ordre que l'architecture fixe et **enregistre ce que chaque étape a
+  observé**. Il refuse d'écrire le fichier de clés si le binaire nommé par la
+  commande forcée n'est pas installé. `YOUR_CLOUD_FAIL_AT` arrête avant une
+  étape ; `YOUR_CLOUD_CUT_AT` l'exécute sans l'observer, et les deux ne sont pas
+  le même fait : le premier se défait complètement, le second rend un déroulé
+  qui refuse de se dire complet et nomme ce qui reste.
+- [`judge`](machine-identity/judge) exécute dans `lab-console` la matrice des
+  refus et de leurs contrôles positifs. Chaque verdict sort du module
+  `machine_identity` compilé, à travers le binaire de fixture, et porte sur les
+  fichiers que les machines détiennent réellement.
+- [`refuse`](machine-identity/refuse) éprouve un vrai `sshd` et un vrai `sudo`,
+  capacité par capacité, chacune à côté de son contrôle positif : clé croisée,
+  commande libre, PTY, SFTP, fichier rc, X11, transferts de port et d'agent,
+  argument libre, variable d'environnement et règle `sudo` élargie.
+- [`verify-path`](machine-identity/verify-path) fait parcourir au Controller le
+  chemin qu'il vient d'installer, avec l'identité propre à la machine, puis
+  n'active que les rôles approuvés.
+- [`remove-machine`](machine-identity/remove-machine) rend chaque machine à son
+  état initial, prouve l'absence de ce qu'il a retiré et **compare l'accès
+  personnel** au relevé pris avant tout enrôlement.
+
+### Usage
+
+```text
+tests/lab/v0.1.0/machine-identity/prove              # les neuf étapes
+tests/lab/v0.1.0/machine-identity/prove judge
+tests/lab/v0.1.0/machine-identity/prove refuse
+tests/lab/v0.1.0/machine-identity/prove mutate
+tests/lab/v0.1.0/machine-identity/prove remove
+```
+
+### Limites et hygiène
+
+- Aucune adresse de LAB, aucune matière de clé et aucun secret ne vit dans ces
+  fichiers. Les quatre paires Ed25519 sont générées au montage et détruites — pas
+  seulement déliées — au démontage ; les adresses viennent de `labctl` et les
+  clés d'hôte sont épinglées depuis le canal géré, jamais depuis une première
+  réponse du réseau.
+- Le **contrôle positif d'X11 est pris sur la politique et non sur le fil** :
+  `sshd` refuse de transporter X11 sans `xauth`, et ces machines n'en portent
+  pas. Ce qui isole le refus est le contraste que le serveur résout lui-même,
+  `no` pour le compte borné et `yes` pour un compte que rien ne restreint, au
+  même instant. Le refus vivant, lui, est bien observé côté borné.
+- L'enrôlement pose un fragment `sshd_config.d` et recharge `sshd` après
+  `sshd -t` ; le démontage le retire, revalide et recharge. Le canal `labctl`
+  n'est jamais concerné par ce fragment, qui ne porte qu'un `Match User`.
+- L'Agent ne peut pas encore être activé : `placement::propose` de #36 refuse
+  `Role::Agent` avec `RoleOutsideThisPalier`, donc aucune approbation n'existe
+  pour lui. Le harnais le montre refusé plutôt que de fabriquer une approbation
+  que personne n'a donnée.
+- Les deux VM restent démarrées ; ce harnais ne crée ni ne détruit de topologie.
+- La présence de ces sources ne constitue pas une preuve. Seule une exécution
+  identifiée en est une.
+
 ## [`windows-helper/`](windows-helper/) — moitié Windows du helper natif
 
 Les suites de contrat propres à Windows n'ont pas d'équivalent Linux : le Job

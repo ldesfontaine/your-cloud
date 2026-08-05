@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Verify the new path from the Controller, then activate only the approved
+# roles — in that order, which is the order the sequence fixes.
+#
+# The verification is not a ping. The Controller opens a session with **this
+# machine's own identity**, the forced command runs the Auxiliary, the Auxiliary
+# checks a signed approval against the machine's own root-owned anchor, spends
+# one sequence and reports what it verified. The gate then refuses that report
+# unless it names this machine, this operation, no mutation, and the identity
+# that opened the session.
+#
+# It also runs the refusals that only exist end to end: an unknown mutation and
+# a mutating privilege, carried through the very same forced command.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+machine=${1:?usage: verify-path <machine> <address> <fingerprint>}
+address=${2:?usage: verify-path <machine> <address> <fingerprint>}
+fingerprint=${3:?usage: verify-path <machine> <address> <fingerprint>}
+
+state=${YOUR_CLOUD_LAB_STATE:?YOUR_CLOUD_LAB_STATE is required}
+fixture=${YOUR_CLOUD_LAB_FIXTURE:?YOUR_CLOUD_LAB_FIXTURE is required}
+signer=${YOUR_CLOUD_LAB_SIGNER:?YOUR_CLOUD_LAB_SIGNER is required}
+seed=${YOUR_CLOUD_LAB_SEED:?YOUR_CLOUD_LAB_SEED is required}
+sequence=${YOUR_CLOUD_LAB_SEQUENCE:-1}
+
+account=your-cloud-auxiliary
+failures=0
+report() { printf '%-62s %s\n' "$1" "$2"; }
+fail() { report "$1" "FAILED: $2"; failures=$((failures + 1)); }
+
+common=(-o IdentitiesOnly=yes -o UserKnownHostsFile="$state/known_hosts"
+  -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10)
+
+through_the_new_path() {
+  timeout 30 ssh -i "$state/identities/$machine" "${common[@]}" "$account@$address" 2>&1
+}
+
+echo "== the Controller walks the new path it just installed =="
+"$signer" -seed "$seed" -machine "$machine" -epoch 1 -sequence "$sequence" \
+  >"$state/observed/$machine.approval.json"
+answer=$(through_the_new_path <"$state/observed/$machine.approval.json") || true
+echo "$answer" | sed 's/^/    /'
+
+operation=$(echo "$answer" | awk -F': ' '/^operation:/ {print $2}')
+reported_machine=$(echo "$answer" | awk -F': ' '/^machine:/ {print $2}')
+consumed=$(echo "$answer" | awk -F': ' '/^consumed sequence:/ {print $2}')
+changed=$(echo "$answer" | awk -F': ' '/^changed:/ {print $2}')
+if [[ -z "$operation" || -z "$reported_machine" ]]; then
+  fail "the Auxiliary answered through the forced command" "$answer"
+  exit 1
+fi
+report "the Auxiliary answered through the forced command" \
+  "$operation on $reported_machine, sequence $consumed, changed=$changed"
+
+# The report is judged by the gate, not by this script: a harness that decided
+# for itself would stay green against a product that had stopped deciding.
+{
+  printf 'machine\t%s\n' "$machine"
+  cat "$state/perimeter.identities"
+  cat "$state/perimeter.cleared"
+  printf 'placement\trelay\t%s\n' "$machine"
+  printf 'report\t%s\t%s\t%s\t%s\t%s\n' \
+    "$reported_machine" "$operation" "$changed" "$consumed" "$fingerprint"
+} >"$state/observed/$machine.perimeter"
+
+if output=$("$fixture" verify "$state/observed/$machine.perimeter"); then
+  report "the gate accepts the path it just walked" "$output"
+else
+  fail "the gate accepts the path it just walked" "$output"
+fi
+if output=$("$fixture" activate "$state/observed/$machine.perimeter" relay); then
+  report "the approved role, after the path answered" "$output"
+else
+  fail "the approved role, after the path answered" "$output"
+fi
+if output=$("$fixture" activate "$state/observed/$machine.perimeter" auxiliary 2>&1); then
+  fail "the Auxiliary asked for as a service" "accepted: $output"
+else
+  report "the Auxiliary asked for as a service" "refused: $output"
+fi
+
+echo
+echo "== what the Auxiliary refuses, through the very same forced command =="
+refuses_through_the_path() { # refuses_through_the_path <label> <needle> <signer arguments...>
+  local label=$1 needle=$2 answer
+  shift 2
+  answer=$("$signer" -seed "$seed" -machine "$machine" -epoch 1 "$@" \
+    | through_the_new_path) || true
+  case "$answer" in
+    *"$needle"*) report "$label" "refused: $needle" ;;
+    *) fail "$label" "expected $needle, got: $(echo "$answer" | tr '\n' '|')" ;;
+  esac
+}
+refuses_through_the_path "an operation this Auxiliary does not perform" \
+  "is not one this Auxiliary performs" -sequence $((sequence + 1)) -operation install_container
+refuses_through_the_path "an approval asking for a mutating privilege" \
+  "requires exactly its own privileges" -sequence $((sequence + 1)) -privilege mutate_local_state
+refuses_through_the_path "the sequence that was already spent" \
+  "is not the exact successor of $sequence" -sequence "$sequence"
+refuses_through_the_path "an approval addressed to another machine" \
+  "names another machine than this one" -sequence $((sequence + 1)) -machine lab-machine-9
+
+[[ $failures -eq 0 ]] || { echo "FAILED: $failures assertions" >&2; exit 1; }
+echo "PASS: the new path answered, and the Auxiliary stayed a read-only diagnostic"

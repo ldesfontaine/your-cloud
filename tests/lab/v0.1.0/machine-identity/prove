@@ -1,0 +1,428 @@
+#!/usr/bin/env bash
+# Drive the machine-identity proof: build, mount, enrol, judge, verify, refuse,
+# mutate, interrupt, remove.
+#
+# The two VM play three parts. `lab-console` is the **Controller**: it holds the
+# operational private keys, decides everything and is the only side that opens a
+# session with a bounded identity. `lab-machine-1` and `lab-console` are the two
+# **enrolled machines** — two are the minimum, because the property the palier
+# exists for is that one machine's identity is refused on the other one.
+#
+# Everything is synthetic and generated at mount time; nothing in the repository
+# holds a key, an address or an account.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [artifact | setup | enrol | judge | verify | refuse | mutate | interrupt | remove | all]
+
+  artifact   build the server binary and the synthetic approval signer
+  setup      mount the perimeter: personal access, identities, anchors, gates
+  enrol      enrol both machines over the personal access, and read them back
+  judge      run every gate refusal and its positive control on the Controller
+  verify     walk the new path and activate only the approved role
+  refuse     run the real sshd and sudo matrix, each case with its control
+  mutate     show the suite reddens when an identity becomes acceptable elsewhere
+  interrupt  stop the enrolment at each step and measure what it leaves behind
+  remove     return both machines to their initial state and prove it
+  all        the nine above in order, removing even when a step fails (default)
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  artifact | setup | enrol | judge | verify | refuse | mutate | interrupt | remove | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.0/machine-identity"
+console_vm=lab-console
+target_vm=lab-machine-1
+expected_origin=your-cloud/labctl
+state=/root/lab-machine-identity
+staged=/root/lab-machine-identity-artifact
+remote_harness=/root/your-cloud-lab-machine-identity
+fixture=$state/fixture
+signer=$state/lab-approval-signer
+seed=7
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line vm_state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ vm_state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$vm_state" == running ]] || fail "$vm is $vm_state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+on_console() { "$labctl" ssh "$console_vm" -- ". $state/perimeter.env && $*"; }
+
+# The Go artefact is built where Go lives — lab-machine-1 is the only VM of the
+# LAB that carries a toolchain — and never on the workstation.
+build_artifact() {
+  inventory "$target_vm" >/dev/null
+  echo "building the server binary and the synthetic signer in $target_vm"
+  tar -C "$root" -czf "$workdir/sources.tgz" go.mod go.sum cmd internal
+  tar -C "$root/tests/lab/v0.1.0/signed-approval/_signer" -czf "$workdir/signer.tgz" main.go
+  "$labctl" copy-to "$target_vm" "$workdir/sources.tgz" /root/machine-identity-sources.tgz >/dev/null
+  "$labctl" copy-to "$target_vm" "$workdir/signer.tgz" /root/machine-identity-signer.tgz >/dev/null
+  "$labctl" ssh "$target_vm" -- '
+set -e
+export PATH=$PATH:/usr/local/go/bin LC_ALL=C.UTF-8
+rm -rf /root/machine-identity-build
+install -d /root/machine-identity-build/sources /root/machine-identity-build/signer
+tar -C /root/machine-identity-build/sources -xzmf /root/machine-identity-sources.tgz
+tar -C /root/machine-identity-build/signer -xzmf /root/machine-identity-signer.tgz
+rm -f /root/machine-identity-sources.tgz /root/machine-identity-signer.tgz
+cd /root/machine-identity-build/sources && go build -o /root/machine-identity-build/your-cloud ./cmd/your-cloud
+cd /root/machine-identity-build/signer && (go mod init lab-approval-signer >/dev/null 2>&1 || true)
+cd /root/machine-identity-build/signer && go build -o /root/machine-identity-build/lab-approval-signer .'
+  inventory "$console_vm" >/dev/null
+  "$labctl" ssh "$console_vm" -- "install -d -m 0700 $staged"
+  for file in your-cloud lab-approval-signer; do
+    "$labctl" copy-from "$target_vm" "/root/machine-identity-build/$file" "$workdir/$file" >/dev/null
+    "$labctl" copy-to "$console_vm" "$workdir/$file" "$staged/$file" >/dev/null
+  done
+  echo "artifact built: $(sha256sum "$workdir/your-cloud" | cut -d' ' -f1)"
+}
+
+deploy() { # deploy <vm> <script>...
+  local vm=$1 script
+  shift
+  "$labctl" ssh "$vm" -- "install -d -m 0700 $remote_harness"
+  for script in "$@"; do
+    "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$script"
+  done
+}
+
+setup() {
+  local console_address target_address
+  console_address=$(inventory "$console_vm")
+  target_address=$(inventory "$target_vm")
+  echo "perimeter: Controller $console_vm, machines $target_vm and $console_vm"
+  "$labctl" ssh "$console_vm" -- "test -f $staged/your-cloud" \
+    || fail "no artifact is staged on $console_vm; call artifact first"
+
+  deploy "$console_vm" judge refuse enrol-from-controller verify-path enrol-machine
+  deploy "$target_vm" remove-machine mount-personal-access
+  deploy "$console_vm" remove-machine mount-personal-access
+
+  # Every identity of this perimeter is generated here, at mount time, and
+  # destroyed at teardown. Nothing is ever committed and nothing is reused.
+  "$labctl" ssh "$console_vm" -- "
+set -e
+rm -rf $state
+install -d -m 0700 $state $state/identities $state/anchors $state/entries \
+  $state/fingerprints $state/names $state/observed
+ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/operator
+ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/permissive
+ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/$target_vm
+ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/$console_vm
+chmod 0600 $state/identities/*"
+
+  "$labctl" ssh "$console_vm" -- "install -m 0644 $staged/your-cloud $state/artifact \
+    && install -m 0700 $staged/lab-approval-signer $signer"
+
+  # The host keys are read through the managed LAB channel and pinned. No side
+  # of this harness ever trusts a first answer on the wire.
+  : >"$workdir/known_hosts"
+  for pair in "$target_vm $target_address" "$console_vm $console_address"; do
+    read -r vm address <<<"$pair"
+    "$labctl" copy-from "$vm" /etc/ssh/ssh_host_ed25519_key.pub "$workdir/$vm.pub" >/dev/null
+    awk -v address="$address" '{print address" "$1" "$2}' "$workdir/$vm.pub" >>"$workdir/known_hosts"
+  done
+  "$labctl" copy-to "$console_vm" "$workdir/known_hosts" "$state/known_hosts" >/dev/null
+
+  # The personal access, and the positive control, on both machines.
+  for vm in "$target_vm" "$console_vm"; do
+    for key in operator permissive; do
+      "$labctl" copy-from "$console_vm" "$state/identities/$key.pub" "$workdir/$key.pub" >/dev/null
+      "$labctl" copy-to "$vm" "$workdir/$key.pub" "$remote_harness/$key.pub" >/dev/null
+    done
+    "$labctl" ssh "$vm" -- "$remote_harness/mount-personal-access \
+      $remote_harness/operator.pub $remote_harness/permissive.pub"
+  done
+
+  # The Controller builds this palier's fixture from the sources of this very
+  # run. `package.json` travels with `src-tauri` because `tauri.conf.json` reads
+  # its version from it, and the build cache is deliberately kept: rebuilding
+  # this workspace from nothing costs far more than the copy it would replace.
+  # `-m` stamps every extracted file with the extraction time, so Cargo cannot
+  # decide that sources older than a warm artefact need no rebuild — a pass that
+  # was green about code that was never compiled is worse than a slow one.
+  tar -C "$root/console" --exclude=target -czf "$workdir/console.tgz" src-tauri package.json
+  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" "$remote_harness/console.tgz" >/dev/null
+  "$labctl" ssh "$console_vm" -- "
+set -e
+install -d /root/work
+rm -f /root/work/package.json
+if [ -d /root/work/src-tauri ]; then
+  find /root/work/src-tauri -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} +
+fi
+tar -C /root/work -xzmf $remote_harness/console.tgz
+rm -f $remote_harness/console.tgz"
+
+  "$labctl" ssh "$console_vm" -- "
+set -e
+. /root/.cargo/env
+cd /root/work/src-tauri
+export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8
+cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
+  --features machine-identity-contract-test --bin your-cloud-machine-identity-fixture >/dev/null 2>&1
+install -m 0700 target/debug/your-cloud-machine-identity-fixture $fixture"
+
+  # One anchor and one entry per machine, each naming its own machine. The
+  # entry is rendered by the gate itself, never composed by this harness.
+  "$labctl" ssh "$console_vm" -- "
+set -e
+printf '%s' '$target_vm' >$state/names/one
+printf '%s' '$console_vm' >$state/names/two
+: >$state/perimeter.identities
+: >$state/perimeter.cleared
+index=one
+for machine in $target_vm $console_vm; do
+  $signer -anchor -seed $seed -epoch 1 -machine \$machine >$state/anchors/\$machine.json
+  fingerprint=\$(ssh-keygen -lf $state/identities/\$machine.pub | awk '{print \$2}')
+  printf '%s' \"\$fingerprint\" >$state/fingerprints/\$index
+  printf 'identity\t%s\t%s\n' \"\$machine\" \"\$fingerprint\" >>$state/perimeter.identities
+  printf 'cleared\t%s\n' \"\$machine\" >>$state/perimeter.cleared
+  $fixture render-entry ssh-ed25519 \$(awk '{print \$2}' $state/identities/\$machine.pub) \
+    >$state/entries/\$machine
+  index=two
+done
+$fixture render-elevation >$state/sudoers
+cat $state/perimeter.identities"
+
+  {
+    echo "export YOUR_CLOUD_LAB_STATE=$state"
+    echo "export YOUR_CLOUD_LAB_HARNESS=$remote_harness"
+    echo "export YOUR_CLOUD_LAB_FIXTURE=$fixture"
+    echo "export YOUR_CLOUD_LAB_SIGNER=$signer"
+    echo "export YOUR_CLOUD_LAB_SEED=$seed"
+    echo "export YOUR_CLOUD_LAB_MACHINE_ONE=$target_vm"
+    echo "export YOUR_CLOUD_LAB_MACHINE_TWO=$console_vm"
+    echo "export YOUR_CLOUD_LAB_ADDRESS_ONE=$target_address"
+    echo "export YOUR_CLOUD_LAB_ADDRESS_TWO=$console_address"
+  } >"$workdir/perimeter.env"
+  "$labctl" copy-to "$console_vm" "$workdir/perimeter.env" "$state/perimeter.env" >/dev/null
+  echo "perimeter mounted on both machines"
+}
+
+enrol() {
+  local console_address target_address
+  console_address=$(inventory "$console_vm")
+  target_address=$(inventory "$target_vm")
+  on_console "$remote_harness/enrol-from-controller $target_vm $target_address"
+  on_console "$remote_harness/enrol-from-controller $console_vm $console_address"
+}
+
+judge() { on_console "$remote_harness/judge"; }
+
+verify() {
+  local console_address target_address one two
+  console_address=$(inventory "$console_vm")
+  target_address=$(inventory "$target_vm")
+  one=$("$labctl" ssh "$console_vm" -- "cat $state/fingerprints/one")
+  two=$("$labctl" ssh "$console_vm" -- "cat $state/fingerprints/two")
+  on_console "$remote_harness/verify-path $target_vm $target_address $one"
+  on_console "$remote_harness/verify-path $console_vm $console_address $two"
+}
+
+refuse() { on_console "$remote_harness/refuse"; }
+
+# The two mutations. The first makes an identity really acceptable on the wrong
+# machine; the second makes the gate say so. A suite that stayed green under
+# either would not be measuring the property it is named after.
+mutate() {
+  local target_address one output
+  target_address=$(inventory "$target_vm")
+  one=$("$labctl" ssh "$console_vm" -- "cat $state/fingerprints/one")
+
+  echo "== mutation 1: the second machine is given the first machine's identity =="
+  "$labctl" copy-from "$console_vm" "$state/entries/$target_vm" "$workdir/foreign-entry" >/dev/null
+  "$labctl" copy-to "$console_vm" "$workdir/foreign-entry" \
+    /etc/your-cloud/authorized-keys/your-cloud-auxiliary >/dev/null
+  output=$(on_console "$remote_harness/refuse" 2>&1 || true)
+  echo "$output" | grep -E "identity of|FAILED" | head -8
+  case "$output" in
+    *"IT WAS ACCEPTED"*)
+      echo "MUTATION_CAUGHT: the cross-key case turned red as soon as the key was accepted elsewhere" ;;
+    *) fail "the mutation was not caught: the suite stayed green with a foreign identity installed" ;;
+  esac
+  # The machine is put back before anything else runs.
+  "$labctl" copy-from "$console_vm" "$state/entries/$console_vm" "$workdir/own-entry" >/dev/null
+  "$labctl" copy-to "$console_vm" "$workdir/own-entry" \
+    /etc/your-cloud/authorized-keys/your-cloud-auxiliary >/dev/null
+  "$labctl" ssh "$console_vm" -- "chown root:root /etc/your-cloud/authorized-keys/your-cloud-auxiliary \
+    && chmod 0644 /etc/your-cloud/authorized-keys/your-cloud-auxiliary"
+
+  echo
+  echo "== mutation 2: the gate is made to admit a foreign identity =="
+  "$labctl" ssh "$console_vm" -- "
+set -e
+cd /root/work/src-tauri/crates/native-bootstrap-assistant/src/machine_identity
+cp identity.rs identity.rs.original
+python3 - <<'PATCH'
+import re
+path = 'identity.rs'
+source = open(path).read()
+needle = '''        match self
+            .identities
+            .iter()
+            .find(|other| other.fingerprint == presented)'''
+assert needle in source, 'the mutation point moved; the mutation must be rewritten'
+source = source.replace(needle, '''        return Ok(minted);
+        #[allow(unreachable_code)]
+        match self
+            .identities
+            .iter()
+            .find(|other| other.fingerprint == presented)''', 1)
+open(path, 'w').write(source)
+PATCH
+. /root/.cargo/env
+cd /root/work/src-tauri
+export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8
+cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
+  --features machine-identity-contract-test --bin your-cloud-machine-identity-fixture >/dev/null 2>&1
+install -m 0700 target/debug/your-cloud-machine-identity-fixture $state/fixture-mutated"
+  output=$(on_console "YOUR_CLOUD_LAB_FIXTURE=$state/fixture-mutated $remote_harness/judge" 2>&1 || true)
+  echo "$output" | grep -E "presented to|FAILED:" | head -8
+  case "$output" in
+    *"FAILED"*) echo "MUTATION_CAUGHT: the gate suite turned red as soon as admits stopped refusing" ;;
+    *) fail "the mutation was not caught: the gate suite stayed green with admits weakened" ;;
+  esac
+  "$labctl" ssh "$console_vm" -- "
+set -e
+cd /root/work/src-tauri/crates/native-bootstrap-assistant/src/machine_identity
+mv identity.rs.original identity.rs
+rm -f $state/fixture-mutated
+. /root/.cargo/env
+cd /root/work/src-tauri
+export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8
+cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
+  --features machine-identity-contract-test --bin your-cloud-machine-identity-fixture >/dev/null 2>&1
+install -m 0700 target/debug/your-cloud-machine-identity-fixture $state/fixture
+grep -c 'return Ok(minted);' crates/native-bootstrap-assistant/src/machine_identity/identity.rs"
+  echo "the source is back: one return, in its own branch"
+}
+
+# A stop at each step, on the machine, with the ledger the step really produced.
+# It runs after `remove enrolment`, so every stop point starts from the same
+# initial state.
+interrupt() {
+  local step target_address output
+  target_address=$(inventory "$target_vm")
+  for step in artifact account anchor replay elevation key; do
+    "$labctl" ssh "$target_vm" -- "$remote_harness/remove-machine enrolment" >/dev/null 2>&1 || true
+    output=$(on_console "YOUR_CLOUD_FAIL_AT=$step $remote_harness/enrol-from-controller \
+      $target_vm $target_address" 2>&1 || true)
+    case "$output" in
+      *"STOPPED_AT=$step"*) ;;
+      *) fail "the enrolment did not stop at $step: $output" ;;
+    esac
+    echo "--- stopped before $step, the ledger it produced ---"
+    on_console "cat $state/observed/$target_vm.ledger" || true
+    output=$(on_console "$fixture unwind $state/observed/$target_vm.ledger" || true)
+    echo "unwind: $output"
+    case "$output" in
+      COMPLETE*) ;;
+      *) fail "a clean stop before $step did not unwind completely: $output" ;;
+    esac
+    # The forced key is never present before the binary is: read off the
+    # machine, at every stop point, rather than argued from the sequence.
+    output=$("$labctl" ssh "$target_vm" -- \
+      "test -e /etc/your-cloud/authorized-keys/your-cloud-auxiliary && echo key-present || echo key-absent")
+    case "$step:$output" in
+      *:key-absent) echo "at the stop before $step, the forced key is absent" ;;
+      *) fail "a stop before $step left a forced key behind: $output" ;;
+    esac
+    "$labctl" ssh "$target_vm" -- "$remote_harness/remove-machine enrolment" >/dev/null \
+      || fail "the machine did not return to its initial state after a stop before $step"
+  done
+
+  echo "--- a cut in the middle of the key step: performed, never observed ---"
+  "$labctl" ssh "$target_vm" -- "$remote_harness/remove-machine enrolment" >/dev/null 2>&1 || true
+  output=$(on_console "YOUR_CLOUD_CUT_AT=key $remote_harness/enrol-from-controller \
+    $target_vm $target_address" 2>&1 || true)
+  case "$output" in
+    *"CUT_AT=key"*) ;;
+    *) fail "the enrolment did not cut at the key step: $output" ;;
+  esac
+  on_console "cat $state/observed/$target_vm.ledger"
+  output=$(on_console "$fixture unwind $state/observed/$target_vm.ledger" || true)
+  echo "unwind: $output"
+  case "$output" in
+    INCOMPLETE*) echo "a cut leaves an unwind that refuses to call itself complete, and names what is left" ;;
+    *) fail "a cut must not produce a complete unwind: $output" ;;
+  esac
+
+  # And the machine is put back where the run found it, then enrolled again so
+  # the perimeter is whole for whatever follows.
+  "$labctl" ssh "$target_vm" -- "$remote_harness/remove-machine enrolment" >/dev/null \
+    || fail "the machine did not return to its initial state after the cut"
+  on_console "$remote_harness/enrol-from-controller $target_vm $target_address" >/dev/null
+  echo "PASS: every stop point is reconstructible, and a cut says so"
+}
+
+remove() {
+  local status=0
+  for vm in "$target_vm" "$console_vm"; do
+    "$labctl" ssh "$vm" -- "$remote_harness/remove-machine all" || status=1
+  done
+  # The Controller's own state: the operational private keys are destroyed, not
+  # merely unlinked.
+  "$labctl" ssh "$console_vm" -- "
+if [ -d $state/identities ]; then find $state/identities -type f -exec shred -u {} + 2>/dev/null || true; fi
+rm -rf $state $remote_harness" || status=1
+  "$labctl" ssh "$target_vm" -- "rm -rf $remote_harness /root/machine-identity-build \
+    /root/machine-identity-sources.tgz /root/machine-identity-signer.tgz" || status=1
+  for pair in "$console_vm $state" "$console_vm $remote_harness" \
+    "$target_vm $remote_harness" "$target_vm /root/machine-identity-build"; do
+    read -r vm path <<<"$pair"
+    "$labctl" ssh "$vm" -- "test ! -e $path" \
+      || { echo "FAILED: $path is still present in $vm" >&2; status=1; }
+  done
+  [[ $status -eq 0 ]] || fail "the perimeter removal is not proven"
+  echo "perimeter removed from both machines"
+}
+
+case "$command" in
+  artifact) build_artifact ;;
+  setup) setup ;;
+  enrol) enrol ;;
+  judge) judge ;;
+  verify) verify ;;
+  refuse) refuse ;;
+  mutate) mutate ;;
+  interrupt) interrupt ;;
+  remove) remove ;;
+  all)
+    status=0
+    build_artifact
+    setup
+    enrol || status=$?
+    if [[ $status -eq 0 ]]; then judge || status=$?; fi
+    if [[ $status -eq 0 ]]; then verify || status=$?; fi
+    if [[ $status -eq 0 ]]; then refuse || status=$?; fi
+    if [[ $status -eq 0 ]]; then mutate || status=$?; fi
+    if [[ $status -eq 0 ]]; then interrupt || status=$?; fi
+    remove
+    [[ $status -eq 0 ]] || fail "the machine-identity proof failed with $status"
+    echo "PROVE_MACHINE_IDENTITY_OK"
+    ;;
+esac

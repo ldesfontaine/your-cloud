@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# What a real `sshd` and a real `sudo` do with the bounded identity — each
+# capability on its own, each beside the positive control that isolates it.
+#
+# The positive control is a synthetic account on the *same* machine, served by
+# the *same* `sshd`, authenticated by the *same* algorithm, and carrying not one
+# restriction. Without it, "SFTP is refused" and "SFTP is not built into this
+# server" would be the same observation.
+#
+# It runs on lab-console, which plays the Controller: it holds the operational
+# private keys and is the only side that opens these sessions. Two channels are
+# used and they are not the same thing: the **bounded identity** is what is
+# being measured, and the **personal access** is only ever an observer here —
+# it plants the hostile conditions and reads back what happened, exactly as a
+# human with a terminal would.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+state=${YOUR_CLOUD_LAB_STATE:?YOUR_CLOUD_LAB_STATE is required}
+one=${YOUR_CLOUD_LAB_MACHINE_ONE:?YOUR_CLOUD_LAB_MACHINE_ONE is required}
+two=${YOUR_CLOUD_LAB_MACHINE_TWO:?YOUR_CLOUD_LAB_MACHINE_TWO is required}
+address_one=${YOUR_CLOUD_LAB_ADDRESS_ONE:?YOUR_CLOUD_LAB_ADDRESS_ONE is required}
+address_two=${YOUR_CLOUD_LAB_ADDRESS_TWO:?YOUR_CLOUD_LAB_ADDRESS_TWO is required}
+
+account=your-cloud-auxiliary
+operator=ycoperator
+permissive=ycpermissive
+work=$state/refuse
+rm -rf "$work"
+install -d -m 0700 "$work"
+failures=0
+
+report() { printf '%-62s %s\n' "$1" "$2"; }
+fail() { report "$1" "FAILED: $2"; failures=$((failures + 1)); }
+
+# expect <label> <needle> <text>
+expect() {
+  case "$3" in
+    *"$2"*) report "$1" "refused: $2" ;;
+    *) fail "$1" "expected $2, got: $(echo "$3" | tr '\n' '|' | cut -c1-160)" ;;
+  esac
+}
+
+common=(-o IdentitiesOnly=yes -o UserKnownHostsFile="$state/known_hosts"
+  -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10)
+
+address_of() { [[ "$1" == "$one" ]] && echo "$address_one" || echo "$address_two"; }
+
+# The bounded identity of one machine, offered to one machine. Keeping the two
+# separate is what lets the cross-key case be written at all.
+#
+# The remote command is a parameter of its own rather than a trailing argument:
+# `ssh` reads the first non-option word as the host, so a helper that appended
+# the host after a command would silently be measuring a name resolution.
+bounded() { # bounded <key machine> <target machine> [ssh option...]
+  local key=$1 target=$2
+  shift 2
+  timeout 30 ssh -i "$state/identities/$key" "${common[@]}" "$@" \
+    "$account@$(address_of "$target")"
+}
+
+bounded_running() { # bounded_running <key> <target> <command> [ssh option...]
+  local key=$1 target=$2 remote=$3
+  shift 3
+  timeout 30 ssh -i "$state/identities/$key" "${common[@]}" "$@" \
+    "$account@$(address_of "$target")" "$remote"
+}
+
+control() { # control <target machine> [ssh option...]
+  local target=$1
+  shift
+  timeout 30 ssh -i "$state/identities/permissive" "${common[@]}" "$@" \
+    "$permissive@$(address_of "$target")"
+}
+
+control_running() { # control_running <target> <command> [ssh option...]
+  local target=$1 remote=$2
+  shift 2
+  timeout 30 ssh -i "$state/identities/permissive" "${common[@]}" "$@" \
+    "$permissive@$(address_of "$target")" "$remote"
+}
+
+# The observer. It is the personal access, used as a human would use it.
+admin() { # admin <target machine> <command>
+  local target=$1
+  shift
+  timeout 60 ssh -i "$state/identities/operator" "${common[@]}" \
+    "$operator@$(address_of "$target")" "sudo -n sh -c $(printf '%q' "$*")"
+}
+
+echo "== the identity of one machine, on its own machine and on the other =="
+for machine in "$one" "$two"; do
+  answer=$(bounded "$machine" "$machine" </dev/null 2>&1 || true)
+  case "$answer" in
+    *"signed approval must contain"*)
+      report "$machine admits the identity minted for it" "the Auxiliary answered" ;;
+    *) fail "$machine admits the identity minted for it" "$answer" ;;
+  esac
+done
+
+# **The crown case.** The private key minted for one machine, offered to the
+# other machine's technical account, on a real `sshd`.
+for pair in "$one $two" "$two $one"; do
+  read -r key target <<<"$pair"
+  answer=$(bounded "$key" "$target" </dev/null 2>&1 || true)
+  case "$answer" in
+    *"signed approval must contain"*)
+      fail "the identity of $key presented to $target" "IT WAS ACCEPTED: $answer" ;;
+    *"Permission denied (publickey)"*)
+      report "the identity of $key presented to $target" \
+        "refused: Permission denied (publickey)" ;;
+    *) fail "the identity of $key presented to $target" "refused for another reason: $answer" ;;
+  esac
+done
+
+echo
+echo "== the effective server policy for this account, as sshd resolves it =="
+admin "$one" "sshd -T -C user=$account,host=$one,addr=$address_two" \
+  >"$work/policy" 2>/dev/null || true
+for expected in "permittty no" "x11forwarding no" "permituserrc no" \
+  "allowtcpforwarding no" "allowagentforwarding no" "permittunnel no" \
+  "permituserenvironment no" "passwordauthentication no"; do
+  if grep -qix "$expected" "$work/policy"; then
+    report "sshd resolves $expected" "for $account"
+  else
+    fail "sshd resolves $expected" "absent from the effective policy"
+  fi
+done
+grep -i "^authorizedkeysfile " "$work/policy" | while read -r line; do
+  printf '%-62s %s\n' "the key file sshd reads for this account" "$line"
+done
+# The same question, asked of an account nothing restricts, on the same server
+# at the same instant. Every `no` above is a difference, not a default.
+admin "$one" "sshd -T -C user=$permissive,host=$one,addr=$address_two" \
+  >"$work/policy-control" 2>/dev/null || true
+for expected in "permittty yes" "x11forwarding yes" "permituserrc yes" \
+  "allowtcpforwarding yes" "allowagentforwarding yes"; do
+  if grep -qix "$expected" "$work/policy-control"; then
+    report "the same server resolves $expected" "for $permissive"
+  else
+    fail "the same server resolves $expected" "so the refusal above is a default, not a bound"
+  fi
+done
+
+echo
+echo "== a shell, and a command the client chose =="
+admin "$one" "rm -f /tmp/lab-machine-identity-shell-canary"
+answer=$(bounded_running "$one" "$one" 'touch /tmp/lab-machine-identity-shell-canary' </dev/null 2>&1 || true)
+expect "a client command on the bounded identity" "signed approval must contain" "$answer"
+observed=$(admin "$one" "test -e /tmp/lab-machine-identity-shell-canary && echo present || echo absent")
+case "$observed" in
+  *absent*) report "the command the client asked for" "never ran" ;;
+  *) fail "the command the client asked for" "it ran" ;;
+esac
+control_running "$one" 'touch /tmp/lab-machine-identity-shell-canary' </dev/null >/dev/null 2>&1 || true
+observed=$(admin "$one" "test -e /tmp/lab-machine-identity-shell-canary && echo present || echo absent")
+case "$observed" in
+  *present*) report "the same command on the positive control" "ran" ;;
+  *) fail "the same command on the positive control" "did not run, so nothing is isolated" ;;
+esac
+admin "$one" "rm -f /tmp/lab-machine-identity-shell-canary"
+
+echo
+echo "== a pseudo-terminal =="
+answer=$(bounded "$one" "$one" -tt </dev/null 2>&1 || true)
+expect "a PTY on the bounded identity" "PTY allocation request failed" "$answer"
+answer=$(control_running "$one" 'echo control-pty' -tt </dev/null 2>&1 || true)
+case "$answer" in
+  *"PTY allocation request failed"*) fail "a PTY on the positive control" "also refused" ;;
+  *control-pty*) report "a PTY on the positive control" "allocated" ;;
+  *) fail "a PTY on the positive control" "$answer" ;;
+esac
+
+echo
+echo "== SFTP =="
+sftp_probe() { # sftp_probe <user> <key>
+  timeout 20 sftp -o IdentityFile="$state/identities/$2" "${common[@]}" \
+    -b /dev/null "$1@$address_one" >"$work/sftp.$1" 2>&1
+  echo $?
+}
+status=$(sftp_probe "$account" "$one")
+if [[ "$status" -ne 0 ]]; then
+  report "SFTP on the bounded identity" "refused (exit $status)"
+else
+  fail "SFTP on the bounded identity" "the subsystem answered"
+fi
+admin "$one" "pkill -u $account 2>/dev/null; true" >/dev/null 2>&1 || true
+status=$(sftp_probe "$permissive" permissive)
+if [[ "$status" -eq 0 ]]; then
+  report "SFTP on the positive control" "negotiated"
+else
+  fail "SFTP on the positive control" "the control could not use SFTP either (exit $status)"
+fi
+
+echo
+echo "== the user rc file =="
+# The hostile setup: an account that somehow gained a home with an rc file in
+# it. `no-user-rc` and `PermitUserRC no` must refuse it anyway.
+admin "$one" "pkill -u $account 2>/dev/null; sleep 1; \
+  install -d -m 0755 -o root -g root /var/tmp/yc-aux-home /var/tmp/yc-aux-home/.ssh \
+  && printf 'touch /tmp/lab-machine-identity-rc-ran\\n' > /var/tmp/yc-aux-home/.ssh/rc \
+  && chmod 0700 /var/tmp/yc-aux-home/.ssh/rc \
+  && rm -f /tmp/lab-machine-identity-rc-ran \
+  && usermod --home /var/tmp/yc-aux-home $account"
+bounded "$one" "$one" </dev/null >/dev/null 2>&1 || true
+observed=$(admin "$one" "test -e /tmp/lab-machine-identity-rc-ran && echo present || echo absent")
+case "$observed" in
+  *absent*) report "an rc file planted for the bounded identity" "never ran" ;;
+  *) fail "an rc file planted for the bounded identity" "it ran" ;;
+esac
+admin "$one" "pkill -u $account 2>/dev/null; sleep 1; \
+  usermod --home /nonexistent $account && rm -rf /var/tmp/yc-aux-home \
+  && rm -f /tmp/lab-machine-identity-rc-ran"
+control_running "$one" 'true' </dev/null >/dev/null 2>&1 || true
+observed=$(admin "$one" "test -e /tmp/lab-machine-identity-rc-ran && echo present || echo absent")
+case "$observed" in
+  *present*) report "the positive control's own rc file" "ran" ;;
+  *) fail "the positive control's own rc file" "did not run, so nothing is isolated" ;;
+esac
+admin "$one" "rm -f /tmp/lab-machine-identity-rc-ran"
+
+echo
+echo "== X11 =="
+answer=$(DISPLAY=:99 bounded "$one" "$one" -X </dev/null 2>&1 || true)
+expect "X11 on the bounded identity" "X11 forwarding request failed" "$answer"
+# The positive control for X11 is taken on the policy rather than on the wire,
+# and it says so. `sshd` refuses to forward X11 without `xauth`, and this LAB
+# machine carries none, so a live control would fail for a reason that has
+# nothing to do with the bounded identity. What isolates the refusal is the
+# contrast the server itself resolves: `no` for the bounded account, `yes` for
+# an account nothing restricts, on the same server and at the same instant.
+admin "$one" "sshd -T -C user=$permissive,host=$one,addr=$address_two" \
+  >"$work/policy-control" 2>/dev/null || true
+if grep -qix "x11forwarding yes" "$work/policy-control"; then
+  report "X11 on the positive control" \
+    "the same server resolves x11forwarding yes for it"
+else
+  fail "X11 on the positive control" "the server refuses X11 to it as well"
+fi
+if admin "$one" "command -v xauth >/dev/null && echo present || echo absent" | grep -q absent; then
+  report "a live X11 control is not available here" "this machine carries no xauth"
+fi
+
+echo
+echo "== port and agent forwarding =="
+answer=$(bounded "$one" "$one" -R 127.0.0.1:19022:127.0.0.1:22 </dev/null 2>&1 || true)
+expect "a remote forward on the bounded identity" "remote port forwarding failed" "$answer"
+
+# A local forward is not refused when it is asked for: it is refused when it is
+# used, and the difference is the whole reason this probe opens a connection
+# through it rather than reading a client message.
+forward_bytes() { # forward_bytes <port> <identity> <user>
+  local port=$1 identity=$2 user=$3 carried
+  timeout 30 ssh -i "$state/identities/$identity" "${common[@]}" -f -N \
+    -L "127.0.0.1:$port:127.0.0.1:22" "$user@$address_one" >/dev/null 2>&1 || true
+  carried=$(timeout 8 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 8 <&3" 2>/dev/null || true)
+  pkill -f "127.0.0.1:$port:127.0.0.1:22" 2>/dev/null || true
+  echo "$carried"
+}
+carried=$(forward_bytes 19023 "$one" "$account")
+if [[ -z "$carried" ]]; then
+  report "a local forward used on the bounded identity" "not one byte came back"
+else
+  fail "a local forward used on the bounded identity" "it carried: $carried"
+fi
+carried=$(forward_bytes 19024 permissive "$permissive")
+case "$carried" in
+  SSH-2.0*) report "a local forward used on the positive control" "carried $carried" ;;
+  *) fail "a local forward used on the positive control" "carried nothing either" ;;
+esac
+
+# Agent forwarding is observed on the server, where `sshd` either creates the
+# forwarded-agent socket for the session or does not. It needs no log level and
+# no cooperation from the client.
+eval "$(ssh-agent -s)" >/dev/null
+ssh-add "$state/identities/$one" >/dev/null 2>&1 || true
+sockets_during() { # sockets_during <opener...>
+  local fifo="$work/hold.$$"
+  rm -f "$fifo"
+  mkfifo "$fifo"
+  "$@" <"$fifo" >/dev/null 2>&1 &
+  local session=$!
+  exec 9>"$fifo"
+  sleep 3
+  admin "$one" "ls -d /tmp/ssh-* 2>/dev/null | wc -l"
+  exec 9>&-
+  wait "$session" 2>/dev/null || true
+  rm -f "$fifo"
+}
+observed=$(sockets_during timeout 30 ssh -A -i "$state/identities/$one" "${common[@]}" \
+  "$account@$address_one")
+if [[ "${observed//[^0-9]/}" == 0 ]]; then
+  report "agent forwarding on the bounded identity" "no socket appeared on the server"
+else
+  fail "agent forwarding on the bounded identity" "$observed socket(s) appeared"
+fi
+observed=$(sockets_during timeout 30 ssh -A -i "$state/identities/permissive" "${common[@]}" \
+  "$permissive@$address_one" "sleep 6")
+if [[ "${observed//[^0-9]/}" -gt 0 ]]; then
+  report "agent forwarding on the positive control" "$observed socket(s) created"
+else
+  fail "agent forwarding on the positive control" "no socket either, so nothing is isolated"
+fi
+ssh-agent -k >/dev/null 2>&1 || true
+admin "$one" "rm -rf /tmp/ssh-*" >/dev/null 2>&1 || true
+
+echo
+echo "== the elevation, run from the account itself =="
+elevate() { admin "$one" "sudo -u $account sudo -n $*"; }
+answer=$(elevate "/usr/lib/your-cloud/your-cloud auxiliary approve </dev/null" 2>&1 || true)
+expect "the exact invocation is the one thing it may run" \
+  "signed approval must contain" "$answer"
+answer=$(elevate "/usr/lib/your-cloud/your-cloud auxiliary approve --format=json </dev/null" 2>&1 || true)
+expect "one free argument added to the exact invocation" "a password is required" "$answer"
+answer=$(elevate "/bin/sh -c id" 2>&1 || true)
+expect "a shell through the same rule" "a password is required" "$answer"
+answer=$(elevate "YOUR_CLOUD_LAB=1 /usr/lib/your-cloud/your-cloud auxiliary approve </dev/null" 2>&1 || true)
+expect "an environment variable set through the elevation" \
+  "not allowed to set the following environment variables" "$answer"
+elevate "-l" >"$work/sudo-listing" 2>&1 || true
+commands=$(grep -c "NOPASSWD:" "$work/sudo-listing" || true)
+if [[ "$commands" -eq 1 ]] \
+  && grep -q "(root) NOPASSWD: /usr/lib/your-cloud/your-cloud auxiliary approve" "$work/sudo-listing"; then
+  report "what sudo says this account may run" "exactly one command, the exact invocation"
+else
+  fail "what sudo says this account may run" "$(tr '\n' '|' <"$work/sudo-listing")"
+fi
+
+[[ $failures -eq 0 ]] || { echo "FAILED: $failures assertions" >&2; exit 1; }
+echo "PASS: every capability was refused on its own, beside its positive control"

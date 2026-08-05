@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Mount, on one machine, the two accounts the enrolment is measured against.
+#
+# `ycoperator` stands for the **user's personal SSH access**: it is the path the
+# Assistant travels to enrol this machine, and it is the thing the enrolment
+# must leave exactly as it found. Everything about it is recorded here, before
+# any enrolment exists, so the teardown can compare rather than assert.
+#
+# `ycpermissive` is the **positive control**. Same machine, same `sshd`, same
+# key algorithm, and not one restriction: it is what makes each refusal of the
+# bounded identity a measured difference instead of an absolute claim. Without
+# it, "SFTP is refused" would be indistinguishable from "SFTP is not built in".
+#
+# Both accounts are synthetic, created here and destroyed by `remove-machine`.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+operator_key=${1:?usage: mount-personal-access <operator.pub> <permissive.pub>}
+permissive_key=${2:?usage: mount-personal-access <operator.pub> <permissive.pub>}
+
+operator=ycoperator
+permissive=ycpermissive
+state=/root/lab-machine-identity
+
+install -d -m 0700 -o root -g root "$state"
+
+for account in "$operator" "$permissive"; do
+  id "$account" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$account"
+  install -d -m 0700 -o "$account" -g "$account" "/home/$account/.ssh"
+done
+
+install -m 0600 -o "$operator" -g "$operator" "$operator_key" "/home/$operator/.ssh/authorized_keys"
+install -m 0600 -o "$permissive" -g "$permissive" "$permissive_key" \
+  "/home/$permissive/.ssh/authorized_keys"
+
+# The personal access is what a real user's own access is: full elevation on
+# their own machine. The whole point of the palier is that the Controller stops
+# needing it, not that it is narrow.
+cat >/etc/sudoers.d/50-lab-personal-access <<EOF
+$operator ALL=(ALL) NOPASSWD: ALL
+EOF
+chmod 0440 /etc/sudoers.d/50-lab-personal-access
+visudo -c -f /etc/sudoers.d/50-lab-personal-access >/dev/null
+
+# The positive control's own startup file. It runs on every session that does
+# not forbid it, which is exactly what makes the bounded account's silence mean
+# something.
+cat >"/home/$permissive/.ssh/rc" <<'EOF'
+touch /tmp/lab-machine-identity-rc-ran
+EOF
+chown "$permissive:$permissive" "/home/$permissive/.ssh/rc"
+chmod 0700 "/home/$permissive/.ssh/rc"
+rm -f /tmp/lab-machine-identity-rc-ran
+
+# Everything about the personal access, before any enrolment exists. The
+# teardown compares this file byte for byte rather than re-deciding what
+# "intact" means.
+{
+  echo "passwd: $(getent passwd "$operator")"
+  echo "shadow-field: $(getent shadow "$operator" | cut -d: -f2)"
+  echo "groups: $(id -nG "$operator")"
+  echo "authorized_keys-sha256: $(sha256sum "/home/$operator/.ssh/authorized_keys" | cut -d' ' -f1)"
+  echo "authorized_keys-fingerprints: $(ssh-keygen -lf "/home/$operator/.ssh/authorized_keys" | tr '\n' ';')"
+  echo "authorized_keys-mode: $(stat -c '%U:%G %a' "/home/$operator/.ssh/authorized_keys")"
+  echo "ssh-dir-mode: $(stat -c '%U:%G %a' "/home/$operator/.ssh")"
+  echo "sudoers-sha256: $(sha256sum /etc/sudoers.d/50-lab-personal-access | cut -d' ' -f1)"
+} >"$state/personal-access.before"
+
+cat "$state/personal-access.before"
+echo "PERSONAL_ACCESS_MOUNTED"
