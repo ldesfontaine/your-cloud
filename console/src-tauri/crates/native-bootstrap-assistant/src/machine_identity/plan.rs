@@ -21,14 +21,15 @@
 //! the shape of the claim "the Auxiliary is never a service, a listener or a
 //! general shell": without it, the claim would only be the absence of a unit.
 //!
-//! ## The boundary this palier runs into
+//! ## What "approved" means for the Agent
 //!
-//! `personal_access::placement::propose` refuses `Role::Agent` and
-//! `Role::Auxiliary` with `RoleOutsideThisPalier`, so #36 cannot produce an
-//! `ApprovedPlacement` for an Agent today. [`activate`] therefore maps the
-//! Agent onto its unit and still refuses it for want of an approval. Lifting
-//! that boundary belongs to #36's own change, not to this one, and pretending
-//! otherwise here would mean approving a placement nothing approved.
+//! Every machine this release manages receives an Agent, so
+//! `personal_access::placement` proposes one on every endpoint it can audit.
+//! That is *not* the same as activating one: [`activate`] still asks for the
+//! Agent to appear in this machine's own `ApprovedPlacement` list, and refuses
+//! it with [`ActivationRefusal::RoleNotApproved`] otherwise. "The Agent may be
+//! proposed anywhere" and "somebody approved the Agent here" are two different
+//! statements, and this module only ever acts on the second.
 
 use crate::installation::preflight::PreflightCleared;
 use crate::machine_identity::identity::{Enrolled, IdentityRefusal, MintedIdentity};
@@ -442,26 +443,30 @@ mod tests {
         }
     }
 
-    /// A real [`ApprovedPlacement`] for a Relay, obtained the only way one can
-    /// be obtained: `propose` on observed facts, then `approve`.
-    fn approved_relay(machine: &str) -> ApprovedPlacement {
+    /// A real [`ApprovedPlacement`], obtained the only way one can be obtained:
+    /// `propose` on observed facts, then `approve`.
+    fn approved(role: Role, machine: &str) -> ApprovedPlacement {
         let endpoint = DeclaredEndpoint {
             name: machine.into(),
             port: 22,
             exposure: Exposure::Private,
             availability: Availability::NormallyOn,
-            relay_candidate: true,
+            relay_candidate: role == Role::Relay,
         };
-        let proposal = placement::propose(Role::Relay, &endpoint, &compatible_machine())
-            .expect("the relay placement fixture must be proposable");
+        let proposal = placement::propose(role, &endpoint, &compatible_machine())
+            .expect("the placement fixture must be proposable");
         placement::approve(
             &proposal,
             &Approval {
-                role: Role::Relay,
+                role,
                 endpoint: endpoint.name.clone(),
             },
         )
-        .expect("the relay placement fixture must be approvable")
+        .expect("the placement fixture must be approvable")
+    }
+
+    fn approved_relay(machine: &str) -> ApprovedPlacement {
+        approved(Role::Relay, machine)
     }
 
     fn enrolment() -> Enrolment {
@@ -680,8 +685,9 @@ mod tests {
         assert!(DELIVERED_UNITS.contains(&activation.unit()));
     }
 
-    /// A role nobody approved is refused, and so is the Agent — which is where
-    /// this palier meets #36's boundary rather than stepping over it.
+    /// A role nobody approved is refused, and the Agent is refused that way and
+    /// no other: #36 will happily propose one here, and a proposal nobody
+    /// answered is still not an approval.
     #[test]
     fn a_role_nobody_approved_is_refused_including_the_agent() {
         let enrolment = enrolment();
@@ -692,8 +698,8 @@ mod tests {
                 role: Role::Agent.as_str()
             })
         );
-        // And the boundary itself, read from #36: no proposal, so no approval,
-        // so nothing this gate could ever be handed for an Agent.
+        // The distinction this refusal rests on: the placement is proposable,
+        // and this enrolment was still never handed the witness for it.
         assert!(placement::propose(
             Role::Agent,
             &DeclaredEndpoint {
@@ -705,7 +711,52 @@ mod tests {
             },
             &compatible_machine(),
         )
-        .is_err());
+        .is_ok());
+        assert!(!enrolment.roles().contains(&Role::Agent));
+    }
+
+    /// **The Agent, explicitly approved, is activated onto its own unit.** It
+    /// is the criterion #39 could only half answer while #36 refused to place
+    /// an Agent at all, and the witness it rests on is built the only way one
+    /// can be: `propose`, then `approve`.
+    #[test]
+    fn an_explicitly_approved_agent_is_activated_onto_the_daemon_unit() {
+        let enrolment = authorize(
+            &cleared(&["lab-machine-1"]),
+            &elevation(),
+            &[
+                approved(Role::Agent, "lab-machine-1"),
+                approved_relay("lab-machine-1"),
+            ],
+            &estate(),
+            "lab-machine-1",
+        )
+        .expect("an approved Agent authorises an enrolment");
+        assert_eq!(enrolment.roles(), [Role::Agent, Role::Relay]);
+
+        let verified = verify(&estate(), &enrolment, &report()).expect("the fixture must verify");
+        let activation =
+            activate(&enrolment, &verified, Role::Agent).expect("the approved Agent must activate");
+        assert_eq!(activation.machine(), "lab-machine-1");
+        assert_eq!(activation.unit(), AGENT_UNIT);
+        assert!(DELIVERED_UNITS.contains(&activation.unit()));
+
+        // And the clearance is still per machine: the same approved Agent does
+        // not activate on the machine that did not answer.
+        let elsewhere = authorize(
+            &cleared(&["lab-machine-2"]),
+            &elevation(),
+            &[approved(Role::Agent, "lab-machine-2")],
+            &estate(),
+            "lab-machine-2",
+        )
+        .expect("the second machine must authorise");
+        assert_eq!(
+            activate(&elsewhere, &verified, Role::Agent),
+            Err(ActivationRefusal::VerifiedAnotherMachine {
+                machine: "lab-machine-1".into()
+            })
+        );
     }
 
     /// The Auxiliary is never a service, and the Controller is not started by
