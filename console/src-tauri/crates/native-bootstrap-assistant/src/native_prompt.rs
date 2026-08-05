@@ -141,10 +141,14 @@ fn run_dialog(
     content.pack_start(&countdown, false, false, 0);
 
     let secret_entry = copy.secret_label.map(|secret_label| {
-        let label = Label::new(Some(secret_label));
+        // The label carries the field's accelerator and points at it, which is
+        // what GTK expects of a labelled entry: without it the only way to the
+        // field is a walk through every selectable line of the scope above.
+        let label = Label::with_mnemonic(secret_label);
         label.set_xalign(0.0);
         content.pack_start(&label, false, false, 0);
         let entry = new_secret_entry();
+        label.set_mnemonic_widget(Some(&entry));
         content.pack_start(&entry, false, false, 0);
         entry
     });
@@ -293,11 +297,17 @@ fn build_key_file_chooser(
     // Nothing is named yet, whatever the agent offered.
     dialog.set_response_sensitive(ResponseType::Accept, false);
 
-    let label = Label::new(Some("Ou clé OpenSSH chiffrée :"));
+    // The accelerator sits on the label and points at the button rather than
+    // on the button itself, which is what GTK expects and what keeps the two
+    // concerns apart: the button's own text becomes the chosen path, and a
+    // path holding an underscore must render as itself rather than as an
+    // accelerator. Every other control of this window already answers to one.
+    let label = Label::with_mnemonic(KEY_FILE_LABEL);
     label.set_xalign(0.0);
     content.pack_start(&label, false, false, 0);
 
     let button = Button::with_label(NO_KEY_FILE_CHOSEN);
+    label.set_mnemonic_widget(Some(&button));
     content.pack_start(&button, false, false, 0);
 
     let chosen: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
@@ -334,6 +344,21 @@ fn build_key_file_chooser(
 /// A modal child dialog runs its own loop, so the parent's countdown cannot end
 /// it: the expiry, the released lease and the violated protocol are watched
 /// here as well, and each closes the selector with nothing chosen.
+///
+/// Each of the three answers the selector with its *own* identifier rather than
+/// with a plain cancellation, and the reason is not cosmetic. A GLib source
+/// that breaks has already removed itself, so removing it a second time is a
+/// fatal error and not a no-operation; the only way this function can know
+/// whether the source is still there is to be able to tell the response its own
+/// timer wrote from the one the user's button writes, and a timer answering
+/// `Cancel` is indistinguishable from that button. Answering with the same
+/// identifiers the window above uses makes the two loops read alike, and
+/// [`timer_stopped_itself`] answers for both.
+///
+/// Which of the three fired is deliberately not returned. This function only
+/// ever answers a path or nothing, and the terminal that the session ends on is
+/// decided by the window underneath, whose own timer observes the very same
+/// three conditions.
 fn run_key_file_chooser(
     parent: &Dialog,
     deadline: Instant,
@@ -360,20 +385,25 @@ fn run_key_file_chooser(
     let timer_expired = Arc::clone(expired);
     let timer_lease = lease.clone();
     let timer = glib::source::timeout_add_local(TIMER_INTERVAL, move || {
-        if timer_lease.is_protocol_invalid()
-            || timer_expired.load(Ordering::SeqCst)
-            || Instant::now() >= deadline
-            || timer_lease.is_cancelled()
-        {
-            timer_chooser.response(ResponseType::Cancel);
-            return ControlFlow::Break;
-        }
-        ControlFlow::Continue
+        let stopped = if timer_lease.is_protocol_invalid() {
+            PROTOCOL_INVALID_RESPONSE_ID
+        } else if timer_expired.load(Ordering::SeqCst) || Instant::now() >= deadline {
+            EXPIRED_RESPONSE_ID
+        } else if timer_lease.is_cancelled() {
+            LEASE_CANCELLED_RESPONSE_ID
+        } else {
+            return ControlFlow::Continue;
+        };
+        timer_chooser.response(ResponseType::Other(stopped));
+        ControlFlow::Break
     });
 
     chooser.show_all();
     let response = chooser.run();
-    timer.remove();
+    // A source that broke removed itself; removing it again aborts the process.
+    if !timer_stopped_itself(response) {
+        timer.remove();
+    }
     let chosen = (response == ResponseType::Accept)
         .then(|| chooser.filename())
         .flatten();
@@ -383,6 +413,9 @@ fn run_key_file_chooser(
     chosen.filter(|path| path.is_absolute())
 }
 
+/// The row that offers the encrypted key file, and the accelerator that opens
+/// its selector.
+const KEY_FILE_LABEL: &str = "_Ou clé OpenSSH chiffrée :";
 const NO_KEY_FILE_CHOSEN: &str = "Choisir un fichier de clé…";
 
 /// The tail of a path, bounded like every other public line of this window.
@@ -518,12 +551,12 @@ fn prompt_copy(prompt: NativePromptKind) -> PromptCopy {
         },
         NativePromptKind::KeyPassphrase => PromptCopy {
             title: "Your Cloud — passphrase de la clé SSH",
-            secret_label: Some("Passphrase de la clé SSH :"),
+            secret_label: Some("_Passphrase de la clé SSH :"),
             accept: "_Continuer",
         },
         NativePromptKind::SudoPassword => PromptCopy {
             title: "Your Cloud — mot de passe sudo",
-            secret_label: Some("Mot de passe sudo :"),
+            secret_label: Some("_Mot de passe sudo :"),
             accept: "_Continuer",
         },
         NativePromptKind::ConfirmRootAccess => PromptCopy {
@@ -877,6 +910,61 @@ mod tests {
             "Empreinte hôte : {}",
             maximal.target.host_key_sha256
         )));
+    }
+
+    /// The character GTK reads as an accelerator out of one label, if any.
+    fn accelerator(label: &str) -> Option<char> {
+        let mut characters = label.chars();
+        while let Some(character) = characters.next() {
+            if character == '_' {
+                return characters.next().map(|marked| {
+                    marked
+                        .to_lowercase()
+                        .next()
+                        .expect("a character lowercases to at least one")
+                });
+            }
+        }
+        None
+    }
+
+    /// Every control of every window answers to an accelerator, and no two
+    /// controls of the same window answer to the same one.
+    ///
+    /// It is not a cosmetic rule. These windows carry a countdown, and the
+    /// controls that end them must be reachable without a pointing device;
+    /// two controls sharing a letter would make one of them unreachable, which
+    /// on a window with a deadline means unreachable in time.
+    #[test]
+    fn each_window_names_its_controls_by_a_distinct_accelerator() {
+        for prompt in [
+            NativePromptKind::ConfirmPersonalAccess,
+            NativePromptKind::ConfirmRootAccess,
+            NativePromptKind::KeyPassphrase,
+            NativePromptKind::SudoPassword,
+        ] {
+            let copy = prompt_copy(prompt);
+            let mut labels = vec!["_Refuser", copy.accept];
+            labels.extend(copy.secret_label);
+            if prompt == NativePromptKind::ConfirmPersonalAccess {
+                labels.push(KEY_FILE_LABEL);
+            }
+
+            let mut marked = Vec::new();
+            for label in &labels {
+                let letter = accelerator(label)
+                    .unwrap_or_else(|| panic!("{label:?} carries no accelerator at all"));
+                assert!(
+                    !marked.contains(&letter),
+                    "two controls of {prompt:?} answer to the same accelerator {letter:?}"
+                );
+                marked.push(letter);
+            }
+        }
+
+        // The reader itself, on the two shapes that must not be confused.
+        assert_eq!(accelerator("_Refuser"), Some('r'));
+        assert_eq!(accelerator("Refuser"), None);
     }
 
     #[test]
