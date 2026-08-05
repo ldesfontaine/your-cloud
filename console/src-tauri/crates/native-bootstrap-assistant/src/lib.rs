@@ -6,6 +6,11 @@ mod hardening;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod installation;
 mod lease;
+/// Enrolling one approved machine with an SSH identity bounded to it. It is
+/// compiled on the two platforms the palier targets, like the installation it
+/// continues and like the witnesses it requires.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod machine_identity;
 #[cfg(target_os = "linux")]
 mod native_prompt;
 #[cfg(target_os = "windows")]
