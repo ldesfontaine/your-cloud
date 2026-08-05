@@ -21,6 +21,10 @@ pub const MAX_ASSISTANT_REMAINING_MILLIS: u64 = 300_000;
 pub const MAX_ASSISTANT_TARGET_ADDRESSES: usize = 8;
 pub const MAX_ASSISTANT_SCOPE_FRAME_BYTES: usize = 4_096;
 pub const MAX_ASSISTANT_EVENT_FRAME_BYTES: usize = 1_024;
+/// The one code a proven access may answer, and the only code any terminal
+/// event of this protocol maps onto zero. It is declared beside the refusals it
+/// is the counterpart of, so the whole terminal table is read in one place.
+pub const ASSISTANT_EXIT_ACCESS_VERIFIED: u8 = 0;
 pub const ASSISTANT_EXIT_INVALID_INVOCATION: u8 = 64;
 pub const ASSISTANT_EXIT_PROTOCOL_REFUSED: u8 = 65;
 pub const ASSISTANT_EXIT_REFUSED: u8 = 66;
@@ -185,10 +189,38 @@ fn valid_target_addresses(addresses: &[String]) -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum AssistantEventKind {
     PromptOpen,
+    /// The elevation was proven on the exact session that was consented to.
+    /// It is the only event of this protocol that means an access succeeded,
+    /// and the only one whose exit code is zero.
+    AccessVerified,
     Refused,
     Cancelled,
     Expired,
     Unavailable,
+}
+
+impl AssistantEventKind {
+    /// The one exit code this event may ever be read beside.
+    ///
+    /// There is a single table, on the surface both processes share, so that
+    /// the pair cannot come apart: the assistant derives the code it exits
+    /// with from the event it wrote, and the Console refuses any frame whose
+    /// code is not the one named here. A divergent combination — `zero`
+    /// without [`Self::AccessVerified`], or [`Self::AccessVerified`] with
+    /// anything but zero — is therefore not a case anyone has to remember to
+    /// handle: it has no entry at all.
+    ///
+    /// [`Self::PromptOpen`] is not terminal and names no code.
+    pub fn terminal_exit_code(self) -> Option<u8> {
+        match self {
+            Self::PromptOpen => None,
+            Self::AccessVerified => Some(ASSISTANT_EXIT_ACCESS_VERIFIED),
+            Self::Refused => Some(ASSISTANT_EXIT_REFUSED),
+            Self::Cancelled => Some(ASSISTANT_EXIT_CANCELLED),
+            Self::Expired => Some(ASSISTANT_EXIT_WATCHDOG_EXPIRED),
+            Self::Unavailable => Some(ASSISTANT_EXIT_UNAVAILABLE),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -511,6 +543,7 @@ mod tests {
 
         for (event, wire_name) in [
             (AssistantEventKind::PromptOpen, "prompt_open"),
+            (AssistantEventKind::AccessVerified, "access_verified"),
             (AssistantEventKind::Refused, "refused"),
             (AssistantEventKind::Cancelled, "cancelled"),
             (AssistantEventKind::Expired, "expired"),
@@ -520,6 +553,43 @@ mod tests {
                 serde_json::to_value(event).unwrap(),
                 serde_json::json!(wire_name)
             );
+        }
+    }
+
+    /// The pair both processes read the same table for.
+    ///
+    /// Zero belongs to `access_verified` and to nothing else, every other
+    /// terminal event names a distinct non-zero code, and the only event
+    /// without a code is the one that terminates nothing.
+    #[test]
+    fn exactly_one_terminal_event_carries_the_successful_exit_code() {
+        const TERMINALS: [AssistantEventKind; 5] = [
+            AssistantEventKind::AccessVerified,
+            AssistantEventKind::Refused,
+            AssistantEventKind::Cancelled,
+            AssistantEventKind::Expired,
+            AssistantEventKind::Unavailable,
+        ];
+
+        assert_eq!(AssistantEventKind::PromptOpen.terminal_exit_code(), None);
+        assert_eq!(
+            AssistantEventKind::AccessVerified.terminal_exit_code(),
+            Some(ASSISTANT_EXIT_ACCESS_VERIFIED)
+        );
+        assert_eq!(ASSISTANT_EXIT_ACCESS_VERIFIED, 0);
+
+        let mut codes: Vec<u8> = Vec::new();
+        for event in TERMINALS {
+            let code = event
+                .terminal_exit_code()
+                .expect("every terminal event names its own code");
+            assert_eq!(
+                code == 0,
+                event == AssistantEventKind::AccessVerified,
+                "{event:?} must not share the successful code"
+            );
+            assert!(!codes.contains(&code), "{event:?} reuses the code {code}");
+            codes.push(code);
         }
     }
 
