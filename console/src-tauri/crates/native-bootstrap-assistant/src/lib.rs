@@ -1,5 +1,10 @@
 mod framing;
 mod hardening;
+/// Installing one Controller from the embedded bundle. It is compiled on the
+/// two platforms the palier targets, exactly like the audit, the elevation and
+/// the placement whose witnesses it requires.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod installation;
 mod lease;
 #[cfg(target_os = "linux")]
 mod native_prompt;

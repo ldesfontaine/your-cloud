@@ -15,6 +15,7 @@ windows-parent-spoof-contract-test = ["native-prompt-contract-test"]
 windows-live-prompt-contract-test = ["native-prompt-contract-test"]
 delayed-start-contract-test = ["native-prompt-contract-test"]
 personal-access-contract-test = []
+controller-install-contract-test = []
 windows-agent-pipe-contract-test = []
 windows-personal-transport-contract-test = []
 
@@ -41,6 +42,11 @@ required-features = ["delayed-start-contract-test"]
 name = "your-cloud-personal-access-fixture"
 path = "src/personal_access_fixture.rs"
 required-features = ["personal-access-contract-test"]
+
+[[bin]]
+name = "your-cloud-controller-install-fixture"
+path = "src/controller_install_fixture.rs"
+required-features = ["controller-install-contract-test"]
 
 [[bin]]
 name = "your-cloud-agent-pipe-fixture"
@@ -103,6 +109,17 @@ required-features = ["windows-personal-transport-contract-test"]
 # par défaut : `Preferred::DEFAULT` reste inutilisable et chaque champ négocié
 # est fermé explicitement par `personal_access::ssh_algorithms`.
 russh = { version = "=0.62.4", default-features = false, features = ["ring", "rsa"] }
+# Vérification de la signature détachée du manifeste du lot serveur. Le paquet
+# est déjà dans le graphe à cette version exacte : `russh` et `ssh-key` en
+# dépendent tous deux. La dépendance directe n'ajoute donc rien au graphe, elle
+# rend seulement nommable le seul type par lequel l'Assistant juge une ancre —
+# et sans features par défaut, pour n'activer ni `zeroize` ni les tables
+# précalculées dont une vérification n'a pas besoin.
+ed25519-dalek = { version = "=3.0.0", default-features = false }
+# Empreinte SHA-256 de l'artefact, confrontée à celle que le manifeste signé
+# lie. Même situation exactement : `sha2` est déjà dans le graphe à cette
+# version par `bcrypt-pbkdf`, `ed25519-dalek` et les courbes `p256`/`p384`.
+sha2 = { version = "=0.11.0", default-features = false }
 serde_json = "=1.0.149"
 # Trait de signature de la clé personnelle ouverte en mémoire. Le paquet est
 # déjà dans le graphe : `ssh-key` en dépend, et `russh` réexporte le type
