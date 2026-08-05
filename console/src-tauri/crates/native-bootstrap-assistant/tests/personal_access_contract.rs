@@ -96,6 +96,16 @@ use your_cloud_native_bootstrap_assistant::personal_access::{
     sudo_policy::SudoRefusal,
     target::TargetRefusal,
 };
+use your_cloud_native_bootstrap_assistant::personal_access::{
+    audit::{
+        self, Architecture, CgroupHierarchy, ChannelAnswer, Distribution, InitSystem, Installation,
+        Observed, ObservedMachine, Role, Unverified,
+    },
+    placement::{
+        self, Approval, Availability, Cohabitation, DeclaredEndpoint, Exposure, Facility,
+        FaultDomain, Incompatibility, PlacementRefusal, Resource,
+    },
+};
 use your_cloud_native_bootstrap_assistant::personal_access_contract as fixture_names;
 use your_cloud_native_bootstrap_assistant::{
     EXIT_CANCELLED, EXIT_INVALID_INVOCATION, EXIT_PROTOCOL_REFUSED, EXIT_WATCHDOG_EXPIRED,
@@ -175,6 +185,34 @@ const SUDO_UID: &str = "YOUR_CLOUD_LAB_SUDO_UID";
 const SUDO_PASSWORD: &str = "YOUR_CLOUD_LAB_SUDO_PASSWORD";
 /// The account the root route authenticates as.
 const ROOT_USERNAME: &str = "YOUR_CLOUD_LAB_ROOT_USERNAME";
+
+/// The audited endpoint whose answers are this very machine: no forced command,
+/// no fixture, the real Debian the LAB runs. It is the compatible control.
+const AUDIT_USERNAME: &str = "YOUR_CLOUD_LAB_AUDIT_USERNAME";
+/// Numeric uid of that account, so the uid the audit reads out of the audited
+/// machine is asserted against the perimeter rather than against a guess.
+const AUDIT_UID: &str = "YOUR_CLOUD_LAB_AUDIT_UID";
+/// Home directory of that account, which is where a write would land.
+const AUDIT_HOME: &str = "YOUR_CLOUD_LAB_AUDIT_HOME";
+/// The audited machine's own name, read by the LAB channel rather than by the
+/// client under test.
+const AUDIT_HOSTNAME: &str = "YOUR_CLOUD_LAB_AUDIT_HOSTNAME";
+/// Synthetic machine answering another distribution, and nothing else deviant.
+const AUDIT_DISTRIBUTION_USERNAME: &str = "YOUR_CLOUD_LAB_AUDIT_DISTRIBUTION_USERNAME";
+/// Synthetic machine answering another architecture.
+const AUDIT_ARCHITECTURE_USERNAME: &str = "YOUR_CLOUD_LAB_AUDIT_ARCHITECTURE_USERNAME";
+/// Synthetic machine answering less memory than the role needs.
+const AUDIT_RESOURCES_USERNAME: &str = "YOUR_CLOUD_LAB_AUDIT_RESOURCES_USERNAME";
+/// Synthetic machine answering another init and no unified hierarchy.
+const AUDIT_FACILITY_USERNAME: &str = "YOUR_CLOUD_LAB_AUDIT_FACILITY_USERNAME";
+/// Synthetic machine that already declares a Your Cloud installation.
+const AUDIT_INSTALLED_USERNAME: &str = "YOUR_CLOUD_LAB_AUDIT_INSTALLED_USERNAME";
+/// Synthetic machine that answers nothing at all.
+const AUDIT_SILENT_USERNAME: &str = "YOUR_CLOUD_LAB_AUDIT_SILENT_USERNAME";
+/// Port of a real `sshd` on the audited machine that nothing ever declares.
+const CANARY_PORT: &str = "YOUR_CLOUD_LAB_CANARY_PORT";
+/// That listener's own journal, which is what says whether it was ever dialled.
+const CANARY_LOG: &str = "YOUR_CLOUD_LAB_CANARY_LOG";
 
 /// Program that runs one command on the server and prints its output. It is
 /// the only way this suite observes the far side, and it carries the server's
@@ -4762,4 +4800,555 @@ fn no_byte_of_the_sent_password_survives_on_the_server() {
             "the password survived on the server"
         );
     }
+}
+
+// --------------------------------------------------------------- the audit
+//
+// The read-only audit of #36, against the same real `sshd` and the same real
+// session the elevation above uses. Every case below drives what the Console
+// drives — establish, three reading channels, close — and then asks the
+// placement module what may be proposed on what was read.
+//
+// The compatible control is the LAB machine itself: the nominal audit account
+// carries no forced command, so what it answers is a real Debian reading its own
+// files. Every refusal is produced by a *synthetic machine* served by that same
+// real server, each deviating in exactly one respect, and each refusing outright
+// any command that is not one of the audit's own three.
+
+/// The declared endpoint. It is a declaration and nothing else: the audit
+/// reaches the machine through the session, never through this value.
+fn audit_endpoint(name: &str) -> DeclaredEndpoint {
+    DeclaredEndpoint {
+        name: name.to_owned(),
+        port: required_port(PORT),
+        exposure: Exposure::Private,
+        availability: Availability::NormallyOn,
+        relay_candidate: false,
+    }
+}
+
+/// Establishes one session on the declared endpoint, audits it read-only and
+/// closes it. It is the whole of what happens before anything is proposed.
+fn audit_as(username: &str) -> (ObservedMachine, usize) {
+    let mut live = establish_as(username).expect("the LAB session must open");
+    let machine = audit::observe(&mut live, lease(), &always_continue());
+    let channels = live.channels_spent();
+    live.close();
+    (machine, channels)
+}
+
+/// Every account the audit cases drive, so a proof about "all of them" is
+/// written once.
+const AUDITED_ACCOUNTS: [&str; 7] = [
+    AUDIT_USERNAME,
+    AUDIT_DISTRIBUTION_USERNAME,
+    AUDIT_ARCHITECTURE_USERNAME,
+    AUDIT_RESOURCES_USERNAME,
+    AUDIT_FACILITY_USERNAME,
+    AUDIT_INSTALLED_USERNAME,
+    AUDIT_SILENT_USERNAME,
+];
+
+/// The reasons a role was refused on one audited machine.
+fn refusals_for(role: Role, account: &str, machine: &ObservedMachine) -> Vec<Incompatibility> {
+    match placement::propose(role, &audit_endpoint(account), machine) {
+        Err(PlacementRefusal::Incompatible(refusals)) => refusals,
+        other => panic!("{account} must be refused as incompatible: {other:?}"),
+    }
+}
+
+/// The whole nominal audit, end to end, against a real machine: three reading
+/// channels, ten facts, and one complete placement proposal.
+///
+/// The uid, the name and the distribution are asserted against what the LAB
+/// channel itself reads on that machine, so the client is confronted with the
+/// truth rather than with a fixture that agrees with it.
+#[test]
+fn a_compatible_declared_endpoint_is_audited_and_proposed_before_any_mutation() {
+    let account = required(AUDIT_USERNAME);
+    let expected_uid: u32 = required(AUDIT_UID).parse().expect("a decimal uid");
+    let (machine, channels) = audit_as(&account);
+
+    assert_eq!(machine.uid, Observed::Known(expected_uid));
+    assert_eq!(machine.hostname, Observed::Known(required(AUDIT_HOSTNAME)));
+    assert_eq!(
+        machine.distribution,
+        Observed::Known(Distribution {
+            id: "debian".into(),
+            version_id: "13".into(),
+        })
+    );
+    assert_eq!(machine.architecture, Observed::Known(Architecture::Amd64));
+    assert_eq!(machine.init, Observed::Known(InitSystem::Systemd));
+    assert_eq!(machine.cgroup, Observed::Known(CgroupHierarchy::V2));
+    assert!(machine.memory_kib.is_known(), "{:?}", machine.memory_kib);
+    assert!(machine.processors.is_known(), "{:?}", machine.processors);
+    assert!(
+        machine.free_disk_kib.is_known(),
+        "{:?}",
+        machine.free_disk_kib
+    );
+    assert_eq!(
+        machine.installation,
+        Observed::Known(Installation::NotDeclared),
+        "a fresh machine declares no installation at the fixed path"
+    );
+    assert_eq!(
+        channels, MAX_EXEC_CHANNELS,
+        "an audit is three reads, and it spends the session's whole budget"
+    );
+
+    let proposal = placement::propose(Role::Controller, &audit_endpoint(&account), &machine)
+        .expect("a compatible private machine must be proposable");
+    assert_eq!(proposal.role, Role::Controller);
+    assert_eq!(proposal.endpoint, account);
+    assert_eq!(proposal.cohabitation, Cohabitation::NoDeclaredInstallation);
+    assert_eq!(proposal.fault_domain, FaultDomain::OwnHost);
+    assert!(
+        proposal.unverified.is_empty(),
+        "nothing was left unverified on this machine: {:?}",
+        proposal.unverified
+    );
+    // Everything the user must see before approving is carried by the proposal
+    // itself, beside the cost and the fault domain above.
+    assert!(!proposal.accounts.is_empty());
+    assert!(!proposal.artifacts.is_empty());
+    assert!(!proposal.flows.is_empty());
+    assert!(!proposal.privileges.is_empty());
+    assert!(proposal.observed_memory_kib >= proposal.required.memory_kib);
+}
+
+/// An audit spends the session it was given, and has nothing left to elevate
+/// with. It is the bound rather than a promise: the fourth channel is refused
+/// by the session's own budget.
+#[test]
+fn an_audit_leaves_the_session_no_channel_to_elevate_with() {
+    let mut live = establish_as(&required(AUDIT_USERNAME)).expect("the LAB session must open");
+    let machine = audit::observe(&mut live, lease(), &always_continue());
+    assert!(machine.distribution.is_known());
+    assert_eq!(live.channels_spent(), MAX_EXEC_CHANNELS);
+    assert_eq!(
+        live.run_channel(elevation::PREFLIGHT, None, lease(), &always_continue()),
+        Err(TransportRefusal::ChannelBudgetSpent),
+        "an audited session must not be able to go on and elevate"
+    );
+    live.close();
+}
+
+/// Each incompatible machine is refused by the deviation it carries, and by
+/// that one alone.
+///
+/// The machines differ from the supported target in exactly one respect each,
+/// so a refusal that named the wrong thing — or named several — would fail here
+/// rather than pass for the right reason.
+#[test]
+fn each_incompatible_machine_is_refused_by_the_deviation_it_carries() {
+    let expectations: [(&str, Incompatibility); 3] = [
+        (
+            AUDIT_DISTRIBUTION_USERNAME,
+            Incompatibility::Distribution {
+                observed: Distribution {
+                    id: "ubuntu".into(),
+                    version_id: "24.04".into(),
+                },
+            },
+        ),
+        (
+            AUDIT_ARCHITECTURE_USERNAME,
+            Incompatibility::Architecture {
+                observed: Architecture::Other("aarch64".into()),
+            },
+        ),
+        (
+            AUDIT_RESOURCES_USERNAME,
+            Incompatibility::Resource {
+                resource: Resource::Memory,
+                observed: 131_072,
+                required: placement::CONTROLLER_REQUIREMENTS.memory_kib,
+            },
+        ),
+    ];
+    for (name, expected) in expectations {
+        let account = required(name);
+        let (machine, _) = audit_as(&account);
+        let refusals = refusals_for(Role::Controller, &account, &machine);
+        assert_eq!(
+            refusals,
+            vec![expected],
+            "{account} must be refused by its one deviation and by nothing else"
+        );
+    }
+
+    // The facility machine deviates twice — another init, and no unified
+    // hierarchy — and both are named rather than the first one found.
+    let account = required(AUDIT_FACILITY_USERNAME);
+    let (machine, _) = audit_as(&account);
+    let refusals = refusals_for(Role::Controller, &account, &machine);
+    assert_eq!(refusals.len(), 2, "{refusals:?}");
+    assert!(refusals.contains(&Incompatibility::Facility {
+        facility: Facility::Init,
+        observed_init: Some(InitSystem::Other("openrc".into())),
+        observed_hierarchy: None,
+    }));
+    assert!(refusals.contains(&Incompatibility::Facility {
+        facility: Facility::CgroupV2,
+        observed_init: None,
+        observed_hierarchy: Some(CgroupHierarchy::Legacy),
+    }));
+}
+
+/// A machine that answers nothing leaves every fact unknown, and every
+/// requirement resting on one is refused as unverified rather than assumed.
+#[test]
+fn a_machine_that_answers_nothing_is_refused_for_not_having_answered() {
+    let account = required(AUDIT_SILENT_USERNAME);
+    let (machine, channels) = audit_as(&account);
+    assert_eq!(
+        channels, MAX_EXEC_CHANNELS,
+        "the three channels really ran against it"
+    );
+    assert_eq!(
+        machine,
+        ObservedMachine::unanswered(Unverified::NotAnswered),
+        "not one fact of a silent machine may be completed"
+    );
+
+    let refusals = refusals_for(Role::Controller, &account, &machine);
+    for fact in [
+        "distribution",
+        "architecture",
+        "init",
+        "cgroup",
+        "memory",
+        "processors",
+        "free disk",
+    ] {
+        assert!(
+            refusals.contains(&Incompatibility::Unverified {
+                fact,
+                why: Unverified::NotAnswered,
+            }),
+            "{fact} must be refused as unverified: {refusals:?}"
+        );
+    }
+    assert_eq!(refusals.len(), 7);
+}
+
+/// An installation that already declares a role is read as such, announced as
+/// cohabitation and as a shared fault domain, and it moves the placement.
+#[test]
+fn an_existing_installation_is_announced_before_anything_is_approved() {
+    let account = required(AUDIT_INSTALLED_USERNAME);
+    let (machine, _) = audit_as(&account);
+    assert_eq!(
+        machine.installation,
+        Observed::Known(Installation::Declared(vec![Role::Relay]))
+    );
+
+    assert_eq!(
+        placement::propose(Role::Controller, &audit_endpoint(&account), &machine),
+        Err(PlacementRefusal::ControllerBesideRelay),
+        "the private brain is not proposed by default on the public door"
+    );
+
+    let mut candidate = audit_endpoint(&account);
+    candidate.relay_candidate = true;
+    let proposal = placement::propose(Role::Relay, &candidate, &machine)
+        .expect("a declared candidate that satisfies the relay");
+    assert_eq!(
+        proposal.cohabitation,
+        Cohabitation::WithDeclaredRoles(vec![Role::Relay])
+    );
+    assert_eq!(proposal.fault_domain, FaultDomain::SharedWithDeclaredRoles);
+}
+
+/// The Relay is proposed only where the user explicitly declared a candidate.
+/// The two runs below differ by that declaration and by nothing else.
+#[test]
+fn the_relay_is_refused_on_an_endpoint_nobody_declared_a_candidate() {
+    let account = required(AUDIT_USERNAME);
+    let (machine, _) = audit_as(&account);
+
+    let mut endpoint = audit_endpoint(&account);
+    assert!(!endpoint.relay_candidate);
+    assert_eq!(
+        placement::propose(Role::Relay, &endpoint, &machine),
+        Err(PlacementRefusal::RelayOnUndeclaredCandidate)
+    );
+
+    endpoint.relay_candidate = true;
+    let proposal =
+        placement::propose(Role::Relay, &endpoint, &machine).expect("a declared candidate");
+    assert_eq!(proposal.role, Role::Relay);
+}
+
+/// The Controller is proposed on a private, normally powered on machine, and
+/// each of the two declarations is refused on its own name.
+#[test]
+fn the_controller_is_refused_on_an_exposed_or_intermittent_declaration() {
+    let account = required(AUDIT_USERNAME);
+    let (machine, _) = audit_as(&account);
+
+    let mut exposed = audit_endpoint(&account);
+    exposed.exposure = Exposure::Exposed;
+    assert_eq!(
+        placement::propose(Role::Controller, &exposed, &machine),
+        Err(PlacementRefusal::ControllerOnExposedEndpoint)
+    );
+
+    let mut intermittent = audit_endpoint(&account);
+    intermittent.availability = Availability::Intermittent;
+    assert_eq!(
+        placement::propose(Role::Controller, &intermittent, &machine),
+        Err(PlacementRefusal::ControllerOnIntermittentEndpoint)
+    );
+}
+
+/// The synthetic machines answer the three declared commands and refuse every
+/// other one outright.
+///
+/// It is what makes every case above a proof about *these* commands: the facts
+/// they returned could not have come from anything else, because anything else
+/// is answered 127 by the far side rather than by this client.
+#[test]
+fn an_audited_machine_answers_the_three_declared_commands_and_nothing_else() {
+    let account = required(AUDIT_ARCHITECTURE_USERNAME);
+    let mut live = establish_as(&account).expect("the LAB session must open");
+
+    let foreign = live
+        .run_channel(elevation::PREFLIGHT, None, lease(), &always_continue())
+        .expect("the channel itself must run");
+    assert_eq!(
+        foreign.exit_status, 127,
+        "the audited machine must refuse a command the audit never declares"
+    );
+
+    let declared = live
+        .run_channel(audit::ARCHITECTURE, None, lease(), &always_continue())
+        .expect("the architecture channel must answer");
+    assert_eq!(
+        audit::read_architecture(ChannelAnswer {
+            exit_status: declared.exit_status,
+            stdout: &declared.stdout,
+            stderr: &declared.stderr,
+        }),
+        Observed::Known(Architecture::Other("aarch64".into()))
+    );
+    live.close();
+}
+
+/// A host key that is not the approved one refuses the audit before a single
+/// command runs, and records no trust on the way out.
+///
+/// The audit weakens nothing of #52: there is no session, so there is no
+/// `LiveSession` to hand to `audit::observe` at all.
+#[test]
+fn a_host_key_nobody_approved_refuses_the_audit_before_any_command() {
+    let known_hosts = PathBuf::from(required(KNOWN_HOSTS));
+    let authorized = required(AUTHORIZED);
+    let username = required(AUDIT_USERNAME);
+    let refusal = prepare()
+        .establish(
+            &AuthenticationRequest {
+                username: &username,
+                // A well-formed fingerprint that is certainly not this
+                // server's, which is what a changed host key looks like.
+                approved_host_key_fingerprint: &authorized,
+                selected_fingerprint: &authorized,
+            },
+            lease(),
+            &always_continue(),
+        )
+        .outcome
+        .err()
+        .expect("an unapproved host key cannot open a session");
+    assert_eq!(
+        refusal,
+        PersonalAccessRefusal::Transport(TransportRefusal::HostKey(HostKeyRefusal::KeyMismatch))
+    );
+    assert!(
+        !known_hosts.exists(),
+        "no path of this assistant may record a host key"
+    );
+}
+
+/// How many connections the undeclared listener has ever seen.
+fn canary_connections() -> usize {
+    server(&format!(
+        "grep -c 'Connection from' {} || true",
+        required(CANARY_LOG)
+    ))
+    .parse()
+    .unwrap_or(0)
+}
+
+/// No endpoint that was never declared receives any traffic, and the listener
+/// that says so is proved not to be blind.
+///
+/// Seven machines are audited one by one, each through its own declared session.
+/// A client that scanned a port range, a subnet or anything else on that machine
+/// would land on the canary, which listens on the very same address with the
+/// very same host key and the very same accounts — it deviates in nothing except
+/// never having been declared.
+///
+/// The control at the end is deliberate and is this case's own: one session
+/// opened towards the canary on purpose, which the listener records. Without it
+/// an empty journal would prove nothing about the audit and everything about the
+/// journal.
+#[test]
+fn no_endpoint_that_was_never_declared_receives_any_traffic() {
+    let before = canary_connections();
+    for name in AUDITED_ACCOUNTS {
+        let account = required(name);
+        let (machine, channels) = audit_as(&account);
+        assert_eq!(channels, MAX_EXEC_CHANNELS, "{account}");
+        // The audit really happened: a case where nothing ran would keep the
+        // canary silent for the wrong reason.
+        assert!(
+            machine.architecture.is_known() || account == required(AUDIT_SILENT_USERNAME),
+            "{account} answered nothing at all"
+        );
+    }
+    assert_eq!(
+        canary_connections(),
+        before,
+        "an endpoint nobody declared received traffic while declared ones were audited"
+    );
+
+    let host_key = required(HOST_KEY);
+    let authorized = required(AUTHORIZED);
+    let username = required(AUDIT_USERNAME);
+    let control = Prepared::open(&required(TARGET), required_port(CANARY_PORT), lease())
+        .expect("the canary is a real server on a real port")
+        .establish(
+            &AuthenticationRequest {
+                username: &username,
+                approved_host_key_fingerprint: &host_key,
+                selected_fingerprint: &authorized,
+            },
+            lease(),
+            &always_continue(),
+        );
+    // Whether that session is then accepted is beside the point and is
+    // deliberately not asserted: what the canary records is the connection, and
+    // a scan that was refused would have been a scan all the same.
+    if let Ok(live) = control.outcome {
+        live.close();
+    }
+    assert!(
+        canary_connections() > before,
+        "the canary records nothing at all, so its silence proved nothing"
+    );
+}
+
+/// The inventory of everything an installation, a write or a trace would touch
+/// on the audited machine.
+///
+/// It is `/etc`, the tree an installation's own artefacts live under, and the
+/// audited account's home — with each entry's size, modification time and mode,
+/// so a file rewritten with the same length is seen too.
+fn audited_machine_inventory() -> String {
+    format!(
+        "find /etc /usr/local/lib {} -xdev -printf '%p %s %T@ %m\\n' 2>/dev/null \
+         | sort | sha256sum",
+        required(AUDIT_HOME)
+    )
+}
+
+/// Nothing an audit does changes the machine it audits.
+///
+/// Every audited machine is driven — the compatible one included, which is the
+/// only one whose commands really execute on the far side — and the machine is
+/// then compared with itself. A command that created a file, touched a
+/// directory, wrote a marker or left a state would move this digest.
+#[test]
+fn no_audit_writes_anything_on_the_machine_it_audits() {
+    let inventory = audited_machine_inventory();
+    let before = server(&inventory);
+    assert!(
+        before.len() >= 64,
+        "the inventory must be one digest: {before}"
+    );
+
+    for name in AUDITED_ACCOUNTS {
+        let account = required(name);
+        let (_, channels) = audit_as(&account);
+        assert_eq!(channels, MAX_EXEC_CHANNELS, "{account}");
+    }
+
+    assert_eq!(
+        server(&inventory),
+        before,
+        "an audit changed the machine it audited"
+    );
+    assert_eq!(
+        server("ls -A /etc/your-cloud 2>/dev/null || true"),
+        "",
+        "the audit created the installation directory it only ever reads"
+    );
+}
+
+/// A recommendation is not an installation, and an approval that names
+/// something else is not an approval.
+///
+/// The machine is inventoried before, audited, proposed, refused an approval it
+/// never received, granted the one it did — and inventoried again. Nothing on
+/// the far side moved at any point: no role, no account, no flow, no privilege.
+#[test]
+fn a_recommendation_installs_nothing_and_only_the_exact_approval_is_one() {
+    let account = required(AUDIT_USERNAME);
+    let inventory = audited_machine_inventory();
+    let before = server(&inventory);
+
+    let (machine, _) = audit_as(&account);
+    let proposal = placement::propose(Role::Controller, &audit_endpoint(&account), &machine)
+        .expect("a compatible private machine");
+
+    assert_eq!(
+        placement::approve(
+            &proposal,
+            &Approval {
+                role: Role::Relay,
+                endpoint: account.clone(),
+            }
+        ),
+        Err(PlacementRefusal::RoleNotApproved),
+        "a role the user never approved must not become a placement"
+    );
+    assert_eq!(
+        placement::approve(
+            &proposal,
+            &Approval {
+                role: Role::Controller,
+                endpoint: format!("{account}-elsewhere"),
+            }
+        ),
+        Err(PlacementRefusal::RoleNotApproved),
+        "the same role on another endpoint is another placement"
+    );
+
+    let approved = placement::approve(
+        &proposal,
+        &Approval {
+            role: Role::Controller,
+            endpoint: account.clone(),
+        },
+    )
+    .expect("the exact proposal may be approved");
+    assert_eq!(approved.role(), Role::Controller);
+    assert_eq!(approved.endpoint(), account);
+
+    assert_eq!(
+        server(&inventory),
+        before,
+        "something was installed by a proposal or by an approval"
+    );
+    assert_eq!(
+        server(
+            "getent passwd | grep -c '^your-cloud-' || true; \
+             systemctl list-unit-files 'your-cloud*' --no-legend | wc -l"
+        ),
+        "0\n0",
+        "an account or a unit exists that only an installation could have created"
+    );
 }
