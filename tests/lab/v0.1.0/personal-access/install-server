@@ -2,9 +2,15 @@
 # Mount the synthetic server side of the personal access perimeter.
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { echo "usage: install-server <authorized-public-key> <observer-public-key>" >&2; exit 2; }
+[[ $# -eq 4 ]] || {
+  echo "usage: install-server <authorized-public-key> <observer-public-key>" \
+    "<file-ed25519-public-key> <file-rsa-public-key>" >&2
+  exit 2
+}
 authorized_pub=$1
 observer_pub=$2
+file_ed25519_pub=$3
+file_rsa_pub=$4
 
 [[ $(id -u) -eq 0 ]] || { echo "install-server must run as root" >&2; exit 1; }
 command -v sshd >/dev/null || command -v /usr/sbin/sshd >/dev/null \
@@ -31,7 +37,7 @@ exact_bound=${prefix}fit
 held=${prefix}hold
 accounts=("$nominal" "$oversized_stdout" "$oversized_stderr" "$exact_bound" "$held")
 
-for key in "$authorized_pub" "$observer_pub"; do
+for key in "$authorized_pub" "$observer_pub" "$file_ed25519_pub" "$file_rsa_pub"; do
   [[ -f "$key" && ! -L "$key" ]] || { echo "public key is missing or symbolic: $key" >&2; exit 1; }
   ssh-keygen -l -f "$key" >/dev/null \
     || { echo "not an OpenSSH public key: $key" >&2; exit 1; }
@@ -50,6 +56,12 @@ done
 
 authorized_line=$(cat -- "$authorized_pub")
 observer_line=$(cat -- "$observer_pub")
+# The two identities the encrypted key files of #53 carry. They are authorised
+# on every synthetic account, exactly like the agent identity, so the fallback
+# is proven against the same accounts, the same forced commands and the same
+# closures rather than against a perimeter of its own.
+file_ed25519_line=$(cat -- "$file_ed25519_pub")
+file_rsa_line=$(cat -- "$file_rsa_pub")
 restrictions=no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
 
 # The forced commands. Only the server decides how many bytes come back, which
@@ -91,12 +103,15 @@ for account in "${accounts[@]}"; do
   useradd -m -s /bin/bash "$account"
   install -d -m 0700 -o "$account" -g "$account" "/home/$account/.ssh"
   command=${forced[$account]}
-  if [[ -n "$command" ]]; then
-    line="command=\"$command\",$restrictions $authorized_line"
-  else
-    line="$restrictions $authorized_line"
-  fi
-  printf '%s\n' "$line" >"/home/$account/.ssh/authorized_keys"
+  : >"/home/$account/.ssh/authorized_keys"
+  for identity in "$authorized_line" "$file_ed25519_line" "$file_rsa_line"; do
+    if [[ -n "$command" ]]; then
+      line="command=\"$command\",$restrictions $identity"
+    else
+      line="$restrictions $identity"
+    fi
+    printf '%s\n' "$line" >>"/home/$account/.ssh/authorized_keys"
+  done
   chown "$account:$account" "/home/$account/.ssh/authorized_keys"
   chmod 0600 "/home/$account/.ssh/authorized_keys"
 done

@@ -12,13 +12,22 @@ failures=0
 pkill -f "ssh-agent -a $state" 2>/dev/null || true
 pkill -f 'your-cloud-personal-access-fixture' 2>/dev/null || true
 
-# Every private byte is destroyed rather than merely unlinked.
-for path in "$state/keys/authorized" "$state/keys/stranger" "$state/keys/observer" \
-  "$state/needle/authorized-seed.hex"; do
-  if [[ -f "$path" ]]; then
+# Every private byte is destroyed rather than merely unlinked: the agent
+# identities, the key files of the fallback, their passphrase and both canaries.
+while IFS= read -r path; do
+  [[ -n "$path" ]] || continue
+  if [[ -f "$path" && ! -L "$path" ]]; then
     shred -u "$path"
   fi
-done
+done <<EOF
+$state/keys/authorized
+$state/keys/stranger
+$state/keys/observer
+$state/needle/authorized-seed.hex
+$state/needle/key-seed.hex
+$state/needle/key-passphrase
+$(find "$state/keys/files" -maxdepth 1 -type f 2>/dev/null || true)
+EOF
 
 # The resolver tables are returned to the files this perimeter saved.
 if [[ -f "$state/restore/hosts" ]]; then

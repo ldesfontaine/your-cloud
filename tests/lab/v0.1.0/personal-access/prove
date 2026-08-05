@@ -43,6 +43,7 @@ required_names=(
   OVERSIZED_STDOUT_USERNAME OVERSIZED_STDERR_USERNAME EXACT_BOUND_USERNAME
   HELD_USERNAME ECDSA_PORT KEX_PORT CIPHER_PORT MANY_NAME SELF_NAME
   LOOPBACK_NAME HOSTS_FILE REBOUND_ADDRESS SERVER_COMMAND KEY_NEEDLE SCRATCH
+  KEY_DIR KEY_PASSPHRASE KEY_SEED_NEEDLE KEY_ED25519_FINGERPRINT KEY_RSA_FINGERPRINT
 )
 
 fail() { echo "FAILED: $*" >&2; exit 1; }
@@ -108,9 +109,18 @@ setup() {
     "$labctl" copy-to "$server_vm" "$workdir/$key.pub" \
       "$remote_harness/$key.pub" >/dev/null
   done
+  # The two public keys of the encrypted files, so the fallback of #53
+  # authenticates against the same synthetic accounts as the agent path.
+  for key in ed25519 rsa3072; do
+    "$labctl" copy-from "$console_vm" "$remote_state/keys/files/$key.pub" \
+      "$workdir/file-$key.pub" >/dev/null
+    "$labctl" copy-to "$server_vm" "$workdir/file-$key.pub" \
+      "$remote_harness/file-$key.pub" >/dev/null
+  done
 
   "$labctl" ssh "$server_vm" -- "$remote_harness/install-server" \
     "$remote_harness/authorized.pub" "$remote_harness/observer.pub" \
+    "$remote_harness/file-ed25519.pub" "$remote_harness/file-rsa3072.pub" \
     >"$workdir/server.env"
 
   declared=$(awk -F= '$1 == "HOST_KEY" {print $2}' "$workdir/server.env")

@@ -20,6 +20,13 @@ state=/root/lab-personal-access
 # never a LAB address: one is what a rebinding attacker would make the name
 # answer, the others crowd a single name past the frozen-address bound.
 rebound_address=192.0.2.66
+# `MAX_BCRYPT_ROUNDS` of the client, and the count that sits exactly on it.
+max_rounds=2048
+bound_rounds=$max_rounds
+# Enough rounds that a derivation is unmistakably still running after a fifth
+# of a second, on this machine and under the unoptimised build the contract
+# suite uses.
+slow_rounds=128
 crowd_prefix=192.0.2.
 crowd_count=9
 
@@ -33,9 +40,13 @@ ssh-keygen -q -t ed25519 -N '' -C "$prefix-authorized" -f "$state/keys/authorize
 ssh-keygen -q -t ed25519 -N '' -C "$prefix-stranger" -f "$state/keys/stranger"
 ssh-keygen -q -t ed25519 -N '' -C "$prefix-observer" -f "$state/keys/observer"
 
-# The raw private scalar of the authorised identity is the canary the suite
-# searches for. It exists only while the perimeter does.
-python3 - "$state/keys/authorized" >"$state/needle/authorized-seed.hex" <<'PY'
+# The raw private scalar of an unencrypted Ed25519 key file, in hexadecimal.
+# It is the canary the suite searches for, and it exists only while the
+# perimeter does. A key is generated in the clear, its scalar read here, and
+# only then encrypted in place: the seed of an already encrypted file cannot be
+# read without the passphrase, and the harness must never hold two ways to it.
+extract_seed() {
+  python3 - "$1" <<'PY'
 import base64, struct, sys
 
 body = []
@@ -69,6 +80,9 @@ _, inner = take(private, inner)
 seed, inner = take(private, inner)
 print(seed[:32].hex())
 PY
+}
+
+extract_seed "$state/keys/authorized" >"$state/needle/authorized-seed.hex"
 chmod 0600 "$state/needle/authorized-seed.hex"
 
 # A real agent, holding real keys, on a socket whose parent directory is what
@@ -78,6 +92,160 @@ SSH_AUTH_SOCK="$state/agent/agent.sock" ssh-add -q "$state/keys/authorized" "$st
 # From here on the agent is the only holder of these two identities: the suite
 # proves the client authenticates without ever exporting a private key.
 shred -u "$state/keys/authorized" "$state/keys/stranger"
+
+# ---------------------------------------------------------------- key files
+#
+# The perimeter of #53: real OpenSSH key files, encrypted with a passphrase
+# generated here and nowhere else, beside every shape the fallback must refuse.
+# Nothing below is committed, nothing is reused between runs, and every private
+# byte is destroyed by remove-client.
+keyfiles="$state/keys/files"
+install -d -m 0700 "$keyfiles"
+
+command -v openssl >/dev/null || { echo "openssl is required for the foreign formats" >&2; exit 1; }
+
+passphrase_file="$state/needle/key-passphrase"
+# Forty hexadecimal characters, and no trailing newline: the file holds exactly
+# the bytes the passphrase is made of, because the suite reads it whole.
+printf '%s' "$(openssl rand -hex 20)" >"$passphrase_file"
+chmod 0600 "$passphrase_file"
+passphrase=$(cat -- "$passphrase_file")
+[[ ${#passphrase} -eq 40 ]] || { echo "the synthetic passphrase was not generated" >&2; exit 1; }
+
+# The nominal Ed25519 file. Generated in the clear so its scalar becomes the
+# canary, then encrypted in place with the default sixteen rounds.
+ssh-keygen -q -t ed25519 -N '' -C "$prefix-file-ed25519" -f "$keyfiles/ed25519"
+extract_seed "$keyfiles/ed25519" >"$state/needle/key-seed.hex"
+chmod 0600 "$state/needle/key-seed.hex"
+ssh-keygen -q -p -P '' -N "$passphrase" -f "$keyfiles/ed25519" >/dev/null
+grep -q 'BEGIN OPENSSH PRIVATE KEY' "$keyfiles/ed25519" \
+  || { echo "the nominal key file is not an OpenSSH envelope" >&2; exit 1; }
+
+# The nominal RSA file, at the smallest modulus the perimeter accepts, and the
+# one just below it that must be refused.
+ssh-keygen -q -t rsa -b 3072 -N "$passphrase" -C "$prefix-file-rsa3072" -f "$keyfiles/rsa3072"
+ssh-keygen -q -t rsa -b 2048 -N "$passphrase" -C "$prefix-file-rsa2048" -f "$keyfiles/rsa2048"
+
+# A second Ed25519 file, encrypted with the same passphrase. It is what the
+# substitution proof moves on top of a file already validated: identical in
+# every respect except being another key, so a client that accepted it would be
+# accepting a substitution and not a broken file.
+ssh-keygen -q -t ed25519 -N "$passphrase" -C "$prefix-file-replacement" -f "$keyfiles/replacement"
+
+# A file whose declared round count sits exactly on the accepted bound. Only
+# its envelope is read: deriving it under a debug build costs far more than the
+# step ceiling, which is a property of the build and not of the product.
+ssh-keygen -q -t ed25519 -a "$bound_rounds" -N "$passphrase" -C "$prefix-file-bound" \
+  -f "$keyfiles/bound"
+
+# And a file whose derivation is expensive enough to still be running when a
+# short lease fires, yet cheap enough to finish under a full one. Both halves of
+# the expiry proof are taken on this one file, so the refusal and its control
+# differ by the deadline alone.
+ssh-keygen -q -t ed25519 -a "$slow_rounds" -N "$passphrase" -C "$prefix-file-slow" \
+  -f "$keyfiles/slow"
+
+# A key in the clear. The single most important refusal of this fallback.
+ssh-keygen -q -t ed25519 -N '' -C "$prefix-file-clear" -f "$keyfiles/clear"
+
+# The foreign formats, produced by the tools that really write them rather than
+# imitated. PPK has no generator here, so it is the header PuTTY writes.
+openssl genpkey -algorithm ed25519 -out "$keyfiles/pkcs8" 2>/dev/null \
+  || { echo "the PKCS#8 sample could not be generated" >&2; exit 1; }
+openssl genrsa -traditional -out "$keyfiles/pkcs1" 3072 2>/dev/null \
+  || { echo "the PKCS#1 sample could not be generated" >&2; exit 1; }
+openssl ecparam -name prime256v1 -genkey -noout -out "$keyfiles/sec1" 2>/dev/null \
+  || { echo "the SEC1 sample could not be generated" >&2; exit 1; }
+{
+  echo "PuTTY-User-Key-File-3: ssh-ed25519"
+  echo "Encryption: aes256-cbc"
+  echo "Comment: $prefix-file-ppk"
+  echo "Public-Lines: 1"
+  echo "AAAA"
+} >"$keyfiles/ppk"
+
+for sample in pkcs8 pkcs1 sec1; do
+  grep -q 'BEGIN OPENSSH PRIVATE KEY' "$keyfiles/$sample" \
+    && { echo "the $sample sample is an OpenSSH envelope after all" >&2; exit 1; }
+done
+
+# A file larger than the bound, refused before it is ever parsed.
+head -c $((64 * 1024 + 1)) /dev/zero | tr '\0' 'A' >"$keyfiles/oversized"
+
+# Envelopes that declare something outside the contract. They are rewritten
+# from the nominal file rather than generated, because no tool writes them: an
+# `aes256-gcm` cipher, a `none` key derivation, a round count of zero, a round
+# count one past the bound, and eight bytes of payload nobody asked for.
+python3 - "$keyfiles/ed25519" "$keyfiles" "$max_rounds" <<'PY'
+import base64, struct, sys
+
+source, out, max_rounds = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+body = []
+keep = False
+for line in open(source):
+    if line.startswith('-----BEGIN'):
+        keep = True
+        continue
+    if line.startswith('-----END'):
+        break
+    if keep:
+        body.append(line.strip())
+raw = base64.b64decode(''.join(body))
+
+MAGIC = b'openssh-key-v1\0'
+
+
+def take(buffer, offset):
+    (length,) = struct.unpack('>I', buffer[offset:offset + 4])
+    return buffer[offset + 4:offset + 4 + length], offset + 4 + length
+
+
+def string(value):
+    return struct.pack('>I', len(value)) + value
+
+
+offset = len(MAGIC)
+cipher, offset = take(raw, offset)
+kdf, offset = take(raw, offset)
+options, offset = take(raw, offset)
+(count,) = struct.unpack('>I', raw[offset:offset + 4])
+offset += 4
+public, offset = take(raw, offset)
+encrypted, offset = take(raw, offset)
+assert offset == len(raw), 'the nominal file already carries trailing data'
+salt, inner = take(options, 0)
+(rounds,) = struct.unpack('>I', options[inner:inner + 4])
+assert cipher == b'aes256-ctr' and kdf == b'bcrypt', (cipher, kdf)
+
+
+def build(name, **changes):
+    fields = dict(cipher=cipher, kdf=kdf, salt=salt, rounds=rounds, count=count,
+                  public=public, encrypted=encrypted, trailing=b'')
+    fields.update(changes)
+    options = string(fields['salt']) + struct.pack('>I', fields['rounds'])
+    payload = (MAGIC + string(fields['cipher']) + string(fields['kdf'])
+               + string(options) + struct.pack('>I', fields['count'])
+               + string(fields['public']) + string(fields['encrypted'])
+               + fields['trailing'])
+    encoded = base64.b64encode(payload).decode('ascii')
+    lines = [encoded[index:index + 70] for index in range(0, len(encoded), 70)]
+    document = ('-----BEGIN OPENSSH PRIVATE KEY-----\n'
+                + '\n'.join(lines)
+                + '\n-----END OPENSSH PRIVATE KEY-----\n')
+    with open(f'{out}/{name}', 'w') as target:
+        target.write(document)
+
+
+build('wrong-cipher', cipher=b'aes256-gcm@openssh.com')
+build('wrong-kdf', kdf=b'none')
+build('rounds-zero', rounds=0)
+build('rounds-over', rounds=max_rounds + 1)
+build('trailing', trailing=b'\0' * 8)
+PY
+
+chmod 0600 "$keyfiles"/*
+find "$keyfiles" -name '*.pub' -exec chmod 0644 {} +
 
 # The observation bridge. It carries the server address so no test file has to,
 # and it pins the host key observed through the managed LAB channel rather than
@@ -127,6 +295,11 @@ printf 'AUTHORIZED=%s\n' "$(ssh-keygen -l -f "$state/keys/authorized.pub" | awk 
 printf 'STRANGER=%s\n' "$(ssh-keygen -l -f "$state/keys/stranger.pub" | awk '{print $2}')"
 printf 'SERVER_COMMAND=%s\n' "$state/server-command"
 printf 'KEY_NEEDLE=%s\n' "$state/needle/authorized-seed.hex"
+printf 'KEY_DIR=%s\n' "$keyfiles"
+printf 'KEY_PASSPHRASE=%s\n' "$passphrase_file"
+printf 'KEY_SEED_NEEDLE=%s\n' "$state/needle/key-seed.hex"
+printf 'KEY_ED25519_FINGERPRINT=%s\n' "$(ssh-keygen -l -f "$keyfiles/ed25519.pub" | awk '{print $2}')"
+printf 'KEY_RSA_FINGERPRINT=%s\n' "$(ssh-keygen -l -f "$keyfiles/rsa3072.pub" | awk '{print $2}')"
 printf 'SCRATCH=%s\n' "$state/scratch"
 printf 'KNOWN_HOSTS=%s\n' "$state/known_hosts"
 echo "INSTALL_CLIENT_OK" >&2
