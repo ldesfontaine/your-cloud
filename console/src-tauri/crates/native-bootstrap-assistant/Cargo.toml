@@ -104,6 +104,13 @@ required-features = ["windows-personal-transport-contract-test"]
 # est fermé explicitement par `personal_access::ssh_algorithms`.
 russh = { version = "=0.62.4", default-features = false, features = ["ring", "rsa"] }
 serde_json = "=1.0.149"
+# Trait de signature de la clé personnelle ouverte en mémoire. Le paquet est
+# déjà dans le graphe : `ssh-key` en dépend, et `russh` réexporte le type
+# `Signature` sans réexporter le trait qui le produit. La dépendance directe
+# n'ajoute donc rien au graphe, elle rend seulement nommable le seul trait par
+# lequel le repli par clé peut signer — et signer par le même `Signer` que
+# l'agent, donc par le même budget, plutôt que par un second chemin.
+signature = { version = "=3.0.0", default-features = false }
 # Runtime du transport personnel. `russh` impose déjà exactement cette version ;
 # la dépendance directe n'ajoute rien au graphe, elle rend seulement utilisable
 # la boucle courante et le socket Unix que le client d'agent exige.
