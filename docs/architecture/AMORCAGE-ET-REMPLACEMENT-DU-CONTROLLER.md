@@ -499,7 +499,7 @@ Après approbation, l'Assistant :
    rend le résultat exact de chaque machine.
 
 Le lot installe donc le binaire avant de rendre sa commande forcée joignable.
-Dans ce palier, `your-cloud aux` sait uniquement valider son enveloppe et rendre
+Dans ce palier, `your-cloud auxiliary` sait uniquement valider son enveloppe et rendre
 un diagnostic de protocole en lecture seule ; toute opération de mutation est
 refusée par défaut. Le palier suivant ajoute explicitement la première
 opération, la sonde OCI jetable. L'amorçage ne préautorise aucune action future.
@@ -520,7 +520,7 @@ transferts, puis impose le chemin absolu du binaire et de ses parents
 root-owned.
 
 Une règle d'élévation possédée par `root`, avec environnement réinitialisé et
-sans `SETENV`, autorise seulement l'invocation exacte de `your-cloud aux` sans
+sans `SETENV`, autorise seulement l'invocation exacte de `your-cloud auxiliary` sans
 argument libre. Le plan typé arrive sur son entrée standard et est revérifié
 avant que le processus ponctuel agisse avec les privilèges nécessaires. Aucune
 règle `sudo` générale n'est créée.

@@ -251,7 +251,7 @@ Console
 Controller autonome
 |- une identité SSH Your Cloud différente par machine
 |- clés privées root-owned fournies au service par credentials systemd
-`- clés publiques -> commande forcée `your-cloud aux`
+`- clés publiques -> commande forcée `your-cloud auxiliary`
                       `- protocole lecture seule, mutation refusée par défaut
 ```
 

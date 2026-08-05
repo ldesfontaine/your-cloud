@@ -232,7 +232,7 @@ valeurs de santé collectées.
 
 Le chemin prévu pour `v0.1.0` n'ajoute aucun ordre à ces rôles : une identité
 SSH propre
-à la machine et une commande forcée lanceront `your-cloud aux` comme processus
+à la machine et une commande forcée lanceront `your-cloud auxiliary` comme processus
 ponctuel séparé. Le Daemon et le Relay resteront non privilégiés et consacrés à
 l'observation. Cette cartographie n'ajoutera l'Auxiliaire à ses fonctions et
 fichiers qu'après son implémentation réelle.

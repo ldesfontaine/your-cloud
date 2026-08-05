@@ -306,7 +306,7 @@ présence :
 Une machine ordinaire lance donc seulement `your-cloud daemon`. Une candidate
 Relay explicitement provisionnée peut lancer simultanément `your-cloud daemon`
 et `your-cloud relay` depuis les mêmes octets, sous deux comptes différents.
-Dans `v0.1.0`, `your-cloud aux` devient un troisième processus ponctuel. Le
+Dans `v0.1.0`, `your-cloud auxiliary` devient un troisième processus ponctuel. Le
 Controller l'invoque par une identité SSH propre à la machine et une commande
 forcée pour un plan exact. Après confirmation native, le cœur de la Console
 signe l'enveloppe canonique du plan et de son rollback avec la clé humaine de

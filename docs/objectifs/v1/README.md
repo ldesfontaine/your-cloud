@@ -330,7 +330,7 @@ Il existe exactement deux catégories d'accès SSH d'administration des machines
 - une identité Your Cloud différente par machine, créée et détenue par le
   Controller.
 
-La seconde clé publique impose une commande forcée vers `your-cloud aux` et
+La seconde clé publique impose une commande forcée vers `your-cloud auxiliary` et
 interdit shell, PTY, SFTP, transfert de port et transfert d'agent. Sa clé privée
 reste sur le Controller dans un fichier possédé par `root`, fourni au seul
 service Controller par les credentials systemd. L'authentification
@@ -481,7 +481,7 @@ local explicite de la machine candidate. Une seule version à maintenir ne
 signifie donc ni un seul processus, ni une autorité commune.
 
 Sur une machine placée en mode géré, une commande SSH forcée peut lancer
-ponctuellement `your-cloud aux` depuis les mêmes octets. L'Auxiliaire n'est ni
+ponctuellement `your-cloud auxiliary` depuis les mêmes octets. L'Auxiliaire n'est ni
 une unité permanente, ni un listener, ni un shell général. Il reçoit un plan
 typé dont l'enveloppe canonique a été signée par le cœur natif de la Console
 après l'approbation explicite. La cible conserve la clé publique, l'époque et la
