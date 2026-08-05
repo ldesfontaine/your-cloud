@@ -26,6 +26,11 @@ nominal_port=22
 ecdsa_port=2202
 kex_port=2203
 cipher_port=2204
+# The canary listener. It is a real `sshd`, on a real port of this machine, that
+# nothing ever declares to the client: an audit that scanned anything would
+# reach it, and its journal is what says whether anything did.
+canary_port=2205
+canary_log=/var/log/sshd-$prefix-canary.log
 # `MAX_PROBE_STREAM_BYTES` of the client, and the single byte past it.
 bound=4096
 over_bound=$((bound + 1))
@@ -60,9 +65,36 @@ sudo_accounts=(
   "$sudo_requiretty" "$sudo_divergent" "$sudo_ambiguous" "$sudo_oversized"
 )
 
+# The audit perimeter of #36. One account per synthetic machine profile, plus
+# the nominal one which carries no forced command at all: what that one answers
+# is this very machine, so the compatible control is a real Debian reading and
+# not a fixture agreeing with itself.
+#
+# Every other profile answers the three fixed read-only commands of the audit
+# and refuses every other command outright, which is what makes "the client sent
+# exactly those three commands" a server-side verdict rather than a client-side
+# claim.
+audit_nominal=${prefix}audn
+audit_distribution=${prefix}audd
+audit_architecture=${prefix}auda
+audit_resources=${prefix}audr
+audit_facility=${prefix}audf
+audit_installed=${prefix}audi
+audit_silent=${prefix}auds
+audit_profiles=(
+  "$audit_distribution" "$audit_architecture" "$audit_resources"
+  "$audit_facility" "$audit_installed" "$audit_silent"
+)
+
+# The three commands, spelled exactly as `personal_access::audit` declares them.
+# A client that changed one of them would be answered 127 by every profile.
+audit_uname='/usr/bin/uname -m'
+audit_df='/usr/bin/df -k -P /var'
+audit_head='/usr/bin/head -v -c 320 /proc/self/status /etc/hostname /etc/os-release /proc/1/comm /sys/fs/cgroup/cgroup.controllers /proc/meminfo /sys/devices/system/cpu/online /etc/your-cloud/roles'
+
 accounts=(
   "$nominal" "$oversized_stdout" "$oversized_stderr" "$exact_bound" "$held"
-  "${sudo_accounts[@]}"
+  "${sudo_accounts[@]}" "$audit_nominal" "${audit_profiles[@]}"
 )
 
 for key in "$authorized_pub" "$observer_pub" "$file_ed25519_pub" "$file_rsa_pub"; do
@@ -119,6 +151,75 @@ EOF
 chmod 0755 "$forced_dir"/flood-stdout "$forced_dir"/flood-stderr \
   "$forced_dir"/exact-stdout "$forced_dir"/hold
 
+# ------------------------------------------------ the synthetic machines of #36
+#
+# One script serves every profile and computes nothing: it matches the command
+# against the three fixed ones, and answers with a file the profile of the
+# account that is logged in holds. A profile carrying `fail` answers nothing at
+# all, which is the machine that never says what it is.
+install -d -m 0755 "$forced_dir/profiles"
+cat >"$forced_dir/audit-profile" <<EOF
+#!/bin/sh
+profile=$forced_dir/profiles/\$(id -un)
+if [ -e "\$profile/fail" ]; then
+  echo "this machine answers nothing" >&2
+  exit 1
+fi
+case "\$SSH_ORIGINAL_COMMAND" in
+"$audit_uname") exec cat "\$profile/uname" ;;
+"$audit_df") exec cat "\$profile/df" ;;
+"$audit_head") exec cat "\$profile/head" ;;
+esac
+echo "the audited machine was asked something it never agreed to answer" >&2
+exit 127
+EOF
+chmod 0755 "$forced_dir/audit-profile"
+
+# One synthetic machine, written as the three answers it gives.
+write_profile() {
+  local account=$1 arch=$2 os_id=$3 os_version=$4 init=$5 hierarchy=$6
+  local memory_kb=$7 processors=$8 free_kb=$9 roles=${10}
+  local directory="$forced_dir/profiles/$account"
+  install -d -m 0755 "$directory"
+  printf '%s\n' "$arch" >"$directory/uname"
+  {
+    printf 'Filesystem     1024-blocks    Used Available Capacity Mounted on\n'
+    printf '/dev/vda1         10113424 1263772 %s      14%% /\n' "$free_kb"
+  } >"$directory/df"
+  {
+    # `head -v` writes one header per file, a blank line before each header but
+    # the first, and no header at all for a file it could not open. What is
+    # written below is that layout, so what the client parses in the LAB is what
+    # it parses on a real machine.
+    printf '==> /proc/self/status <==\nName:\thead\nUid:\t4242\t4242\t4242\t4242\n'
+    printf '\n==> /etc/hostname <==\nsynthetic-%s\n' "$account"
+    printf '\n==> /etc/os-release <==\nID=%s\nVERSION_ID="%s"\n' "$os_id" "$os_version"
+    printf '\n==> /proc/1/comm <==\n%s\n' "$init"
+    if [[ "$hierarchy" == unified ]]; then
+      printf '\n==> /sys/fs/cgroup/cgroup.controllers <==\ncpuset cpu io memory pids\n'
+    fi
+    printf '\n==> /proc/meminfo <==\nMemTotal: %10s kB\nMemFree:        1 kB\n' "$memory_kb"
+    printf '\n==> /sys/devices/system/cpu/online <==\n%s\n' "$processors"
+    if [[ "$roles" != none ]]; then
+      printf '\n==> /etc/your-cloud/roles <==\n%s\n' "$roles"
+    fi
+  } >"$directory/head"
+  chmod 0644 "$directory"/uname "$directory"/df "$directory"/head
+}
+
+# The supported target in every respect but one, so each refusal is produced by
+# a single deviation and names it.
+write_profile "$audit_distribution" x86_64 ubuntu 24.04 systemd unified 4194304 0-1 8388608 none
+write_profile "$audit_architecture" aarch64 debian 13 systemd unified 4194304 0-1 8388608 none
+write_profile "$audit_resources" x86_64 debian 13 systemd unified 131072 0 8388608 none
+write_profile "$audit_facility" x86_64 debian 13 openrc legacy 4194304 0-1 8388608 none
+# A machine that already declares a Relay: an existing installation, its active
+# role, and the cohabitation a proposal must announce.
+write_profile "$audit_installed" x86_64 debian 13 systemd unified 4194304 0-1 8388608 relay
+# The machine that answers nothing. Every fact of it must come back unknown.
+write_profile "$audit_silent" x86_64 debian 13 systemd unified 4194304 0-1 8388608 none
+: >"$forced_dir/profiles/$audit_silent/fail"
+
 declare -A forced=(
   ["$nominal"]=""
   ["$oversized_stdout"]="$forced_dir/flood-stdout"
@@ -128,6 +229,12 @@ declare -A forced=(
 )
 for account in "${sudo_accounts[@]}"; do
   forced["$account"]=""
+done
+# The nominal audit account answers with this machine itself, so it carries no
+# forced command; every other profile answers through the single script above.
+forced["$audit_nominal"]=""
+for account in "${audit_profiles[@]}"; do
+  forced["$account"]="$forced_dir/audit-profile"
 done
 
 for account in "${accounts[@]}"; do
@@ -281,10 +388,16 @@ start_instance "$cipher_port" cipher "HostKey /etc/ssh/ssh_host_ed25519_key
 Ciphers aes128-ctr
 MACs hmac-sha2-256"
 
+# The canary. It deviates in nothing: same host key, same accounts, same
+# algorithms as the nominal server. The only thing that separates it from the
+# declared endpoint is that nobody ever declares it, so a connection in its
+# journal can only come from something that went looking.
+start_instance "$canary_port" canary "HostKey /etc/ssh/ssh_host_ed25519_key"
+
 listening() {
   ss -tln | grep -qE "[:.]$1[[:space:]]"
 }
-for port in "$nominal_port" "$ecdsa_port" "$kex_port" "$cipher_port"; do
+for port in "$nominal_port" "$ecdsa_port" "$kex_port" "$cipher_port" "$canary_port"; do
   for _ in $(seq 50); do
     listening "$port" && break
     sleep 0.1
@@ -314,6 +427,18 @@ printf 'SUDO_DIVERGENT_USERNAME=%s\n' "$sudo_divergent"
 printf 'SUDO_AMBIGUOUS_USERNAME=%s\n' "$sudo_ambiguous"
 printf 'SUDO_OVERSIZED_USERNAME=%s\n' "$sudo_oversized"
 printf 'SUDO_UID=%s\n' "$(id -u "$sudo_password")"
+printf 'AUDIT_USERNAME=%s\n' "$audit_nominal"
+printf 'AUDIT_UID=%s\n' "$(id -u "$audit_nominal")"
+printf 'AUDIT_HOME=%s\n' "/home/$audit_nominal"
+printf 'AUDIT_HOSTNAME=%s\n' "$(cat /etc/hostname)"
+printf 'AUDIT_DISTRIBUTION_USERNAME=%s\n' "$audit_distribution"
+printf 'AUDIT_ARCHITECTURE_USERNAME=%s\n' "$audit_architecture"
+printf 'AUDIT_RESOURCES_USERNAME=%s\n' "$audit_resources"
+printf 'AUDIT_FACILITY_USERNAME=%s\n' "$audit_facility"
+printf 'AUDIT_INSTALLED_USERNAME=%s\n' "$audit_installed"
+printf 'AUDIT_SILENT_USERNAME=%s\n' "$audit_silent"
+printf 'CANARY_PORT=%s\n' "$canary_port"
+printf 'CANARY_LOG=%s\n' "$canary_log"
 # The only secret this script emits. The harness turns it into a file on the
 # client and never writes it into the perimeter description, so no environment
 # of any process the suite starts ever carries it.

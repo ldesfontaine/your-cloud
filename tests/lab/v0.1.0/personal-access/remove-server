@@ -13,6 +13,8 @@ accounts=(
   ${prefix}nom ${prefix}out ${prefix}err ${prefix}fit ${prefix}hold
   ${prefix}sudp ${prefix}sudn ${prefix}sudx ${prefix}sudl
   ${prefix}sudt ${prefix}sudd ${prefix}suda ${prefix}sudb
+  ${prefix}audn ${prefix}audd ${prefix}auda ${prefix}audr
+  ${prefix}audf ${prefix}audi ${prefix}auds
 )
 failures=0
 
@@ -30,8 +32,8 @@ done
 
 pkill -f "sshd_config_$prefix-" 2>/dev/null || true
 sleep 1
-rm -f "/etc/ssh/sshd_config_$prefix-ecdsa" "/etc/ssh/sshd_config_$prefix-kex" \
-  "/etc/ssh/sshd_config_$prefix-cipher"
+# Every deviating instance this perimeter started, the canary included.
+rm -f "/etc/ssh/sshd_config_$prefix-"*
 rm -f /var/log/sshd-$prefix-*.log /run/sshd-$prefix-*.pid
 rm -f "$hostile_key" "$hostile_key.pub"
 rm -rf "$forced_dir"
@@ -57,6 +59,10 @@ for account in "${accounts[@]}"; do
 done
 if pgrep -f "sshd_config_$prefix-" >/dev/null; then
   echo "a hostile server is still running" >&2
+  failures=$((failures + 1))
+fi
+if compgen -G "/etc/ssh/sshd_config_$prefix-*" >/dev/null; then
+  echo "a deviating server configuration is still present" >&2
   failures=$((failures + 1))
 fi
 for path in "$forced_dir" "$log_fragment" "$hostile_key"; do
