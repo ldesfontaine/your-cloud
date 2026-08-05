@@ -243,6 +243,88 @@ tests/lab/v0.1.0/machine-identity/prove remove
 - La présence de ces sources ne constitue pas une preuve. Seule une exécution
   identifiée en est une.
 
+## [`controller-replacement/`](controller-replacement/) — remplacement explicite d'un Controller
+
+C'est le seul harnais du palier dont le sujet est ce qui se passe **quand on ne
+sait pas**. Il joue les deux rôles que l'incident sépare : `lab-console` porte
+l'ancien Controller — celui qu'on remplace, et donc celui que le harnais
+**arrête réellement** — et `lab-machine-1` porte le nouveau, le Relay et une
+cible. Les deux machines sont aussi des cibles : « chaque cible rend l'un des
+quatre états » ne veut rien dire sur une seule.
+
+- [`prove`](controller-replacement/prove) est l'entrée unique, exécutée depuis
+  le poste de pilotage. Elle commence par la garde d'inventaire obligatoire,
+  puis enchaîne huit sous-commandes : `setup`, `incident`, `switch`,
+  `withdraw`, `refuse`, `interrupt`, `mutate` et `remove`. Sans argument elle
+  fait les huit dans l'ordre et démonte le périmètre même lorsqu'une étape
+  échoue. Seules `setup` et `remove` s'appellent seules : les six autres
+  refusent, parce qu'elles ont besoin du périmètre et des identités forgées par
+  le même passage.
+- `incident` est la phase qui coûte du temps, et c'est voulu. Elle arrête
+  vraiment `lab-console` par le contrôleur du LAB, prend une sonde
+  immédiatement, puis attend réellement la borne que le produit fixe avant d'en
+  reprendre une. La panne de cette preuve n'est pas simulée, et les secondes qui
+  sont jugées sont celles qui se sont écoulées.
+- Les **deux observations indépendantes** de la panne sont d'espèces
+  différentes : une vraie tentative TCP depuis `lab-machine-1`, et l'état du
+  domaine tel que l'hyperviseur le rapporte par `labctl`. La seconde ne passe
+  par aucun réseau invité, ce qui est exactement ce qu'on demande à une seconde
+  observation.
+- [`mount-perimeter`](controller-replacement/mount-perimeter) monte sur chaque
+  machine un compte technique verrouillé, le fichier de clés géré que `sshd` lit
+  pour lui seul, et **un compte personnel avec sa propre clé**. Ce dernier
+  existe pour que « aucune clé personnelle n'est retirée » soit une observation
+  sur un vrai fichier d'un vrai compte. Il ouvre et ferme aussi les sockets
+  d'écoute, et les relève avec `ss` plutôt que de les déduire d'un pid.
+- [`run-from-controller`](controller-replacement/run-from-controller) forge les
+  deux identités opérationnelles et ouvre les sessions. `refused` est prononcé
+  par `sshd` sous la forme `Permission denied (publickey)` et par rien d'autre ;
+  un échec qui n'est ni un refus ni une réponse rend `no-answer`, qui ne tiendra
+  jamais lieu de refus.
+- Les quatre états sont reconstruits depuis **deux sources qui doivent
+  s'accorder** : ce que le fichier root détient et ce que deux vraies sessions
+  ont répondu. Le désaccord est obtenu honnêtement — la clé neuve est bien
+  installée et `RevokedKeys` la fait refuser par `sshd` — et il rend `unknown`.
+- `mutate` joue trois épreuves. Deux mutent une source du produit dans la VM et
+  reconstruisent une fixture mutée *à côté* de la bonne ; la troisième est jouée
+  sur les machines, en réinstallant l'entrée de l'ancienne identité derrière le
+  remplacement. Chaque correctif vérifie son propre point d'application : une
+  mutation dont la cible a bougé échoue bruyamment au lieu de laisser la suite
+  verte pour rien.
+- [`remove-machine`](controller-replacement/remove-machine) compare l'accès
+  personnel au relevé pris **avant** tout remplacement, puis retire ce que ce
+  harnais a créé — et seulement cela : la provenance de chaque compte est celle
+  relevée au montage, exactement comme le registre de #38.
+
+### Usage
+
+```text
+tests/lab/v0.1.0/controller-replacement/prove          # les huit étapes
+tests/lab/v0.1.0/controller-replacement/prove setup
+tests/lab/v0.1.0/controller-replacement/prove remove
+```
+
+### Limites et hygiène
+
+- Aucune adresse de LAB, aucune matière de clé et aucun secret ne vit dans ces
+  fichiers. Les adresses viennent de `labctl`, les identités sont générées au
+  montage et détruites au démontage.
+- Le socket du lecteur Relay est un socket, pas un lecteur : il n'y a ni TLS, ni
+  certificat client, ni instantané servi. Ce que le harnais relève est
+  « ouvert » ou « fermé » ; le manifeste, lui, est jugé par la porte compilée.
+- La commande forcée est **écrite et jugée**, pas exécutée par un vrai
+  Auxiliaire : ce que ces sessions établissent est l'authentification, et c'est
+  `machine-identity/` qui prouve la commande.
+- Il n'y a pas de troisième VM. Le nouveau Controller, le Relay et une cible
+  partagent `lab-machine-1`, et il n'existe pas de machine hostile distincte.
+- `incident` immobilise `lab-console` pendant plus de cinq minutes. C'est le
+  prix de la seule borne qui empêche une bascule sur une panne trop jeune.
+- Les deux VM restent démarrées ; ce harnais ne crée ni ne détruit de topologie.
+  Le swap de `lab-console` ne survit pas à l'arrêt qu'il provoque : `prove` le
+  réactive au redémarrage, avant toute compilation.
+- La présence de ces sources ne constitue pas une preuve. Seule une exécution
+  identifiée en est une.
+
 ## [`windows-helper/`](windows-helper/) — moitié Windows du helper natif
 
 Les suites de contrat propres à Windows n'ont pas d'équivalent Linux : le Job

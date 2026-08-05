@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# Ce que le Controller fait lui-même, depuis la machine qui le porte : forger
+# les deux identités opérationnelles du remplacement, et ouvrir de vraies
+# sessions avec chacune contre un vrai `sshd`.
+#
+# Les verdicts `answered` et `refused` ne sont pas déduits d'un code de sortie :
+# `refused` est prononcé par `sshd` sous la forme `Permission denied
+# (publickey)`, et rien d'autre ne le produit. Un échec qui n'est ni l'un ni
+# l'autre — hôte injoignable, coupure, dépassement de délai — rend `no-answer`,
+# qui n'est pas un refus et n'en tiendra jamais lieu.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+state=/root/your-cloud-lab-controller-replacement
+managed_account=your-cloud-auxiliary
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: run-from-controller <commande>
+
+  forge NOM            forge une identité opérationnelle et rend sa clé publique
+  fingerprint NOM      rend l'empreinte SHA256 de cette identité
+  probe ADRESSE NOM    ouvre une session avec cette identité et rend
+                       answered | refused | no-answer
+  reach ADRESSE PORT   atteint ce port et rend
+                       answered | unreachable | no-answer
+USAGE
+  exit 2
+}
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+
+forge() {
+  local name=$1
+  mkdir -p "$state"
+  chmod 0700 "$state"
+  if [[ ! -f "$state/$name.key" ]]; then
+    ssh-keygen -q -t ed25519 -N '' -C "your-cloud lab $name" -f "$state/$name.key"
+  fi
+  cat "$state/$name.key.pub"
+}
+
+fingerprint() {
+  local name=$1
+  [[ -f "$state/$name.key.pub" ]] || fail "no identity named $name"
+  ssh-keygen -lf "$state/$name.key.pub" | awk '{print $2}'
+}
+
+# Une seule tentative, bornée, sans agent, sans reprise et sans TOFU : la clé
+# d'hôte est celle que le canal `labctl` a épinglée au montage.
+probe() {
+  local address=$1 name=$2
+  [[ -f "$state/$name.key" ]] || fail "no identity named $name"
+  local output status
+  set +e
+  output=$(ssh \
+    -i "$state/$name.key" \
+    -o IdentitiesOnly=yes \
+    -o IdentityAgent=none \
+    -o BatchMode=yes \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$state/known_hosts" \
+    -o ConnectTimeout=10 \
+    -o NumberOfPasswordPrompts=0 \
+    -n "$managed_account@$address" true 2>&1)
+  status=$?
+  set -e
+  if [[ "$output" == *"Permission denied (publickey"* ]]; then
+    echo refused
+    return 0
+  fi
+  case "$output" in
+    *"Connection refused"* | *"No route to host"* | *"Network is unreachable"* | \
+    *"Connection timed out"* | *"Operation timed out"* | *"Connection closed by remote host"*)
+      echo no-answer
+      return 0
+      ;;
+    *"Host key verification failed"* | *"REMOTE HOST IDENTIFICATION HAS CHANGED"*)
+      fail "the host key of $address is not the one pinned at mount time"
+      ;;
+  esac
+  # L'authentification a réussi ; ce que la commande forcée a fait de son côté
+  # n'est pas la question posée ici.
+  if [[ $status -eq 255 ]]; then
+    echo no-answer
+    return 0
+  fi
+  echo answered
+}
+
+# La tentative de l'ancien Controller sur le lecteur Relay, prise depuis cette
+# machine. Elle distingue les trois mêmes faits que le module d'incident.
+reach() {
+  local address=$1 port=$2
+  local output status
+  set +e
+  output=$(timeout 8 bash -c "exec 3<>/dev/tcp/${address}/${port}" 2>&1)
+  status=$?
+  set -e
+  if [[ $status -eq 0 ]]; then
+    echo answered
+    return 0
+  fi
+  case "$output" in
+    *"Connection refused"* | *"No route to host"* | *"Network is unreachable"*)
+      echo unreachable
+      ;;
+    *) echo no-answer ;;
+  esac
+}
+
+command=${1:-}
+case "$command" in
+  forge)
+    [[ $# -eq 2 ]] || usage
+    forge "$2"
+    ;;
+  fingerprint)
+    [[ $# -eq 2 ]] || usage
+    fingerprint "$2"
+    ;;
+  probe)
+    [[ $# -eq 3 ]] || usage
+    probe "$2" "$3"
+    ;;
+  reach)
+    [[ $# -eq 3 ]] || usage
+    reach "$2" "$3"
+    ;;
+  *) usage ;;
+esac

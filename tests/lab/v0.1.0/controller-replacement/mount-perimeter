@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+# Monte, sur une machine du LAB, le périmètre synthétique du remplacement du
+# Controller : un compte technique verrouillé, le fichier de clés géré que
+# `sshd` lit pour lui seul, un compte personnel avec sa propre clé, et le relevé
+# de l'état initial qui servira à prouver le retour à cet état au démontage.
+#
+# Tout est synthétique et généré ici : aucune clé, aucune adresse et aucun
+# secret ne vient du dépôt. Le compte personnel existe pour que « aucune clé
+# personnelle n'est retirée » soit une observation sur un vrai fichier d'un vrai
+# compte, et non une affirmation.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+state=/root/your-cloud-lab-controller-replacement
+managed_directory=/etc/your-cloud/authorized-keys
+managed_account=your-cloud-auxiliary
+managed_file="$managed_directory/$managed_account"
+personal_account=ycreplop
+sshd_dropin=/etc/ssh/sshd_config.d/60-your-cloud-controller-replacement.conf
+revoked_file=/etc/your-cloud/revoked-keys
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: mount-perimeter <commande>
+
+  install        crée le compte technique, le compte personnel, le fichier géré
+                 vide, la règle sshd et le relevé de l'état initial
+  entries        écrit le fichier géré à partir des lignes lues sur l'entrée
+                 standard, puis rend son empreinte
+  fingerprint    rend l'empreinte SHA256 d'une clé publique donnée
+  revoke         inscrit une clé publique dans la liste révoquée de sshd
+  unrevoke       vide la liste révoquée
+  unreadable     rend le fichier géré illisible, puis lisible avec `readable`
+  readable       rend le fichier géré lisible
+  observed       rend le relevé des entrées observées, fichier par fichier
+  record         rend le relevé de l'accès personnel de cette machine
+  reader-open PORT    ouvre un socket d'écoute sur ce port
+  reader-close PORT   ferme ce socket
+  reader-sample PORT  relève s'il écoute, sans jamais le supposer
+USAGE
+  exit 2
+}
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+
+install_perimeter() {
+  mkdir -p "$state" "$managed_directory" /etc/your-cloud
+  chmod 0700 "$state"
+  chmod 0755 /etc/your-cloud "$managed_directory"
+
+  if ! id "$managed_account" >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin "$managed_account"
+    passwd --lock "$managed_account" >/dev/null
+    echo created >"$state/managed-account.provenance"
+  else
+    echo found >"$state/managed-account.provenance"
+  fi
+
+  if ! id "$personal_account" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash "$personal_account"
+    passwd --lock "$personal_account" >/dev/null
+    echo created >"$state/personal-account.provenance"
+  else
+    echo found >"$state/personal-account.provenance"
+  fi
+
+  personal_home=$(getent passwd "$personal_account" | cut -d: -f6)
+  install -d -m 0700 -o "$personal_account" -g "$personal_account" "$personal_home/.ssh"
+  if [[ ! -f "$personal_home/.ssh/id_ed25519" ]]; then
+    su - "$personal_account" -c \
+      "ssh-keygen -q -t ed25519 -N '' -C 'personal key of the operator' -f $personal_home/.ssh/id_ed25519"
+  fi
+  cp "$personal_home/.ssh/id_ed25519.pub" "$personal_home/.ssh/authorized_keys"
+  chown "$personal_account:$personal_account" "$personal_home/.ssh/authorized_keys"
+  chmod 0600 "$personal_home/.ssh/authorized_keys"
+
+  : >"$managed_file"
+  chown root:root "$managed_file"
+  chmod 0644 "$managed_file"
+  : >"$revoked_file"
+  chmod 0644 "$revoked_file"
+
+  cat >"$sshd_dropin" <<EOF
+Match User $managed_account
+  AuthorizedKeysFile $managed_directory/%u
+  PasswordAuthentication no
+  PubkeyAuthentication yes
+RevokedKeys $revoked_file
+EOF
+  chmod 0644 "$sshd_dropin"
+  sshd -t || fail "the sshd configuration this perimeter installs is invalid"
+  systemctl reload ssh
+
+  record_personal_access >"$state/personal-access.before"
+  echo "PERIMETER_MOUNTED $(hostname)"
+}
+
+# Le relevé qui sert de témoin : ce que la machine offrait à l'utilisateur avant
+# tout remplacement. Il est comparé tel quel au démontage.
+record_personal_access() {
+  local home
+  home=$(getent passwd "$personal_account" | cut -d: -f6)
+  {
+    getent passwd "$personal_account"
+    getent shadow "$personal_account" | cut -d: -f2 | cut -c1-3
+    id -nG "$personal_account"
+    sha256sum "$home/.ssh/authorized_keys" | cut -d' ' -f1
+    ssh-keygen -lf "$home/.ssh/authorized_keys" | awk '{print $2}'
+    stat -c '%a %U %G' "$home/.ssh" "$home/.ssh/authorized_keys"
+  } 2>/dev/null
+}
+
+# Le fichier géré est écrit à partir de lignes que la fixture compilée a rendues.
+# Le harnais n'en compose aucune : ce que la machine détient est ce que le
+# produit écrit.
+write_entries() {
+  local temporary
+  temporary=$(mktemp)
+  cat >"$temporary"
+  install -m 0644 -o root -g root "$temporary" "$managed_file"
+  rm -f "$temporary"
+  sha256sum "$managed_file" | cut -d' ' -f1
+}
+
+fingerprint_of() {
+  local public=$1
+  [[ -f "$public" ]] || fail "no public key at $public"
+  ssh-keygen -lf "$public" | awk '{print $2}'
+}
+
+# Le relevé que la porte de retrait juge : un fichier, une empreinte et la ligne
+# telle qu'elle est, pour chaque entrée de chaque fichier qui pourrait en porter.
+observed_entries() {
+  local home
+  home=$(getent passwd "$personal_account" | cut -d: -f6)
+  local file
+  for file in "$managed_file" "$home/.ssh/authorized_keys"; do
+    [[ -r "$file" ]] || continue
+    while IFS= read -r line; do
+      [[ -n "${line// /}" ]] || continue
+      [[ "$line" != \#* ]] || continue
+      local single
+      single=$(mktemp)
+      printf '%s\n' "$line" >"$single"
+      local print
+      print=$(ssh-keygen -lf "$single" 2>/dev/null | awk '{print $2}')
+      rm -f "$single"
+      [[ -n "$print" ]] || continue
+      printf '%s\t%s\t%s\n' "$file" "$print" "$line"
+    done <"$file"
+  done
+}
+
+# Le lecteur Relay, réduit à ce que ce palier doit pouvoir observer : un socket
+# qui écoute ou qui n'écoute pas, sur le port que le produit fixe. Il ne sert
+# aucun instantané et ne porte aucune identité — le manifeste, lui, est jugé par
+# la porte compilée. Le relevé est pris avec `ss`, jamais déduit d'un pid.
+reader_port=0
+reader_pid_file="$state/reader-0.pid"
+
+reader_open() {
+  reader_close
+  mkdir -p "$state"
+  setsid python3 -c "
+import socket, sys, time
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('0.0.0.0', $reader_port))
+server.listen(4)
+while True:
+    try:
+        connection, _ = server.accept()
+        connection.close()
+    except OSError:
+        time.sleep(1)
+" >/dev/null 2>&1 &
+  echo $! >"$reader_pid_file"
+  local waited=0
+  while [[ $waited -lt 20 ]]; do
+    if ss -ltnH "sport = :$reader_port" | grep -q LISTEN; then
+      echo "READER_OPEN port=$reader_port"
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  fail "the reader socket did not come up within its deadline"
+}
+
+reader_close() {
+  if [[ -f "$reader_pid_file" ]]; then
+    kill "$(cat "$reader_pid_file")" 2>/dev/null || true
+    rm -f "$reader_pid_file"
+  fi
+  pkill -f "bind(('0.0.0.0', $reader_port))" 2>/dev/null || true
+  local waited=0
+  while [[ $waited -lt 20 ]]; do
+    if ! ss -ltnH "sport = :$reader_port" | grep -q LISTEN; then
+      echo "READER_CLOSED port=$reader_port"
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  fail "the reader socket did not go down within its deadline"
+}
+
+reader_sample() {
+  if ss -ltnH "sport = :$reader_port" | grep -q LISTEN; then
+    echo listening
+  else
+    echo not-listening
+  fi
+}
+
+command=${1:-}
+case "$command" in
+  install) install_perimeter ;;
+  reader-open)
+    [[ $# -eq 2 ]] || usage
+    reader_port=$2
+    reader_pid_file="$state/reader-$reader_port.pid"
+    reader_open
+    ;;
+  reader-close)
+    [[ $# -eq 2 ]] || usage
+    reader_port=$2
+    reader_pid_file="$state/reader-$reader_port.pid"
+    reader_close
+    ;;
+  reader-sample)
+    [[ $# -eq 2 ]] || usage
+    reader_port=$2
+    reader_sample
+    ;;
+  entries) write_entries ;;
+  fingerprint)
+    [[ $# -eq 2 ]] || usage
+    fingerprint_of "$2"
+    ;;
+  revoke)
+    [[ $# -eq 2 ]] || usage
+    cat "$2" >>"$revoked_file"
+    systemctl reload ssh
+    ;;
+  unrevoke)
+    : >"$revoked_file"
+    systemctl reload ssh
+    ;;
+  unreadable) chmod 0000 "$managed_file" ;;
+  readable) chmod 0644 "$managed_file" ;;
+  observed) observed_entries ;;
+  record) record_personal_access ;;
+  *) usage ;;
+esac

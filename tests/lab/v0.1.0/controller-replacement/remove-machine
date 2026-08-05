@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Rend une machine du LAB à son état initial et le prouve : chaque élément posé
+# est retiré, son absence est relevée, et l'accès personnel est comparé au
+# relevé pris avant tout remplacement.
+#
+# Le compte personnel n'est retiré que parce que ce harnais l'a créé. La
+# provenance de chaque compte est celle qui a été relevée au montage, exactement
+# comme le registre de #38 : ce qui était déjà là n'est pas emporté.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+state=/root/your-cloud-lab-controller-replacement
+managed_directory=/etc/your-cloud/authorized-keys
+managed_account=your-cloud-auxiliary
+managed_file="$managed_directory/$managed_account"
+personal_account=ycreplop
+sshd_dropin=/etc/ssh/sshd_config.d/60-your-cloud-controller-replacement.conf
+revoked_file=/etc/your-cloud/revoked-keys
+
+failures=0
+report() { printf '%-70s %s\n' "$1" "$2"; }
+fail() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+
+record_personal_access() {
+  local home
+  home=$(getent passwd "$personal_account" | cut -d: -f6)
+  {
+    getent passwd "$personal_account"
+    getent shadow "$personal_account" | cut -d: -f2 | cut -c1-3
+    id -nG "$personal_account"
+    sha256sum "$home/.ssh/authorized_keys" | cut -d' ' -f1
+    ssh-keygen -lf "$home/.ssh/authorized_keys" | awk '{print $2}'
+    stat -c '%a %U %G' "$home/.ssh" "$home/.ssh/authorized_keys"
+  } 2>/dev/null
+}
+
+# L'accès personnel est comparé avant que quoi que ce soit ne soit retiré : la
+# question est de savoir si le remplacement l'a touché, pas si le démontage sait
+# le remettre.
+if [[ -f "$state/personal-access.before" ]] && id "$personal_account" >/dev/null 2>&1; then
+  if diff -q "$state/personal-access.before" <(record_personal_access) >/dev/null 2>&1; then
+    echo "PERSONAL_ACCESS_INTACT"
+  else
+    fail "personal access" "the operator's own account or key changed during the replacement"
+    diff "$state/personal-access.before" <(record_personal_access) >&2 || true
+  fi
+fi
+
+rm -f "$sshd_dropin" "$revoked_file"
+if [[ -f /etc/ssh/sshd_config ]]; then
+  sshd -t && systemctl reload ssh
+fi
+
+# Le matériel privé est détruit, pas seulement délié.
+for private in "$state"/*.key /home/$personal_account/.ssh/id_ed25519; do
+  [[ -f "$private" ]] || continue
+  shred -u "$private"
+done
+
+rm -f "$managed_file"
+rmdir "$managed_directory" 2>/dev/null || true
+
+# Un compte n'est retiré que si ce harnais l'a créé — la provenance relevée au
+# montage, exactement comme le registre de #38. Une dernière session ouverte par
+# une sonde peut encore tenir le compte : elle est fermée, puis le retrait est
+# retenté sous une borne, et son erreur est rapportée plutôt qu'avalée.
+withdraw_account() {
+  local account=$1 provenance=$2
+  shift 2
+  [[ -f "$state/$provenance" ]] || return 0
+  [[ $(cat "$state/$provenance") == created ]] || {
+    report "$account" "found before this run — not this harness's to remove"
+    return 0
+  }
+  id "$account" >/dev/null 2>&1 || return 0
+  pkill -KILL -u "$account" 2>/dev/null || true
+  local waited=0 error
+  while [[ $waited -lt 15 ]]; do
+    if error=$(userdel "$@" "$account" 2>&1); then
+      return 0
+    fi
+    case "$error" in
+      *"mail spool"*) return 0 ;;
+    esac
+    sleep 1
+    waited=$((waited + 1))
+  done
+  fail "$account" "userdel kept refusing: $error"
+}
+
+# Les provenances sont lues avant tout retrait : après, l'état a disparu.
+managed_provenance=$(cat "$state/managed-account.provenance" 2>/dev/null || echo unknown)
+personal_provenance=$(cat "$state/personal-account.provenance" 2>/dev/null || echo unknown)
+
+withdraw_account "$personal_account" personal-account.provenance --remove
+withdraw_account "$managed_account" managed-account.provenance
+
+rm -rf "$state"
+rmdir /etc/your-cloud 2>/dev/null || true
+
+for path in "$sshd_dropin" "$revoked_file" "$managed_file" "$state"; do
+  if [[ -e "$path" ]]; then
+    fail "$path" "is still present"
+  else
+    report "$path" "absent"
+  fi
+done
+for pair in "$managed_account:$managed_provenance" "$personal_account:$personal_provenance"; do
+  account=${pair%%:*}
+  provenance=${pair##*:}
+  if ! id "$account" >/dev/null 2>&1; then
+    report "$account" "absent"
+  elif [[ "$provenance" == created ]]; then
+    fail "$account" "this run created it and it is still declared"
+  else
+    report "$account" "left as it was found"
+  fi
+done
+
+if [[ $failures -ne 0 ]]; then
+  echo "FAILED: $failures assertions" >&2
+  exit 1
+fi
+echo "MACHINE_RETURNED_TO_ITS_INITIAL_STATE $(hostname)"

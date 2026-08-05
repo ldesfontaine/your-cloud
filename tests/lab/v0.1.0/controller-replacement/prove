@@ -1,0 +1,895 @@
+#!/usr/bin/env bash
+# Preuve du remplacement explicite d'un Controller (#40), sur la topologie
+# `quick` du LAB Linux.
+#
+# Les deux machines jouent :
+#
+#   lab-console    l'hôte de l'ancien Controller — celui qu'on remplace, et donc
+#                  celui qu'on arrête réellement pour observer une panne
+#   lab-machine-1  l'hôte du nouveau Controller, le Relay, et une cible
+#
+# Les deux machines sont aussi des cibles : la propriété « chaque cible rend l'un
+# des quatre états » ne veut rien dire sur une seule.
+#
+# Rien de ce que ce harnais affirme n'est calculé par lui : chaque verdict sort
+# de la fixture compilée, et chaque fait qu'elle juge est relevé sur les machines
+# — un vrai `sshd`, un vrai socket, un vrai arrêt de VM.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+console_vm=lab-console
+target_vm=lab-machine-1
+remote_harness=/root/your-cloud-lab-controller-replacement-harness
+state=/root/your-cloud-lab-controller-replacement
+fixture="$state/fixture"
+controller_port=9443
+reader_port=8444
+infrastructure=infrastructure-lab-replacement
+old_controller=controller-old-lab
+new_controller=controller-new-lab
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: prove [phase]
+
+  setup      monte le périmètre sur les deux machines et construit la fixture
+  incident   arrête réellement l'ancien Controller et qualifie l'incident
+  switch     joue la bascule, échantillonne le lecteur et reconstruit les états
+  withdraw   retire l'ancienne autorité et éprouve ce qu'elle peut encore
+  refuse     les contrôles négatifs, refus par refus
+  interrupt  injecte une coupure à chaque transition et reconstruit
+  mutate     les épreuves par mutation
+  remove     démonte le périmètre et prouve le retour à l'état initial
+  all        tout ce qui précède, dans cet ordre (défaut)
+USAGE
+  exit 2
+}
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+
+failures=0
+report() { printf '%-72s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+
+# La garde d'inventaire, identique à celle des autres suites : rien n'est muté
+# avant qu'elle ne soit passée.
+inventory() {
+  local vm=$1 line vm_state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ vm_state ips template topology origin <<<"$line"
+  [[ "$origin" == "your-cloud/labctl" ]] || fail "$vm is not managed by labctl"
+  [[ "$vm_state" == running ]] || fail "$vm is not running"
+  [[ "$topology" == quick ]] || fail "$vm is not part of the quick topology"
+  [[ "$ips" != *,* ]] || fail "$vm exposes several addresses"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] || fail "$vm carries a forbidden address"
+  echo "$ips"
+}
+
+# L'état du domaine tel que l'hyperviseur le rapporte. C'est la seconde
+# observation indépendante de la panne, et elle ne passe par aucun réseau invité.
+domain_state() {
+  "$labctl" list --format=tsv | awk -v vm="$1" -F'\t' '$1 == vm {print $2}'
+}
+
+on() { "$labctl" ssh "$1" -- "${@:2}"; }
+
+deploy() {
+  local vm=$1
+  "$labctl" ssh "$vm" -- "mkdir -p $remote_harness && chmod 0700 $remote_harness"
+  local script
+  for script in mount-perimeter run-from-controller remove-machine; do
+    "$labctl" copy-to "$vm" "$here/$script" "$remote_harness/$script" >/dev/null
+    "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$script"
+  done
+}
+
+wait_for_ssh() {
+  local vm=$1 waited=0
+  while [[ $waited -lt 60 ]]; do
+    if "$labctl" ssh "$vm" -- true >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 1))
+  done
+  fail "$vm did not come back within its deadline"
+}
+
+# ---------------------------------------------------------------------------
+# setup
+# ---------------------------------------------------------------------------
+
+setup() {
+  console_ip=$(inventory "$console_vm")
+  target_ip=$(inventory "$target_vm")
+  mkdir -p "$workdir"
+
+  deploy "$console_vm"
+  deploy "$target_vm"
+
+  local vm
+  for vm in "$console_vm" "$target_vm"; do
+    on "$vm" "$remote_harness/mount-perimeter install"
+  done
+
+  # La clé d'hôte est épinglée depuis le canal `labctl`, jamais depuis une
+  # première réponse du réseau.
+  "$labctl" ssh "$console_vm" -- "mkdir -p $state && : >$state/known_hosts"
+  for vm in "$console_vm" "$target_vm"; do
+    local address key
+    address=$(inventory "$vm")
+    key=$("$labctl" ssh "$vm" -- cat /etc/ssh/ssh_host_ed25519_key.pub)
+    "$labctl" ssh "$console_vm" -- \
+      "printf '%s %s\n' '$address' '$(echo "$key" | cut -d' ' -f1-2)' >>$state/known_hosts"
+  done
+
+  # Les sources de l'arbre sous test partent dans la VM, et la fixture y est
+  # construite. Rien n'est compilé sur le poste.
+  tar -czf "$workdir/work.tgz" -C "$root" \
+    --exclude='console/src-tauri/target' --exclude='console/node_modules' \
+    console/src-tauri console/package.json
+  "$labctl" copy-to "$console_vm" "$workdir/work.tgz" /root/work.tgz >/dev/null
+  on "$console_vm" "mkdir -p /root/work && tar -xzmf /root/work.tgz -C /root/work --strip-components=1"
+
+  # La fixture, construite dans le LAB et nulle part ailleurs.
+  on "$console_vm" ". /root/.cargo/env; cd /root/work/src-tauri && \
+    export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8 && \
+    cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
+      --features controller-replacement-contract-test \
+      --bin your-cloud-controller-replacement-fixture >/dev/null 2>&1 && \
+    install -m 0700 target/debug/your-cloud-controller-replacement-fixture $fixture"
+
+  # Les deux identités opérationnelles, forgées par le Controller lui-même.
+  on "$console_vm" "$remote_harness/run-from-controller forge old" >"$workdir/old.pub"
+  on "$console_vm" "$remote_harness/run-from-controller forge new" >"$workdir/new.pub"
+  old_print=$(on "$console_vm" "$remote_harness/run-from-controller fingerprint old")
+  new_print=$(on "$console_vm" "$remote_harness/run-from-controller fingerprint new")
+  printf '%s\n' "$old_print" >"$workdir/old.print"
+  printf '%s\n' "$new_print" >"$workdir/new.print"
+
+  # Les entrées sont rendues par la fixture — le harnais n'en compose aucune.
+  local body
+  body=$(cut -d' ' -f2 "$workdir/old.pub")
+  on "$console_vm" "$fixture render-entry ssh-ed25519 '$body'" >"$workdir/old.entry"
+  body=$(cut -d' ' -f2 "$workdir/new.pub")
+  on "$console_vm" "$fixture render-entry ssh-ed25519 '$body'" >"$workdir/new.entry"
+  grep -q '^command="/usr/bin/sudo -n ' "$workdir/old.entry" \
+    || fail "the entry the product rendered is not the bounded one"
+
+  install_entries old
+  echo "SETUP_OK console=$console_ip target=$target_ip"
+  report "the old identity" "$old_print"
+  report "the new identity" "$new_print"
+}
+
+# Écrit sur les deux cibles le jeu d'entrées demandé : `old`, `both` ou `new`.
+install_entries() {
+  local which=$1 vm
+  local content=""
+  case "$which" in
+    old) content=$(cat "$workdir/old.entry") ;;
+    both) content=$(cat "$workdir/old.entry" "$workdir/new.entry") ;;
+    new) content=$(cat "$workdir/new.entry") ;;
+    none) content="" ;;
+    *) fail "unknown entry set $which" ;;
+  esac
+  for vm in "$console_vm" "$target_vm"; do
+    printf '%s\n' "$content" >"$workdir/entries"
+    "$labctl" copy-to "$vm" "$workdir/entries" "$state/entries" >/dev/null
+    on "$vm" "$remote_harness/mount-perimeter entries <$state/entries" >/dev/null
+  done
+}
+
+# ---------------------------------------------------------------------------
+# incident
+# ---------------------------------------------------------------------------
+
+# Écrit un fichier de périmètre pour la fixture. Les directives suivent le
+# format que la fixture documente ; le harnais ne juge rien.
+perimeter() {
+  local path=$1
+  shift
+  : >"$path"
+  local line
+  for line in "$@"; do
+    printf '%s\n' "$line" >>"$path"
+  done
+}
+
+judge() {
+  local label=$1 path=$2 expected=$3
+  "$labctl" copy-to "$console_vm" "$path" "$state/perimeter" >/dev/null
+  local output
+  if output=$(on "$console_vm" "$fixture ${4:-qualify} $state/perimeter" 2>&1); then
+    case "$output" in
+      "$expected"*) report "$label" "${output:0:120}" ;;
+      *) red "$label" "accepted with an unexpected verdict: $output" ;;
+    esac
+  else
+    red "$label" "the positive control was refused: $output"
+  fi
+}
+
+refuse() {
+  local label=$1 path=$2 expected=$3
+  "$labctl" copy-to "$console_vm" "$path" "$state/perimeter" >/dev/null
+  local output
+  if output=$(on "$console_vm" "$fixture ${4:-qualify} $state/perimeter" 2>&1); then
+    red "$label" "accepted: $output"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) red "$label" "refused for another reason: $output" ;;
+  esac
+}
+
+incident() {
+  console_ip=$(inventory "$console_vm")
+  target_ip=$(inventory "$target_vm")
+
+  # L'ancien Controller écoute réellement.
+  on "$console_vm" "$remote_harness/mount-perimeter reader-open $controller_port" >/dev/null
+  on "$target_vm" "$remote_harness/mount-perimeter reader-open $reader_port" >/dev/null
+
+  local answer
+  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
+  [[ "$answer" == answered ]] || fail "the old Controller does not answer before it is stopped"
+  local hypervisor
+  hypervisor=$(domain_state "$console_vm")
+  [[ "$hypervisor" == running ]] || fail "the hypervisor does not report the old host as running"
+
+  perimeter "$workdir/healthy.perimeter" \
+    "qualification	hardware-loss" \
+    "old-controller	$old_controller" \
+    "new-controller	$new_controller" \
+    "suspect-host	$console_vm" \
+    "new-host	distinct	$target_vm" \
+    "isolation	unverified" \
+    "confirmed	true" \
+    "probe	$target_vm	answered	5" \
+    "probe	hypervisor	unreachable	600"
+  refuse "a Controller still answering one vantage" "$workdir/healthy.perimeter" \
+    "ControllerStillAnswering"
+
+  perimeter "$workdir/unrequested.perimeter" \
+    "qualification	hardware-loss" \
+    "old-controller	$old_controller" \
+    "new-controller	$new_controller" \
+    "suspect-host	$console_vm" \
+    "new-host	distinct	$target_vm" \
+    "isolation	unverified" \
+    "confirmed	false" \
+    "probe	$target_vm	unreachable	600" \
+    "probe	hypervisor	unreachable	600"
+  refuse "an outage nobody asked to act on" "$workdir/unrequested.perimeter" \
+    "NotRequestedByTheUser"
+
+  # L'arrêt réel. Le compteur part d'ici, et il n'est pas simulé.
+  echo "stopping $console_vm — the outage of this proof is a real one"
+  "$labctl" stop "$console_vm" >/dev/null
+  local started_at
+  started_at=$(date +%s)
+
+  [[ "$(domain_state "$console_vm")" == "shut off" ]] \
+    || fail "the hypervisor does not report the old host as stopped"
+
+  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
+  local young=$(($(date +%s) - started_at))
+  printf '%s %s\n' "$answer" "$young" >"$workdir/young.probe"
+  [[ "$answer" == unreachable || "$answer" == no-answer ]] \
+    || fail "the stopped host still answers: $answer"
+
+  perimeter "$workdir/young.perimeter" \
+    "qualification	hardware-loss" \
+    "old-controller	$old_controller" \
+    "new-controller	$new_controller" \
+    "suspect-host	$console_vm" \
+    "new-host	distinct	$target_vm" \
+    "isolation	unverified" \
+    "confirmed	true" \
+    "probe	$target_vm	unreachable	$young" \
+    "probe	hypervisor	unreachable	$young"
+
+  # On attend réellement la borne du produit avant de reprendre les sondes.
+  local bound=300 waited
+  while :; do
+    waited=$(($(date +%s) - started_at))
+    [[ $waited -lt $bound ]] || break
+    sleep 15
+  done
+  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
+  [[ "$answer" == unreachable || "$answer" == no-answer ]] \
+    || fail "the stopped host answered again: $answer"
+  local silence=$(($(date +%s) - started_at))
+  printf '%s %s\n' "$answer" "$silence" >"$workdir/silence.probe"
+
+  perimeter "$workdir/silent.perimeter" \
+    "qualification	hardware-loss" \
+    "old-controller	$old_controller" \
+    "new-controller	$new_controller" \
+    "suspect-host	$console_vm" \
+    "new-host	distinct	$target_vm" \
+    "isolation	unverified" \
+    "confirmed	true" \
+    "probe	$target_vm	$answer	$silence" \
+    "probe	hypervisor	unreachable	$silence" \
+    "state	$target_vm	$infrastructure" \
+    "state	lab-relay	$infrastructure" \
+    "used	$old_controller" \
+    "cleared	$target_vm" \
+    "association	$new_controller	$infrastructure	sheet-lab"
+
+  echo "restarting $console_vm"
+  "$labctl" start "$console_vm" >/dev/null
+  wait_for_ssh "$console_vm"
+  # Le swap de lab-console ne survit à aucun redémarrage : il est réactivé avant
+  # toute compilation ou tout jugement.
+  on "$console_vm" "swapon /swapfile 2>/dev/null || true; swapon --show=NAME --noheadings"
+  console_ip=$(inventory "$console_vm")
+
+  refuse "a silence younger than the bound" "$workdir/young.perimeter" "SilenceTooYoung"
+  judge "a confirmed loss on ${silence}s of observed silence" "$workdir/silent.perimeter" \
+    "QUALIFIED"
+  judge "the infrastructure carried over by concordance" "$workdir/silent.perimeter" \
+    "CONTINUED" concord
+  judge "a fresh Controller succeeding the lost one" "$workdir/silent.perimeter" \
+    "SUCCEEDED" succeed
+  judge "the hardware-loss journey" "$workdir/silent.perimeter" "AUTHORIZED" authorize
+
+  cp "$workdir/silent.perimeter" "$workdir/base.perimeter"
+  echo "INCIDENT_OK silence=${silence}s"
+}
+
+# ---------------------------------------------------------------------------
+# switch
+# ---------------------------------------------------------------------------
+
+sample_reader() {
+  on "$target_vm" "$remote_harness/mount-perimeter reader-sample $reader_port"
+}
+
+# Reconstruit l'état d'une cible depuis ce que la machine détient et ce que deux
+# vraies sessions ont répondu.
+reconstruct() {
+  local vm=$1 address=$2 label=$3 expected=$4
+  local old_attempt new_attempt
+  old_attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address old" || true)
+  new_attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address new" || true)
+  {
+    printf 'old-fingerprint\t%s\n' "$(cat "$workdir/old.print")"
+    printf 'new-fingerprint\t%s\n' "$(cat "$workdir/new.print")"
+    local observed
+    observed=$(on "$vm" "$remote_harness/mount-perimeter observed" || true)
+    if [[ -z "$observed" ]]; then
+      printf 'unreadable\n'
+    else
+      printf '%s\n' "$observed" | awk -F'\t' \
+        '$1 == "/etc/your-cloud/authorized-keys/your-cloud-auxiliary" {print "managed\t" $2}'
+    fi
+    printf 'old-attempt\t%s\n' "$old_attempt"
+    printf 'new-attempt\t%s\n' "$new_attempt"
+  } >"$workdir/evidence"
+  "$labctl" copy-to "$console_vm" "$workdir/evidence" "$state/evidence" >/dev/null
+  local output
+  output=$(on "$console_vm" "$fixture reconstruct $state/evidence" 2>&1 || true)
+  case "$output" in
+    "STATE $expected"*) report "$label" "$output" ;;
+    *) red "$label" "expected $expected, the machine rebuilt: $output" ;;
+  esac
+}
+
+switch() {
+  console_ip=$(inventory "$console_vm")
+  target_ip=$(inventory "$target_vm")
+
+  # `ancien seul` — la bascule n'a rien touché.
+  install_entries old
+  reconstruct "$console_vm" "$console_ip" "the old Controller alone, on lab-console" "old-only"
+  reconstruct "$target_vm" "$target_ip" "the old Controller alone, on lab-machine-1" "old-only"
+
+  # Le lecteur est fermé pour toute la durée de la bascule, et échantillonné à
+  # chaque transition plutôt qu'affirmé.
+  on "$target_vm" "$remote_harness/mount-perimeter reader-close $reader_port" >/dev/null
+  local samples=()
+  local step
+  for step in install associate epoch identities; do
+    local sample
+    sample=$(sample_reader)
+    samples+=("reader-during	$old_controller	$console_ip	active	$sample")
+    report "the reader, sampled at the $step transition" "$sample"
+    [[ "$sample" == not-listening ]] || red "reader at $step" "the reader was open during the switch"
+  done
+
+  # `chevauchement borné` — les deux autorités atteignent la machine, entre la
+  # vérification et le retrait, et nulle part ailleurs.
+  install_entries both
+  reconstruct "$console_vm" "$console_ip" "the bounded overlap, on lab-console" "bounded-overlap"
+  reconstruct "$target_vm" "$target_ip" "the bounded overlap, on lab-machine-1" "bounded-overlap"
+
+  # Le lecteur revient, au seul nouveau Controller et sur une autre adresse
+  # source.
+  on "$target_vm" "$remote_harness/mount-perimeter reader-open $reader_port" >/dev/null
+  local after
+  after=$(sample_reader)
+  [[ "$after" == listening ]] || fail "the reader did not come back up"
+
+  # Le périmètre de base, plus les échantillons réellement pris.
+  cp "$workdir/base.perimeter" "$workdir/rotation.perimeter"
+  printf '%s\n' "${samples[@]}" >>"$workdir/rotation.perimeter"
+  {
+    printf 'reader-after\t%s\t%s\tactive\t%s\n' "$new_controller" "$target_ip" "$after"
+    printf 'reader-old-address\t%s\n' "$console_ip"
+  } >>"$workdir/rotation.perimeter"
+  judge "the reader closed across the switch and reopened to one Controller" \
+    "$workdir/rotation.perimeter" "ROTATED" rotate
+
+  cp "$workdir/rotation.perimeter" "$workdir/base.perimeter"
+  echo "SWITCH_OK samples=${#samples[@]}"
+}
+
+# ---------------------------------------------------------------------------
+# withdraw
+# ---------------------------------------------------------------------------
+
+withdraw() {
+  console_ip=$(inventory "$console_vm")
+  target_ip=$(inventory "$target_vm")
+  local old_print new_print
+  old_print=$(cat "$workdir/old.print")
+  new_print=$(cat "$workdir/new.print")
+
+  local vm address
+  for pair in "$console_vm:$console_ip" "$target_vm:$target_ip"; do
+    vm=${pair%%:*}
+    address=${pair##*:}
+    on "$vm" "$remote_harness/mount-perimeter observed" >"$workdir/observed.$vm"
+    "$labctl" copy-to "$console_vm" "$workdir/observed.$vm" "$state/observed" >/dev/null
+
+    local output
+    output=$(on "$console_vm" \
+      "$fixture classify $state/observed '$old_print,$new_print'" 2>&1 || true)
+    report "what $vm really holds" "$(echo "$output" | tr '\n' ' ')"
+    echo "$output" | grep -q '^personal ' || red "$vm" "the operator's own key was not seen at all"
+
+    output=$(on "$console_vm" \
+      "$fixture withdraw $vm $vm $state/observed '$new_print' '$old_print'" 2>&1 || true)
+    case "$output" in
+      "WITHDRAWN"*) report "the withdrawal proposed on $vm" "$output" ;;
+      *) red "the withdrawal on $vm" "was refused: $output" ;;
+    esac
+    echo "$output" | grep -q "removed=$old_print" \
+      || red "the withdrawal on $vm" "did not name the old identity"
+    echo "$output" | grep -q "personal:" \
+      || red "the withdrawal on $vm" "did not name the operator's key among the kept"
+  done
+
+  # Le retrait est appliqué pour de bon, puis l'ancienne autorité est éprouvée
+  # contre les vraies machines.
+  install_entries new
+  for pair in "$console_vm:$console_ip" "$target_vm:$target_ip"; do
+    vm=${pair%%:*}
+    address=${pair##*:}
+    local attempt
+    attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address old" || true)
+    if [[ "$attempt" == refused ]]; then
+      report "the old Controller still trying SSH on $vm" "refused by sshd"
+    else
+      red "the old Controller on $vm" "still reaches the machine: $attempt"
+    fi
+    attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address new" || true)
+    [[ "$attempt" == answered ]] || red "the new authority on $vm" "does not answer: $attempt"
+    reconstruct "$vm" "$address" "the new Controller alone, on $vm" "new-only"
+  done
+
+  # L'époque d'approbation avance strictement, jugée avant d'être installée.
+  local output
+  output=$(on "$console_vm" "$fixture supersede 1 2" 2>&1 || true)
+  case "$output" in
+    "SUPERSEDED epoch=2"*) report "the approval epoch superseded" "$output" ;;
+    *) red "the approval epoch" "did not supersede: $output" ;;
+  esac
+
+  # Le balayage résiduel et le démarrage propre, sur le périmètre réel.
+  {
+    cat "$workdir/base.perimeter"
+    printf 'target\t%s\tnew-only\n' "$console_vm"
+    printf 'target\t%s\tnew-only\n' "$target_vm"
+    printf 'containment\tnot-applicable\n'
+    printf 'carried\tcertificate\tserver authority\tminted\n'
+    printf 'carried\tcertificate\tdevice authority\tminted\n'
+    printf 'carried\tsecret\treader client key\tminted\n'
+    printf 'carried\tcertificate\tdaemon authority\tindependent\n'
+    local kind
+    for kind in device certificate session secret network-filter manifest; do
+      printf 'residue\t%s\tthe old %s\trefused\n' "$kind" "$kind"
+    done
+  } >"$workdir/final.perimeter"
+
+  judge "nothing of the old association came in" "$workdir/final.perimeter" "STARTED_CLEAN" admit
+  judge "nothing the old Controller could use still grants it authority" \
+    "$workdir/final.perimeter" "SWEPT" sweep
+  judge "every target in new only" "$workdir/final.perimeter" "FLEET finished=true" fleet
+  judge "the replacement announced as secured" "$workdir/final.perimeter" "SECURED" conclude
+
+  cp "$workdir/final.perimeter" "$workdir/base.perimeter"
+  echo "WITHDRAW_OK"
+}
+
+# ---------------------------------------------------------------------------
+# refuse
+# ---------------------------------------------------------------------------
+
+refuse_all() {
+  local base="$workdir/final.perimeter"
+
+  # Une compromission sans isolement vérifié.
+  sed 's/^qualification\thardware-loss/qualification\tsuspected-compromise/' "$base" \
+    >"$workdir/compromise.perimeter"
+  refuse "a suspected compromise with no verified isolation" \
+    "$workdir/compromise.perimeter" "IsolationNotVerified" qualify
+
+  # La même, isolée : le parcours change, et il change tout seul.
+  {
+    sed -e 's/^qualification\thardware-loss/qualification\tsuspected-compromise/' \
+        -e "s/^isolation\tunverified/isolation\tverified\tlab-hypervisor/" "$base"
+  } >"$workdir/isolated.perimeter"
+  judge "the suspected-compromise journey, isolated" "$workdir/isolated.perimeter" \
+    "AUTHORIZED" authorize
+  local output
+  "$labctl" copy-to "$console_vm" "$workdir/isolated.perimeter" "$state/perimeter" >/dev/null
+  output=$(on "$console_vm" "$fixture authorize $state/perimeter" 2>&1 || true)
+  echo "$output" | grep -q 'journey=suspected-compromise' \
+    || red "the compromise journey" "did not name itself: $output"
+  echo "$output" | grep -q 'steps=isolate,' \
+    || red "the compromise journey" "does not start by isolating: $output"
+
+  # L'isolement perdu au moment de conclure.
+  sed 's/^containment\tnot-applicable/containment\tlost/' "$workdir/isolated.perimeter" \
+    >"$workdir/lost.perimeter"
+  refuse "a compromise whose isolation no longer holds" "$workdir/lost.perimeter" \
+    "SuspectHostNoLongerIsolated" conclude
+
+  # Le lecteur ouvert pendant la bascule : un seul échantillon change, et il
+  # refuse toute la rotation.
+  awk -F'\t' -v OFS='\t' -v seen=0 \
+    '$1 == "reader-during" && seen == 0 { $5 = "listening"; seen = 1 } { print }' \
+    "$workdir/final.perimeter" >"$workdir/openreader.perimeter"
+  refuse "the reader found open during the switch" "$workdir/openreader.perimeter" \
+    "OpenDuringTheSwitch" rotate
+
+  # Deux Controllers dans un seul manifeste.
+  sed "s/^reader-after\t$new_controller/reader-after\t$old_controller,$new_controller/" \
+    "$workdir/final.perimeter" >"$workdir/two.perimeter"
+  refuse "a reader manifest naming two Controllers" "$workdir/two.perimeter" \
+    "TwoControllers" rotate
+
+  # Le nouvel identifiant réutilisant l'ancien.
+  sed "s/^new-controller\t$new_controller/new-controller\t$old_controller/" \
+    "$workdir/final.perimeter" >"$workdir/stale.perimeter"
+  refuse "a Controller identifier that is not fresh" "$workdir/stale.perimeter" \
+    "ControllerIdIsNotFresh" succeed
+
+  # Des états indépendants qui divergent.
+  sed "s/^state\tlab-relay\t$infrastructure/state\tlab-relay\tinfrastructure-other/" \
+    "$workdir/final.perimeter" >"$workdir/divergent.perimeter"
+  refuse "independent states that name two infrastructures" "$workdir/divergent.perimeter" \
+    "Divergent" concord
+
+  # Une cible inconnue au moment de conclure.
+  sed "s/^target\t$target_vm\tnew-only/target\t$target_vm\tunknown/" \
+    "$workdir/final.perimeter" >"$workdir/unknown.perimeter"
+  refuse "an unknown target at the moment of concluding" "$workdir/unknown.perimeter" \
+    "TargetsUnknown" conclude
+
+  # Un balayage qui a oublié un genre.
+  grep -v '^residue	session' "$workdir/final.perimeter" >"$workdir/partial.perimeter"
+  refuse "a sweep that says nothing about one kind" "$workdir/partial.perimeter" \
+    "KindNotSwept" sweep
+
+  # Quelque chose qui donne encore autorité à l'ancien Controller.
+  sed 's/^residue\tsession\t\(.*\)\trefused/residue\tsession\t\1\tstill-grants/' \
+    "$workdir/final.perimeter" >"$workdir/live.perimeter"
+  refuse "a session that still works for the old Controller" "$workdir/live.perimeter" \
+    "StillGrantsAuthority" sweep
+
+  # Un appareil hérité de l'ancienne association.
+  sed 's/^carried\tcertificate\tdevice authority\tminted/carried\tdevice\tthe old device\tinherited/' \
+    "$workdir/final.perimeter" >"$workdir/inherited.perimeter"
+  refuse "a device inherited from the old association" "$workdir/inherited.perimeter" \
+    "Inherited" admit
+
+  # Le retrait pris sur une autre machine que celle qui a répondu.
+  on "$console_vm" "$remote_harness/mount-perimeter observed" >"$workdir/observed.console"
+  "$labctl" copy-to "$console_vm" "$workdir/observed.console" "$state/observed" >/dev/null
+  local new_print old_print
+  new_print=$(cat "$workdir/new.print")
+  old_print=$(cat "$workdir/old.print")
+  local output
+  if output=$(on "$console_vm" \
+    "$fixture withdraw $console_vm $target_vm $state/observed '$new_print' '$old_print'" 2>&1); then
+    red "a withdrawal verified on another machine" "accepted: $output"
+  else
+    case "$output" in
+      *VerifiedAnotherMachine*) report "a withdrawal verified on another machine" "refused" ;;
+      *) red "a withdrawal verified on another machine" "refused otherwise: $output" ;;
+    esac
+  fi
+
+  echo "REFUSE_OK"
+}
+
+# ---------------------------------------------------------------------------
+# interrupt
+# ---------------------------------------------------------------------------
+
+interrupt() {
+  console_ip=$(inventory "$console_vm")
+  target_ip=$(inventory "$target_vm")
+
+  # Une coupure à chaque transition : ce que la machine détient à cet instant est
+  # relevé, et l'état est reconstruit depuis elle et depuis deux vraies sessions.
+  local step expected
+  for step in "old:old-only" "both:bounded-overlap" "new:new-only"; do
+    install_entries "${step%%:*}"
+    expected="${step##*:}"
+    reconstruct "$target_vm" "$target_ip" "cut after the ${step%%:*} entries were written" \
+      "$expected"
+  done
+
+  # Le quatrième état : le fichier dit une chose, le fil en dit une autre. La clé
+  # est bien installée et `sshd` la révoque — un vrai désaccord, pas un montage.
+  install_entries new
+  "$labctl" copy-to "$target_vm" "$workdir/new.pub" "$state/new.pub" >/dev/null
+  on "$target_vm" "$remote_harness/mount-perimeter revoke $state/new.pub" >/dev/null
+  reconstruct "$target_vm" "$target_ip" "a file and a wire that disagree" "unknown"
+  on "$target_vm" "$remote_harness/mount-perimeter unrevoke" >/dev/null
+
+  # Et l'état inconnu ne propose aucun retrait.
+  local output
+  "$labctl" copy-to "$console_vm" "$workdir/evidence" "$state/evidence" >/dev/null
+  output=$(on "$console_vm" "$fixture reconstruct $state/evidence" 2>&1 || true)
+  echo "$output" | grep -q 'next=observe-only' \
+    || red "an unknown target" "proposed something other than observing: $output"
+
+  # Une machine que plus rien n'atteint est inconnue, jamais terminée.
+  install_entries none
+  reconstruct "$target_vm" "$target_ip" "a machine nothing reaches at all" "unknown"
+  install_entries new
+
+  # Le registre de #38 juge la coupure, avec ses trois provenances.
+  {
+    printf 'FILE\t/etc/your-cloud/authorized-keys/your-cloud-auxiliary\tCREATED\n'
+    printf 'FILE\t/etc/your-cloud/approval-anchor.json\tCREATED\n'
+  } >"$workdir/ledger"
+  "$labctl" copy-to "$console_vm" "$workdir/ledger" "$state/ledger" >/dev/null
+  output=$(on "$console_vm" "$fixture unwind $state/ledger" 2>&1 || true)
+  case "$output" in
+    "COMPLETE"*) report "a cut before the transfer, judged by the registry of #38" "$output" ;;
+    *) red "the registry of #38" "did not unwind completely: $output" ;;
+  esac
+
+  printf 'UNIT_STATE\tyour-cloud-controller.service\tUNKNOWN\n' >>"$workdir/ledger"
+  "$labctl" copy-to "$console_vm" "$workdir/ledger" "$state/ledger" >/dev/null
+  if output=$(on "$console_vm" "$fixture unwind $state/ledger" 2>&1); then
+    red "an unknown item in the registry" "was reported as a complete unwind: $output"
+  else
+    case "$output" in
+      "INCOMPLETE"*) report "an unknown item removes nothing and is named" "$output" ;;
+      *) red "an unknown item" "produced something else: $output" ;;
+    esac
+  fi
+
+  echo "INTERRUPT_OK"
+}
+
+# ---------------------------------------------------------------------------
+# mutate
+# ---------------------------------------------------------------------------
+
+mutate() {
+  console_ip=$(inventory "$console_vm")
+  target_ip=$(inventory "$target_vm")
+
+  # Mutation 1 — la porte d'incident cesse de refuser une panne ambiguë.
+  # C'est la propriété centrale du palier : le contrôle qui l'attrape est celui
+  # qui refuse un silence plus jeune que la borne.
+  source_mutation incident.rs '''
+needle = """        Reading::Ambiguous(ambiguity) => return Err(IncidentRefusal::Ambiguous(ambiguity)),"""
+assert needle in source, "the mutation point moved; the mutation must be rewritten"
+source = source.replace(needle, """        Reading::Ambiguous(ambiguity) => {
+            let _ = ambiguity;
+        }""", 1)
+'''
+
+  "$labctl" copy-to "$console_vm" "$workdir/young.perimeter" "$state/perimeter" >/dev/null
+  local output
+  output=$(on "$console_vm" "$state/fixture-mutated qualify $state/perimeter" 2>&1 || true)
+  case "$output" in
+    QUALIFIED*)
+      echo "MUTATION_CAUGHT: a replacement became possible on an ambiguous failure"
+      report "the mutated gate, on the silence it must refuse" "$output"
+      ;;
+    *) red "mutation 1" "was not caught: the mutated gate answered $output" ;;
+  esac
+  restore_mutation incident.rs "Reading::Ambiguous(ambiguity) => return Err"
+  output=$(on "$console_vm" "$fixture qualify $state/perimeter" 2>&1 || true)
+  case "$output" in
+    *SilenceTooYoung*) report "the restored gate refuses the ambiguity again" "$output" ;;
+    *) red "the restored gate" "did not come back green: $output" ;;
+  esac
+
+  # Mutation 2 — la porte de retrait cesse de distinguer une clé personnelle.
+  # Le contrôle qui l'attrape est le relevé réel du fichier personnel de
+  # `ycreplop`, qui devient retirable.
+  source_mutation withdrawal.rs '''
+needle = """    if observed.file != key_file() {
+        return KeyProvenance::Personal;
+    }"""
+assert needle in source, "the mutation point moved; the mutation must be rewritten"
+source = source.replace(needle, """    if observed.file != key_file() {
+        return KeyProvenance::Managed;
+    }""", 1)
+'''
+
+  install_entries both
+  on "$target_vm" "$remote_harness/mount-perimeter observed" >"$workdir/observed.mutated"
+  "$labctl" copy-to "$console_vm" "$workdir/observed.mutated" "$state/observed" >/dev/null
+  local personal_print new_print old_print
+  new_print=$(cat "$workdir/new.print")
+  old_print=$(cat "$workdir/old.print")
+  personal_print=$(awk -F'\t' '$1 ~ /ycreplop/ {print $2}' "$workdir/observed.mutated")
+  output=$(on "$console_vm" \
+    "$state/fixture-mutated withdraw $target_vm $target_vm $state/observed '$new_print' '$old_print,$personal_print'" 2>&1 || true)
+  case "$output" in
+    *"removed="*"$personal_print"*)
+      echo "MUTATION_CAUGHT: the operator's own key became removable"
+      report "the mutated gate, on the operator's real key file" "${output:0:150}"
+      ;;
+    *) red "mutation 2" "was not caught: the mutated gate answered ${output:0:150}" ;;
+  esac
+  restore_mutation withdrawal.rs "if observed.file != key_file()"
+  output=$(on "$console_vm" \
+    "$fixture withdraw $target_vm $target_vm $state/observed '$new_print' '$old_print,$personal_print'" 2>&1 || true)
+  case "$output" in
+    *"personal:$personal_print"*) report "the restored gate keeps the personal key again" "${output:0:150}" ;;
+    *) red "the restored gate" "did not come back green: ${output:0:150}" ;;
+  esac
+
+  # Mutation 3 — l'ancienne autorité conserve un accès. Elle est jouée sur les
+  # machines et non sur les sources : l'entrée de l'ancienne identité est remise
+  # dans le fichier géré, et la suite doit le voir.
+  local attempt
+  attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $target_ip old" || true)
+  if [[ "$attempt" == answered ]]; then
+    echo "MUTATION_CAUGHT: the old authority reaches the machine again after the replacement"
+    report "the old identity, reinstalled behind the replacement" "answered"
+  else
+    red "mutation 3" "was not caught: the reinstalled old identity answered $attempt"
+  fi
+  reconstruct "$target_vm" "$target_ip" "the fleet under mutation 3" "bounded-overlap"
+  {
+    grep -v '^target	' "$workdir/base.perimeter"
+    printf 'target\t%s\tnew-only\n' "$console_vm"
+    printf 'target\t%s\tbounded-overlap\n' "$target_vm"
+  } >"$workdir/mutated.perimeter"
+  refuse "the conclusion, under mutation 3" "$workdir/mutated.perimeter" \
+    "TargetsNotFinished" conclude
+
+  install_entries new
+  attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $target_ip old" || true)
+  [[ "$attempt" == refused ]] || red "the restored perimeter" "the old identity still answers"
+  report "the mutations removed, the suite green again" "old=$attempt"
+
+  echo "MUTATE_OK"
+}
+
+# Applique une mutation sur une source du produit, dans la VM, et construit une
+# fixture mutée *à côté* de la bonne. Le correctif vérifie son propre point
+# d'application : une mutation dont la cible a bougé échoue bruyamment au lieu
+# de ne rien faire et de laisser la suite verte pour rien.
+source_mutation() {
+  local file=$1 patch=$2
+  on "$console_vm" "cd /root/work/src-tauri/crates/native-bootstrap-assistant/src/replacement \
+&& cp $file $file.original && python3 - <<'PATCH'
+import pathlib
+path = pathlib.Path('$file')
+source = path.read_text()
+$patch
+path.write_text(source)
+PATCH"
+  build_fixture "$state/fixture-mutated"
+}
+
+restore_mutation() {
+  local file=$1 needle=$2
+  on "$console_vm" \
+    "cd /root/work/src-tauri/crates/native-bootstrap-assistant/src/replacement && \
+     mv $file.original $file && touch $file && grep -q '$needle' $file"
+  build_fixture "$fixture"
+  on "$console_vm" "rm -f $state/fixture-mutated"
+}
+
+build_fixture() {
+  on "$console_vm" ". /root/.cargo/env; cd /root/work/src-tauri; \
+    export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8; \
+    cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
+      --features controller-replacement-contract-test \
+      --bin your-cloud-controller-replacement-fixture >/dev/null 2>&1; \
+    install -m 0700 target/debug/your-cloud-controller-replacement-fixture $1"
+}
+
+# ---------------------------------------------------------------------------
+# remove
+# ---------------------------------------------------------------------------
+
+remove() {
+  local status=0 vm
+  for vm in "$console_vm" "$target_vm"; do
+    "$labctl" ssh "$vm" -- "$remote_harness/mount-perimeter reader-close $reader_port" \
+      >/dev/null 2>&1 || true
+    "$labctl" ssh "$vm" -- "$remote_harness/mount-perimeter reader-close $controller_port" \
+      >/dev/null 2>&1 || true
+    "$labctl" ssh "$vm" -- "$remote_harness/remove-machine" || status=1
+    "$labctl" ssh "$vm" -- "rm -rf $remote_harness" || status=1
+  done
+  # L'archive des sources part avec le reste ; le répertoire de construction
+  # `/root/work` est un cache partagé par les suites du palier et reste en place.
+  "$labctl" ssh "$console_vm" -- "rm -f /root/work.tgz" || status=1
+  for vm in "$console_vm" "$target_vm"; do
+    local path
+    for path in "$remote_harness" "$state"; do
+      if "$labctl" ssh "$vm" -- "test ! -e $path"; then
+        report "$vm:$path" "absent"
+      else
+        red "$vm:$path" "is still present"
+        status=1
+      fi
+    done
+  done
+  [[ $status -eq 0 ]] || fail "the perimeter was not fully removed"
+  echo "perimeter removed from both machines"
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  setup | incident | switch | withdraw | refuse | interrupt | mutate | remove | all) ;;
+  *) usage ;;
+esac
+
+case "$command" in
+  setup) setup ;;
+  incident) fail "incident needs the perimeter of the same run; use all" ;;
+  switch) fail "switch needs the perimeter of the same run; use all" ;;
+  withdraw) fail "withdraw needs the perimeter of the same run; use all" ;;
+  refuse) fail "refuse needs the perimeter of the same run; use all" ;;
+  interrupt) fail "interrupt needs the perimeter of the same run; use all" ;;
+  mutate) fail "mutate needs the perimeter of the same run; use all" ;;
+  remove) remove ;;
+  all)
+    status=0
+    setup && incident && switch && withdraw && refuse_all && interrupt && mutate || status=$?
+    remove || status=1
+    [[ $failures -eq 0 ]] || {
+      echo "FAILED: $failures assertions" >&2
+      status=1
+    }
+    [[ $status -eq 0 ]] || exit "$status"
+    echo "PROVE_CONTROLLER_REPLACEMENT_OK"
+    ;;
+esac
