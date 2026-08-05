@@ -9,8 +9,16 @@ prefix=ycpa
 forced_dir=/usr/local/lib/your-cloud-lab-personal-access
 log_fragment=/etc/ssh/sshd_config.d/$prefix-log.conf
 hostile_key=/etc/ssh/${prefix}_hostile_ecdsa_key
-accounts=(${prefix}nom ${prefix}out ${prefix}err ${prefix}fit ${prefix}hold)
+accounts=(
+  ${prefix}nom ${prefix}out ${prefix}err ${prefix}fit ${prefix}hold
+  ${prefix}sudp ${prefix}sudn ${prefix}sudx ${prefix}sudl
+  ${prefix}sudt ${prefix}sudd ${prefix}suda ${prefix}sudb
+)
 failures=0
+
+# Every synthetic sudo policy this perimeter wrote, and its synthetic password
+# with the account that held it.
+rm -f /etc/sudoers.d/90-$prefix-*
 
 for account in "${accounts[@]}"; do
   if id -u "$account" >/dev/null 2>&1; then
@@ -32,8 +40,11 @@ rm -rf "$forced_dir"
 # perimeter made outside its own files.
 rm -f "$log_fragment"
 systemctl restart ssh
+# The observation identity and the three the root route authenticates with all
+# carry this perimeter's prefix in their comment, and nothing else on this
+# machine does.
 if [[ -f /root/.ssh/authorized_keys ]]; then
-  sed -i "/$prefix-observer/d" /root/.ssh/authorized_keys
+  sed -i "/$prefix-/d" /root/.ssh/authorized_keys
   [[ -s /root/.ssh/authorized_keys ]] || rm -f /root/.ssh/authorized_keys
 fi
 
@@ -54,8 +65,12 @@ for path in "$forced_dir" "$log_fragment" "$hostile_key"; do
     failures=$((failures + 1))
   fi
 done
-if [[ -f /root/.ssh/authorized_keys ]] && grep -q "$prefix-observer" /root/.ssh/authorized_keys; then
-  echo "the observation identity is still authorised" >&2
+if [[ -f /root/.ssh/authorized_keys ]] && grep -q "$prefix-" /root/.ssh/authorized_keys; then
+  echo "a synthetic identity is still authorised on root" >&2
+  failures=$((failures + 1))
+fi
+if compgen -G "/etc/sudoers.d/90-$prefix-*" >/dev/null; then
+  echo "a synthetic sudo policy is still present" >&2
   failures=$((failures + 1))
 fi
 

@@ -35,7 +35,35 @@ oversized_stdout=${prefix}out
 oversized_stderr=${prefix}err
 exact_bound=${prefix}fit
 held=${prefix}hold
-accounts=("$nominal" "$oversized_stdout" "$oversized_stderr" "$exact_bound" "$held")
+
+# The elevation perimeter of #54. Each account carries one policy and one
+# deviation, so a refusal names the policy that produced it instead of a
+# combination. None of them is ever given a forced command: they must run the
+# three exact channels the client opens.
+#
+# `listpw=never` is what makes the single `sudo -S` reachable at all. Debian's
+# default is `listpw=any`, under which listing a password-protected policy
+# itself demands the password, and #51 refuses to send one to find out whether
+# it may send one. The two accounts below that really answer a password
+# therefore describe the one configuration in which a password may travel, and
+# the account without it is kept as the control that says so.
+sudo_password=${prefix}sudp
+sudo_nopasswd=${prefix}sudn
+sudo_unlistable=${prefix}sudx
+sudo_log_input=${prefix}sudl
+sudo_requiretty=${prefix}sudt
+sudo_divergent=${prefix}sudd
+sudo_ambiguous=${prefix}suda
+sudo_oversized=${prefix}sudb
+sudo_accounts=(
+  "$sudo_password" "$sudo_nopasswd" "$sudo_unlistable" "$sudo_log_input"
+  "$sudo_requiretty" "$sudo_divergent" "$sudo_ambiguous" "$sudo_oversized"
+)
+
+accounts=(
+  "$nominal" "$oversized_stdout" "$oversized_stderr" "$exact_bound" "$held"
+  "${sudo_accounts[@]}"
+)
 
 for key in "$authorized_pub" "$observer_pub" "$file_ed25519_pub" "$file_rsa_pub"; do
   [[ -f "$key" && ! -L "$key" ]] || { echo "public key is missing or symbolic: $key" >&2; exit 1; }
@@ -98,6 +126,9 @@ declare -A forced=(
   ["$exact_bound"]="$forced_dir/exact-stdout"
   ["$held"]="$forced_dir/hold"
 )
+for account in "${sudo_accounts[@]}"; do
+  forced["$account"]=""
+done
 
 for account in "${accounts[@]}"; do
   useradd -m -s /bin/bash "$account"
@@ -118,10 +149,98 @@ done
 
 # The observation bridge reaches this machine as root, because the invariance
 # proof reads /etc/shadow and the closure proof reads the journal.
+#
+# The three synthetic identities are authorised here too, and this is the whole
+# of the root route's perimeter: an access lent as `root` is an ordinary key on
+# root's own `authorized_keys`, and what makes it an access is the dedicated
+# consent on the client, never anything the server does differently.
 install -d -m 0700 /root/.ssh
 touch /root/.ssh/authorized_keys
 chmod 0600 /root/.ssh/authorized_keys
 printf '%s %s\n' "$restrictions" "$observer_line" >>/root/.ssh/authorized_keys
+for identity in "$authorized_line" "$file_ed25519_line" "$file_rsa_line"; do
+  printf '%s %s\n' "$restrictions" "$identity" >>/root/.ssh/authorized_keys
+done
+
+# ------------------------------------------------------- the sudo perimeter
+#
+# One synthetic password, generated here and nowhere else, used by the two
+# accounts whose policy really demands one. It never reaches a command line: it
+# is written to the standard output of this script, which the harness turns into
+# a file on the client, exactly as the key passphrase already is.
+sudo_password_value=$(openssl rand -hex 20)
+[[ ${#sudo_password_value} -eq 40 ]] \
+  || { echo "the synthetic sudo password was not generated" >&2; exit 1; }
+printf '%s:%s\n' "$sudo_password" "$sudo_password_value" | chpasswd
+
+write_policy() {
+  local account=$1 body=$2 file="/etc/sudoers.d/90-$prefix-$1"
+  printf '%s\n' "$body" >"$file"
+  chmod 0440 "$file"
+  visudo -cqf "$file" || { echo "the policy of $account is not valid sudoers" >&2; exit 1; }
+}
+
+# The nominal password route: the listing is readable without a secret, running
+# the action is not. It is the only shape in which this palier ever sends one.
+write_policy "$sudo_password" "Defaults:$sudo_password listpw=never
+$sudo_password ALL=(root) /usr/bin/id"
+
+# The nominal passwordless route.
+write_policy "$sudo_nopasswd" "$sudo_nopasswd ALL=(root) NOPASSWD: /usr/bin/id"
+
+# A policy that cannot be described without first authenticating. It is
+# deliberately the Debian default shape, and it is refused before any password
+# exists.
+write_policy "$sudo_unlistable" "$sudo_unlistable ALL=(root) /usr/bin/id"
+
+# A policy that would write the standard input — the password — into the I/O
+# log. Refused whatever else it authorises.
+write_policy "$sudo_log_input" "Defaults:$sudo_log_input log_input
+$sudo_log_input ALL=(root) NOPASSWD: /usr/bin/id"
+
+# A policy that demands a terminal this session never allocates.
+write_policy "$sudo_requiretty" "Defaults:$sudo_requiretty requiretty
+$sudo_requiretty ALL=(root) NOPASSWD: /usr/bin/id"
+
+# A policy that authorises another command entirely.
+write_policy "$sudo_divergent" "$sudo_divergent ALL=(root) NOPASSWD: /usr/bin/true"
+
+# Two entries, so which one applies is sudo's own ordering and not anything the
+# client can observe.
+write_policy "$sudo_ambiguous" "$sudo_ambiguous ALL=(root) NOPASSWD: /usr/bin/id
+$sudo_ambiguous ALL=(root) NOPASSWD: /usr/bin/hostname"
+
+# A listing far past the bound the client reads it under.
+{
+  printf 'Defaults:%s listpw=never\n' "$sudo_oversized"
+  printf '%s ALL=(root) NOPASSWD: /usr/bin/id' "$sudo_oversized"
+  for index in $(seq 200); do
+    printf ', %s/pad-%03d-aaaaaaaaaaaaaaaaaaaaaaaa' "$forced_dir" "$index"
+  done
+  printf '\n'
+} >"/etc/sudoers.d/90-$prefix-$sudo_oversized"
+chmod 0440 "/etc/sudoers.d/90-$prefix-$sudo_oversized"
+visudo -cqf "/etc/sudoers.d/90-$prefix-$sudo_oversized" \
+  || { echo "the oversized policy is not valid sudoers" >&2; exit 1; }
+
+# Each policy is confirmed against the very sudo that will answer the client,
+# under the very locale the client fixes. A perimeter that does not behave as
+# described is refused here rather than halfway through a proof.
+listing_of() {
+  su -s /bin/sh -c "LC_ALL=C /usr/bin/sudo -N -n -l -l" "$1" </dev/null 2>&1 || true
+}
+[[ "$(listing_of "$sudo_unlistable")" == *"a password is required"* ]] \
+  || { echo "the unlistable policy can be listed after all" >&2; exit 1; }
+[[ "$(listing_of "$sudo_requiretty")" == *"must have a tty"* ]] \
+  || { echo "the requiretty policy does not demand a terminal" >&2; exit 1; }
+[[ "$(listing_of "$sudo_nopasswd")" == *"!authenticate"* ]] \
+  || { echo "the passwordless policy does not waive authentication" >&2; exit 1; }
+[[ "$(listing_of "$sudo_password")" != *"!authenticate"* ]] \
+  || { echo "the password policy waives authentication after all" >&2; exit 1; }
+[[ "$(listing_of "$sudo_log_input")" == *"log_input"* ]] \
+  || { echo "the log_input policy does not log its input" >&2; exit 1; }
+[[ $(listing_of "$sudo_oversized" | wc -c) -gt "$bound" ]] \
+  || { echo "the oversized listing fits inside the bound" >&2; exit 1; }
 
 # The server's own account of a session closing is what the suite reads, and
 # only a verbose journal writes it.
@@ -186,4 +305,17 @@ printf 'HELD_USERNAME=%s\n' "$held"
 printf 'ECDSA_PORT=%s\n' "$ecdsa_port"
 printf 'KEX_PORT=%s\n' "$kex_port"
 printf 'CIPHER_PORT=%s\n' "$cipher_port"
+printf 'SUDO_PASSWORD_USERNAME=%s\n' "$sudo_password"
+printf 'SUDO_NOPASSWD_USERNAME=%s\n' "$sudo_nopasswd"
+printf 'SUDO_UNLISTABLE_USERNAME=%s\n' "$sudo_unlistable"
+printf 'SUDO_LOG_INPUT_USERNAME=%s\n' "$sudo_log_input"
+printf 'SUDO_REQUIRETTY_USERNAME=%s\n' "$sudo_requiretty"
+printf 'SUDO_DIVERGENT_USERNAME=%s\n' "$sudo_divergent"
+printf 'SUDO_AMBIGUOUS_USERNAME=%s\n' "$sudo_ambiguous"
+printf 'SUDO_OVERSIZED_USERNAME=%s\n' "$sudo_oversized"
+printf 'SUDO_UID=%s\n' "$(id -u "$sudo_password")"
+# The only secret this script emits. The harness turns it into a file on the
+# client and never writes it into the perimeter description, so no environment
+# of any process the suite starts ever carries it.
+printf 'SUDO_PASSWORD_VALUE=%s\n' "$sudo_password_value"
 echo "INSTALL_SERVER_OK" >&2

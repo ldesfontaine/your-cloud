@@ -44,6 +44,10 @@ required_names=(
   HELD_USERNAME ECDSA_PORT KEX_PORT CIPHER_PORT MANY_NAME SELF_NAME
   LOOPBACK_NAME HOSTS_FILE REBOUND_ADDRESS SERVER_COMMAND KEY_NEEDLE SCRATCH
   KEY_DIR KEY_PASSPHRASE KEY_SEED_NEEDLE KEY_ED25519_FINGERPRINT KEY_RSA_FINGERPRINT
+  SUDO_PASSWORD_USERNAME SUDO_NOPASSWD_USERNAME SUDO_UNLISTABLE_USERNAME
+  SUDO_LOG_INPUT_USERNAME SUDO_REQUIRETTY_USERNAME SUDO_DIVERGENT_USERNAME
+  SUDO_AMBIGUOUS_USERNAME SUDO_OVERSIZED_USERNAME SUDO_UID SUDO_PASSWORD
+  ROOT_USERNAME
 )
 
 fail() { echo "FAILED: $*" >&2; exit 1; }
@@ -127,8 +131,27 @@ setup() {
   [[ "$declared" == "$host_key_fingerprint" ]] \
     || fail "the server announces the host key $declared, the LAB channel read $host_key_fingerprint"
 
+  # The one synthetic secret the server generated. It becomes a file on the
+  # client and never a value in the perimeter description: the suite reads it
+  # from that path, exactly as it already reads the key passphrase, so no
+  # environment of any process it starts ever carries the password itself.
+  local sudo_password
+  sudo_password=$(awk -F= '$1 == "SUDO_PASSWORD_VALUE" {print substr($0, 21)}' \
+    "$workdir/server.env")
+  [[ -n "$sudo_password" ]] || fail "the server never generated a synthetic sudo password"
+  printf '%s' "$sudo_password" >"$workdir/sudo-password"
+  chmod 0600 "$workdir/sudo-password"
+  "$labctl" copy-to "$console_vm" "$workdir/sudo-password" \
+    "$remote_state/needle/sudo-password" >/dev/null
+  "$labctl" ssh "$console_vm" -- "chmod 0600 $remote_state/needle/sudo-password"
+
   {
     echo "TARGET=$server_address"
+    # The root route authenticates as root itself: the account is not synthetic,
+    # only the identity authorised on it is, and `remove-server` takes that
+    # identity away again.
+    echo "ROOT_USERNAME=root"
+    echo "SUDO_PASSWORD=$remote_state/needle/sudo-password"
     cat "$workdir/client.env" "$workdir/server.env"
   } >"$workdir/values"
   : >"$workdir/perimeter.env"
