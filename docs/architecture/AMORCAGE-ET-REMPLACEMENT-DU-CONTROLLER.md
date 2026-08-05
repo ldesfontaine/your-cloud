@@ -235,6 +235,19 @@ de signatures est limité à l'authentification SSH de cette opération ; une
 deuxième signature ou un message hors de cette capacité est refusé. Les logs du
 client d'agent restent désactivés afin qu'aucun tampon de protocole n'y entre.
 
+La sélection de cette clé appartient à la fenêtre native, des deux côtés :
+liste GTK3 sous Linux, liste déroulante Win32 sous Windows. Les deux montrent
+les identités que l'agent détient réellement, chacune nommée par sa propre
+empreinte — celle à laquelle le budget de signature sera ensuite lié, si bien
+que ce qui est lu et ce qui est signé ne peuvent pas diverger. Un certificat
+n'y est jamais proposé, puisque ce palier refuse de signer avec. Et
+l'acceptation reste indisponible tant qu'aucune identité n'est nommée : un
+consentement ne peut pas être donné sans dire à quelle clé il s'applique. Le
+pas produit lui-même est un seul chemin partagé : toute l'observation — une
+résolution, les adresses gelées, l'endpoint de l'agent, les identités — précède
+la fenêtre, rien n'est redérivé après le consentement, et chaque refus est
+expurgé dans le même événement terminal `Unavailable`.
+
 En solution de repli, le sélecteur natif ouvre seulement une clé au format
 `OPENSSH PRIVATE KEY` réellement chiffrée par bcrypt et `aes256-ctr`. Ed25519
 est accepté ; RSA ne l'est qu'à partir de 3072 bits pour compatibilité. Les clés
