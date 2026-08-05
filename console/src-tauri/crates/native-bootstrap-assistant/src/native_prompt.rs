@@ -451,7 +451,13 @@ fn outcome_from_response(
                     None => PromptOutcome::Refused,
                 }
             }
-            NativePromptKind::ConfirmPersonalAccess if identity_chooser.is_some() => {
+            // The root window offers the same list for the same reason: the
+            // session it consents to still has to authenticate with one named
+            // identity, and a consent that did not say which would be leaving
+            // that choice to something downstream.
+            NativePromptKind::ConfirmPersonalAccess | NativePromptKind::ConfirmRootAccess
+                if identity_chooser.is_some() =>
+            {
                 match identity_chooser.and_then(ComboBoxExt::active_id) {
                     // The selected identity travels with the consent: nothing
                     // downstream may choose a key on the user's behalf.

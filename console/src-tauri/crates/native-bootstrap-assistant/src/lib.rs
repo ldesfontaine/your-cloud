@@ -20,12 +20,13 @@ use framing::ReadFrameError;
 use lease::{LeaseResolution, LeaseState, UnbufferedStandardInput};
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1,
-    ASSISTANT_EXIT_CANCELLED, ASSISTANT_EXIT_INTERNAL_FAILURE, ASSISTANT_EXIT_INVALID_INVOCATION,
-    ASSISTANT_EXIT_IO_FAILURE, ASSISTANT_EXIT_PROTOCOL_REFUSED, ASSISTANT_EXIT_REFUSED,
-    ASSISTANT_EXIT_UNAVAILABLE, ASSISTANT_EXIT_WATCHDOG_EXPIRED,
+    ASSISTANT_EXIT_ACCESS_VERIFIED, ASSISTANT_EXIT_CANCELLED, ASSISTANT_EXIT_INTERNAL_FAILURE,
+    ASSISTANT_EXIT_INVALID_INVOCATION, ASSISTANT_EXIT_IO_FAILURE, ASSISTANT_EXIT_PROTOCOL_REFUSED,
+    ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE, ASSISTANT_EXIT_WATCHDOG_EXPIRED,
 };
 
 pub const REQUIRED_MODE_ARGUMENT: &str = "--native-bootstrap-assistant";
+pub const EXIT_ACCESS_VERIFIED: u8 = ASSISTANT_EXIT_ACCESS_VERIFIED;
 pub const EXIT_INVALID_INVOCATION: u8 = ASSISTANT_EXIT_INVALID_INVOCATION;
 pub const EXIT_PROTOCOL_REFUSED: u8 = ASSISTANT_EXIT_PROTOCOL_REFUSED;
 pub const EXIT_REFUSED: u8 = ASSISTANT_EXIT_REFUSED;
@@ -431,6 +432,10 @@ enum SessionError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionTerminal {
+    /// The elevation was proven on the exact session that was consented to.
+    /// It is the only terminal that is not a refusal, and the only one this
+    /// process may exit zero on.
+    AccessVerified,
     Refused,
     Cancelled,
     Expired,
@@ -447,6 +452,15 @@ pub(crate) enum PromptOutcome {
     /// window, and the path came from the helper's own native selector.
     ConsentWithKeyFile(std::path::PathBuf),
     Secret(secret::ProtectedSecret),
+    /// The elevation was proven. It carries the witness `elevation` produced
+    /// and nothing else: the only way to reach this variant is to hold one, and
+    /// the only way to hold one is to have read an exit status of zero beside
+    /// root's uid on the session that was consented to.
+    #[cfg(all(
+        not(feature = "delayed-start-contract-test"),
+        any(target_os = "linux", target_os = "windows")
+    ))]
+    Verified(personal_access::elevation::Elevation),
     Refused,
     Cancelled,
     Expired,
@@ -456,6 +470,7 @@ pub(crate) enum PromptOutcome {
 impl SessionTerminal {
     fn event(self) -> AssistantEventKind {
         match self {
+            Self::AccessVerified => AssistantEventKind::AccessVerified,
             Self::Refused => AssistantEventKind::Refused,
             Self::Cancelled => AssistantEventKind::Cancelled,
             Self::Expired => AssistantEventKind::Expired,
@@ -463,13 +478,19 @@ impl SessionTerminal {
         }
     }
 
+    /// The code this process exits with is *derived from the event it wrote*,
+    /// never chosen beside it, and the table it is derived through is the
+    /// protocol's own — the very one the Console reads the pair back with.
+    ///
+    /// That is what makes "exit code zero" and `access_verified` indissociable
+    /// rather than merely consistent: there is no second list to keep in step,
+    /// and no way to answer one without the other. An event that terminates
+    /// nothing names no code and is refused here, which cannot happen from any
+    /// variant above and is written down so it never silently can.
     fn exit_code(self) -> u8 {
-        match self {
-            Self::Refused => EXIT_REFUSED,
-            Self::Cancelled => EXIT_CANCELLED,
-            Self::Expired => EXIT_WATCHDOG_EXPIRED,
-            Self::Unavailable => EXIT_UNAVAILABLE,
-        }
+        self.event()
+            .terminal_exit_code()
+            .unwrap_or(EXIT_INTERNAL_FAILURE)
     }
 }
 
@@ -523,12 +544,20 @@ fn serve_scope(
 
 fn terminal_from_prompt(outcome: PromptOutcome) -> SessionTerminal {
     match outcome {
-        // A verified personal access is deliberately indistinguishable from an
-        // unavailable one on the public surface: announcing it belongs to a
-        // later issue, not to this one.
+        // A consent is not an access. It says the user agreed to a session,
+        // never that the session proved anything, and it stays expurgated into
+        // the same Unavailable every refusal ends in.
         PromptOutcome::Consent
         | PromptOutcome::ConsentWithIdentity(_)
         | PromptOutcome::ConsentWithKeyFile(_) => SessionTerminal::Unavailable,
+        // The one path to the one terminal that is not a refusal. It is
+        // reachable only from a witness, so this line cannot be reached by
+        // anything that did not prove an elevation.
+        #[cfg(all(
+            not(feature = "delayed-start-contract-test"),
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        PromptOutcome::Verified(_witness) => SessionTerminal::AccessVerified,
         PromptOutcome::Secret(secret) => {
             drop(secret);
             SessionTerminal::Unavailable
@@ -590,10 +619,20 @@ fn show_prompt(
     expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: LeaseState,
 ) -> PromptOutcome {
-    if scope.prompt == your_cloud_bootstrap_protocol::NativePromptKind::ConfirmPersonalAccess {
-        return serve_personal_access(scope, deadline, expired, lease);
+    match scope.prompt {
+        your_cloud_bootstrap_protocol::NativePromptKind::ConfirmPersonalAccess => {
+            serve_personal_access(scope, deadline, expired, lease)
+        }
+        // The root route is its own entry, and it is entered only through the
+        // scope the protocol reserves for it: `ConfirmRootAccess` is refused
+        // beside an administrator target, and `ConfirmPersonalAccess` beside a
+        // root one, so neither route can be arrived at through the other's
+        // consent.
+        your_cloud_bootstrap_protocol::NativePromptKind::ConfirmRootAccess => {
+            serve_root_access(scope, deadline, expired, lease)
+        }
+        _ => native_window::prompt(scope, deadline, expired, lease),
     }
-    native_window::prompt(scope, deadline, expired, lease)
 }
 
 /// The whole personal access, in the order the perimeter fixes.
@@ -602,8 +641,8 @@ fn show_prompt(
 /// — the frozen addresses beside the name, the identities the agent really
 /// holds — is exactly what the transport will use afterwards. Nothing is
 /// re-derived after consent, and every refusal is expurgated into the same
-/// Unavailable outcome, because no public surface of this palier may reveal
-/// whether an access was verified.
+/// Unavailable outcome: the public surface distinguishes a proven access from
+/// everything else, and never one refusal from another.
 ///
 /// The step is one path on both systems. Only the agent endpoint differs, and
 /// that difference lives inside `Prepared::open`: a Unix socket judged by its
@@ -692,18 +731,215 @@ fn serve_personal_access(
     };
     // Only the outcome is consulted here: how much of the signature budget the
     // session left is a contract observation, not a decision this path makes.
-    let observation = match credential {
-        Credential::AgentIdentity(_) => prepared.run(&request, deadline, &guard),
+    let established = match credential {
+        Credential::AgentIdentity(_) => prepared.establish(&request, deadline, &guard),
         #[cfg(target_os = "linux")]
-        Credential::Key(key) => prepared.run_with_key(key, &request, deadline, &guard),
+        Credential::Key(key) => prepared.establish_with_key(key, &request, deadline, &guard),
     };
-    match observation.outcome {
-        Ok(report) => {
-            // The probe result stays internal at this palier: it is dropped
-            // here rather than travelling to any public event.
-            drop(report);
-            PromptOutcome::ConsentWithIdentity(selected)
+    let Ok(mut live) = established.outcome else {
+        return PromptOutcome::Unavailable;
+    };
+    let proven =
+        prove_administrator_elevation(&mut live, &resolved, deadline, &expired, &lease, &guard);
+    // The transport is closed before anything is announced, on every path —
+    // including the one that is about to announce a verified access. Nothing of
+    // this session is still open when its terminal is written.
+    live.close();
+    match proven {
+        Ok(witness) => PromptOutcome::Verified(witness),
+        // Every refusal of the elevation is already expurgated into an outcome
+        // by the function above; a cancelled or expired window keeps its own.
+        Err(outcome) => outcome,
+    }
+}
+
+/// The administrator route, in the three channels it is allowed and no more.
+///
+/// The order is the perimeter's. The identity first, because an account that is
+/// already `root` must never reach root privileges under the personal access
+/// consent alone. The policy next, judged by #51 before a password exists at
+/// all. The single elevation last, and only in the one form that policy chose:
+/// a passwordless `sudo -n` when the entry waives authentication, or the one
+/// `sudo -S` when it does not — never both, never twice, never retried.
+///
+/// The password window is a *new* native consent for a new privileged step. It
+/// is derived from the scope already agreed and revalidated, so the escalation
+/// it names is the escalation of the machine the user consented to.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+fn prove_administrator_elevation(
+    live: &mut personal_access::session::LiveSession,
+    resolved: &AssistantScopeV1,
+    deadline: Instant,
+    expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: &LeaseState,
+    guard: &(dyn Fn() -> personal_access::session::GuardVerdict + Sync),
+) -> Result<personal_access::elevation::Elevation, PromptOutcome> {
+    use personal_access::elevation::{self, AccessRoute};
+
+    let probe = live
+        .probe(deadline, guard)
+        .map_err(|_| PromptOutcome::Unavailable)?;
+    elevation::attest_identity(
+        AccessRoute::Administrator,
+        probe.exit_status,
+        &probe.stdout,
+        &probe.stderr,
+    )
+    .map_err(|_| PromptOutcome::Unavailable)?;
+
+    let preflight = live
+        .run_channel(elevation::PREFLIGHT, None, deadline, guard)
+        .map_err(|_| PromptOutcome::Unavailable)?;
+    // A listing that succeeded is on the standard output; the reason a listing
+    // failed — a password required, a terminal required — is on the standard
+    // error. Whichever stream carries the answer is the stream #51 judges, and
+    // handing it the empty one would turn an explicit refusal into a shrug.
+    let succeeded = preflight.exit_status == 0;
+    let capture = if succeeded {
+        &preflight.stdout
+    } else {
+        &preflight.stderr
+    };
+    let attested = elevation::attest_policy(succeeded, capture, false)
+        .map_err(|_| PromptOutcome::Unavailable)?;
+
+    let elevated = if attested.password_required {
+        let password = ask_sudo_password(resolved, deadline, expired, lease)?;
+        let report = live.run_channel(attested.command, Some(password.bytes()), deadline, guard);
+        // Wiped here, whatever the channel answered. There is no retry, so
+        // there is nothing that could ever need it a second time.
+        drop(password);
+        report
+    } else {
+        live.run_channel(attested.command, None, deadline, guard)
+    }
+    .map_err(|_| PromptOutcome::Unavailable)?;
+
+    elevation::elevated(elevated.exit_status, &elevated.stdout, &elevated.stderr)
+        .map_err(|_| PromptOutcome::Unavailable)
+}
+
+/// Opens the escalation window of #45 for the step it belongs to.
+///
+/// The scope is derived from the one already agreed and revalidated, exactly as
+/// the passphrase window is, so the augmentation stays inside the very bounds
+/// the parent's scope had to satisfy. The protocol refuses this couple beside a
+/// root target, which is what keeps a `sudo` password window off the root route
+/// without a check anyone has to remember.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+fn ask_sudo_password(
+    resolved: &AssistantScopeV1,
+    deadline: Instant,
+    expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: &LeaseState,
+) -> Result<secret::ProtectedSecret, PromptOutcome> {
+    let mut escalation = resolved.clone();
+    escalation.step = your_cloud_bootstrap_protocol::BootstrapStep::PrivilegeEscalation;
+    escalation.prompt = your_cloud_bootstrap_protocol::NativePromptKind::SudoPassword;
+    let Ok(escalation) = escalation.validate() else {
+        return Err(PromptOutcome::Unavailable);
+    };
+
+    let outcome = native_window::prompt(
+        &escalation,
+        deadline,
+        std::sync::Arc::clone(expired),
+        lease.clone(),
+    );
+    let PromptOutcome::Secret(password) = outcome else {
+        return Err(outcome);
+    };
+    Ok(password)
+}
+
+/// The root route, which shares no step with the one above beyond the transport
+/// itself.
+///
+/// Nothing here elevates: an access lent as `root` is already `root`, and the
+/// only thing left to establish is that the session really reached it. What
+/// makes it an access rather than an assumption is the window: a dedicated
+/// consent, on the scope the protocol reserves for this route, answered with
+/// the one identity the session will authenticate with. No other outcome of
+/// that window continues, so there is no implicit root attempt to make.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+fn serve_root_access(
+    scope: &AssistantScopeV1,
+    deadline: Instant,
+    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: LeaseState,
+) -> PromptOutcome {
+    use personal_access::{
+        elevation,
+        session::{AuthenticationRequest, GuardVerdict, Prepared},
+    };
+    use std::sync::atomic::Ordering;
+
+    let Ok(prepared) = Prepared::open(&scope.target.host, scope.target.port, deadline) else {
+        return PromptOutcome::Unavailable;
+    };
+    let mut resolved = scope.clone();
+    resolved.target_addresses = prepared
+        .target()
+        .addresses()
+        .iter()
+        .map(|address| address.to_string())
+        .collect();
+    let Ok(resolved) = resolved.validate() else {
+        return PromptOutcome::Unavailable;
+    };
+
+    let outcome = native_window::prompt_with_identities(
+        &resolved,
+        prepared.identities(),
+        deadline,
+        std::sync::Arc::clone(&expired),
+        lease.clone(),
+    );
+    // The dedicated consent, and nothing weaker. A window that answered a bare
+    // consent named no identity, which is not something this route completes
+    // for the user.
+    let PromptOutcome::ConsentWithIdentity(selected) = outcome else {
+        return outcome;
+    };
+
+    let guard_expired = std::sync::Arc::clone(&expired);
+    let guard_lease = lease.clone();
+    let guard = move || {
+        if guard_expired.load(Ordering::SeqCst) || Instant::now() >= deadline {
+            GuardVerdict::Expired
+        } else if guard_lease.is_cancelled() || guard_lease.is_protocol_invalid() {
+            GuardVerdict::Cancelled
+        } else {
+            GuardVerdict::Continue
         }
+    };
+    let request = AuthenticationRequest {
+        username: &resolved.target.username,
+        approved_host_key_fingerprint: &resolved.target.host_key_sha256,
+        selected_fingerprint: &selected,
+    };
+    let established = prepared.establish(&request, deadline, &guard);
+    let Ok(mut live) = established.outcome else {
+        return PromptOutcome::Unavailable;
+    };
+    let probe = live.probe(deadline, &guard);
+    live.close();
+    let Ok(probe) = probe else {
+        return PromptOutcome::Unavailable;
+    };
+    // `true` is reachable from this line alone, and this line is reachable only
+    // from the dedicated consent above.
+    match elevation::root_access(true, probe.exit_status, &probe.stdout, &probe.stderr) {
+        Ok(witness) => PromptOutcome::Verified(witness),
         Err(_refused) => PromptOutcome::Unavailable,
     }
 }
@@ -865,6 +1101,64 @@ mod tests {
             None,
             "millisecond-to-nanosecond overflow must fail closed"
         );
+    }
+
+    /// The pair, inside this process. Whatever a session ends as, the code it
+    /// exits with is the one the protocol pairs with the event it just wrote,
+    /// and zero belongs to the proven access alone.
+    #[test]
+    fn the_exit_code_is_always_the_one_the_written_event_names() {
+        for terminal in [
+            SessionTerminal::AccessVerified,
+            SessionTerminal::Refused,
+            SessionTerminal::Cancelled,
+            SessionTerminal::Expired,
+            SessionTerminal::Unavailable,
+        ] {
+            assert_eq!(
+                Some(terminal.exit_code()),
+                terminal.event().terminal_exit_code(),
+                "{terminal:?} exits with a code its own event does not name"
+            );
+            assert_eq!(
+                terminal.exit_code() == EXIT_ACCESS_VERIFIED,
+                terminal == SessionTerminal::AccessVerified,
+                "{terminal:?} must not share the successful exit code"
+            );
+        }
+        assert_eq!(
+            SessionTerminal::AccessVerified.event(),
+            AssistantEventKind::AccessVerified
+        );
+    }
+
+    /// A consent is not an access, and neither is a secret. Nothing a window
+    /// can answer on its own reaches the verified terminal: only the witness
+    /// does, and only `personal_access::elevation` builds one.
+    #[test]
+    fn nothing_a_window_alone_answers_ever_becomes_a_verified_access() {
+        let mut outcomes = vec![
+            PromptOutcome::Consent,
+            PromptOutcome::ConsentWithIdentity("SHA256:synthetic".into()),
+            PromptOutcome::ConsentWithKeyFile(std::path::PathBuf::from("/nonexistent/key")),
+            PromptOutcome::Refused,
+            PromptOutcome::Cancelled,
+            PromptOutcome::Expired,
+            PromptOutcome::Unavailable,
+        ];
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if let Ok(mut secret) = secret::ProtectedSecret::new() {
+            if secret.copy_from(b"synthetic-canary").is_ok() {
+                outcomes.push(PromptOutcome::Secret(secret));
+            }
+        }
+        for outcome in outcomes {
+            assert_ne!(
+                terminal_from_prompt(outcome),
+                SessionTerminal::AccessVerified,
+                "a window answer alone must never announce a verified access"
+            );
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]

@@ -1033,7 +1033,13 @@ unsafe fn accept_dialog(dialog: HWND, state: &mut DialogState) {
     }
 
     match state.prompt {
-        NativePromptKind::ConfirmPersonalAccess if state.has_identity_chooser() => {
+        // The root window offers the same list for the same reason: the session
+        // it consents to still has to authenticate with one named identity, and
+        // a consent that did not say which would be leaving that choice to
+        // something downstream.
+        NativePromptKind::ConfirmPersonalAccess | NativePromptKind::ConfirmRootAccess
+            if state.has_identity_chooser() =>
+        {
             // The selected identity travels with the consent: nothing
             // downstream may choose a key on the user's behalf.
             match selected_fingerprint(state) {
