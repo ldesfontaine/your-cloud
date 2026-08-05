@@ -132,6 +132,24 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — installation d'un Controller depuis le lot embarqué](v0.1.0-controller-install.md) :
+  passage `quick` du 5 août 2026 pour #38, premier palier qui **mute réellement**
+  une machine. Le lot Debian 13 `amd64` est construit par la preuve, son
+  manifeste signé lie version, cible, taille et SHA-256, et l'Assistant le juge
+  avant tout privilège : artefact altéré d'un octet, artefact tronqué, manifeste
+  réécrit, manifeste signé par une autre clé, `arm64`, autre version et autre
+  genre sont refusés chacun par sa propre raison, avec leurs contrôles positifs.
+  Le paquet ne possède que `/usr/lib/your-cloud/your-cloud` `root:root` `0755`
+  et trois unités `root:root` `0644` livrées inactives, sans setuid, setgid ni
+  capacité ; une seule unité est activée. Le Controller tourne sous un compte
+  dynamique sans capacité, avec `TasksMax=128` et `MemoryMax=384 Mio`, ses
+  secrets `root:root` `0600` remis par systemd seul. `lab-console` est
+  **réellement arrêtée** après extinction des processus de l'Assistant : le
+  Controller garde le **même PID** et écoute toujours. Un arrêt à chacune des
+  quatre premières étapes rend un registre que le déroulé reconstruit
+  exactement, et la machine revient à son état initial à chaque fois. Trois
+  épreuves par mutation font rougir la suite. Le lot n'est pas encore embarqué
+  dans l'installateur de la Console et l'ancre n'y est pas scellée.
 - [`v0.1.0` — approbation signée vérifiée sans faire confiance au Controller](v0.1.0-signed-approval.md) :
   passage `quick` du 5 août 2026 pour #37. Le cœur natif signe une enveloppe
   canonique versionnée qui lie infrastructure, machine, époque, séquence, plan,
