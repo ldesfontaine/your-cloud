@@ -93,7 +93,8 @@ use your_cloud_native_bootstrap_assistant::personal_access::{
 };
 use your_cloud_native_bootstrap_assistant::personal_access_contract as fixture_names;
 use your_cloud_native_bootstrap_assistant::{
-    EXIT_PROTOCOL_REFUSED, EXIT_WATCHDOG_EXPIRED, REQUIRED_MODE_ARGUMENT,
+    EXIT_CANCELLED, EXIT_INVALID_INVOCATION, EXIT_PROTOCOL_REFUSED, EXIT_WATCHDOG_EXPIRED,
+    REQUIRED_MODE_ARGUMENT,
 };
 
 /// Numeric address of the machine running the synthetic `sshd`.
@@ -2695,4 +2696,1423 @@ fn a_dead_parent_removes_a_key_authenticated_helper_and_its_probe() {
     }
     assert_session_closed(before);
     let _ = fs::remove_file(&pid_path);
+}
+
+// ------------------------------------------- destroying each state of the fallback
+//
+// The cases above end a *session*. The ones below end the fallback while it is
+// still building one, at the two moments where this process is holding
+// something and doing nothing else: the passphrase awaited on a file already
+// opened and validated, and the derivation itself.
+//
+// Each of them is written the same way, because the claim is the same and it is
+// easy to prove by accident. "Killing it destroys the state" says nothing at
+// all unless the state existed, so every case first observes it — the
+// descriptor really open on the file the user chose, the derivation thread
+// really running — and fails if it does not. Only then is the exit applied, and
+// only then is what is left behind searched.
+//
+// The fixture used is the helper's own hardened process, stopped inside the
+// fallback rather than around a whole session: at both of these moments the
+// product has no transport open either, so a fixture that opened one would be
+// holding more than the state under test.
+
+/// A key file whose derivation lasts seconds rather than milliseconds, and
+/// still finishes well inside the step ceiling when nothing interrupts it.
+const COSTLY: &str = "costly";
+
+/// Longest a fixture may take to reach the state it was asked to stop in.
+const STATE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest a killed process may take to leave `/proc`.
+const DISAPPEARANCE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Names of every thread `pid` is running, as `/proc` answers them.
+///
+/// A process that has already gone answers none, which is exactly what the
+/// cases below read after the exit.
+fn thread_names(pid: u32) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(format!("/proc/{pid}/task")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| fs::read_to_string(entry.path().join("comm")).ok())
+        .map(|name| name.trim().to_owned())
+        .collect()
+}
+
+/// Whether the derivation thread of this process is running right now.
+///
+/// The name compared is the one the product gives that thread, truncated to
+/// what Linux really stores: comparing the whole name would never match, and a
+/// case built on it would conclude that no derivation had started.
+fn derivation_running(pid: u32) -> bool {
+    let expected = &fixture_names::DERIVATION_THREAD[..fixture_names::DERIVATION_THREAD_COMM_BYTES];
+    thread_names(pid).iter().any(|name| name == expected)
+}
+
+/// Every regular file `pid` holds a descriptor on.
+fn open_files(pid: u32) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| fs::read_link(entry.path()).ok())
+        .collect()
+}
+
+/// Every process that declares `pid` as its parent.
+///
+/// Read *before* an exit, this answers the question that matters: does the
+/// fallback create a process of its own at this state? Read afterwards it is
+/// far weaker, because a child that outlived its parent has been reparented
+/// and no longer names it — which is exactly why every case below asserts the
+/// emptiness before the exit as well as after, and why the descendant these
+/// states really do create is a thread, observed by name.
+fn children_of(pid: u32) -> Vec<u32> {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut children = Vec::new();
+    for entry in entries.flatten() {
+        let Some(candidate) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(status) = fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        // The executable name sits in parentheses and may hold anything,
+        // spaces and parentheses included, so the fields are read from the
+        // last closing one: state, then the parent.
+        let Some((_, tail)) = status.rsplit_once(')') else {
+            continue;
+        };
+        if tail.split_whitespace().nth(1) == Some(&pid.to_string()) {
+            children.push(candidate);
+        }
+    }
+    children
+}
+
+/// Waits until `pid` has left `/proc` entirely, and says how long it took.
+fn await_disappearance(pid: u32) {
+    let deadline = Instant::now() + DISAPPEARANCE_TIMEOUT;
+    while process_alive(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the process at pid {pid} was still there {DISAPPEARANCE_TIMEOUT:?} after its exit"
+        );
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Ends `pid` the way nothing can be handled: no signal handler runs, no
+/// destructor runs, and nothing this process owns is wiped by its own code.
+fn crash(pid: u32) {
+    // SAFETY: `kill` reads no memory of this process. The pid was observed
+    // alive one line above by the case that calls this.
+    assert_eq!(
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) },
+        0,
+        "the crash could not be delivered to {pid}"
+    );
+}
+
+/// An empty directory of this run's scratch, ready to be searched afterwards.
+fn state_directory(name: &str) -> PathBuf {
+    let directory = scratch().join(name);
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("the state directory must be creatable");
+    directory
+}
+
+/// Starts the fixture inside one clean state of the fallback.
+///
+/// Standard input stays a pipe this process owns in both modes: it is what the
+/// passphrase travels through, and it is also the end of file one of the cases
+/// below applies. Nothing travels on the command line or in the environment
+/// except the path of the file, which is not a secret.
+fn start_in_state(mode: &str, key: &str, ready: &Path) -> Child {
+    let _ = fs::remove_file(ready);
+    Command::new(fixture_path())
+        .arg(mode)
+        .env(fixture_names::KEY_PATH, key_file(key))
+        .env(fixture_names::READY_PATH, ready)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the fixture must start")
+}
+
+/// Waits until the fixture announces the state it was asked to stop in, and
+/// refuses to let a case continue against a process that never got there.
+fn await_state(child: &mut Child, ready: &Path) {
+    let deadline = Instant::now() + STATE_TIMEOUT;
+    while !ready.exists() {
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("the fixture stopped with {status} before reaching its state");
+        }
+        if Instant::now() >= deadline {
+            let cleanup = terminate_and_reap_bounded(child, REAP_TIMEOUT);
+            panic!("the fixture never reached its state; cleanup: {cleanup:?}");
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Hands the fixture its passphrase and closes the pipe behind it.
+fn feed_passphrase(child: &mut Child, passphrase: &[u8]) {
+    let mut input = child
+        .stdin
+        .take()
+        .expect("the fixture reads its passphrase");
+    input
+        .write_all(passphrase)
+        .expect("the passphrase must reach the fixture");
+    drop(input);
+}
+
+/// The end of file at the state where the passphrase is awaited.
+///
+/// This is the moment the product is in while its passphrase window is up: the
+/// file the user chose is open, validated and held, and not one byte of a
+/// passphrase exists in the process. The exit applied is the parent letting go
+/// — an end of file on the very descriptor the passphrase would have arrived
+/// through — and it must leave nothing behind: no key derived, no descriptor
+/// held, no process.
+///
+/// The control is what makes the claim mean anything: the open descriptor is
+/// read back from `/proc` *before* the end of file, and it is required to name
+/// the file that was chosen. A case that closed a pipe on a process holding
+/// nothing would pass for the wrong reason.
+#[test]
+fn an_end_of_file_while_the_passphrase_is_awaited_returns_the_file_and_derives_nothing() {
+    let before = key_directory_digest();
+    let directory = state_directory("selected-eof");
+    let ready = directory.join("ready");
+    let mut fixture = start_in_state(fixture_names::MODE_SELECTED, NOMINAL_ED25519, &ready);
+    await_state(&mut fixture, &ready);
+    let pid = fixture.id();
+
+    // The state really exists, and it is the state claimed.
+    assert!(
+        open_files(pid).contains(&key_file(NOMINAL_ED25519)),
+        "the fixture announced a selected file it does not hold open"
+    );
+    assert!(
+        !derivation_running(pid),
+        "a derivation is running at a state where no passphrase has been typed"
+    );
+    assert!(
+        children_of(pid).is_empty(),
+        "the fallback started a process of its own before any passphrase existed"
+    );
+
+    drop(fixture.stdin.take().expect("the fixture reads its input"));
+
+    let output = collect_output_bounded(fixture, STATE_TIMEOUT)
+        .expect("the fixture must stop under a bound");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(EXIT_INVALID_INVOCATION)),
+        "an end of file before a passphrase derives nothing and keeps nothing"
+    );
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
+
+    await_disappearance(pid);
+    assert!(
+        open_files(pid).is_empty(),
+        "a descriptor of the personal file outlived the process holding it"
+    );
+    assert!(children_of(pid).is_empty());
+    assert_eq!(
+        key_directory_digest(),
+        before,
+        "the personal file must stay bit for bit unchanged"
+    );
+}
+
+/// The crash at that same state.
+///
+/// Nothing of the user's is in this process yet beyond the bytes of a file they
+/// already hold on disk, which is why the claim here is about the descriptor
+/// and the process rather than about a secret: the passphrase has not been
+/// typed, and there is no derived key to lose. What must be true is that the
+/// file is let go of and that nothing survives to hold it.
+#[test]
+fn a_crash_while_the_passphrase_is_awaited_takes_the_open_file_with_it() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let before = key_directory_digest();
+    let directory = state_directory("selected-crash");
+    let ready = directory.join("ready");
+    let mut fixture = start_in_state(fixture_names::MODE_SELECTED, NOMINAL_ED25519, &ready);
+    await_state(&mut fixture, &ready);
+    let pid = fixture.id();
+
+    assert!(
+        open_files(pid).contains(&key_file(NOMINAL_ED25519)),
+        "the fixture announced a selected file it does not hold open"
+    );
+    assert!(children_of(pid).is_empty());
+
+    crash(pid);
+
+    let status = wait_bounded(&mut fixture, STATE_TIMEOUT).expect("the crashed fixture is reaped");
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGKILL),
+        "the case must have ended this process the one way nothing can handle"
+    );
+    await_disappearance(pid);
+    assert!(
+        open_files(pid).is_empty(),
+        "a descriptor of the personal file outlived the crash"
+    );
+    assert!(
+        thread_names(pid).is_empty(),
+        "a thread of the crashed process is still running"
+    );
+    assert!(children_of(pid).is_empty());
+    assert_eq!(key_directory_digest(), before);
+}
+
+/// Everywhere a process of this machine could have left a copy of what it held.
+///
+/// It is deliberately more than the fixture's own outputs: a crash writes
+/// nothing on purpose, so the interesting places are the ones the *system*
+/// writes to when a process dies — the collected cores and both journals — and
+/// the one place the kernel itself could have put a page, which is the swap.
+fn places_a_crash_could_leave_something(directory: &Path) -> Vec<PathBuf> {
+    let client_journal = directory.join("client-journal");
+    capture(&client_journal, "journalctl -b --no-pager");
+    let server_journal = directory.join("server-journal");
+    capture(
+        &server_journal,
+        &format!("{} 'journalctl -b --no-pager'", required(SERVER_COMMAND)),
+    );
+
+    let mut places = vec![client_journal, server_journal];
+    for collected in ["/var/lib/systemd/coredump", "/var/crash"] {
+        let Ok(entries) = fs::read_dir(collected) else {
+            continue;
+        };
+        places.extend(
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_file()),
+        );
+    }
+    places
+}
+
+/// The swap of this machine, and how much of it is in use, in bytes.
+fn swap_in_use() -> Vec<(PathBuf, u64)> {
+    capture_local("swapon --show=NAME,USED --bytes --noheadings")
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next()?;
+            let used = fields.next()?.parse::<u64>().ok()?;
+            Some((PathBuf::from(name), used))
+        })
+        .collect()
+}
+
+/// Searches the swap for a needle, and proves the search really read it.
+///
+/// The control is the swap area's own signature, which Linux writes at the end
+/// of the first page: a scan that cannot find `SWAPSPACE2` in a swap area did
+/// not read the swap area, and its answer about the needle means nothing.
+fn swap_holds(path: &Path, needle: &[u8]) -> bool {
+    assert!(
+        file_contains(path, b"SWAPSPACE2").expect("the swap must be readable"),
+        "the swap scan of {} never found the signature of a swap area: it read \
+         something else, and what it says about a secret is worthless",
+        path.display()
+    );
+    file_contains(path, needle).expect("the swap must be readable")
+}
+
+/// Largest live mapping the memory search below will read in one piece. The
+/// protected allocation is one page; anything far larger is a heap or a mapped
+/// file and reading it whole would put a great deal of this process's memory
+/// into the searcher's own.
+const MAX_LIVE_REGION_BYTES: usize = 16 * 1024 * 1024;
+
+/// Searches the *live* memory of `pid` for a needle, through `/proc`.
+///
+/// This is the counterpart of the dump, and the control that makes the dump
+/// mean something. `MADV_DONTDUMP` removes a region from what a dump collects
+/// and from nothing else: a privileged reader who goes to the memory itself
+/// still finds whatever is there. Finding the passphrase this way, at the very
+/// instant a dump of the same process does not hold it, is what turns "the
+/// dump did not hold the passphrase" into a statement about the dump rather
+/// than about the passphrase.
+fn live_memory_holds(pid: u32, needle: &[u8]) -> bool {
+    use std::os::unix::fs::FileExt as _;
+
+    let Ok(maps) = fs::read_to_string(format!("/proc/{pid}/maps")) else {
+        return false;
+    };
+    let Ok(memory) = File::open(format!("/proc/{pid}/mem")) else {
+        return false;
+    };
+    for line in maps.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(range), Some(permissions)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if !permissions.starts_with("rw") {
+            continue;
+        }
+        let Some((start, end)) = range.split_once('-') else {
+            continue;
+        };
+        let (Ok(start), Ok(end)) = (u64::from_str_radix(start, 16), u64::from_str_radix(end, 16))
+        else {
+            continue;
+        };
+        let length = end.saturating_sub(start) as usize;
+        if length == 0 || length > MAX_LIVE_REGION_BYTES {
+            continue;
+        }
+        let mut region = vec![0_u8; length];
+        // A region the kernel refuses to read is skipped rather than fatal:
+        // this walk is an observation of what is reachable, not of what exists.
+        if memory.read_exact_at(&mut region, start).is_err() {
+            continue;
+        }
+        if canary_scan::contains_subslice(&region, needle) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Starts the fixture inside its derivation and answers once it is really
+/// paying for the rounds.
+///
+/// The thread is the control. A file is opened, a passphrase is handed over and
+/// a marker is written before the derivation is entered, but none of that says
+/// a single round was ever computed; the thread the product spawns to compute
+/// them does, and it exists only while they are being computed.
+fn start_deriving(key: &str, ready: &Path) -> (Child, u32) {
+    let mut fixture = start_in_state(fixture_names::MODE_DERIVING, key, ready);
+    feed_passphrase(&mut fixture, &key_passphrase());
+    await_state(&mut fixture, ready);
+    let pid = fixture.id();
+
+    let deadline = Instant::now() + STATE_TIMEOUT;
+    while !derivation_running(pid) {
+        if let Ok(Some(status)) = fixture.try_wait() {
+            panic!("the fixture stopped with {status} instead of deriving");
+        }
+        if Instant::now() >= deadline {
+            let cleanup = terminate_and_reap_bounded(&mut fixture, REAP_TIMEOUT);
+            panic!(
+                "no thread named {} ever appeared: nothing was deriving; cleanup: {cleanup:?}",
+                fixture_names::DERIVATION_THREAD
+            );
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    (fixture, pid)
+}
+
+/// What a privileged debugger gets out of a derivation while it is running.
+///
+/// This is the measurement the whole crash case rests on, and it is taken while
+/// the secret is not merely present but *in use*: the passphrase is in the
+/// protected allocation, the file's bytes are in an ordinary buffer beside it,
+/// and a thread is reading both. A core is taken by `gcore`, as root, of a
+/// process that made itself non-dumpable — which is the strongest position an
+/// attacker of this machine could be in short of reading its memory live.
+///
+/// Two claims, and the first is what makes the second worth anything. The
+/// bytes of the *file* must be found, because they are held in ordinary memory
+/// and finding them says the dump and the search really reached this process's
+/// heap. The *passphrase* must not be, because it lives only in the mapping
+/// that `mlock` pins and `MADV_DONTDUMP` excludes.
+///
+/// The file used is the one whose declared round count sits on the accepted
+/// bound: under the unoptimised build this suite uses, its derivation outlasts
+/// the step ceiling, so the state stays open for as long as the observation
+/// needs rather than for as long as it happens to last.
+#[test]
+fn a_dump_of_a_live_derivation_holds_the_file_it_reads_and_never_the_passphrase() {
+    let directory = state_directory("deriving-dump");
+    let ready = directory.join("ready");
+    let passphrase = key_passphrase();
+    let ciphertext = fs::read(key_file(BOUND_ROUNDS)).expect("the key file must be readable");
+    assert!(
+        ciphertext.len() > 192,
+        "the sample of the file's bytes must be a real part of it"
+    );
+    let held_bytes = ciphertext[64..192].to_vec();
+
+    // The control of the search itself, before anything is dumped: both needles
+    // planted in one file, and both found there.
+    let control = directory.join("control");
+    let mut planted = held_bytes.clone();
+    planted.extend_from_slice(&passphrase);
+    fs::write(&control, &planted).expect("the control must be writable");
+    for needle in [&held_bytes, &passphrase] {
+        assert!(
+            file_contains(&control, needle).expect("scan the control"),
+            "the search must be able to find a canary when it is really there"
+        );
+    }
+
+    let (mut fixture, pid) = start_deriving(BOUND_ROUNDS, &ready);
+    assert!(
+        open_files(pid).contains(&key_file(BOUND_ROUNDS)),
+        "the deriving fixture no longer holds the file it is deriving"
+    );
+
+    // The control the whole case turns on, taken before the dump: the
+    // passphrase really is in this process's memory at this instant, and a
+    // privileged reader who goes to the memory rather than to a dump of it
+    // finds it there. Whatever the dump says below is therefore about the dump.
+    let live = live_memory_holds(pid, &passphrase);
+
+    let dumped = Command::new("gcore")
+        .arg("-o")
+        .arg(directory.join("core"))
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    let core_path = fs::read_dir(&directory)
+        .expect("read the state directory")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("core"))
+        });
+    let cleanup = terminate_and_reap_bounded(&mut fixture, REAP_TIMEOUT);
+
+    assert!(dumped, "the derivation could not be dumped at all");
+    let core_path = core_path.expect("the debugger reported a dump it did not produce");
+    let holds_file = file_contains(&core_path, &held_bytes).expect("scan the core");
+    let holds_passphrase = file_contains(&core_path, &passphrase).expect("scan the core");
+    // The dump is the largest thing this run writes; it is removed before
+    // anything is asserted so that a failing case cannot leave it behind.
+    fs::remove_file(&core_path).expect("the dump must be removable");
+
+    assert!(cleanup.is_ok(), "the dumped fixture must be reaped");
+    assert!(
+        live,
+        "the passphrase was not in this process's memory at all while it was \
+         deriving with it: the dump's silence about it says nothing"
+    );
+    assert!(
+        holds_file,
+        "the dump held none of the bytes the derivation is reading: it captured \
+         nothing of this process, and its silence about the passphrase means nothing"
+    );
+    assert!(
+        !holds_passphrase,
+        "the passphrase of a live derivation reached a privileged dump: the \
+         locked, non-dumpable allocation did not cover the one moment it is used"
+    );
+}
+
+/// What the locked, non-dumpable allocation does *not* cover, said out loud.
+///
+/// The case above is only honest if this one is written beside it. Excluding a
+/// region from a dump is exactly that and no more: a reader privileged enough
+/// to dump the process is privileged enough to read its memory directly, and
+/// there the passphrase is, for as long as the derivation needs it. The bound
+/// on that exposure is the state's own lifetime and nothing else.
+///
+/// It is asserted rather than left as a remark because it is the residual risk
+/// this fallback carries, and a residual risk that stops being true without
+/// anyone noticing is a residual risk nobody is managing any more.
+#[test]
+fn the_protected_allocation_hides_the_passphrase_from_a_dump_and_from_nothing_else() {
+    let directory = state_directory("deriving-live");
+    let ready = directory.join("ready");
+    let passphrase = key_passphrase();
+
+    let (mut fixture, pid) = start_deriving(BOUND_ROUNDS, &ready);
+    let reachable = live_memory_holds(pid, &passphrase);
+    // The control that says the walk answers no by looking rather than by
+    // failing: the same walk, on the same live process, for something no
+    // process holds. Both are taken before anything is killed, because a walk
+    // of a process that has gone answers no to everything.
+    let absent = live_memory_holds(pid, b"ycpa-needle-that-belongs-to-nobody");
+    let cleanup = terminate_and_reap_bounded(&mut fixture, REAP_TIMEOUT);
+
+    assert!(cleanup.is_ok());
+    assert!(!absent, "the memory walk answers yes to anything at all");
+    assert!(
+        reachable,
+        "the passphrase could not be read out of a live derivation at all. That \
+         is a stronger property than this project claims, and the claim above — \
+         that the dump is what is empty — would no longer be measuring anything"
+    );
+}
+
+/// A crash *during* the derivation, and everything it must take with it.
+///
+/// This is the sharpest of the exits and the only one on which the product's
+/// own erasure does nothing at all: `SIGKILL` runs no destructor, so the
+/// passphrase in the protected allocation and the bytes of the file beside it
+/// are not wiped by any code of this project. What is claimed here is therefore
+/// deliberately narrow and is exactly what was measured: the thread stops, the
+/// descriptor is returned, no process survives, and nothing of the secret is
+/// findable anywhere this machine writes.
+///
+/// Three controls, because three different things could make this case pass for
+/// the wrong reason. The derivation must have been *running* when it was killed
+/// — the thread is read from `/proc` on the line before the kill, and the same
+/// file left alone is timed deriving for longer than the state lasted here.
+/// The search must be able to find these needles — a control file holding both
+/// is scanned first. And the swap must really have been read — the scan is
+/// required to find the swap area's own signature before its answer counts.
+#[test]
+fn a_crash_during_the_derivation_destroys_the_thread_the_file_and_leaves_no_secret() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let before = key_directory_digest();
+    let directory = state_directory("deriving-crash");
+    let ready = directory.join("ready");
+    let passphrase = key_passphrase();
+    let ciphertext = fs::read(key_file(COSTLY)).expect("the key file must be readable");
+    assert!(ciphertext.len() > 192);
+    let held_bytes = ciphertext[64..192].to_vec();
+
+    let control = directory.join("control");
+    let mut planted = held_bytes.clone();
+    planted.extend_from_slice(&passphrase);
+    fs::write(&control, &planted).expect("the control must be writable");
+    for needle in [&held_bytes, &passphrase] {
+        assert!(
+            file_contains(&control, needle).expect("scan the control"),
+            "the search must be able to find a canary when it is really there"
+        );
+    }
+
+    let (mut fixture, pid) = start_deriving(COSTLY, &ready);
+    let entered = Instant::now();
+    assert!(
+        open_files(pid).contains(&key_file(COSTLY)),
+        "the deriving fixture no longer holds the file it is deriving"
+    );
+    assert!(
+        children_of(pid).is_empty(),
+        "the derivation started a process rather than a thread"
+    );
+    // Read once more on the line before the crash: what follows is about a
+    // derivation that was running at the instant it was ended.
+    assert!(derivation_running(pid), "the derivation ended on its own");
+    crash(pid);
+    let killed_at = entered.elapsed();
+
+    let status = wait_bounded(&mut fixture, STATE_TIMEOUT).expect("the crashed fixture is reaped");
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGKILL),
+        "the case must have ended this process the one way nothing can handle"
+    );
+    await_disappearance(pid);
+    assert!(
+        thread_names(pid).is_empty(),
+        "the derivation thread outlived the process it was running in"
+    );
+    assert!(
+        open_files(pid).is_empty(),
+        "a descriptor of the personal file outlived the crash"
+    );
+    assert!(children_of(pid).is_empty());
+
+    // Nothing of the secret, anywhere this machine writes. The state directory
+    // is swept whole rather than by name: it is where every artefact of this
+    // case lives, and the control planted in it is the proof the sweep works.
+    let mut places = places_a_crash_could_leave_something(&directory);
+    for entry in fs::read_dir(&directory).expect("read the state directory") {
+        let path = entry.expect("directory entry").path();
+        if path != control && path.is_file() {
+            places.push(path);
+        }
+    }
+    for place in &places {
+        for (needle, what) in [(&passphrase, "passphrase"), (&held_bytes, "key file")] {
+            assert!(
+                !file_contains(place, needle).unwrap_or(false),
+                "the {what} of a crashed derivation surfaced in {}",
+                place.display()
+            );
+        }
+    }
+    assert!(
+        file_contains(&control, &passphrase).expect("scan the control"),
+        "the sweep that found nothing cannot find a canary that is really there"
+    );
+
+    // And the one place the kernel, rather than this process, could have put a
+    // page of it. `mlock` is what forbids it; the scan is what checks.
+    let swap = swap_in_use();
+    assert!(
+        !swap.is_empty(),
+        "this machine has no swap to search at all"
+    );
+    for (area, used) in &swap {
+        assert!(
+            !swap_holds(area, &passphrase),
+            "the passphrase of a crashed derivation was written to {} ({used} bytes in use)",
+            area.display()
+        );
+    }
+
+    // The control that says what was cut was really running: the same file, the
+    // same passphrase, left alone, derives — and takes longer doing it than the
+    // state above lasted.
+    let control_ready = directory.join("control-ready");
+    let mut control_fixture = start_in_state(fixture_names::MODE_DERIVING, COSTLY, &control_ready);
+    feed_passphrase(&mut control_fixture, &passphrase);
+    let started = Instant::now();
+    let control_output = collect_output_bounded(control_fixture, STATE_TIMEOUT)
+        .expect("the control derivation must stop under a bound");
+    let derived_after = started.elapsed();
+    assert_eq!(
+        control_output.status.code(),
+        Some(0),
+        "the same file must derive when nothing interrupts it"
+    );
+    assert!(
+        derived_after > killed_at,
+        "the derivation finished in {derived_after:?} and the crash landed at \
+         {killed_at:?}: nothing that was still running was cut"
+    );
+    assert_eq!(key_directory_digest(), before);
+}
+
+// -------------------------------------- the two states that are a window
+//
+// The states above are held by a process and observed in `/proc`. These two are
+// held by a *window*, and there is no other way to reach them: the path only
+// exists because a user opened a native selector and typed into a native
+// passphrase field, and every exit that ends them — the parent letting go of
+// the lease, the window being closed — is an event of that window.
+//
+// Each case therefore drives the shipped helper the way a user drives it, and
+// the driving is itself the control: the case does not continue until the X
+// server says the window of the state it is aiming at is really up and really
+// owned by the helper under test.
+
+/// Title GTK gives the native selector of the encrypted key file.
+const KEY_SELECTOR_TITLE: &str = "Your Cloud — choisir la clé OpenSSH chiffrée";
+/// Title of the passphrase window the fallback opens once a file is chosen.
+const KEY_PASSPHRASE_TITLE: &str = "Your Cloud — passphrase de la clé SSH";
+/// Accelerator of the key file row of the personal access window.
+const OPEN_SELECTOR: &str = "alt+o";
+/// Accelerator of that window's acceptance.
+const ACCEPT_ACCESS: &str = "alt+a";
+/// Longest a driven window may take to appear or to go away.
+const DRIVEN_WINDOW_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long the selector is given to answer an activated location entry on its
+/// own before its own accelerator is used instead.
+const SELECTOR_ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
+/// How many times naming a file in the selector is attempted before the case
+/// gives up and says the state was never reached.
+const SELECTOR_ATTEMPTS: usize = 4;
+
+/// The identifier of one visible window `process_id` owns titled exactly
+/// `title`, when there is one.
+///
+/// Both the ownership and the title are read back from the X server rather than
+/// assumed from the search: several windows of this helper are up at once in
+/// these cases, and naming the wrong one would drive the wrong state.
+fn window_titled(process_id: &str, title: &str) -> Option<String> {
+    let listing = xdotool(&["search", "--onlyvisible", "--pid", process_id, "."])?;
+    listing
+        .lines()
+        .map(str::trim)
+        .find(|window_id| {
+            window_id.parse::<u64>().is_ok()
+                && xdotool(&["getwindowpid", window_id])
+                    .as_deref()
+                    .map(str::trim)
+                    == Some(process_id)
+                && xdotool(&["getwindowname", window_id])
+                    .as_deref()
+                    .map(str::trim)
+                    == Some(title)
+        })
+        .map(str::to_owned)
+}
+
+/// Waits for one window of `child` titled `title`, and refuses to let a case
+/// continue against a state that was never reached.
+///
+/// A window that has just been mapped is not yet a window that takes a key: it
+/// is visible, and its toolkit is still building what the keystroke would reach.
+/// One poll interval is left for that, because a keystroke sent too early is
+/// not refused, it is simply lost — and a lost keystroke would show up much
+/// later as a state that was never driven rather than as a race here.
+fn await_window_titled(child: &mut Child, title: &str) -> String {
+    let process_id = child.id().to_string();
+    let deadline = Instant::now() + DRIVEN_WINDOW_TIMEOUT;
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("the helper exited with {status} before opening «{title}»");
+        }
+        if let Some(window) = window_titled(&process_id, title) {
+            thread::sleep(POLL_INTERVAL);
+            return window;
+        }
+        if Instant::now() >= deadline {
+            abandon(child, &format!("no window titled «{title}» ever appeared"));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Answers whether one window of `child` titled `title` has gone within
+/// `timeout`, with the helper still running: what is being observed is one
+/// window closing, not a process dying and taking every window with it.
+fn window_closed_within(child: &mut Child, title: &str, timeout: Duration) -> bool {
+    let process_id = child.id().to_string();
+    let deadline = Instant::now() + timeout;
+    while window_titled(&process_id, title).is_some() {
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("the helper exited with {status} instead of closing «{title}»");
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    true
+}
+
+/// The same, but a window that stays open is the case failing.
+fn await_window_gone(child: &mut Child, title: &str) {
+    if !window_closed_within(child, title, DRIVEN_WINDOW_TIMEOUT) {
+        abandon(child, &format!("the window «{title}» never closed"));
+    }
+}
+
+/// Presses one accelerator on one window of the helper.
+///
+/// The focus is set first and synchronously: without a window manager nothing
+/// else assigns it, and a key sent to an unfocused display reaches no widget at
+/// all. The event itself goes through the test extension rather than as a
+/// synthetic message, so what the toolkit receives is what a keyboard produces.
+fn press(window: &str, key: &str) {
+    assert!(
+        xdotool(&["windowfocus", "--sync", window]).is_some(),
+        "the window {window} could not be given the input focus"
+    );
+    assert!(
+        xdotool(&["key", "--clearmodifiers", key]).is_some(),
+        "the key {key} could not be sent to {window}"
+    );
+}
+
+/// Types one absolute path into the selector's location bar and opens it.
+///
+/// The steps are the ones a user takes, and each is needed. Activating the
+/// location entry names the file; whether that alone answers the selector
+/// depends on the toolkit build, so the selector's own accelerator is used when
+/// the dialog is still up afterwards.
+///
+/// The whole sequence is attempted several times under one bound rather than
+/// once, because a keystroke that reaches a dialog which is not yet listening
+/// is lost rather than refused. Every attempt begins by replacing the entry's
+/// whole contents, so an attempt that half worked cannot leave a path glued to
+/// the one the next attempt types, and an attempt that did nothing leaves the
+/// selector exactly as it found it — open, with nothing chosen. Nothing here
+/// can make a *wrong* file be chosen quietly either: every case that drives
+/// this reads the descriptor back from `/proc` and requires it to name the file
+/// that was typed.
+fn choose_file(child: &mut Child, selector: &str, path: &Path) {
+    for _ in 0..SELECTOR_ATTEMPTS {
+        press(selector, "ctrl+l");
+        press(selector, "ctrl+a");
+        assert!(
+            xdotool(&[
+                "type",
+                "--clearmodifiers",
+                "--delay",
+                "20",
+                &path.to_string_lossy(),
+            ])
+            .is_some(),
+            "the path could not be typed into the selector"
+        );
+        press(selector, "Return");
+        if window_closed_within(child, KEY_SELECTOR_TITLE, SELECTOR_ANSWER_TIMEOUT) {
+            return;
+        }
+        press(selector, "alt+o");
+        if window_closed_within(child, KEY_SELECTOR_TITLE, SELECTOR_ANSWER_TIMEOUT) {
+            return;
+        }
+    }
+    abandon(
+        child,
+        &format!("the selector never answered the path {}", path.display()),
+    );
+}
+
+/// Starts one helper on the personal access step, with its scope delivered.
+fn start_driven_helper() -> (Child, UnixStream) {
+    let (mut child, mut parent_lease) = spawn_authenticated(helper_command());
+    if parent_lease
+        .write_all(&scope_frame(&direct_personal_access_scope(
+            LIVE_WINDOW_LEASE_MILLIS,
+        )))
+        .and_then(|()| parent_lease.flush())
+        .is_err()
+    {
+        abandon(&mut child, "the scope never reached the helper");
+    }
+    (child, parent_lease)
+}
+
+/// The parent letting go while the file selector is open.
+///
+/// The state is the first clean one of the fallback: a native selector is up,
+/// nothing has been opened, and no passphrase exists anywhere. The exit is the
+/// cancellation lease of the protocol, which on this transport *is* the end of
+/// file — the parent closes the pipe and says nothing.
+///
+/// What must happen is that both loops end, not one: the selector runs a modal
+/// loop of its own that the window underneath cannot interrupt, so a released
+/// lease that only reached the outer window would leave a native dialog on
+/// screen with no process to answer it.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_released_lease_closes_the_open_file_selector_and_the_window_under_it() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let (mut child, parent_lease) = start_driven_helper();
+    let window = await_window_titled(&mut child, PERSONAL_ACCESS_TITLE);
+    press(&window, OPEN_SELECTOR);
+    // The control: the selector is really up, and it belongs to this helper.
+    let _selector = await_window_titled(&mut child, KEY_SELECTOR_TITLE);
+    let pid = child.id();
+    assert!(
+        !open_files(pid).contains(&key_file(NOMINAL_ED25519)),
+        "a file was opened while the user was still choosing one"
+    );
+
+    drop(parent_lease);
+
+    let output = collect_output_bounded(child, PROCESS_TIMEOUT)
+        .expect("the cancelled helper must stop under a bound");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(EXIT_CANCELLED)),
+        "a lease released under an open selector is a cancellation; status {:?}, \
+         stdout {:?}, stderr {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        decode_event(&output.stdout),
+        AssistantEventV1 {
+            schema_version: 1,
+            request_id: DIRECT_REQUEST_ID.into(),
+            event: AssistantEventKind::Cancelled,
+        }
+    );
+    assert!(output.stderr.is_empty());
+    await_disappearance(pid);
+    assert!(
+        window_titled(&pid.to_string(), KEY_SELECTOR_TITLE).is_none(),
+        "the native selector outlived the process that opened it"
+    );
+}
+
+/// The user closing the selector itself.
+///
+/// This one is not a session ending, and saying so is the point: closing the
+/// selector destroys the selector and nothing else. Nothing is chosen, nothing
+/// is opened, and the window it was opened from is still there — which is what
+/// makes the second half of the case possible, where closing *that* window is
+/// what ends the session.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_closed_file_selector_chooses_nothing_and_leaves_the_window_it_came_from() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let (mut child, parent_lease) = start_driven_helper();
+    let window = await_window_titled(&mut child, PERSONAL_ACCESS_TITLE);
+    press(&window, OPEN_SELECTOR);
+    let selector = await_window_titled(&mut child, KEY_SELECTOR_TITLE);
+    let pid = child.id();
+
+    press(&selector, "Escape");
+    await_window_gone(&mut child, KEY_SELECTOR_TITLE);
+    assert!(
+        matches!(child.try_wait(), Ok(None)),
+        "closing the selector ended the whole session"
+    );
+    assert!(
+        window_titled(&pid.to_string(), PERSONAL_ACCESS_TITLE).is_some(),
+        "closing the selector took the window it was opened from with it"
+    );
+    assert!(
+        !open_files(pid).contains(&key_file(NOMINAL_ED25519)),
+        "a selector that was closed opened a file anyway"
+    );
+
+    // And now the window under it, which is a session ending.
+    press(&window, "Escape");
+    let output = collect_output_bounded(child, PROCESS_TIMEOUT)
+        .expect("the closed helper must stop under a bound");
+    drop(parent_lease);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(EXIT_CANCELLED)),
+        "a personal access window the user closes is a cancellation"
+    );
+    assert_eq!(
+        decode_event(&output.stdout),
+        AssistantEventV1 {
+            schema_version: 1,
+            request_id: DIRECT_REQUEST_ID.into(),
+            event: AssistantEventKind::Cancelled,
+        }
+    );
+    await_disappearance(pid);
+}
+
+/// A crash while the selector is open.
+///
+/// Nothing has been opened at this state and nothing secret exists, so what
+/// must be true is narrow and is exactly what is checked: the process goes, and
+/// the native dialog it had put on the display goes with it rather than
+/// outliving it on an X server that has no window manager to clean up after
+/// anyone.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_crash_while_the_file_selector_is_open_leaves_no_window_and_no_open_file() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let (mut child, parent_lease) = start_driven_helper();
+    let window = await_window_titled(&mut child, PERSONAL_ACCESS_TITLE);
+    press(&window, OPEN_SELECTOR);
+    let _selector = await_window_titled(&mut child, KEY_SELECTOR_TITLE);
+    let pid = child.id();
+    assert!(
+        children_of(pid).is_empty(),
+        "the selector was opened by a process of its own"
+    );
+
+    crash(pid);
+
+    let status = wait_bounded(&mut child, PROCESS_TIMEOUT).expect("the crashed helper is reaped");
+    drop(parent_lease);
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    await_disappearance(pid);
+    let process_id = pid.to_string();
+    for title in [PERSONAL_ACCESS_TITLE, KEY_SELECTOR_TITLE] {
+        assert!(
+            window_titled(&process_id, title).is_none(),
+            "the window «{title}» outlived the process that opened it"
+        );
+    }
+    assert!(open_files(pid).is_empty());
+    assert!(children_of(pid).is_empty());
+}
+
+/// Drives one helper all the way to the passphrase window of the fallback.
+///
+/// The drive is the control. Reaching this window means a file was named in the
+/// native selector, opened, and validated — the passphrase window is only ever
+/// shown through an `Ok` of that opening — and the descriptor is read back from
+/// `/proc` before any case is allowed to continue, so what follows is about a
+/// state that is really held rather than about a window that merely looks like
+/// it.
+fn drive_to_passphrase_window(child: &mut Child, key: &str) -> String {
+    let window = await_window_titled(child, PERSONAL_ACCESS_TITLE);
+    press(&window, OPEN_SELECTOR);
+    let selector = await_window_titled(child, KEY_SELECTOR_TITLE);
+    choose_file(child, &selector, &key_file(key));
+    press(&window, ACCEPT_ACCESS);
+    let passphrase = await_window_titled(child, KEY_PASSPHRASE_TITLE);
+    assert!(
+        open_files(child.id()).contains(&key_file(key)),
+        "the passphrase window is up on a file this process does not hold open"
+    );
+    assert!(
+        !derivation_running(child.id()),
+        "a derivation started before any passphrase was typed"
+    );
+    assert!(
+        children_of(child.id()).is_empty(),
+        "the fallback created a process of its own to hold this state"
+    );
+    passphrase
+}
+
+/// The parent letting go while the passphrase is being typed.
+///
+/// This is the state of the fallback that holds the most without holding a
+/// secret: the file is open, validated and confirmed, its bytes are in memory,
+/// and the very next thing that happens is a derivation. The lease is released
+/// there, and what must follow is one controlled cancellation — the expurgated
+/// terminal, the descriptor returned, no derivation ever started.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_released_lease_closes_the_passphrase_window_and_returns_the_file_it_opened() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let before = key_directory_digest();
+    let (mut child, parent_lease) = start_driven_helper();
+    let _passphrase_window = drive_to_passphrase_window(&mut child, NOMINAL_ED25519);
+    let pid = child.id();
+
+    drop(parent_lease);
+
+    let output = collect_output_bounded(child, PROCESS_TIMEOUT)
+        .expect("the cancelled helper must stop under a bound");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(EXIT_CANCELLED)),
+        "a lease released under the passphrase window is a cancellation; \
+         status {:?}, stderr {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        decode_event(&output.stdout),
+        AssistantEventV1 {
+            schema_version: 1,
+            request_id: DIRECT_REQUEST_ID.into(),
+            event: AssistantEventKind::Cancelled,
+        }
+    );
+    await_disappearance(pid);
+    assert!(
+        open_files(pid).is_empty(),
+        "a descriptor of the personal file outlived the cancellation"
+    );
+    assert!(
+        window_titled(&pid.to_string(), KEY_PASSPHRASE_TITLE).is_none(),
+        "the passphrase window outlived the process that opened it"
+    );
+    assert_eq!(key_directory_digest(), before);
+}
+
+/// The user closing the passphrase window instead of answering it.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_closed_passphrase_window_returns_the_file_and_derives_nothing() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let before = key_directory_digest();
+    let (mut child, parent_lease) = start_driven_helper();
+    let passphrase_window = drive_to_passphrase_window(&mut child, NOMINAL_ED25519);
+    let pid = child.id();
+
+    press(&passphrase_window, "Escape");
+
+    let output = collect_output_bounded(child, PROCESS_TIMEOUT)
+        .expect("the closed helper must stop under a bound");
+    drop(parent_lease);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(EXIT_CANCELLED)),
+        "a passphrase window the user closes is a cancellation; status {:?}, stderr {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        decode_event(&output.stdout),
+        AssistantEventV1 {
+            schema_version: 1,
+            request_id: DIRECT_REQUEST_ID.into(),
+            event: AssistantEventKind::Cancelled,
+        }
+    );
+    await_disappearance(pid);
+    assert!(open_files(pid).is_empty());
+    assert_eq!(key_directory_digest(), before);
+}
+
+/// A crash while the passphrase window is open.
+///
+/// The file is held here, so the claim is about the descriptor as much as about
+/// the process: a `SIGKILL` runs no destructor, and what returns the descriptor
+/// is the kernel closing it with everything else this process owned.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_crash_while_the_passphrase_window_is_open_takes_the_window_and_the_file_with_it() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let before = key_directory_digest();
+    let (mut child, parent_lease) = start_driven_helper();
+    let _passphrase_window = drive_to_passphrase_window(&mut child, NOMINAL_ED25519);
+    let pid = child.id();
+
+    crash(pid);
+
+    let status = wait_bounded(&mut child, PROCESS_TIMEOUT).expect("the crashed helper is reaped");
+    drop(parent_lease);
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    await_disappearance(pid);
+    assert!(
+        open_files(pid).is_empty(),
+        "a descriptor of the personal file outlived the crash"
+    );
+    assert!(
+        thread_names(pid).is_empty(),
+        "a thread of the crashed helper is still running"
+    );
+    assert!(children_of(pid).is_empty());
+    let process_id = pid.to_string();
+    for title in [PERSONAL_ACCESS_TITLE, KEY_PASSPHRASE_TITLE] {
+        assert!(
+            window_titled(&process_id, title).is_none(),
+            "the window «{title}» outlived the process that opened it"
+        );
+    }
+    assert_eq!(key_directory_digest(), before);
+}
+
+/// Accelerator of the passphrase field, and of the acceptance beside it.
+const FOCUS_PASSPHRASE: &str = "alt+p";
+const ACCEPT_PASSPHRASE: &str = "alt+c";
+/// How long a released lease is given to prove it did *not* cut a derivation.
+const NOT_CUT_GRACE: Duration = Duration::from_secs(1);
+/// Longest a helper whose derivation was left to finish may take to stop.
+const ABSORBED_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How many times the server has accepted a public key for one account.
+///
+/// It is the server's own account of a connection having happened, taken from
+/// its journal rather than from anything this client says about itself.
+fn authentications_for(account: &str) -> usize {
+    server(&format!(
+        "journalctl -t sshd-session --since '-30 min' --no-pager \
+         | grep -c 'Accepted publickey for {account} ' || true"
+    ))
+    .parse()
+    .unwrap_or(0)
+}
+
+/// Hands the passphrase to the window that asks for it, and consents.
+///
+/// The passphrase travels as the *contents of a file* rather than as an
+/// argument: a synthetic secret typed on a command line would sit in `/proc`
+/// for as long as the typing lasts, and this suite spends its time proving that
+/// nothing of the sort happens.
+fn type_passphrase_and_accept(window: &str) {
+    press(window, FOCUS_PASSPHRASE);
+    assert!(
+        xdotool(&[
+            "type",
+            "--clearmodifiers",
+            "--delay",
+            "20",
+            "--file",
+            &required(KEY_PASSPHRASE),
+        ])
+        .is_some(),
+        "the passphrase could not be typed into the window"
+    );
+    press(window, ACCEPT_PASSPHRASE);
+}
+
+/// The parent letting go while the derivation is running — and what that does
+/// not do.
+///
+/// This is the one exit of the fallback that is *not* immediate, and the case
+/// exists to say so precisely rather than to hide it. `bcrypt-pbkdf` cannot be
+/// interrupted once it has started; the derivation runs on a thread that owns
+/// everything it was given, and the only bound on it is the deadline. So a
+/// lease released here is not a cut: it is absorbed, and it is absorbed within
+/// a bound — the shorter of what is left of the session and the derivation's
+/// own ceiling.
+///
+/// What must nevertheless be true is that nothing is *used*. The key the
+/// derivation produces is never carried into a transport, the server never sees
+/// a connection, and the session ends on the expurgated cancellation like every
+/// other released lease. All four are asserted, and the one that says the
+/// derivation really was still running when the lease went is the thread, read
+/// from `/proc` before and after.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_lease_released_during_the_derivation_is_absorbed_and_opens_no_connection() {
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let username = required(USERNAME);
+    let accepted_before = authentications_for(&username);
+    let before = key_directory_digest();
+    let (mut child, parent_lease) = start_driven_helper();
+    let passphrase_window = drive_to_passphrase_window(&mut child, COSTLY);
+    let pid = child.id();
+    type_passphrase_and_accept(&passphrase_window);
+
+    // The control: a derivation is really running before anything is released.
+    let deadline = Instant::now() + DRIVEN_WINDOW_TIMEOUT;
+    while !derivation_running(pid) {
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("the helper exited with {status} instead of deriving");
+        }
+        if Instant::now() >= deadline {
+            abandon(&mut child, "the consent never started a derivation");
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+
+    let released = Instant::now();
+    drop(parent_lease);
+
+    // And the finding: it keeps running. A cancellation observed here is
+    // recorded, not acted on, because there is nothing safe to act on it with.
+    thread::sleep(NOT_CUT_GRACE);
+    assert!(
+        derivation_running(pid),
+        "the derivation stopped within {NOT_CUT_GRACE:?} of the release: it was cut \
+         after all, and this case no longer describes what happens"
+    );
+
+    let output = collect_output_bounded(child, ABSORBED_TIMEOUT)
+        .expect("the helper must stop under a bound even so");
+    let stopped_after = released.elapsed();
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(EXIT_CANCELLED)),
+        "an absorbed cancellation is still a cancellation; status {:?}, stderr {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        decode_event(&output.stdout),
+        AssistantEventV1 {
+            schema_version: 1,
+            request_id: DIRECT_REQUEST_ID.into(),
+            event: AssistantEventKind::Cancelled,
+        },
+        "the terminal of an absorbed cancellation says nothing more than any other"
+    );
+    assert!(
+        stopped_after > NOT_CUT_GRACE,
+        "the helper stopped at {stopped_after:?}: nothing was absorbed"
+    );
+
+    await_disappearance(pid);
+    assert!(
+        thread_names(pid).is_empty(),
+        "the derivation thread outlived the session it belonged to"
+    );
+    assert!(
+        open_files(pid).is_empty(),
+        "a descriptor of the personal file outlived the cancellation"
+    );
+    assert!(children_of(pid).is_empty());
+    assert_eq!(
+        authentications_for(&username),
+        accepted_before,
+        "a key derived under a released lease was carried into a connection"
+    );
+    assert_eq!(key_directory_digest(), before);
+}
+
+/// A crash while the shipped helper is deriving.
+///
+/// The fixture case above is the one that searches for what a crash leaves
+/// behind; this one says the same exit reaches the same state through the
+/// product's own path — a file named in the native selector, a passphrase typed
+/// in the native window, a derivation started by the consent — and that nothing
+/// of it survives: no thread, no descriptor, no window, and no connection the
+/// server would have seen.
+#[test]
+#[ignore = "requires the isolated Xvfb the LAB run provides"]
+fn a_crash_during_the_derivation_of_the_shipped_helper_leaves_nothing_of_it() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "this case needs the isolated display the LAB run provides"
+    );
+
+    let username = required(USERNAME);
+    let accepted_before = authentications_for(&username);
+    let before = key_directory_digest();
+    let (mut child, parent_lease) = start_driven_helper();
+    let passphrase_window = drive_to_passphrase_window(&mut child, COSTLY);
+    let pid = child.id();
+    type_passphrase_and_accept(&passphrase_window);
+
+    let deadline = Instant::now() + DRIVEN_WINDOW_TIMEOUT;
+    while !derivation_running(pid) {
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("the helper exited with {status} instead of deriving");
+        }
+        if Instant::now() >= deadline {
+            abandon(&mut child, "the consent never started a derivation");
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    assert!(open_files(pid).contains(&key_file(COSTLY)));
+
+    crash(pid);
+
+    let status = wait_bounded(&mut child, PROCESS_TIMEOUT).expect("the crashed helper is reaped");
+    drop(parent_lease);
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    await_disappearance(pid);
+    assert!(
+        thread_names(pid).is_empty(),
+        "the derivation thread outlived the crash"
+    );
+    assert!(open_files(pid).is_empty());
+    assert!(children_of(pid).is_empty());
+    let process_id = pid.to_string();
+    for title in [PERSONAL_ACCESS_TITLE, KEY_PASSPHRASE_TITLE] {
+        assert!(
+            window_titled(&process_id, title).is_none(),
+            "the window «{title}» outlived the crash"
+        );
+    }
+    assert_eq!(
+        authentications_for(&username),
+        accepted_before,
+        "a derivation that was killed still opened a connection"
+    );
+    assert_eq!(key_directory_digest(), before);
 }
