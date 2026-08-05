@@ -16,7 +16,10 @@
 //! channel. Each of them hands its observation back to the deciding half
 //! rather than judging it on the spot.
 //!
-//! Opening an encrypted key file belongs to #53 and any elevation to #54.
+//! The fallback of #53 — [`key_file`], [`key_unlock`], [`key_signer`] — follows
+//! the same split, and joins the acting half rather than doubling it: the key it
+//! opens becomes a signer for the very transport, the very probe and the very
+//! signature budget the agent path already uses. Any elevation belongs to #54.
 
 pub mod agent_client;
 pub mod agent_endpoint;
@@ -27,6 +30,18 @@ pub mod agent_endpoint;
 pub mod agent_pipe;
 pub mod algorithms;
 pub mod host_key;
+/// Opening the personal key file the native selector answered, on the system
+/// that carries `O_NOFOLLOW` and an inode. It is the observing half of
+/// [`openssh_key`], which decides on bytes already in hand.
+#[cfg(target_os = "linux")]
+pub mod key_file;
+/// Turning the opened key into a signer that spends the budget of #52. It is
+/// compiled beside the file it serves, and for the same reason.
+#[cfg(target_os = "linux")]
+pub mod key_signer;
+/// Paying for the key derivation under the session's own deadline.
+#[cfg(target_os = "linux")]
+pub mod key_unlock;
 pub mod local_addresses;
 pub mod openssh_key;
 pub mod resolver;

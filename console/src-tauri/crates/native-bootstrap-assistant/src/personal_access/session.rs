@@ -175,10 +175,53 @@ pub enum GuardVerdict {
     Cancelled,
 }
 
+/// What one session needs of whoever signs it.
+///
+/// Two things beyond the signature itself: the public key to authenticate with,
+/// and how much of the single-signature budget is left once the session is over.
+/// Both are what makes the session one path — it never asks *where* the key
+/// lives, only these two questions and the one signature.
+pub trait PersonalSigner: russh::Signer<Error = SigningRefusal> + Send {
+    fn public_key(&self) -> &PublicKey;
+    fn remaining_signatures(&self) -> usize;
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> PersonalSigner
+    for BudgetedAgentSigner<S>
+{
+    fn public_key(&self) -> &PublicKey {
+        BudgetedAgentSigner::public_key(self)
+    }
+
+    fn remaining_signatures(&self) -> usize {
+        BudgetedAgentSigner::remaining_signatures(self)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl PersonalSigner for super::key_signer::BudgetedKeySigner {
+    fn public_key(&self) -> &PublicKey {
+        super::key_signer::BudgetedKeySigner::public_key(self)
+    }
+
+    fn remaining_signatures(&self) -> usize {
+        super::key_signer::BudgetedKeySigner::remaining_signatures(self)
+    }
+}
+
 /// Everything observed before the user is asked anything.
+///
+/// The agent is an `Option` because #53 made its absence a state rather than a
+/// failure: a machine whose agent holds nothing, or whose endpoint is refused,
+/// is exactly the machine where the encrypted key file is the way in. The
+/// refusal that was observed is kept beside it, so that a caller which insists
+/// on the agent still learns why there is none instead of being told something
+/// vaguer.
 pub struct Prepared {
     runtime: Runtime,
-    agent: PersonalAgent<AgentStream>,
+    agent: Option<PersonalAgent<AgentStream>>,
+    /// Why no agent is held, when none is. Always `None` when one is.
+    agent_refusal: Option<PersonalAccessRefusal>,
     target: FrozenTarget,
     identities: Vec<OfferedIdentity>,
 }
@@ -224,7 +267,7 @@ impl Prepared {
         // On Linux it is a filesystem entry, judged before any runtime exists.
         #[cfg(target_os = "linux")]
         let endpoint =
-            agent_endpoint::observe_linux_endpoint().map_err(PersonalAccessRefusal::Endpoint)?;
+            agent_endpoint::observe_linux_endpoint().map_err(PersonalAccessRefusal::Endpoint);
 
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -232,18 +275,36 @@ impl Prepared {
             .map_err(|_| PersonalAccessRefusal::Transport(TransportRefusal::RuntimeUnavailable))?;
 
         #[cfg(target_os = "linux")]
-        let (agent, identities) = runtime.block_on(open_agent(&endpoint, deadline))?;
+        let held = match endpoint {
+            Ok(endpoint) => runtime.block_on(open_agent(&endpoint, deadline)),
+            Err(refusal) => Err(refusal),
+        };
         // On Windows the endpoint is a pipe object, and attesting it *is*
         // opening it: the handle that was attested is the handle the agent is
         // spoken to over, and it is registered with this runtime rather than
         // reopened. That is why the whole step lives one module over and is
         // called, not repeated, here.
         #[cfg(target_os = "windows")]
-        let (agent, identities) = runtime.block_on(agent_pipe::open_personal_agent(deadline))?;
+        let held = runtime
+            .block_on(agent_pipe::open_personal_agent(deadline))
+            .map_err(PersonalAccessRefusal::from);
+
+        // An agent that cannot be reached, or holds nothing usable, is not the
+        // end of the preparation: it is the state in which the encrypted key
+        // file of #53 is the only way in. A lease that ran out, on the other
+        // hand, ends everything — there is no time left for a window either.
+        if held.as_ref().err() == Some(&PersonalAccessRefusal::Expired) {
+            return Err(PersonalAccessRefusal::Expired);
+        }
+        let (agent, agent_refusal, identities) = match held {
+            Ok((agent, identities)) => (Some(agent), None, identities),
+            Err(refusal) => (None, Some(refusal), Vec::new()),
+        };
 
         Ok(Self {
             runtime,
             agent,
+            agent_refusal,
             target,
             identities,
         })
@@ -273,7 +334,18 @@ impl Prepared {
         deadline: Instant,
         guard: &(dyn Fn() -> GuardVerdict + Sync),
     ) -> RunObservation {
-        let mut signer = match self.agent.select(request.selected_fingerprint) {
+        let Some(agent) = self.agent else {
+            // No agent was retained. Whoever asks for one anyway is told what
+            // was observed, and nothing was signed to find out.
+            return RunObservation {
+                outcome: Err(self
+                    .agent_refusal
+                    .unwrap_or(PersonalAccessRefusal::Agent(AgentRefusal::ConnectionFailed))),
+                remaining_signatures: MAX_AUTHENTICATION_SIGNATURES,
+                stream_refusal: None,
+            };
+        };
+        let mut signer = match agent.select(request.selected_fingerprint) {
             Ok(signer) => signer,
             // A selection that never happened spent nothing, and reached no
             // stream: the untouched budget is reported as such.
@@ -286,26 +358,59 @@ impl Prepared {
             }
         };
 
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let outcome = if remaining.is_zero() {
-            Err(TransportRefusal::Expired)
-        } else {
-            self.runtime.block_on(async {
-                match timeout(
-                    remaining,
-                    run_session(&mut signer, &self.target, request, guard),
-                )
-                .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(_elapsed) => Err(TransportRefusal::Expired),
-                }
-            })
-        };
+        let outcome = drive(
+            &self.runtime,
+            &mut signer,
+            &self.target,
+            request,
+            deadline,
+            guard,
+        );
         RunObservation {
             outcome: outcome.map_err(PersonalAccessRefusal::Transport),
             remaining_signatures: signer.remaining_signatures(),
             stream_refusal: signer.stream_refusal(),
+        }
+    }
+
+    /// The same session, authenticated by a key this process opened itself.
+    ///
+    /// It is the fallback of #53, and it is deliberately three lines long: the
+    /// transport, the frozen addresses, the host key attestation, the single
+    /// signature budget and the fixed probe are literally the ones above, and
+    /// the only thing that changes is which signer is handed to them. A bound
+    /// proved on the agent path is therefore the bound this one runs, and a
+    /// second implementation of the session never existed to drift from it.
+    ///
+    /// `request.selected_fingerprint` must name the opened key. It is not read
+    /// to select anything here — there is nothing to select from — but the
+    /// budget is bound to the key's own fingerprint, so a request naming
+    /// another identity is refused by that budget rather than by a check that
+    /// could be forgotten.
+    #[cfg(target_os = "linux")]
+    pub fn run_with_key(
+        self,
+        key: super::key_unlock::PersonalKey,
+        request: &AuthenticationRequest<'_>,
+        deadline: Instant,
+        guard: &(dyn Fn() -> GuardVerdict + Sync),
+    ) -> RunObservation {
+        let mut signer = super::key_signer::BudgetedKeySigner::over(key);
+        let outcome = drive(
+            &self.runtime,
+            &mut signer,
+            &self.target,
+            request,
+            deadline,
+            guard,
+        );
+        RunObservation {
+            outcome: outcome.map_err(PersonalAccessRefusal::Transport),
+            remaining_signatures: signer.remaining_signatures(),
+            // No stream was opened towards any agent, so there is no stream
+            // refusal to report. It is `None` because nothing happened, which
+            // is not the same claim as "nothing went wrong".
+            stream_refusal: None,
         }
     }
 
@@ -324,12 +429,40 @@ impl Prepared {
         self,
         fingerprint: &str,
     ) -> Result<(Runtime, BudgetedAgentSigner<AgentStream>), PersonalAccessRefusal> {
-        let signer = self
-            .agent
+        let agent = self.agent.ok_or_else(|| {
+            self.agent_refusal
+                .unwrap_or(PersonalAccessRefusal::Agent(AgentRefusal::ConnectionFailed))
+        })?;
+        let signer = agent
             .select(fingerprint)
             .map_err(PersonalAccessRefusal::Agent)?;
         Ok((self.runtime, signer))
     }
+}
+
+/// Runs one whole session on the prepared runtime, whatever signs it.
+///
+/// This is where the agent path and the key path meet, and there is exactly one
+/// of it. The outer bound is the caller's deadline; the guard is consulted
+/// inside; the transport and the channel are closed on every path.
+fn drive<S: PersonalSigner>(
+    runtime: &Runtime,
+    signer: &mut S,
+    target: &FrozenTarget,
+    request: &AuthenticationRequest<'_>,
+    deadline: Instant,
+    guard: &(dyn Fn() -> GuardVerdict + Sync),
+) -> Result<ProbeReport, TransportRefusal> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(TransportRefusal::Expired);
+    }
+    runtime.block_on(async {
+        match timeout(remaining, run_session(signer, target, request, guard)).await {
+            Ok(outcome) => outcome,
+            Err(_elapsed) => Err(TransportRefusal::Expired),
+        }
+    })
 }
 
 /// Connects to the Linux agent socket and asks it, once, what it holds.
@@ -478,8 +611,12 @@ impl Handler for PersonalAccessHandler {
 /// stays readable once the session is over, refusal included. "A refused
 /// authentication spends nothing" is only provable if something can still be
 /// asked how much was spent after the refusal.
-async fn run_session(
-    signer: &mut BudgetedAgentSigner<AgentStream>,
+///
+/// It is generic over the signer, and over nothing else, because that is the
+/// only difference between reaching the agent and holding the key: same
+/// transport, same attestation, same probe, same budget.
+async fn run_session<S: PersonalSigner>(
+    signer: &mut S,
     target: &FrozenTarget,
     request: &AuthenticationRequest<'_>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
@@ -538,9 +675,9 @@ async fn connect_to_frozen_address(
     Err(TransportRefusal::NoReachableAddress)
 }
 
-async fn authenticate_and_probe(
+async fn authenticate_and_probe<S: PersonalSigner>(
     handle: &mut Handle<PersonalAccessHandler>,
-    signer: &mut BudgetedAgentSigner<AgentStream>,
+    signer: &mut S,
     request: &AuthenticationRequest<'_>,
     verdict: &Arc<Mutex<HostKeyVerdict>>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),

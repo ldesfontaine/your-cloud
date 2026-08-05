@@ -405,6 +405,11 @@ pub enum SigningRefusal {
     Stream(StreamRefusal),
     /// The agent refused to sign, or answered something else.
     AgentFailure,
+    /// The key opened in this process could not produce the signature the
+    /// budget had just authorised. It is kept apart from [`Self::AgentFailure`]
+    /// because no agent was involved at all: the fallback of #53 signs with a
+    /// key it holds, and a failure there says nothing about any socket.
+    LocalSignature,
 }
 
 impl From<russh::SendError> for SigningRefusal {
