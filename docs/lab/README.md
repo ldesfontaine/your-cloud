@@ -132,6 +132,20 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — approbation signée vérifiée sans faire confiance au Controller](v0.1.0-signed-approval.md) :
+  passage `quick` du 5 août 2026 pour #37. Le cœur natif signe une enveloppe
+  canonique versionnée qui lie infrastructure, machine, époque, séquence, plan,
+  rollback, privilèges, émission, expiration et clé d'approbation ; l'Auxiliaire
+  de diagnostic la vérifie contre sa propre ancre `root`, consomme
+  atomiquement la séquence avant tout traitement et refuse rejeu, séquence
+  ancienne, sautée ou concurrente. Un vecteur déterministe unique est épinglé
+  côté Console et côté Auxiliaire : la signature produite par le code Rust est
+  vérifiée par le code Go. `lab-machine-1` est **réellement arrêtée puis
+  redémarrée** par le contrôleur du LAB ; la position anti-rejeu est retrouvée
+  octet pour octet et les mêmes refus tiennent. Une nouvelle clé humaine laisse
+  l'action verrouillée jusqu'à la rotation de l'ancre par l'accès personnel.
+  Trois épreuves par mutation font rougir la suite. Aucune mutation n'est
+  exécutée : le rapport de l'Auxiliaire porte `changed: false`.
 - [`v0.1.0` — bornes KDF et politique `sudo` de l'accès personnel](v0.1.0-personal-access-bounds.md) :
   passage `quick` du 3 août 2026 pour #51. La calibration `bcrypt_pbkdf` sur
   `lab-console` rend environ 4,6 ms par round, identiques pour Ed25519 et RSA
