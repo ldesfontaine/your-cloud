@@ -231,10 +231,14 @@ tests/lab/v0.1.0/machine-identity/prove remove
 - L'enrôlement pose un fragment `sshd_config.d` et recharge `sshd` après
   `sshd -t` ; le démontage le retire, revalide et recharge. Le canal `labctl`
   n'est jamais concerné par ce fragment, qui ne porte qu'un `Match User`.
-- L'Agent ne peut pas encore être activé : `placement::propose` de #36 refuse
-  `Role::Agent` avec `RoleOutsideThisPalier`, donc aucune approbation n'existe
-  pour lui. Le harnais le montre refusé plutôt que de fabriquer une approbation
-  que personne n'a donnée.
+- L'Agent est activé **seulement s'il est explicitement approuvé**. Le harnais
+  ne fabrique aucune approbation : le témoin est construit dans la fixture par
+  `placement::propose` puis `placement::approve` de #36, comme celui du Relay.
+  Les deux périmètres joués côte à côte ne diffèrent que par l'approbation, et
+  celui qui ne l'a pas se fait refuser `RoleNotApproved` ; un rapport dont
+  l'identité ne vérifie pas fait refuser l'activation avant même la question du
+  rôle. Ce que ce harnais ne prouve pas : aucune unité n'est réellement démarrée
+  sur les machines — l'activation est une décision typée, pas un `systemctl`.
 - Les deux VM restent démarrées ; ce harnais ne crée ni ne détruit de topologie.
 - La présence de ces sources ne constitue pas une preuve. Seule une exécution
   identifiée en est une.

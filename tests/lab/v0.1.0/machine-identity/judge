@@ -55,16 +55,22 @@ machine_one=$(cat "$state/names/one")
 machine_two=$(cat "$state/names/two")
 stranger="SHA256:ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
 
+# perimeter <path> <machine> <role> [line...]
+#
+# The role is a parameter because the approval is the whole subject of the
+# activation cases below: the same perimeter with `relay` and with `agent`
+# differs only in what somebody approved, and the fixture derives the witness
+# from #36's own `propose` then `approve` in both cases.
 perimeter() {
-  local path=$1 machine=$2
-  shift 2
+  local path=$1 machine=$2 role=$3
+  shift 3
   {
     printf 'machine\t%s\n' "$machine"
     printf 'identity\t%s\t%s\n' "$machine_one" "$key_one"
     printf 'identity\t%s\t%s\n' "$machine_two" "$key_two"
     printf 'cleared\t%s\n' "$machine_one"
     printf 'cleared\t%s\n' "$machine_two"
-    printf 'placement\trelay\t%s\n' "$machine"
+    printf 'placement\t%s\t%s\n' "$role" "$machine"
     printf '%s\n' "$@"
   } >"$path"
 }
@@ -74,8 +80,9 @@ nominal_report() {
   printf 'report\t%s\tdiagnose_protocol_read_only\tfalse\t1\t%s' "$machine" "$key"
 }
 
-perimeter "$work/one" "$machine_one" "$(nominal_report "$machine_one" "$key_one")"
-perimeter "$work/two" "$machine_two" "$(nominal_report "$machine_two" "$key_two")"
+perimeter "$work/one" "$machine_one" relay "$(nominal_report "$machine_one" "$key_one")"
+perimeter "$work/two" "$machine_two" relay "$(nominal_report "$machine_two" "$key_two")"
+perimeter "$work/agent" "$machine_one" agent "$(nominal_report "$machine_one" "$key_one")"
 
 echo "== one identity per machine, and the refusal on every other one =="
 accepts "the machine admits its own identity" ADMITTED \
@@ -229,15 +236,15 @@ refuses "a key file the technical account owns" \
 echo
 echo "== the new path, and what it may not be called verified on =="
 accepts "the read-only diagnostic on the machine's own identity" VERIFIED verify "$work/one"
-perimeter "$work/mutated" "$machine_one" \
+perimeter "$work/mutated" "$machine_one" relay \
   "$(printf 'report\t%s\tdiagnose_protocol_read_only\ttrue\t1\t%s' "$machine_one" "$key_one")"
 refuses "an Auxiliary reporting a mutation" \
   AuxiliaryReportedAMutation verify "$work/mutated"
-perimeter "$work/other-operation" "$machine_one" \
+perimeter "$work/other-operation" "$machine_one" relay \
   "$(printf 'report\t%s\tinstall_container\tfalse\t1\t%s' "$machine_one" "$key_one")"
 refuses "an operation this Auxiliary does not perform" \
   NotTheDiagnosticOperation verify "$work/other-operation"
-perimeter "$work/foreign-session" "$machine_one" \
+perimeter "$work/foreign-session" "$machine_one" relay \
   "$(nominal_report "$machine_one" "$key_two")"
 refuses "a session opened with another machine's identity" \
   ForeignIdentity verify "$work/foreign-session"
@@ -249,6 +256,22 @@ refuses "an Agent nobody approved" RoleNotApproved activate "$work/one" agent
 refuses "the Auxiliary as a service" AuxiliaryIsNeverAService activate "$work/one" auxiliary
 refuses "the Controller through an enrolment" \
   ControllerIsNotActivatedByAnEnrolment activate "$work/one" controller
+
+# The Agent, explicitly approved. The witness is built inside the fixture by
+# #36's own `propose` then `approve`: nothing here fabricates an approval, and
+# the two lines above and below differ by exactly who approved what.
+accepts "the explicitly approved Agent" ACTIVATED activate "$work/agent" agent
+refuses "the Relay on an enrolment that only approved the Agent" \
+  RoleNotApproved activate "$work/agent" relay
+refuses "the Auxiliary, even beside an approved Agent" \
+  AuxiliaryIsNeverAService activate "$work/agent" auxiliary
+# The order, read as a refusal rather than argued from the sequence: an Agent
+# whose path did not verify is not activated, and the reason is the verification
+# rather than the approval.
+perimeter "$work/agent-foreign-session" "$machine_one" agent \
+  "$(nominal_report "$machine_one" "$key_two")"
+refuses "an approved Agent whose path was never verified" \
+  ForeignIdentity activate "$work/agent-foreign-session" agent
 
 echo
 echo "== the order the sequence fixes =="

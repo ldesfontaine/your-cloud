@@ -60,24 +60,49 @@ report "the Auxiliary answered through the forced command" \
   cat "$state/perimeter.identities"
   cat "$state/perimeter.cleared"
   printf 'placement\trelay\t%s\n' "$machine"
+  printf 'placement\tagent\t%s\n' "$machine"
   printf 'report\t%s\t%s\t%s\t%s\t%s\n' \
     "$reported_machine" "$operation" "$changed" "$consumed" "$fingerprint"
 } >"$state/observed/$machine.perimeter"
+
+# The same perimeter, with the Agent left unapproved. It is the negative control
+# of the activation just below: the two files differ by one approval and by
+# nothing else, so an Agent that started anyway would have started without one.
+grep -v $'^placement\tagent\t' "$state/observed/$machine.perimeter" \
+  >"$state/observed/$machine.perimeter-without-agent"
 
 if output=$("$fixture" verify "$state/observed/$machine.perimeter"); then
   report "the gate accepts the path it just walked" "$output"
 else
   fail "the gate accepts the path it just walked" "$output"
 fi
-if output=$("$fixture" activate "$state/observed/$machine.perimeter" relay); then
-  report "the approved role, after the path answered" "$output"
+for role in relay agent; do
+  if output=$("$fixture" activate "$state/observed/$machine.perimeter" "$role"); then
+    report "the approved $role, after the path answered" "$output"
+  else
+    fail "the approved $role, after the path answered" "$output"
+  fi
+done
+if output=$("$fixture" activate "$state/observed/$machine.perimeter-without-agent" agent 2>&1); then
+  fail "an Agent nobody approved on this machine" "accepted: $output"
 else
-  fail "the approved role, after the path answered" "$output"
+  report "an Agent nobody approved on this machine" "refused: $output"
 fi
 if output=$("$fixture" activate "$state/observed/$machine.perimeter" auxiliary 2>&1); then
   fail "the Auxiliary asked for as a service" "accepted: $output"
 else
   report "the Auxiliary asked for as a service" "refused: $output"
+fi
+
+# The order this palier fixes, taken end to end rather than off the constant:
+# the report the machine really produced is spoiled on the identity that opened
+# the session, and the approved Agent is refused for want of a verified path.
+awk -F'\t' -v OFS='\t' '$1 == "report" {$6="SHA256:ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"} {print}' \
+  "$state/observed/$machine.perimeter" >"$state/observed/$machine.perimeter-unverified"
+if output=$("$fixture" activate "$state/observed/$machine.perimeter-unverified" agent 2>&1); then
+  fail "the approved Agent on a path that did not verify" "accepted: $output"
+else
+  report "the approved Agent on a path that did not verify" "refused: $output"
 fi
 
 echo
