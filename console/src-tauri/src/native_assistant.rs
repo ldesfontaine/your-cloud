@@ -23,11 +23,12 @@ use std::os::unix::{
     process::CommandExt,
 };
 
+// The exit codes are deliberately not imported one by one any more: the pair an
+// event may be read beside is `AssistantEventKind::terminal_exit_code`, and
+// naming the constants here again would be a second table to keep in step.
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1,
-    ASSISTANT_EXIT_CANCELLED, ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE,
-    ASSISTANT_EXIT_WATCHDOG_EXPIRED, MAX_ASSISTANT_EVENT_FRAME_BYTES,
-    MAX_ASSISTANT_SCOPE_FRAME_BYTES,
+    MAX_ASSISTANT_EVENT_FRAME_BYTES, MAX_ASSISTANT_SCOPE_FRAME_BYTES,
 };
 
 // The launch-time environment allowlist is decided per prompt, so the kind of
@@ -82,6 +83,12 @@ impl NativeAssistantError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeAssistantPoll {
     Running,
+    /// The helper proved the elevation of its session and said so on the one
+    /// frame it ever writes. Reaching this verdict means three things held at
+    /// once: the event was `access_verified`, the process exited with the code
+    /// the protocol's own table pairs it with, and nothing of the helper's
+    /// process group was left behind.
+    AccessVerified,
     Unavailable,
 }
 
@@ -529,27 +536,62 @@ fn complete_session(
     if event.request_id != session.request_id {
         return Err(NativeAssistantError::RequestRefused);
     }
-    match (status.code(), event.event) {
-        (Some(code), AssistantEventKind::Unavailable)
-            if code == i32::from(ASSISTANT_EXIT_UNAVAILABLE) =>
-        {
-            Ok(NativeAssistantPoll::Unavailable)
-        }
-        (Some(code), AssistantEventKind::Refused) if code == i32::from(ASSISTANT_EXIT_REFUSED) => {
-            Err(NativeAssistantError::RequestRefused)
-        }
-        (Some(code), AssistantEventKind::Cancelled)
-            if code == i32::from(ASSISTANT_EXIT_CANCELLED) =>
-        {
-            Err(NativeAssistantError::RequestRefused)
-        }
-        (Some(code), AssistantEventKind::Expired)
-            if code == i32::from(ASSISTANT_EXIT_WATCHDOG_EXPIRED) =>
-        {
-            Err(NativeAssistantError::Expired)
-        }
-        _ => Err(NativeAssistantError::RequestRefused),
+    // The pair, read through the protocol's own table rather than through a
+    // list restated here. An event that terminates nothing names no code and is
+    // refused; an event whose code is not the one it names is refused whichever
+    // way round the divergence runs — a zero without `access_verified`, an
+    // `access_verified` without zero, a refusal wearing another refusal's code.
+    let Some(expected_code) = event.event.terminal_exit_code() else {
+        return Err(NativeAssistantError::RequestRefused);
+    };
+    if status.code() != Some(i32::from(expected_code)) {
+        return Err(NativeAssistantError::RequestRefused);
     }
+    match event.event {
+        AssistantEventKind::AccessVerified => {
+            // Nothing of that helper may still be running when its success is
+            // read. A reaped root is not enough: what it started must be gone
+            // too, and until that is observed the verdict is refused.
+            if !descendants_are_gone(&session.child) {
+                return Err(NativeAssistantError::RequestRefused);
+            }
+            Ok(NativeAssistantPoll::AccessVerified)
+        }
+        AssistantEventKind::Unavailable => Ok(NativeAssistantPoll::Unavailable),
+        AssistantEventKind::Expired => Err(NativeAssistantError::Expired),
+        AssistantEventKind::PromptOpen
+        | AssistantEventKind::Refused
+        | AssistantEventKind::Cancelled => Err(NativeAssistantError::RequestRefused),
+    }
+}
+
+/// Whether the helper's whole process group is gone, root included.
+///
+/// The helper is spawned as its own process group leader, so the group is
+/// exactly it and whatever it started. Signal zero delivers nothing and only
+/// reports whether anyone would have received it: `ESRCH` on the negated
+/// identifier is the group being empty, and anything else — a survivor, or a
+/// question that could not be asked — is refused.
+#[cfg(target_os = "linux")]
+fn descendants_are_gone(child: &NativeChild) -> bool {
+    let Ok(group) = i32::try_from(child.id()) else {
+        return false;
+    };
+    // SAFETY: signal zero performs no action on any process; it only reports
+    // whether the group identifier could be signalled at all.
+    if unsafe { libc::kill(-group, 0) } == 0 {
+        return false;
+    }
+    io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+/// On Windows the same proof is already behind this call: `WindowsChild`
+/// answers a terminal status only once its Job holds no process at all, so a
+/// completed session *is* an empty Job there. Restating it here would be a
+/// second, weaker way of asking.
+#[cfg(not(target_os = "linux"))]
+fn descendants_are_gone(_child: &NativeChild) -> bool {
+    true
 }
 
 fn read_event(reader: &mut impl Read) -> Result<AssistantEventV1, NativeAssistantError> {
