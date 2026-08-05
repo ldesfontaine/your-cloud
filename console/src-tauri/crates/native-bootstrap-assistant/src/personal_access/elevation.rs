@@ -12,7 +12,10 @@
 //! The commands are constants. Not one of them is assembled from a name, a
 //! path, a fingerprint or anything else that crossed a process boundary, and
 //! [`FixedCommand`] cannot be built outside this crate, so a command that is
-//! not one of these constants has no way of reaching a channel.
+//! not one of these constants has no way of reaching a channel. The read-only
+//! audit declares its own three constants of the same type, in
+//! [`super::audit`]: what [`CHANNEL_COMMANDS`] lists is every command an
+//! *elevation* may run, not every command that type has values for.
 //!
 //! The verdict is a pair. An exit status of zero and a uid of `0` are read
 //! together, in [`elevated`], and neither is ever enough on its own. The case

@@ -26,6 +26,12 @@
 //! they answered and holds the single gate an access may be called verified
 //! through; [`session`] runs them, in at most three `exec` channels of the one
 //! transport the two paliers above opened.
+//!
+//! The audit of #36 is the same shape and the opposite intent. [`audit`] owns
+//! three reading commands, spends the very same three-channel budget of the very
+//! same [`session`], and hands back facts; [`placement`] decides on those facts
+//! alone. Nothing on either side mutates the audited machine, and nothing in
+//! this crate applies what [`placement`] proposes.
 
 pub mod agent_client;
 pub mod agent_endpoint;
@@ -35,6 +41,13 @@ pub mod agent_endpoint;
 #[cfg(target_os = "windows")]
 pub mod agent_pipe;
 pub mod algorithms;
+/// The read-only audit of one declared endpoint: the three reading commands, and
+/// the fact-by-fact reading of what they answered. It joins the deciding half
+/// for everything it reads and the acting half only to ask [`session`] for the
+/// three channels it spends — it opens nothing itself, and it writes nothing on
+/// the machine it audits.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod audit;
 /// The acting half of the `sudo` bounds [`sudo_policy`] decided, and the one
 /// gate an `access_verified` may ever be earned through. It owns every command
 /// a session may run and reads what they answered; it opens nothing itself.
@@ -55,6 +68,11 @@ pub mod key_signer;
 pub mod key_unlock;
 pub mod local_addresses;
 pub mod openssh_key;
+/// What may be proposed on an audited endpoint, and what a proposal is not. It
+/// decides only: it turns one observation and one declaration into one proposal
+/// or into precise refusals, and nothing in this crate applies what it produces.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod placement;
 pub mod resolver;
 /// The acting half, on both platforms the palier targets. The session is one
 /// sequence — local addresses, one resolution, one agent endpoint, one
