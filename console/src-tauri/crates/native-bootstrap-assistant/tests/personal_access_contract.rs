@@ -2480,15 +2480,23 @@ fn key_seed_needle() -> Vec<u8> {
 /// is searched for it, and the search is shown not to be blind by finding, in
 /// that same core, something this process really does hold in ordinary memory.
 ///
-/// The **private key** must be absent from everything this process *emits*:
-/// its environment, its command line, both journals, every file it could have
-/// written and both of its streams. It is deliberately not claimed absent from
-/// a core taken while the process still exists. A decrypted key is in memory
-/// for as long as the session lasts — that is what using a key means, and it is
-/// as true of `ssh` — and this palier's own copies are the only ones it can
-/// wipe. The measured residue, and the fact that it outlives our own drop
-/// because the decoding buffers of the pinned RustCrypto stack are not
-/// zeroised, is named in the report rather than hidden by a narrower search.
+/// The **private key** must be absent from everything this process emits — its
+/// environment, its command line, both journals, every file it could have
+/// written and both of its streams — and, since the key is held behind a box,
+/// from the core as well.
+///
+/// That last claim is asserted here because it was first measured. An unboxed
+/// key left eighteen copies of the private scalar in the dump of a process
+/// whose session was already over: one per *move* of the value, a move in Rust
+/// being a byte copy that leaves the source frame untouched, so nothing drops
+/// it and nothing wipes it. None of the eighteen came from the decoding
+/// buffers of the pinned RustCrypto stack — each was a `public || private`
+/// pair with the key file's own comment string beside it, which is the shape
+/// of `ssh-key`'s `PrivateKey` and of nothing else, and `ed25519-dalek` was
+/// already built with `zeroize` by way of `russh`. Behind a box every one of
+/// those moves copies a pointer, the single live copy never changes address,
+/// and the drop that wipes it wipes the only copy there ever was.
+///
 /// The passphrase reaches the fixture on its standard input precisely so that
 /// `environ` and `cmdline` can be read back and found clean.
 #[test]
@@ -2601,9 +2609,11 @@ fn a_finished_key_file_session_emits_no_trace_of_the_key_or_its_passphrase() {
         }
     }
 
-    // The core, for the passphrase alone — and only once the search has been
-    // shown to work on it. The account name is a string this process really
-    // holds in ordinary memory, so finding it is what says the core was read.
+    // The core, for both canaries — and only once the search has been shown to
+    // work on it. The account name is a string this process really holds in
+    // ordinary memory, so finding it is what says the core was read at all: a
+    // dump the search could not read would otherwise pass both claims below by
+    // finding nothing in it.
     if let Some(core_path) = core_path {
         let ordinary = required(USERNAME).into_bytes();
         assert!(
@@ -2613,6 +2623,11 @@ fn a_finished_key_file_session_emits_no_trace_of_the_key_or_its_passphrase() {
         assert!(
             !file_contains(&core_path, &passphrase).unwrap_or(true),
             "the passphrase left the protected allocation and reached a dump"
+        );
+        assert!(
+            !file_contains(&core_path, &seed).unwrap_or(true),
+            "the private scalar outlived the session in a dump: a copy of the \
+             key was moved somewhere its own drop no longer wipes"
         );
     }
 
