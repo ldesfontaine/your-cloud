@@ -27,6 +27,11 @@ bound_rounds=$max_rounds
 # of a second, on this machine and under the unoptimised build the contract
 # suite uses.
 slow_rounds=128
+# Enough rounds that a derivation is still running seconds later — long enough
+# for a suite to observe the state, dump it and end it while it is really
+# working — and few enough that the same derivation finishes well inside the
+# step ceiling when nothing interrupts it.
+costly_rounds=256
 crowd_prefix=192.0.2.
 crowd_count=9
 
@@ -144,6 +149,13 @@ ssh-keygen -q -t ed25519 -a "$bound_rounds" -N "$passphrase" -C "$prefix-file-bo
 # differ by the deadline alone.
 ssh-keygen -q -t ed25519 -a "$slow_rounds" -N "$passphrase" -C "$prefix-file-slow" \
   -f "$keyfiles/slow"
+
+# And the one the destruction cases are taken on. The states they observe —
+# a passphrase held in protected memory, a thread paying for the rounds, a
+# descriptor still open — only exist while a derivation runs, so the file they
+# use is the one whose derivation lasts long enough to be caught in the act.
+ssh-keygen -q -t ed25519 -a "$costly_rounds" -N "$passphrase" -C "$prefix-file-costly" \
+  -f "$keyfiles/costly"
 
 # A key in the clear. The single most important refusal of this fallback.
 ssh-keygen -q -t ed25519 -N '' -C "$prefix-file-clear" -f "$keyfiles/clear"

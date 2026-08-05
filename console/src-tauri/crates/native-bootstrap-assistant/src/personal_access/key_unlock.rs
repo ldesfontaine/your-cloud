@@ -50,6 +50,15 @@ use crate::secret::ProtectedSecret;
 /// reason to keep waiting for.
 const DERIVATION_CEILING: Duration = Duration::from_secs(30);
 
+/// Name carried by the thread that pays for the rounds.
+///
+/// It is a named constant because it is observable: a process stopped inside
+/// its derivation shows this thread in `/proc`, and that is how a contract
+/// suite tells "the derivation had really started" from "something was killed
+/// before it began". Naming it here keeps the observation and the thread it
+/// observes from drifting apart.
+pub(crate) const DERIVATION_THREAD_NAME: &str = "personal-key-derivation";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnlockRefusal {
     /// The file is no longer the one that was validated.
@@ -146,7 +155,7 @@ pub(crate) fn unlock(
     // The thread owns the file and the passphrase from here on. A send that
     // finds nobody listening drops the derived key on the spot.
     let started = thread::Builder::new()
-        .name("personal-key-derivation".into())
+        .name(DERIVATION_THREAD_NAME.into())
         .spawn(move || {
             let outcome = derive(&selected, &passphrase);
             let _ = sender.send(outcome);

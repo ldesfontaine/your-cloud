@@ -94,6 +94,29 @@ pub mod personal_access_contract {
     /// Finish one nominal session, then stay alive to be searched.
     pub const MODE_LINGER: &str = "linger";
 
+    /// Stop at the state the fallback is in while the passphrase is being
+    /// typed: the file opened, validated and still held, and not one byte of a
+    /// passphrase in this process. It opens no transport at all, because the
+    /// product has none open at that moment either.
+    pub const MODE_SELECTED: &str = "selected";
+    /// Stop *inside* the derivation: the passphrase in the protected
+    /// allocation, the file still held, and the derivation thread paying for
+    /// the rounds the envelope declared. It too opens no transport: the
+    /// product opens its own only once this state has produced a key.
+    pub const MODE_DERIVING: &str = "deriving";
+
+    /// Name of the thread the derivation runs on, taken from the module that
+    /// spawns it rather than repeated: a suite that looked for a name written
+    /// twice would stop observing anything the day one of the two changed.
+    pub const DERIVATION_THREAD: &str = crate::personal_access::key_unlock::DERIVATION_THREAD_NAME;
+    /// How much of that name `/proc/<pid>/task/<tid>/comm` really answers.
+    ///
+    /// Linux stores fifteen characters and a terminator, and the standard
+    /// library truncates to exactly that before asking, so a suite comparing
+    /// the whole name against `comm` would never match and would conclude the
+    /// derivation had not started.
+    pub const DERIVATION_THREAD_COMM_BYTES: usize = 15;
+
     /// Longest a fixture session may last before its own lease cuts it.
     pub const LEASE_SECONDS: u64 = 100;
 }
@@ -111,7 +134,6 @@ pub mod personal_access_contract {
 pub fn personal_access_contract_main() -> u8 {
     use personal_access::session::{AuthenticationRequest, GuardVerdict, Prepared};
     use personal_access_contract as names;
-    use std::io::Write as _;
 
     // Hardened first, exactly as `process_main` does, and before anything is
     // read: a fixture that hardened itself late would prove a weaker claim.
@@ -120,6 +142,17 @@ pub fn personal_access_contract_main() -> u8 {
     }
 
     let read = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    // The two state modes stop *inside* the fallback rather than around a
+    // whole session, and they open no transport at all: at the moment each of
+    // them describes, the product has none open either. They are therefore
+    // decided before a single name of the perimeter's server is read, so that
+    // what they hold is only what the fallback itself holds.
+    if let Some(mode) = std::env::args().nth(1) {
+        if mode == names::MODE_SELECTED || mode == names::MODE_DERIVING {
+            return hold_fallback_state(&mode);
+        }
+    }
+
     let (Some(mode), Some(target), Some(username), Some(host_key), Some(authorized)) = (
         std::env::args().nth(1),
         read(names::TARGET),
@@ -175,17 +208,9 @@ pub fn personal_access_contract_main() -> u8 {
         let Some(ready_path) = read(names::READY_PATH) else {
             return EXIT_INVALID_INVOCATION;
         };
-        let ready = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(ready_path);
-        let Ok(mut ready) = ready else {
-            return EXIT_IO_FAILURE;
-        };
-        if ready.write_all(b"session complete").is_err() || ready.flush().is_err() {
+        if announce(std::path::Path::new(&ready_path), b"session complete").is_err() {
             return EXIT_IO_FAILURE;
         }
-        drop(ready);
         // Stay alive, holding whatever this process accumulated, until the
         // suite has finished searching it and kills us.
         std::thread::sleep(Duration::from_secs(names::LEASE_SECONDS));
@@ -193,8 +218,110 @@ pub fn personal_access_contract_main() -> u8 {
     0
 }
 
+/// Stops at one clean state of the encrypted key fallback and stays there.
+///
+/// Neither state opens a transport, and neither is a session: they are the two
+/// moments at which the product itself is holding something and doing nothing
+/// else — waiting for a passphrase, and paying for the rounds. Whatever ends
+/// this process while it sits in one of them is what a suite is measuring, so
+/// nothing else may be running beside it.
+///
+/// Readiness is a file, announced at the exact instant the state is entered and
+/// never before: a suite that killed this process on a guess would prove
+/// nothing about a state it had not observed.
+#[cfg(all(feature = "personal-access-contract-test", target_os = "linux"))]
+fn hold_fallback_state(mode: &str) -> u8 {
+    use personal_access::{key_file, key_unlock};
+    use personal_access_contract as names;
+
+    let read = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let (Some(key_path), Some(ready_path)) = (read(names::KEY_PATH), read(names::READY_PATH))
+    else {
+        return EXIT_INVALID_INVOCATION;
+    };
+    let ready_path = std::path::PathBuf::from(ready_path);
+    let Ok(selected) = key_file::open_and_validate(std::path::Path::new(&key_path)) else {
+        return EXIT_UNAVAILABLE;
+    };
+
+    if mode == names::MODE_SELECTED {
+        // The file is open, validated and still held; not one byte of a
+        // passphrase exists in this process. It is the state the product is in
+        // while its passphrase window is up, and the standard input read below
+        // is that window: an end of file on it is the user letting go before
+        // ever typing, and it must leave nothing behind.
+        if announce(&ready_path, b"file selected").is_err() {
+            return EXIT_IO_FAILURE;
+        }
+        return match read_contract_passphrase() {
+            Ok(passphrase) => {
+                // Nothing in this mode derives. Both values are dropped here,
+                // and wiped by that drop.
+                drop(passphrase);
+                drop(selected);
+                EXIT_REFUSED
+            }
+            Err(code) => code,
+        };
+    }
+
+    let passphrase = match read_contract_passphrase() {
+        Ok(passphrase) => passphrase,
+        Err(code) => return code,
+    };
+    // Everything the derivation needs is in hand, and nothing has been paid for
+    // yet. Announced here rather than after the call, which never returns in
+    // time to announce anything.
+    if announce(&ready_path, b"deriving").is_err() {
+        return EXIT_IO_FAILURE;
+    }
+    let deadline = Instant::now() + Duration::from_secs(names::LEASE_SECONDS);
+    match key_unlock::unlock(selected, passphrase, deadline) {
+        // A derivation nothing interrupted is the control of every case that
+        // interrupts one: it says the file really does derive, and how long the
+        // state under observation lasts.
+        Ok(key) => {
+            drop(key);
+            0
+        }
+        Err(_) => EXIT_UNAVAILABLE,
+    }
+}
+
+/// Writes a readiness marker exactly once, or fails.
+///
+/// `create_new` is what makes it once: a marker that could be rewritten would
+/// let a second state announce itself under the first one's name.
+#[cfg(all(feature = "personal-access-contract-test", target_os = "linux"))]
+fn announce(path: &std::path::Path, content: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
+
+    let mut ready = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    ready.write_all(content)?;
+    ready.flush()
+}
+
 /// Opens the contract's synthetic key file with a passphrase read from this
 /// process's own standard input.
+#[cfg(all(feature = "personal-access-contract-test", target_os = "linux"))]
+fn open_contract_key(
+    path: &std::path::Path,
+    deadline: Instant,
+) -> Result<personal_access::key_unlock::PersonalKey, u8> {
+    use personal_access::{key_file, key_unlock};
+
+    let Ok(selected) = key_file::open_and_validate(path) else {
+        return Err(EXIT_UNAVAILABLE);
+    };
+    let passphrase = read_contract_passphrase()?;
+    key_unlock::unlock(selected, passphrase, deadline).map_err(|_| EXIT_UNAVAILABLE)
+}
+
+/// Reads the contract's synthetic passphrase from this process's own standard
+/// input, straight into the protected allocation.
 ///
 /// Standard input is used rather than an argument or an environment entry
 /// because both of those are exactly what the canary search reads back from
@@ -205,17 +332,12 @@ pub fn personal_access_contract_main() -> u8 {
 /// never has that problem, because its passphrase comes from the native window
 /// straight into the protected allocation; the fixture must not weaken what it
 /// is used to prove.
+///
+/// An end of file before a single byte is the caller letting go: it answers the
+/// invalid-invocation code, having built nothing to keep.
 #[cfg(all(feature = "personal-access-contract-test", target_os = "linux"))]
-fn open_contract_key(
-    path: &std::path::Path,
-    deadline: Instant,
-) -> Result<personal_access::key_unlock::PersonalKey, u8> {
-    use personal_access::{key_file, key_unlock};
+fn read_contract_passphrase() -> Result<secret::ProtectedSecret, u8> {
     use std::io::Read as _;
-
-    let Ok(selected) = key_file::open_and_validate(path) else {
-        return Err(EXIT_UNAVAILABLE);
-    };
 
     let Ok(mut passphrase) = secret::ProtectedSecret::new() else {
         return Err(EXIT_INTERNAL_FAILURE);
@@ -242,8 +364,7 @@ fn open_contract_key(
     if passphrase.set_len(filled).is_err() || passphrase.is_empty() {
         return Err(EXIT_INVALID_INVOCATION);
     }
-
-    key_unlock::unlock(selected, passphrase, deadline).map_err(|_| EXIT_UNAVAILABLE)
+    Ok(passphrase)
 }
 
 pub fn process_main() -> u8 {
