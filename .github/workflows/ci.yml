@@ -270,6 +270,15 @@ jobs:
           native_prompt_windows::tests::win32_dialog_handles_consent_secret_tamper_and_lease_states
           -- --ignored --exact --test-threads=1
 
+      - name: Tester la sélection d’identité Win32 isolée
+        if: runner.os == 'Windows'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked
+          --package your-cloud-native-bootstrap-assistant
+          native_prompt_windows::tests::win32_identity_selection_binds_one_consent_to_one_chosen_fingerprint
+          -- --ignored --exact --test-threads=1
+
       - name: Installer le pilote Tauri borné
         run: cargo +1.94.1 install tauri-driver --version 2.0.6 --locked
 

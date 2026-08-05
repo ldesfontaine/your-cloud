@@ -173,6 +173,19 @@ $catalogue = @(
             "native_prompt_windows::tests::win32_dialog_handles_consent_secret_tamper_and_lease_states",
             "--", "--ignored", "--exact", "--test-threads=1"
         )
+    },
+    @{
+        # La sélection d'identité de la fenêtre d'accès personnel, pilotée dans
+        # le processus du test. Elle n'interroge jamais la visibilité de la
+        # fenêtre, ce qui est la seule raison pour laquelle elle est observable
+        # depuis une session 0.
+        name = "win32-identity-selection"
+        honoursConfiguration = $true
+        arguments = @(
+            "-p", $assistant,
+            "native_prompt_windows::tests::win32_identity_selection_binds_one_consent_to_one_chosen_fingerprint",
+            "--", "--ignored", "--exact", "--test-threads=1"
+        )
     }
 )
 

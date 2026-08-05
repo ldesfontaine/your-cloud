@@ -134,7 +134,16 @@ exactes de la porte native hébergée.
 Le catalogue exécuté : `secret-crash-contract`, `native-lib`, `protocol`,
 `delayed-start-contract`, `parent-contract`,
 `windows-parent-spoof-contract`, `windows-agent-pipe-contract`,
-`windows-live-prompt-contract`, `windows-job-contract` et `win32-dialog`.
+`windows-personal-transport-contract`, `windows-live-prompt-contract`,
+`windows-job-contract`, `win32-dialog` et `win32-identity-selection`.
+
+`win32-identity-selection` éprouve la sélection d'identité de la fenêtre
+d'accès personnel **dans le processus du test** : le contenu de la liste lu
+depuis le contrôle lui-même, l'absence de tout certificat, l'acceptation
+indisponible tant qu'aucune empreinte n'est nommée, l'empreinte que porte le
+consentement, et les refus inchangés. Elle n'interroge jamais la visibilité de
+la fenêtre — c'est pour cela qu'elle est observable ici, là où
+`windows-live-prompt-contract` ne peut pas l'être.
 
 `windows-agent-pipe-contract` est la seule suite du catalogue qui **mute** la
 machine : elle arrête puis démarre le service `ssh-agent`, parce que c'est lui
