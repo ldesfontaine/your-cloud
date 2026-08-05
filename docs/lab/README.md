@@ -132,6 +132,29 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — remplacement explicite d'un Controller, et retrait de ses autorités](v0.1.0-controller-replacement.md) :
+  passage `quick` du 5 août 2026 pour #40, le seul palier dont le sujet est ce
+  qui se passe **quand on ne sait pas**. `lab-console` est **réellement
+  arrêtée** : la panne jugée est une vraie panne, observée depuis deux postes
+  indépendants d'espèces différentes — une tentative TCP depuis `lab-machine-1`
+  et l'état du domaine rapporté par l'hyperviseur — et les 310 secondes de
+  silence qui qualifient la perte sont des secondes qui se sont écoulées. Rien
+  ne bascule sans que l'utilisateur le demande ; un Controller qui répond encore
+  rend `ControllerStillAnswering` alors qu'il écoutait vraiment ; un silence
+  plus jeune que la borne rend `Ambiguous(SilenceTooYoung)`. La perte matérielle
+  et la suspicion de compromission sont **deux séquences** que la porte rend
+  elle-même, la seconde commençant par l'isolement et le refusant absent. Le
+  socket du lecteur est relevé fermé à chacune des quatre transitions, et un
+  manifeste nommant deux Controllers est refusé. L'ancienne identité n'est
+  retirée qu'après que la nouvelle a répondu **sur la même machine**, le retrait
+  exigeant par signature le témoin de #39 ; ensuite un vrai `sshd` répond
+  `Permission denied (publickey)` à l'ancienne autorité sur les deux machines.
+  La clé personnelle d'un vrai compte est **nommée parmi les conservées**. Les
+  quatre états sont reconstruits depuis la machine après coupure, et le
+  désaccord entre le fichier `root` et le fil rend `unknown` plutôt que la plus
+  commode des deux lectures. Trois épreuves par mutation font rougir la suite.
+  Aucun Controller Go ne tourne, aucun vrai lecteur Relay n'est servi,
+  l'isolement n'est pas exécuté et il n'y a pas de VM hostile distincte.
 - [`v0.1.0` — identité SSH bornée par machine, et activation des rôles approuvés](v0.1.0-machine-identity.md) :
   passage `quick` du 5 août 2026 pour #39. Chaque machine reçoit une paire qui
   n'est la sienne que sur elle : un **vrai `sshd`** refuse l'identité de
