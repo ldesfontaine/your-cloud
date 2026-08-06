@@ -255,11 +255,16 @@ pub fn verify_plan_document(
 /// The thirty-two bytes an `sha256:` image digest names, and nothing that
 /// merely parses as one: the algorithm is spelled in lower case, the value is
 /// lower-case hexadecimal, and no other spelling of the same number decodes.
-fn decode_image_digest(value: &str) -> Option<[u8; PLAN_DIGEST_BYTES]> {
+///
+/// Schema 2 reads its own pinned digests through this very function: two
+/// spellings of "canonical" would eventually accept an image one schema refuses.
+pub(crate) fn decode_image_digest(value: &str) -> Option<[u8; PLAN_DIGEST_BYTES]> {
     decode_digest(value.strip_prefix(OCI_DIGEST_PREFIX)?)
 }
 
-fn encode_lower_hex(bytes: &[u8]) -> String {
+/// The one spelling a digest is rendered in on this side, shared with schema 2
+/// for the same reason.
+pub(crate) fn encode_lower_hex(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         text.push(char::from_digit(u32::from(byte >> 4), 16).expect("a nibble is a hex digit"));

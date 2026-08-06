@@ -70,17 +70,25 @@ pub const MAX_SIGNED_APPROVAL_BYTES: usize = 1_024;
 /// [`Self::DiagnoseProtocolReadOnly`] is the protocol diagnostic of the
 /// previous palier: it states what it verified and what it consumed, and it
 /// changes nothing. The two probe operations are the first ones that ask to
-/// change a machine, and they are the exact pair of a plan and its rollback —
-/// what each of them describes is the plan document whose digest the envelope
-/// names, never anything the envelope itself could spell. An operation name
-/// outside this list has no variant, so an envelope naming an installation, a
-/// service or an arbitrary container is refused while it is still being parsed.
+/// change a machine, and the six operations of the public profile are the ones
+/// that describe a service, an entrypoint and a published route. Each of them
+/// belongs to an exact pair of a plan and its rollback — what each describes is
+/// the plan document whose digest the envelope names, never anything the
+/// envelope itself could spell. An operation name outside this list has no
+/// variant, so an envelope naming an installation, an arbitrary container or an
+/// operation of a later palier is refused while it is still being parsed.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalOperation {
     DiagnoseProtocolReadOnly,
     DeployOciProbe,
     RemoveOciProbe,
+    DeployWebService,
+    RemoveWebService,
+    DeployEntrypoint,
+    RemoveEntrypoint,
+    PublishRoute,
+    RetireRoute,
 }
 
 impl ApprovalOperation {
@@ -89,6 +97,12 @@ impl ApprovalOperation {
             Self::DiagnoseProtocolReadOnly => "diagnose_protocol_read_only",
             Self::DeployOciProbe => "deploy_oci_probe",
             Self::RemoveOciProbe => "remove_oci_probe",
+            Self::DeployWebService => "deploy_web_service",
+            Self::RemoveWebService => "remove_web_service",
+            Self::DeployEntrypoint => "deploy_entrypoint",
+            Self::RemoveEntrypoint => "remove_entrypoint",
+            Self::PublishRoute => "publish_route",
+            Self::RetireRoute => "retire_route",
         }
     }
 
@@ -96,13 +110,23 @@ impl ApprovalOperation {
     ///
     /// It is an equality rather than a maximum: an envelope that asks for less
     /// than its operation needs, or for more, is not a narrower or a wider
-    /// approval, it is an envelope this palier does not recognise. The two
-    /// probe operations ask for the same pair because a removal has to read the
-    /// machine to find the instance it names before it changes anything.
+    /// approval, it is an envelope this palier does not recognise. Every
+    /// operation that describes a state of a machine asks for the same pair,
+    /// including the removals and the retirement: undoing has to read the
+    /// machine to find the instance it names before it changes anything, and
+    /// retiring a route rewrites the entrypoint's fragments exactly as
+    /// publishing one does.
     pub fn required_privileges(self) -> &'static [ApprovalPrivilege] {
         match self {
             Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],
-            Self::DeployOciProbe | Self::RemoveOciProbe => &[
+            Self::DeployOciProbe
+            | Self::RemoveOciProbe
+            | Self::DeployWebService
+            | Self::RemoveWebService
+            | Self::DeployEntrypoint
+            | Self::RemoveEntrypoint
+            | Self::PublishRoute
+            | Self::RetireRoute => &[
                 ApprovalPrivilege::MutateLocalState,
                 ApprovalPrivilege::ReadLocalState,
             ],
@@ -121,8 +145,10 @@ impl ApprovalOperation {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPrivilege {
-    /// Changing the machine. Only the two probe operations require it, and
-    /// [`ApprovalOperation::DiagnoseProtocolReadOnly`] keeps refusing it.
+    /// Changing the machine. Every operation that describes a state requires
+    /// it, and [`ApprovalOperation::DiagnoseProtocolReadOnly`] keeps refusing
+    /// it: the read-only diagnostic of the previous palier stays the one
+    /// approval that cannot change anything.
     MutateLocalState,
     /// Reading what the machine already holds, and nothing else.
     ReadLocalState,
@@ -625,6 +651,34 @@ mod tests {
         );
     }
 
+    /// The nine operations this palier's envelope may name, in declaration
+    /// order. Holding the list in one place is what keeps the tests below from
+    /// silently covering eight of nine.
+    const DECLARED_OPERATIONS: [ApprovalOperation; 9] = [
+        ApprovalOperation::DiagnoseProtocolReadOnly,
+        ApprovalOperation::DeployOciProbe,
+        ApprovalOperation::RemoveOciProbe,
+        ApprovalOperation::DeployWebService,
+        ApprovalOperation::RemoveWebService,
+        ApprovalOperation::DeployEntrypoint,
+        ApprovalOperation::RemoveEntrypoint,
+        ApprovalOperation::PublishRoute,
+        ApprovalOperation::RetireRoute,
+    ];
+
+    /// The eight operations that describe a state of a machine, which is every
+    /// declared operation but the read-only diagnostic.
+    const MUTATING_OPERATIONS: [ApprovalOperation; 8] = [
+        ApprovalOperation::DeployOciProbe,
+        ApprovalOperation::RemoveOciProbe,
+        ApprovalOperation::DeployWebService,
+        ApprovalOperation::RemoveWebService,
+        ApprovalOperation::DeployEntrypoint,
+        ApprovalOperation::RemoveEntrypoint,
+        ApprovalOperation::PublishRoute,
+        ApprovalOperation::RetireRoute,
+    ];
+
     #[test]
     fn wire_variants_are_fixed() {
         for (operation, wire_name) in [
@@ -634,6 +688,12 @@ mod tests {
             ),
             (ApprovalOperation::DeployOciProbe, "deploy_oci_probe"),
             (ApprovalOperation::RemoveOciProbe, "remove_oci_probe"),
+            (ApprovalOperation::DeployWebService, "deploy_web_service"),
+            (ApprovalOperation::RemoveWebService, "remove_web_service"),
+            (ApprovalOperation::DeployEntrypoint, "deploy_entrypoint"),
+            (ApprovalOperation::RemoveEntrypoint, "remove_entrypoint"),
+            (ApprovalOperation::PublishRoute, "publish_route"),
+            (ApprovalOperation::RetireRoute, "retire_route"),
         ] {
             assert_eq!(
                 serde_json::to_value(operation).unwrap(),
@@ -641,6 +701,19 @@ mod tests {
             );
             assert_eq!(operation.as_str(), wire_name);
         }
+
+        // Every declared operation is one of the ones just named, and no two of
+        // them share a wire name: an operation added to the enum and forgotten
+        // in the table above fails here rather than travelling unnamed.
+        let mut names: Vec<&str> = Vec::new();
+        for operation in DECLARED_OPERATIONS {
+            assert!(
+                !names.contains(&operation.as_str()),
+                "{operation:?} reuses a wire name"
+            );
+            names.push(operation.as_str());
+        }
+        assert_eq!(names.len(), 9);
         for (privilege, wire_name) in [
             (ApprovalPrivilege::ReadLocalState, "read_local_state"),
             (ApprovalPrivilege::MutateLocalState, "mutate_local_state"),
@@ -662,7 +735,7 @@ mod tests {
     /// two agree only while the declaration order below is the alphabetical
     /// order of the names, so that agreement is asserted rather than assumed:
     /// an order that drifted here would produce envelopes this side signs and
-    /// the other side refuses, on the one operation that finally mutates.
+    /// the other side refuses, on every operation that mutates a machine.
     #[test]
     fn the_canonical_privilege_order_is_the_order_of_the_wire_names() {
         const DECLARED: [ApprovalPrivilege; MAX_APPROVAL_PRIVILEGES] = [
@@ -675,11 +748,12 @@ mod tests {
         }
         assert!(canonical_privileges(&DECLARED));
 
-        for operation in [
-            ApprovalOperation::DiagnoseProtocolReadOnly,
-            ApprovalOperation::DeployOciProbe,
-            ApprovalOperation::RemoveOciProbe,
-        ] {
+        // Held for the nine operations rather than for the three of the
+        // previous palier: the invariant is about every list this side can
+        // sign, and an operation added without being listed here would be one
+        // whose privilege order nobody checked.
+        assert_eq!(DECLARED_OPERATIONS.len(), 9);
+        for operation in DECLARED_OPERATIONS {
             let required = operation.required_privileges();
             assert!(
                 canonical_privileges(required),
@@ -691,35 +765,65 @@ mod tests {
     /// Each operation carries exactly its own privileges, and the read-only one
     /// still refuses to mutate whatever else its envelope carries.
     ///
-    /// The equality runs both ways: the diagnostic cannot be given the mutating
-    /// pair, and a probe operation cannot be given the reading privilege alone.
-    /// Naming an operation is therefore the whole of asking for a power here —
-    /// there is no second field through which more could be requested.
+    /// The equality runs both ways, for each of the eight operations that
+    /// describe a state: the diagnostic cannot be given the mutating pair, and
+    /// none of them can be given the reading privilege alone or the mutating one
+    /// alone. Naming an operation is therefore the whole of asking for a power
+    /// here — there is no second field through which more could be requested.
     #[test]
     fn each_operation_carries_exactly_its_own_privileges() {
         assert_eq!(
             ApprovalOperation::DiagnoseProtocolReadOnly.required_privileges(),
             &[ApprovalPrivilege::ReadLocalState]
         );
-        for probe in [
-            ApprovalOperation::DeployOciProbe,
-            ApprovalOperation::RemoveOciProbe,
-        ] {
+        for describing in MUTATING_OPERATIONS {
             assert_eq!(
-                probe.required_privileges(),
+                describing.required_privileges(),
                 &[
                     ApprovalPrivilege::MutateLocalState,
                     ApprovalPrivilege::ReadLocalState,
-                ]
+                ],
+                "{describing:?} does not carry the exact pair of the contract"
             );
             let mutating = ApprovalEnvelopeV1 {
-                operation: probe,
-                privileges: probe.required_privileges().to_vec(),
+                operation: describing,
+                privileges: describing.required_privileges().to_vec(),
                 ..envelope()
             };
             assert!(mutating.is_mutating());
             assert!(mutating.validate().is_ok());
+
+            // Neither less than the operation needs, nor the mutating
+            // privilege on its own.
+            for narrowed in [
+                vec![ApprovalPrivilege::ReadLocalState],
+                vec![ApprovalPrivilege::MutateLocalState],
+            ] {
+                assert_eq!(
+                    ApprovalEnvelopeV1 {
+                        operation: describing,
+                        privileges: narrowed,
+                        ..envelope()
+                    }
+                    .validate(),
+                    Err(ProtocolError::InvalidInput),
+                    "{describing:?} was approved with a list that is not its own"
+                );
+            }
+
+            // The read-only diagnostic can never be given the pair this
+            // operation requires.
+            assert_eq!(
+                ApprovalEnvelopeV1 {
+                    operation: ApprovalOperation::DiagnoseProtocolReadOnly,
+                    privileges: describing.required_privileges().to_vec(),
+                    ..envelope()
+                }
+                .validate(),
+                Err(ProtocolError::InvalidInput)
+            );
         }
+        assert_eq!(MUTATING_OPERATIONS.len(), DECLARED_OPERATIONS.len() - 1);
 
         for privileges in [
             vec![ApprovalPrivilege::MutateLocalState],

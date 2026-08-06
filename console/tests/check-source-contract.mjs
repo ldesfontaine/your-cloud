@@ -368,8 +368,14 @@ const planProtocol = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "plan.rs"),
 );
 const approvalRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "approval.rs"));
+const planV2Protocol = await readSourceText(
+  join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "plan_v2.rs"),
+);
 const probePlanRuntime = await readSourceText(
   join(consoleRoot, "src-tauri", "src", "probe_plan.rs"),
+);
+const publicationPlanRuntime = await readSourceText(
+  join(consoleRoot, "src-tauri", "src", "publication_plan.rs"),
 );
 const bootstrapProtocolManifest = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "Cargo.toml"),
@@ -1943,6 +1949,165 @@ for (const bound of [
 for (const forbidden of ["SigningKey", "signing_key", "human_private_seed", "Signer"]) {
   if (probePlanRuntime.replace(/#\[cfg\(test\)\][\s\S]*$/u, "").includes(forbidden)) {
     failures.push(`probe_plan.rs: une notion de clé privée y apparaît (${forbidden})`);
+  }
+}
+
+// Le schéma 2 ajoute six opérations en trois paires inverses sans rouvrir le
+// schéma 1 : son domaine diffère d'un octet, chaque groupe écrit sa propre
+// queue de transcription champ par champ sous sa propre longueur, et le côté
+// Auxiliaire écrit la même table dans internal/plan/schema2.go.
+for (const bound of [
+  'pub const PLAN_V2_TRANSCRIPT_DOMAIN: &[u8] = b"your-cloud/oci-plan.v2\\0";',
+  "pub const PLAN_V2_SCHEMA_VERSION: u8 = 2;",
+  "transcript.extend_from_slice(PLAN_V2_TRANSCRIPT_DOMAIN);",
+  "transcript.extend_from_slice(&schema_version.to_be_bytes());",
+  "append_field(&mut transcript, infrastructure_id.as_bytes())?;",
+  "append_field(&mut transcript, machine_id.as_bytes())?;",
+  "append_field(&mut transcript, operation.as_str().as_bytes())?;",
+  "append_field(&mut transcript, self.service_profile.as_bytes())?;",
+  "append_field(&mut transcript, self.image_reference.as_bytes())?;",
+  "append_field(&mut transcript, &image)?;",
+  "transcript.extend_from_slice(&self.local_port.to_be_bytes());",
+  "append_field(&mut transcript, self.route_host.as_bytes())?;",
+  "transcript.extend_from_slice(&self.backend_port.to_be_bytes());",
+  // L'opération est le discriminant : elle est lue d'abord, et seule, puis le
+  // document est tenu contre exactement la liste fermée qu'elle déclare.
+  "fn declared_operation(document: &[u8]) -> Result<PlanV2Operation, ProtocolError> {",
+  "let parsed = match declared_operation(document)?.group() {",
+  "#[serde(deny_unknown_fields)]\npub struct WebServicePlanDocumentV2 {",
+  "#[serde(deny_unknown_fields)]\npub struct EntrypointPlanDocumentV2 {",
+  "#[serde(deny_unknown_fields)]\npub struct RoutePlanDocumentV2 {",
+  // Profil fermé, images épinglées par digest seul, bornes du contrat.
+  'pub const SERVICE_PROFILE_BENTOPDF: &str = "bentopdf";',
+  "SERVICE_PROFILE_BENTOPDF => Some(PinnedImage {",
+  'pub const BENTOPDF_IMAGE_REFERENCE: &str = "ghcr.io/alam00000/bentopdf";',
+  '"sha256:a4ed090f29823da5e296e2c2f8603664da71676156ea47c3f186cc73eec38db0"',
+  'pub const ENTRYPOINT_IMAGE_REFERENCE: &str = "docker.io/library/traefik";',
+  '"sha256:9c3b91d5fb7770853ca5c1124a23c34bf2d9b47ffaebeab2614cbaf410dcb2ac"',
+  "reference == pinned.reference",
+  "&& decode_image_digest(digest).is_some()",
+  "&& digest == pinned.digest",
+  "!pinned_image_matches(&self.image_reference, &self.image_digest, image)",
+  "!pinned_image_matches(&self.image_reference, &self.image_digest, ENTRYPOINT_IMAGE)",
+  "!(MIN_PLAN_LOCAL_PORT..=MAX_PLAN_LOCAL_PORT).contains(&self.local_port)",
+  "!(MIN_PLAN_BACKEND_PORT..=MAX_PLAN_BACKEND_PORT).contains(&self.backend_port)",
+  "!canonical_route_host(&self.route_host)",
+  "bytes.len() < MIN_ROUTE_HOST_BYTES || bytes.len() > MAX_ROUTE_HOST_BYTES",
+  '!alphanumeric(bytes[0]) || !alphanumeric(bytes[bytes.len() - 1]) || host.contains("..")',
+  // Constantes du contrat : affichées, jamais approuvées comme valeurs.
+  'pub const SERVICE_LOCAL_ADDRESS: &str = "127.0.0.1";',
+  "pub const ENTRYPOINT_PUBLIC_HTTPS_PORT: u32 = 443;",
+  "pub const ENTRYPOINT_PUBLIC_HTTP_PORT: u32 = 80;",
+  'pub const ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL: &str = "net.ipv4.ip_unprivileged_port_start=80";',
+  '"Cross-Origin-Opener-Policy: same-origin",',
+  '"Cross-Origin-Embedder-Policy: require-corp",',
+]) {
+  if (!planV2Protocol.includes(bound)) {
+    failures.push(`plan_v2.rs (protocole): lien haché absent (${bound})`);
+  }
+}
+// Les deux groupes qui nomment une image l'écrivent chacun dans sa propre
+// transcription, et les deux seuls. C'est compté plutôt que constaté présent :
+// une garde de présence passerait encore si l'un des deux groupes cessait de
+// hacher son image.
+for (const [fragment, expected] of [
+  ["append_field(&mut transcript, self.image_reference.as_bytes())?;", 2],
+  ["append_field(&mut transcript, &image)?;", 2],
+]) {
+  const occurrences = planV2Protocol.split(fragment).length - 1;
+  if (occurrences !== expected) {
+    failures.push(
+      `plan_v2.rs (protocole): ${fragment} est écrit ${occurrences} fois au lieu de ${expected}`,
+    );
+  }
+}
+// Aucun des trois documents ne porte de champ exécutable, et aucun ne porte le
+// champ d'un autre groupe : un document qui en porterait un est un champ
+// inconnu, refusé avant lecture de sa valeur — encore faut-il qu'aucun de ces
+// champs n'existe dans les schémas.
+for (const forbidden of [
+  "pub tag:",
+  "pub volumes:",
+  "pub network:",
+  "pub privileged:",
+  "pub command:",
+  "pub environment:",
+  "pub headers:",
+  "pub tls_certificate:",
+]) {
+  if (planV2Protocol.includes(forbidden)) {
+    failures.push(`plan_v2.rs (protocole): un schéma déclare un champ interdit (${forbidden})`);
+  }
+}
+// Les six opérations du profil public existent dans l'enveloppe et y demandent
+// exactement la paire mutante. Nommer une opération est tout ce qu'une
+// enveloppe fait pour demander un pouvoir : il n'y a pas de second champ par
+// lequel en demander plus, et le diagnostic en lecture seule reste seul à
+// refuser la mutation.
+for (const bound of [
+  'Self::DeployWebService => "deploy_web_service",',
+  'Self::RemoveWebService => "remove_web_service",',
+  'Self::DeployEntrypoint => "deploy_entrypoint",',
+  'Self::RemoveEntrypoint => "remove_entrypoint",',
+  'Self::PublishRoute => "publish_route",',
+  'Self::RetireRoute => "retire_route",',
+  "Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],",
+  "| Self::DeployWebService\n            | Self::RemoveWebService\n            | Self::DeployEntrypoint\n            | Self::RemoveEntrypoint\n            | Self::PublishRoute\n            | Self::RetireRoute => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
+]) {
+  if (!approvalProtocol.includes(bound)) {
+    failures.push(`approval.rs (protocole): opération du profil public absente (${bound})`);
+  }
+}
+// La Console ne possède pas plus de ré-encodeur canonique au schéma 2 qu'au
+// schéma 1 : elle vérifie les octets reçus contre leurs digests avant de rien
+// afficher, elle revérifie avant de signer, et ce que l'humain doit lire est
+// nommé ligne par ligne — le profil, l'image et son digest, le port du service ;
+// l'image et les constantes du point d'entrée, effet sysctl compris ; le nom, le
+// port joint et les en-têtes d'isolation d'une route.
+for (const bound of [
+  "pub fn verify(view: &PlanPairView) -> Result<Self, PublicationPlanError>",
+  "verify_plan_v2_document(view.plan_document.as_bytes(), &view.plan_sha256)",
+  "verify_plan_v2_document(view.rollback_document.as_bytes(), &view.rollback_sha256)",
+  "if !plan.is_undone_by(&rollback) {",
+  "pub fn confirmation_lines(&self) -> Vec<String> {",
+  "if Self::verify(documents)? != *self {",
+  "if self.plan.infrastructure_id() != association.summary.infrastructure_id.as_str() {",
+  "operation: approval_operation(self.plan.operation()),",
+  'format!("Profil de service : {}", document.service_profile)',
+  'format!("Image : {}", document.image_reference)',
+  'format!("Digest de l’image : {}", document.image_digest)',
+  '"Port local : {SERVICE_LOCAL_ADDRESS}:{}"',
+  '"Ports publics : {ENTRYPOINT_PUBLIC_HTTPS_PORT} en HTTPS,',
+  "{ENTRYPOINT_PUBLIC_HTTP_PORT} limité à la redirection",
+  '"Effet sur l’hôte : sysctl {ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL},',
+  'format!("Nom publié : {}", document.route_host)',
+  '"Service joint : {SERVICE_LOCAL_ADDRESS}:{}"',
+  "for header in ROUTE_ISOLATION_HEADERS {",
+  'format!("En-tête d’isolation : {header}")',
+  'format!("Empreinte du plan : {}", self.plan_sha256)',
+  'format!("Empreinte du rollback : {}", self.rollback_sha256)',
+]) {
+  if (!publicationPlanRuntime.includes(bound)) {
+    failures.push(`publication_plan.rs: garde du plan présenté absente (${bound})`);
+  }
+}
+// Les deux genres de plan qui nomment une image la montrent chacun avec son
+// digest. Comme au-dessus, c'est compté : un service dont l'image aurait
+// disparu de ses lignes passerait une garde de simple présence.
+for (const [fragment, expected] of [
+  ['format!("Image : {}", document.image_reference)', 2],
+  ['format!("Digest de l’image : {}", document.image_digest)', 2],
+]) {
+  const occurrences = publicationPlanRuntime.split(fragment).length - 1;
+  if (occurrences !== expected) {
+    failures.push(
+      `publication_plan.rs: ${fragment} est affiché ${occurrences} fois au lieu de ${expected}`,
+    );
+  }
+}
+for (const forbidden of ["SigningKey", "signing_key", "human_private_seed", "Signer"]) {
+  if (publicationPlanRuntime.replace(/#\[cfg\(test\)\][\s\S]*$/u, "").includes(forbidden)) {
+    failures.push(`publication_plan.rs: une notion de clé privée y apparaît (${forbidden})`);
   }
 }
 

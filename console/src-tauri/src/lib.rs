@@ -14,6 +14,13 @@ mod network;
 // the source contract holds the command surface against that.
 #[allow(dead_code)]
 mod probe_plan;
+// The three plans of the public profile are verified, displayed and signed
+// here, for the same reason the two modules above are not reachable from a
+// command: the window that must render a plan before it is approved belongs to
+// the palier that adds the command, and the source contract holds the command
+// surface against that.
+#[allow(dead_code)]
+mod publication_plan;
 mod vault;
 #[cfg(windows)]
 mod windows_security;
