@@ -1,5 +1,5 @@
-//! The three plans of the public profile, from the bytes the Controller froze
-//! to the envelope the native core signs over them.
+//! The plans of the public profile and of the private one, from the bytes the
+//! Controller froze to the envelope the native core signs over them.
 //!
 //! It is the schema 2 counterpart of [`crate::probe_plan`], and it holds the
 //! same three properties for the same reasons — a plan is verified before it is
@@ -7,14 +7,21 @@
 //! the one that already exists. What changes is what a human reads: a service
 //! names a profile, an image and a loopback port; an entrypoint names an image
 //! and the constants a public listener implies; a route names a declared host,
-//! the loopback port behind it and the isolation headers its fragment adds.
+//! the loopback port behind it and the isolation headers its fragment adds; a
+//! private service names all of a service's own and, besides, the origin it will
+//! answer under, the one durable path it writes to, the four lines of its closed
+//! environment and the table that refuses it every outbound flow; a link route
+//! names the host and the peer of the tunnel behind it; an archive names a
+//! profile and a slot, and says in what terms it can and cannot be undone.
 //!
 //! **Nothing is displayed that has not been verified.**
 //! [`PresentedPublicationPlan`] is the only way to obtain the lines a window
 //! renders, and the only way to obtain one is
 //! [`PresentedPublicationPlan::verify`], which rebuilds both digests from the
-//! fields it parsed out of the received bytes. A pair whose digests do not match
-//! never becomes a thing anyone can be shown.
+//! fields it parsed out of the received bytes. A pair whose digests do not
+//! match, a pair whose two documents belong to different operation groups, and a
+//! pair whose two documents are one document, never become a thing anyone can be
+//! shown.
 //!
 //! **A confirmation covers two exact documents.**
 //! [`PublicationPlanConfirmation`] carries the two digests it was given for, and
@@ -26,11 +33,13 @@
 //! request, and what this module hands it as the plan is the exact bytes the
 //! plan digest is taken over.
 //!
-//! **The kind of plan is read in the document, never in the route.** The three
+//! **The kind of plan is read in the document, never in the route.** The seven
 //! sibling Controller routes answer the same frozen-pair shape, so the operation
 //! inside the document is what decides which closed field list was approved and
 //! which lines a human is shown. A service plan returned by the route endpoint
-//! is therefore still a service plan here, displayed as one and signed as one.
+//! is therefore still a service plan here, displayed as one and signed as one —
+//! and a route of the public profile carrying the very host and port of a link
+//! route is still the other plan, because the two hash differently.
 
 use crate::{
     approval::{sign_approval, ApprovalError, ApprovalRequest},
@@ -40,7 +49,11 @@ use serde::Deserialize;
 use your_cloud_bootstrap_protocol::{
     verify_plan_v2_document, ApprovalOperation, PlanDocumentV2, PlanV2Group, PlanV2Operation,
     SignedApprovalV1, ENTRYPOINT_PUBLIC_HTTPS_PORT, ENTRYPOINT_PUBLIC_HTTP_PORT,
-    ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL, ROUTE_ISOLATION_HEADERS, SERVICE_LOCAL_ADDRESS,
+    ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL, LINK_INITIATOR_TUNNEL_ADDRESS,
+    PRIVATE_SERVICE_DATA_VOLUME, PRIVATE_SERVICE_EGRESS_TABLE,
+    PRIVATE_SERVICE_ENVIRONMENT_HARDENING, PRIVATE_SERVICE_ORIGIN_SCHEME,
+    PRIVATE_SERVICE_ORIGIN_VARIABLE, RESERVED_SNAPSHOT_SLOT, ROUTE_ISOLATION_HEADERS,
+    SERVICE_LOCAL_ADDRESS,
 };
 
 /// The one schema of the pairs this palier reads.
@@ -131,12 +144,21 @@ impl PresentedPublicationPlan {
     /// Verifies the whole pair before any of it can be displayed.
     ///
     /// Both documents are strict-decoded inside the bounds of the schema 2
-    /// contract — profile, pinned image, port range, host bounds included — both
+    /// contract — profiles of both doors, pinned images, port range, host
+    /// bounds, slot bound and the reserved slot's own rule included — both
     /// digests are rebuilt from the parsed fields, and the rollback is required
     /// to be the complete document that undoes the plan: the same operation
-    /// group, the same instance, the inverse operation and nothing else changed.
-    /// A pair that fails any of the three is refused whole: there is no
-    /// partially verified plan a window could render "most of".
+    /// group, the same instance, and the one thing that differs — the operation,
+    /// or, for a return, the slot the mechanism owns. A pair that fails any of
+    /// the three is refused whole: there is no partially verified plan a window
+    /// could render "most of".
+    ///
+    /// The last refusal is the one the return makes necessary. A restore already
+    /// naming the reserved slot undoes itself, so a pair could be built whose two
+    /// documents are one document and whose two digests are one digest — and a
+    /// human shown that pair would be approving the same plan as its own
+    /// rollback. Two identical digests are therefore refused before anything is
+    /// displayed, whichever group they belong to.
     pub fn verify(view: &PlanPairView) -> Result<Self, PublicationPlanError> {
         if view.schema_version != PUBLICATION_PLAN_SCHEMA_VERSION {
             return Err(PublicationPlanError::UnverifiedPlan);
@@ -146,7 +168,7 @@ impl PresentedPublicationPlan {
         let rollback =
             verify_plan_v2_document(view.rollback_document.as_bytes(), &view.rollback_sha256)
                 .map_err(|_| PublicationPlanError::UnverifiedPlan)?;
-        if !plan.is_undone_by(&rollback) {
+        if !plan.is_undone_by(&rollback) || plan == rollback {
             return Err(PublicationPlanError::UnverifiedPlan);
         }
         // The digests kept are the ones computed here, never the ones received.
@@ -204,6 +226,27 @@ impl PresentedPublicationPlan {
     /// the service's own namespace, and the contract requires it to be written
     /// in what the human approves rather than done in silence.
     ///
+    /// A private service names everything a stateless one does and, besides,
+    /// the four things the private door adds: the origin the instance answers
+    /// under, the one durable path it writes to, the four lines of its closed
+    /// environment — three constants of the profile and the one approved value —
+    /// and the egress table that refuses it every outbound flow. None of them is
+    /// a field, and each of them is part of what the plan does to the machine, so
+    /// a human who approved the deployment without reading them would have
+    /// approved a volume, an environment and a firewall unread.
+    ///
+    /// A link route names the peer of the tunnel rather than a loopback address,
+    /// and says what happens when the passage falls: the entrypoint answers with
+    /// its own gateway error, never a false success and never a fallback route.
+    ///
+    /// The archives are where this window has to be most careful, because the two
+    /// directions are not symmetrical. A snapshot says that an existing slot is
+    /// refused, which is what makes archives immutable. A discard says what its
+    /// own rollback really does — recreate an archive of the *current* state
+    /// under that name, never the archive that was destroyed, which nothing can
+    /// bring back. A restore says where the return comes from: the reserved slot,
+    /// written before any data is touched.
+    ///
     /// The rollback is named as the plan it is, with what it shares with the
     /// plan spelled out, because a return path a human did not read is a return
     /// path nobody approved.
@@ -243,6 +286,73 @@ impl PresentedPublicationPlan {
                 for header in ROUTE_ISOLATION_HEADERS {
                     lines.push(format!("En-tête d’isolation : {header}"));
                 }
+            }
+            PlanDocumentV2::PrivateService(document) => {
+                lines.push(format!("Profil de service : {}", document.service_profile));
+                lines.push(format!("Image : {}", document.image_reference));
+                lines.push(format!("Digest de l’image : {}", document.image_digest));
+                lines.push(format!(
+                    "Port local : {SERVICE_LOCAL_ADDRESS}:{}",
+                    document.local_port
+                ));
+                lines.push(format!(
+                    "Origine : {PRIVATE_SERVICE_ORIGIN_SCHEME}://{}",
+                    document.origin_host
+                ));
+                lines.push(format!("Volume persistant : {PRIVATE_SERVICE_DATA_VOLUME}"));
+                for hardening in PRIVATE_SERVICE_ENVIRONMENT_HARDENING {
+                    lines.push(format!("Ligne d’environnement : {hardening}"));
+                }
+                lines.push(format!(
+                    "Ligne d’environnement : {PRIVATE_SERVICE_ORIGIN_VARIABLE}=\
+                     {PRIVATE_SERVICE_ORIGIN_SCHEME}://{}",
+                    document.origin_host
+                ));
+                lines.push(format!(
+                    "Confinement de sortie : table {PRIVATE_SERVICE_EGRESS_TABLE}, le service ne \
+                     parle à personne : sortie refusée hors loopback et réponses"
+                ));
+            }
+            PlanDocumentV2::LinkRoute(document) => {
+                lines.push(format!("Nom publié : {}", document.route_host));
+                lines.push(format!(
+                    "Service joint : {LINK_INITIATOR_TUNNEL_ADDRESS}:{}, publié par le seul \
+                     passage privé",
+                    document.backend_port
+                ));
+                lines.push(
+                    "Panne du passage : le nom rend l’erreur de passerelle du point d’entrée, \
+                     jamais un faux succès ni une route de repli"
+                        .to_owned(),
+                );
+            }
+            PlanDocumentV2::Snapshot(document) => {
+                lines.push(format!("Profil de service : {}", document.service_profile));
+                lines.push(format!("Emplacement : {}", document.snapshot_slot));
+                match document.operation {
+                    PlanV2Operation::SnapshotService => lines.push(
+                        "Immuabilité : un emplacement existant est refusé ; l’écraser exige un \
+                         plan de destruction approuvé à part"
+                            .to_owned(),
+                    ),
+                    // The asymmetry the contract names rather than hides:
+                    // destroying an archive has no honest inverse, and the
+                    // rollback that is signed beside it archives the state the
+                    // machine holds when it runs.
+                    _ => lines.push(
+                        "Ce que le rollback fait vraiment : il recrée une archive de l’état \
+                         courant sous ce nom, jamais l’archive détruite, que rien ne ramène"
+                            .to_owned(),
+                    ),
+                }
+            }
+            PlanDocumentV2::Restore(document) => {
+                lines.push(format!("Profil de service : {}", document.service_profile));
+                lines.push(format!("Emplacement restauré : {}", document.snapshot_slot));
+                lines.push(format!(
+                    "Retour : le rollback restaure ce que « {RESERVED_SNAPSHOT_SLOT} » détient, \
+                     écrit avant que la moindre donnée ne soit touchée"
+                ));
             }
         }
         lines.push(format!(
@@ -348,6 +458,13 @@ fn approval_operation(operation: PlanV2Operation) -> ApprovalOperation {
         PlanV2Operation::RemoveEntrypoint => ApprovalOperation::RemoveEntrypoint,
         PlanV2Operation::PublishRoute => ApprovalOperation::PublishRoute,
         PlanV2Operation::RetireRoute => ApprovalOperation::RetireRoute,
+        PlanV2Operation::DeployPrivateService => ApprovalOperation::DeployPrivateService,
+        PlanV2Operation::RemovePrivateService => ApprovalOperation::RemovePrivateService,
+        PlanV2Operation::PublishLinkRoute => ApprovalOperation::PublishLinkRoute,
+        PlanV2Operation::RetireLinkRoute => ApprovalOperation::RetireLinkRoute,
+        PlanV2Operation::SnapshotService => ApprovalOperation::SnapshotService,
+        PlanV2Operation::DiscardSnapshot => ApprovalOperation::DiscardSnapshot,
+        PlanV2Operation::RestoreService => ApprovalOperation::RestoreService,
     }
 }
 
@@ -359,11 +476,20 @@ fn operation_text(operation: PlanV2Operation) -> &'static str {
         PlanV2Operation::RemoveEntrypoint => "retirer le point d’entrée public",
         PlanV2Operation::PublishRoute => "publier la route déclarée",
         PlanV2Operation::RetireRoute => "retirer la route déclarée",
+        PlanV2Operation::DeployPrivateService => "déployer le service privé à données",
+        PlanV2Operation::RemovePrivateService => "retirer le service privé à données",
+        PlanV2Operation::PublishLinkRoute => "publier la route du passage privé",
+        PlanV2Operation::RetireLinkRoute => "retirer la route du passage privé",
+        PlanV2Operation::SnapshotService => "sauvegarder les données du service privé",
+        PlanV2Operation::DiscardSnapshot => "détruire l’archive nommée",
+        PlanV2Operation::RestoreService => "restaurer les données du service privé",
     }
 }
 
 /// What a rollback shares with the plan it undoes, group by group. It is the
-/// whole of what "exact inverse" means on screen: everything but the operation.
+/// whole of what "exact inverse" means on screen: everything but the operation —
+/// except for the return, whose rollback shares even the operation and differs
+/// by the one slot the mechanism owns.
 fn rollback_scope_text(group: PlanV2Group) -> &'static str {
     match group {
         PlanV2Group::WebService => {
@@ -371,6 +497,14 @@ fn rollback_scope_text(group: PlanV2Group) -> &'static str {
         }
         PlanV2Group::Entrypoint => "sur la même machine et la même image",
         PlanV2Group::Route => "sur la même machine, le même nom et le même port",
+        PlanV2Group::PrivateService => {
+            "sur la même machine, le même profil, la même image, le même port et la même origine"
+        }
+        PlanV2Group::LinkRoute => "sur la même machine, le même nom et le même port",
+        PlanV2Group::Snapshot => "sur la même machine, le même profil et le même emplacement",
+        PlanV2Group::Restore => {
+            "sur la même machine et le même profil, vers l’emplacement réservé du mécanisme de retour"
+        }
     }
 }
 
@@ -382,11 +516,14 @@ mod tests {
     use your_cloud_bootstrap_protocol::{
         ApprovalPrivilege, BENTOPDF_IMAGE_DIGEST, BENTOPDF_IMAGE_REFERENCE,
         ENTRYPOINT_IMAGE_DIGEST, ENTRYPOINT_IMAGE_REFERENCE, SERVICE_PROFILE_BENTOPDF,
+        SERVICE_PROFILE_VAULTWARDEN, VAULTWARDEN_IMAGE_DIGEST, VAULTWARDEN_IMAGE_REFERENCE,
     };
 
     const INFRASTRUCTURE: &str = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2";
     const MACHINE: &str = "lab-machine-1";
     const ROUTE_HOST: &str = "bentopdf.lab.your-cloud.test";
+    const ORIGIN_HOST: &str = "vault.lab.your-cloud.test";
+    const SNAPSHOT_SLOT: &str = "nightly";
     const ISSUED_AT: u64 = 1_780_000_000;
 
     /// The six shared vectors of the schema 2 encoding, byte for byte. The very
@@ -429,6 +566,50 @@ mod tests {
         r#""machine_id":"lab-machine-1","operation":"retire_route","#,
         r#""route_host":"bentopdf.lab.your-cloud.test","backend_port":8080}"#,
     );
+    const PRIVATE_SERVICE_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"deploy_private_service","#,
+        r#""service_profile":"vaultwarden","image_reference":"docker.io/vaultwarden/server","#,
+        r#""image_digest":"sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8","#,
+        r#""local_port":8080,"origin_host":"vault.lab.your-cloud.test"}"#,
+    );
+    const PRIVATE_SERVICE_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"remove_private_service","#,
+        r#""service_profile":"vaultwarden","image_reference":"docker.io/vaultwarden/server","#,
+        r#""image_digest":"sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8","#,
+        r#""local_port":8080,"origin_host":"vault.lab.your-cloud.test"}"#,
+    );
+    const LINK_ROUTE_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"publish_link_route","#,
+        r#""route_host":"vault.lab.your-cloud.test","backend_port":8080}"#,
+    );
+    const LINK_ROUTE_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"retire_link_route","#,
+        r#""route_host":"vault.lab.your-cloud.test","backend_port":8080}"#,
+    );
+    const SNAPSHOT_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"snapshot_service","#,
+        r#""service_profile":"vaultwarden","snapshot_slot":"nightly"}"#,
+    );
+    const SNAPSHOT_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"discard_snapshot","#,
+        r#""service_profile":"vaultwarden","snapshot_slot":"nightly"}"#,
+    );
+    const RESTORE_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"restore_service","#,
+        r#""service_profile":"vaultwarden","snapshot_slot":"nightly"}"#,
+    );
+    const RESTORE_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"restore_service","#,
+        r#""service_profile":"vaultwarden","snapshot_slot":"previous"}"#,
+    );
 
     const WEB_SERVICE_PLAN_SHA256: &str =
         "99f6e6401d74583f64e4200e6e47cd365ab299466eebe1c1a7210f260b0366ae";
@@ -442,6 +623,22 @@ mod tests {
         "3d92c310868a8ba98aca5501c069bd0e4674757f787c8095e7c39d65d8d20a89";
     const ROUTE_ROLLBACK_SHA256: &str =
         "93e844abe96e68f157eb715ace9ff423004b0c64c68536d4e79ebc8206da1324";
+    const PRIVATE_SERVICE_PLAN_SHA256: &str =
+        "b4d69bc7fcd277a5c165cd9494f2a88cb3ea8acf06f66906a10f831292f03372";
+    const PRIVATE_SERVICE_ROLLBACK_SHA256: &str =
+        "c1650b0d359671aafc7fc19bc1d0f050bcf561558cfe3a82bfd897c16d0c7ba0";
+    const LINK_ROUTE_PLAN_SHA256: &str =
+        "384fe095408f815bcc6d9b0be5655eaadabefe01c1a717bd0ff641567a5f3fbd";
+    const LINK_ROUTE_ROLLBACK_SHA256: &str =
+        "c17842e513bd8af2da8cee699db20c24b59ae00d2fcfddfa0004caad1cc2d1db";
+    const SNAPSHOT_PLAN_SHA256: &str =
+        "3de5108f5e7f2934579128bcfa8a09b3a6bbb16739b37f53e61d941261c7c6e3";
+    const SNAPSHOT_ROLLBACK_SHA256: &str =
+        "0bedf38650c70b58a36e8a0a28944dd53bd9720bce77012be2227ffa85192cae";
+    const RESTORE_PLAN_SHA256: &str =
+        "6a6b71a15f969916a426fdfdcefca22ab670935a04459079eb724c18e180aebc";
+    const RESTORE_ROLLBACK_SHA256: &str =
+        "1be3be0186ff3be565e6c4df4fc5a864a8a28f1c3929d029b3ec6ecb38c11b5a";
 
     fn view(
         plan_document: &str,
@@ -482,6 +679,51 @@ mod tests {
             ROUTE_PLAN_SHA256,
             ROUTE_ROLLBACK_DOCUMENT,
             ROUTE_ROLLBACK_SHA256,
+        )
+    }
+
+    fn private_service_view() -> PlanPairView {
+        view(
+            PRIVATE_SERVICE_PLAN_DOCUMENT,
+            PRIVATE_SERVICE_PLAN_SHA256,
+            PRIVATE_SERVICE_ROLLBACK_DOCUMENT,
+            PRIVATE_SERVICE_ROLLBACK_SHA256,
+        )
+    }
+
+    fn link_route_view() -> PlanPairView {
+        view(
+            LINK_ROUTE_PLAN_DOCUMENT,
+            LINK_ROUTE_PLAN_SHA256,
+            LINK_ROUTE_ROLLBACK_DOCUMENT,
+            LINK_ROUTE_ROLLBACK_SHA256,
+        )
+    }
+
+    fn snapshot_view() -> PlanPairView {
+        view(
+            SNAPSHOT_PLAN_DOCUMENT,
+            SNAPSHOT_PLAN_SHA256,
+            SNAPSHOT_ROLLBACK_DOCUMENT,
+            SNAPSHOT_ROLLBACK_SHA256,
+        )
+    }
+
+    fn discard_view() -> PlanPairView {
+        view(
+            SNAPSHOT_ROLLBACK_DOCUMENT,
+            SNAPSHOT_ROLLBACK_SHA256,
+            SNAPSHOT_PLAN_DOCUMENT,
+            SNAPSHOT_PLAN_SHA256,
+        )
+    }
+
+    fn restore_view() -> PlanPairView {
+        view(
+            RESTORE_PLAN_DOCUMENT,
+            RESTORE_PLAN_SHA256,
+            RESTORE_ROLLBACK_DOCUMENT,
+            RESTORE_ROLLBACK_SHA256,
         )
     }
 
@@ -610,6 +852,267 @@ mod tests {
         );
     }
 
+    /// The private service names everything a stateless one names and, besides,
+    /// the four things the private door adds and no field carries: the origin,
+    /// the one durable path, the four closed environment lines, and the table
+    /// that refuses it every outbound flow.
+    #[test]
+    fn a_verified_private_service_pair_displays_what_the_private_door_adds() {
+        let presented =
+            PresentedPublicationPlan::verify(&private_service_view()).expect("the vector");
+        assert_eq!(presented.machine_id(), MACHINE);
+        assert_eq!(presented.operation(), PlanV2Operation::DeployPrivateService);
+        assert_eq!(presented.group(), PlanV2Group::PrivateService);
+
+        assert_eq!(
+            presented.confirmation_lines(),
+            vec![
+                format!("Machine : {MACHINE}"),
+                "Opération : déployer le service privé à données".to_owned(),
+                format!("Profil de service : {SERVICE_PROFILE_VAULTWARDEN}"),
+                format!("Image : {VAULTWARDEN_IMAGE_REFERENCE}"),
+                format!("Digest de l’image : {VAULTWARDEN_IMAGE_DIGEST}"),
+                format!("Port local : {SERVICE_LOCAL_ADDRESS}:8080"),
+                format!("Origine : https://{ORIGIN_HOST}"),
+                "Volume persistant : /var/lib/your-cloud-svc-vaultwarden/data".to_owned(),
+                "Ligne d’environnement : SIGNUPS_ALLOWED=false".to_owned(),
+                "Ligne d’environnement : INVITATIONS_ALLOWED=false".to_owned(),
+                "Ligne d’environnement : SHOW_PASSWORD_HINT=false".to_owned(),
+                format!("Ligne d’environnement : DOMAIN=https://{ORIGIN_HOST}"),
+                "Confinement de sortie : table inet your-cloud-egress, le service ne parle à \
+                 personne : sortie refusée hors loopback et réponses"
+                    .to_owned(),
+                "Rollback : retirer le service privé à données, sur la même machine, le même \
+                 profil, la même image, le même port et la même origine"
+                    .to_owned(),
+                format!("Empreinte du plan : {PRIVATE_SERVICE_PLAN_SHA256}"),
+                format!("Empreinte du rollback : {PRIVATE_SERVICE_ROLLBACK_SHA256}"),
+            ]
+        );
+    }
+
+    /// The link route names the peer of the tunnel behind the published name,
+    /// and says what a fallen passage looks like.
+    #[test]
+    fn a_verified_link_route_pair_displays_the_peer_of_the_tunnel() {
+        let presented = PresentedPublicationPlan::verify(&link_route_view()).expect("the vector");
+        assert_eq!(presented.operation(), PlanV2Operation::PublishLinkRoute);
+        assert_eq!(presented.group(), PlanV2Group::LinkRoute);
+
+        assert_eq!(
+            presented.confirmation_lines(),
+            vec![
+                format!("Machine : {MACHINE}"),
+                "Opération : publier la route du passage privé".to_owned(),
+                format!("Nom publié : {ORIGIN_HOST}"),
+                "Service joint : 10.66.66.2:8080, publié par le seul passage privé".to_owned(),
+                "Panne du passage : le nom rend l’erreur de passerelle du point d’entrée, \
+                 jamais un faux succès ni une route de repli"
+                    .to_owned(),
+                "Rollback : retirer la route du passage privé, sur la même machine, le même nom \
+                 et le même port"
+                    .to_owned(),
+                format!("Empreinte du plan : {LINK_ROUTE_PLAN_SHA256}"),
+                format!("Empreinte du rollback : {LINK_ROUTE_ROLLBACK_SHA256}"),
+            ]
+        );
+        // The address behind the name is the peer of the passage and never this
+        // machine's own loopback: a link route that displayed the loopback would
+        // be describing the public profile's route.
+        assert!(!presented
+            .confirmation_lines()
+            .concat()
+            .contains(&format!("Service joint : {SERVICE_LOCAL_ADDRESS}")));
+    }
+
+    /// An archive says that it is immutable, and its destruction says what its
+    /// own rollback really does.
+    ///
+    /// This is the one place the window has to contradict a comfortable reading:
+    /// the rollback of a discard is a snapshot of the same slot, and what it will
+    /// archive is the state the machine holds when it runs — not the archive that
+    /// was destroyed, which nothing brings back. The contract requires those
+    /// terms, so they are asserted here word for word.
+    #[test]
+    fn a_verified_archive_pair_displays_what_its_rollback_can_and_cannot_do() {
+        let presented = PresentedPublicationPlan::verify(&snapshot_view()).expect("the vector");
+        assert_eq!(presented.operation(), PlanV2Operation::SnapshotService);
+        assert_eq!(presented.group(), PlanV2Group::Snapshot);
+        assert_eq!(
+            presented.confirmation_lines(),
+            vec![
+                format!("Machine : {MACHINE}"),
+                "Opération : sauvegarder les données du service privé".to_owned(),
+                format!("Profil de service : {SERVICE_PROFILE_VAULTWARDEN}"),
+                format!("Emplacement : {SNAPSHOT_SLOT}"),
+                "Immuabilité : un emplacement existant est refusé ; l’écraser exige un plan de \
+                 destruction approuvé à part"
+                    .to_owned(),
+                "Rollback : détruire l’archive nommée, sur la même machine, le même profil et le \
+                 même emplacement"
+                    .to_owned(),
+                format!("Empreinte du plan : {SNAPSHOT_PLAN_SHA256}"),
+                format!("Empreinte du rollback : {SNAPSHOT_ROLLBACK_SHA256}"),
+            ]
+        );
+
+        let discard = PresentedPublicationPlan::verify(&discard_view()).expect("the vector");
+        assert_eq!(discard.operation(), PlanV2Operation::DiscardSnapshot);
+        assert_eq!(
+            discard.confirmation_lines(),
+            vec![
+                format!("Machine : {MACHINE}"),
+                "Opération : détruire l’archive nommée".to_owned(),
+                format!("Profil de service : {SERVICE_PROFILE_VAULTWARDEN}"),
+                format!("Emplacement : {SNAPSHOT_SLOT}"),
+                "Ce que le rollback fait vraiment : il recrée une archive de l’état courant sous \
+                 ce nom, jamais l’archive détruite, que rien ne ramène"
+                    .to_owned(),
+                "Rollback : sauvegarder les données du service privé, sur la même machine, le \
+                 même profil et le même emplacement"
+                    .to_owned(),
+                format!("Empreinte du plan : {SNAPSHOT_ROLLBACK_SHA256}"),
+                format!("Empreinte du rollback : {SNAPSHOT_PLAN_SHA256}"),
+            ]
+        );
+    }
+
+    /// The return names where its own return comes from.
+    ///
+    /// The rollback of a restore is a restore of the reserved slot, and the slot
+    /// holds the state the flow wrote there before touching any data. A human who
+    /// read only "restaurer" twice would not know which of the two states each
+    /// document names, so the window says it.
+    #[test]
+    fn a_verified_restore_pair_displays_where_the_return_comes_from() {
+        let presented = PresentedPublicationPlan::verify(&restore_view()).expect("the vector");
+        assert_eq!(presented.operation(), PlanV2Operation::RestoreService);
+        assert_eq!(presented.group(), PlanV2Group::Restore);
+        assert_eq!(
+            presented.confirmation_lines(),
+            vec![
+                format!("Machine : {MACHINE}"),
+                "Opération : restaurer les données du service privé".to_owned(),
+                format!("Profil de service : {SERVICE_PROFILE_VAULTWARDEN}"),
+                format!("Emplacement restauré : {SNAPSHOT_SLOT}"),
+                "Retour : le rollback restaure ce que « previous » détient, écrit avant que la \
+                 moindre donnée ne soit touchée"
+                    .to_owned(),
+                "Rollback : restaurer les données du service privé, sur la même machine et le \
+                 même profil, vers l’emplacement réservé du mécanisme de retour"
+                    .to_owned(),
+                format!("Empreinte du plan : {RESTORE_PLAN_SHA256}"),
+                format!("Empreinte du rollback : {RESTORE_ROLLBACK_SHA256}"),
+            ]
+        );
+        assert_ne!(presented.plan_sha256(), presented.rollback_sha256());
+    }
+
+    /// A pair whose two documents are one document never reaches a window.
+    ///
+    /// It is the return that makes the refusal necessary: a restore already
+    /// naming the reserved slot undoes itself, so the pair verifies as an exact
+    /// inverse and still is not a pair — a human shown it would be approving the
+    /// same plan as its own rollback. The refusal is on the digests, so it holds
+    /// whichever group builds such a pair.
+    #[test]
+    fn a_pair_whose_two_documents_are_one_document_is_refused_before_display() {
+        for (name, hostile) in [
+            (
+                "a return of the reserved slot presented as its own rollback",
+                view(
+                    RESTORE_ROLLBACK_DOCUMENT,
+                    RESTORE_ROLLBACK_SHA256,
+                    RESTORE_ROLLBACK_DOCUMENT,
+                    RESTORE_ROLLBACK_SHA256,
+                ),
+            ),
+            (
+                "a link route presented as its own rollback",
+                view(
+                    LINK_ROUTE_PLAN_DOCUMENT,
+                    LINK_ROUTE_PLAN_SHA256,
+                    LINK_ROUTE_PLAN_DOCUMENT,
+                    LINK_ROUTE_PLAN_SHA256,
+                ),
+            ),
+        ] {
+            assert!(
+                matches!(
+                    PresentedPublicationPlan::verify(&hostile),
+                    Err(PublicationPlanError::UnverifiedPlan)
+                ),
+                "{name} reached the confirmation window"
+            );
+        }
+    }
+
+    /// The two couples of operations that carry identical fields are two plans,
+    /// and this side treats them as two.
+    ///
+    /// A public route and a link route naming the same host and the same port
+    /// hash differently, so a pair of one kind presented under the digests of the
+    /// other never verifies — and the rollback of one never undoes the other.
+    /// The same holds for an archive and a return naming the same profile and
+    /// slot.
+    #[test]
+    fn two_plans_carrying_the_same_fields_are_never_taken_for_one_another() {
+        let public_route_of_the_same_name = ROUTE_PLAN_DOCUMENT.replace(ROUTE_HOST, ORIGIN_HOST);
+        for (name, hostile) in [
+            (
+                "a public route under the digests of a link route",
+                PlanPairView {
+                    plan_document: public_route_of_the_same_name,
+                    ..link_route_view()
+                },
+            ),
+            (
+                "a link route rolled back by a public retirement",
+                PlanPairView {
+                    rollback_document: ROUTE_ROLLBACK_DOCUMENT.replace(ROUTE_HOST, ORIGIN_HOST),
+                    ..link_route_view()
+                },
+            ),
+            (
+                "an archive rolled back by a return of the same slot",
+                PlanPairView {
+                    rollback_document: RESTORE_PLAN_DOCUMENT.to_owned(),
+                    rollback_sha256: RESTORE_PLAN_SHA256.to_owned(),
+                    ..snapshot_view()
+                },
+            ),
+            (
+                "a return rolled back by a discard of the same slot",
+                PlanPairView {
+                    rollback_document: SNAPSHOT_ROLLBACK_DOCUMENT.to_owned(),
+                    rollback_sha256: SNAPSHOT_ROLLBACK_SHA256.to_owned(),
+                    ..restore_view()
+                },
+            ),
+        ] {
+            assert!(
+                matches!(
+                    PresentedPublicationPlan::verify(&hostile),
+                    Err(PublicationPlanError::UnverifiedPlan)
+                ),
+                "{name} reached the confirmation window"
+            );
+        }
+
+        // The four digests really are four, which is what all of the above rests
+        // on.
+        let mut seen: Vec<&str> = Vec::new();
+        for digest in [
+            LINK_ROUTE_PLAN_SHA256,
+            LINK_ROUTE_ROLLBACK_SHA256,
+            SNAPSHOT_PLAN_SHA256,
+            RESTORE_PLAN_SHA256,
+        ] {
+            assert!(!seen.contains(&digest), "{digest} is named twice");
+            seen.push(digest);
+        }
+    }
+
     /// Nothing reaches a window before its digests are held.
     ///
     /// Each hostile pair below is one a transport could actually send: a
@@ -711,6 +1214,38 @@ mod tests {
                 },
             ),
             (
+                "a private service whose origin was moved after it was frozen",
+                PlanPairView {
+                    plan_document: PRIVATE_SERVICE_PLAN_DOCUMENT
+                        .replace(ORIGIN_HOST, "evil.lab.your-cloud.test"),
+                    ..private_service_view()
+                },
+            ),
+            (
+                "a private service naming the profile of the stateless door",
+                PlanPairView {
+                    plan_document: PRIVATE_SERVICE_PLAN_DOCUMENT.replace(
+                        &format!(r#""service_profile":"{SERVICE_PROFILE_VAULTWARDEN}""#),
+                        &format!(r#""service_profile":"{SERVICE_PROFILE_BENTOPDF}""#),
+                    ),
+                    ..private_service_view()
+                },
+            ),
+            (
+                "an archive of the slot the return mechanism owns",
+                PlanPairView {
+                    plan_document: SNAPSHOT_PLAN_DOCUMENT.replace(SNAPSHOT_SLOT, "previous"),
+                    ..snapshot_view()
+                },
+            ),
+            (
+                "an archive whose slot climbs out of the profile's directory",
+                PlanPairView {
+                    plan_document: SNAPSHOT_PLAN_DOCUMENT.replace(SNAPSHOT_SLOT, "../../etc"),
+                    ..snapshot_view()
+                },
+            ),
+            (
                 "a schema 1 probe plan under a schema 2 pair",
                 PlanPairView {
                     plan_document: concat!(
@@ -782,6 +1317,40 @@ mod tests {
                 ApprovalOperation::PublishRoute,
                 ApprovalOperation::RetireRoute,
             ),
+            (
+                "private service",
+                private_service_view(),
+                view(
+                    PRIVATE_SERVICE_ROLLBACK_DOCUMENT,
+                    PRIVATE_SERVICE_ROLLBACK_SHA256,
+                    PRIVATE_SERVICE_PLAN_DOCUMENT,
+                    PRIVATE_SERVICE_PLAN_SHA256,
+                ),
+                ApprovalOperation::DeployPrivateService,
+                ApprovalOperation::RemovePrivateService,
+            ),
+            (
+                "link route",
+                link_route_view(),
+                view(
+                    LINK_ROUTE_ROLLBACK_DOCUMENT,
+                    LINK_ROUTE_ROLLBACK_SHA256,
+                    LINK_ROUTE_PLAN_DOCUMENT,
+                    LINK_ROUTE_PLAN_SHA256,
+                ),
+                ApprovalOperation::PublishLinkRoute,
+                ApprovalOperation::RetireLinkRoute,
+            ),
+            (
+                // The archive is the case the word "backup" makes tempting to
+                // read as harmless: it stops the service, writes and restarts,
+                // so its envelope asks for the mutating pair like any other.
+                "snapshot",
+                snapshot_view(),
+                discard_view(),
+                ApprovalOperation::SnapshotService,
+                ApprovalOperation::DiscardSnapshot,
+            ),
         ] {
             let presented = PresentedPublicationPlan::verify(&forward).unwrap();
             let signed = presented
@@ -834,6 +1403,27 @@ mod tests {
             );
             assert_ne!(signed_reverse.signature, signed.signature, "{name}");
         }
+
+        // The return has one direction, so it has no reverse pair to sign: the
+        // document that returns from it is a restore of the reserved slot, and a
+        // pair whose two documents would be that one document is refused above.
+        // What is asserted here is that the one direction signs, under its own
+        // operation and the same mutating pair.
+        let presented = PresentedPublicationPlan::verify(&restore_view()).unwrap();
+        let signed = presented
+            .sign(&record, &restore_view(), &presented.confirmed(), request())
+            .expect("a confirmed return is signed");
+        assert_eq!(signed.envelope.operation, ApprovalOperation::RestoreService);
+        assert_eq!(signed.envelope.plan_sha256, RESTORE_PLAN_SHA256);
+        assert_eq!(signed.envelope.rollback_sha256, RESTORE_ROLLBACK_SHA256);
+        assert_eq!(
+            signed.envelope.privileges,
+            vec![
+                ApprovalPrivilege::MutateLocalState,
+                ApprovalPrivilege::ReadLocalState,
+            ]
+        );
+        assert!(signed.clone().validate().is_ok());
     }
 
     /// A confirmation covers two exact documents, and stops covering anything
@@ -904,7 +1494,15 @@ mod tests {
     #[test]
     fn a_plan_of_another_infrastructure_is_never_signed() {
         let foreign = association("8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3");
-        for pair in [service_view(), entrypoint_view(), route_view()] {
+        for pair in [
+            service_view(),
+            entrypoint_view(),
+            route_view(),
+            private_service_view(),
+            link_route_view(),
+            snapshot_view(),
+            restore_view(),
+        ] {
             let presented = PresentedPublicationPlan::verify(&pair).unwrap();
             assert!(matches!(
                 presented.sign(&foreign, &pair, &presented.confirmed(), request()),
@@ -957,7 +1555,15 @@ mod tests {
     #[test]
     fn the_surface_this_module_produces_carries_no_key_material() {
         let record = association(INFRASTRUCTURE);
-        for pair in [service_view(), entrypoint_view(), route_view()] {
+        for pair in [
+            service_view(),
+            entrypoint_view(),
+            route_view(),
+            private_service_view(),
+            link_route_view(),
+            snapshot_view(),
+            restore_view(),
+        ] {
             let presented = PresentedPublicationPlan::verify(&pair).unwrap();
             let signed = presented
                 .sign(&record, &pair, &presented.confirmed(), request())

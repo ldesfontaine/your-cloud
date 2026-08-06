@@ -2005,6 +2005,51 @@ for (const bound of [
   'pub const ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL: &str = "net.ipv4.ip_unprivileged_port_start=80";',
   '"Cross-Origin-Opener-Policy: same-origin",',
   '"Cross-Origin-Embedder-Policy: require-corp",',
+  // Le profil privé : sa propre porte, sa propre liste fermée, sa propre image
+  // épinglée par digest seul. La liste de manifestes est ce que le contrat
+  // épingle ; l'image résolue par architecture n'est pas une seconde vérité.
+  'pub const SERVICE_PROFILE_VAULTWARDEN: &str = "vaultwarden";',
+  "SERVICE_PROFILE_VAULTWARDEN => Some(PinnedImage {",
+  'pub const VAULTWARDEN_IMAGE_REFERENCE: &str = "docker.io/vaultwarden/server";',
+  // La déclaration entière, et pas seulement le digest : celui-ci apparaît
+  // aussi dans les vecteurs, si bien qu'une garde de simple présence passerait
+  // encore avec une constante déplacée sur l'image résolue d'une architecture.
+  'pub const VAULTWARDEN_IMAGE_DIGEST: &str =\n    "sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8";',
+  "fn private_profile_image(service_profile: &str) -> Option<PinnedImage> {",
+  "#[serde(deny_unknown_fields)]\npub struct PrivateServicePlanDocumentV2 {",
+  "#[serde(deny_unknown_fields)]\npub struct LinkRoutePlanDocumentV2 {",
+  "#[serde(deny_unknown_fields)]\npub struct SnapshotPlanDocumentV2 {",
+  "#[serde(deny_unknown_fields)]\npub struct RestorePlanDocumentV2 {",
+  // Les queues de transcription des quatre groupes : l'origine ajoutée après le
+  // port, l'emplacement après le profil.
+  "append_field(&mut transcript, self.origin_host.as_bytes())?;",
+  "append_field(&mut transcript, self.snapshot_slot.as_bytes())?;",
+  // L'origine reprend la borne des hôtes plutôt qu'une seconde expression, et
+  // l'emplacement a la sienne, fermée sur ce qu'une entrée de répertoire peut
+  // être : ni séparateur, ni point, ni majuscule, donc rien qui grimpe.
+  "!canonical_route_host(&self.origin_host)",
+  "!canonical_snapshot_slot(&self.snapshot_slot)",
+  "bytes.len() < MIN_SNAPSHOT_SLOT_BYTES || bytes.len() > MAX_SNAPSHOT_SLOT_BYTES",
+  "pub const MIN_SNAPSHOT_SLOT_BYTES: usize = 1;",
+  "pub const MAX_SNAPSHOT_SLOT_BYTES: usize = 32;",
+  // L'emplacement réservé appartient au mécanisme de retour : refusé dans une
+  // sauvegarde et dans une destruction, accepté dans un retour — c'est le
+  // rollback signé d'un `restore_service`, seul document du produit à le nommer.
+  'pub const RESERVED_SNAPSHOT_SLOT: &str = "previous";',
+  "self.snapshot_slot == RESERVED_SNAPSHOT_SLOT",
+  // L'inverse qui déplace un champ au lieu de l'opération. Les deux lignes vont
+  // ensemble : l'opération d'un retour est elle-même, et ce qui change entre lui
+  // et son annulation est l'emplacement.
+  "Self::RestoreService => Self::RestoreService,",
+  "snapshot_slot: RESERVED_SNAPSHOT_SLOT.to_owned(),",
+  // Constantes du profil privé : affichées, portées par aucun champ.
+  'pub const PRIVATE_SERVICE_DATA_VOLUME: &str = "/var/lib/your-cloud-svc-vaultwarden/data";',
+  '"SIGNUPS_ALLOWED=false",',
+  '"INVITATIONS_ALLOWED=false",',
+  '"SHOW_PASSWORD_HINT=false",',
+  'pub const PRIVATE_SERVICE_ORIGIN_VARIABLE: &str = "DOMAIN";',
+  'pub const PRIVATE_SERVICE_ORIGIN_SCHEME: &str = "https";',
+  'pub const PRIVATE_SERVICE_EGRESS_TABLE: &str = "inet your-cloud-egress";',
 ]) {
   if (!planV2Protocol.includes(bound)) {
     failures.push(`plan_v2.rs (protocole): lien haché absent (${bound})`);
@@ -2015,8 +2060,19 @@ for (const bound of [
 // une garde de présence passerait encore si l'un des deux groupes cessait de
 // hacher son image.
 for (const [fragment, expected] of [
-  ["append_field(&mut transcript, self.image_reference.as_bytes())?;", 2],
-  ["append_field(&mut transcript, &image)?;", 2],
+  ["append_field(&mut transcript, self.image_reference.as_bytes())?;", 3],
+  ["append_field(&mut transcript, &image)?;", 3],
+  // Les deux formes qui nomment un emplacement le hachent chacune, et les deux
+  // seules ; les deux qui archivent tiennent chacune la liste privée des
+  // profils, parce qu'un profil sans volume n'a rien à archiver.
+  ["append_field(&mut transcript, self.snapshot_slot.as_bytes())?;", 2],
+  ["private_profile_image(&self.service_profile).is_none()", 2],
+  ["!canonical_snapshot_slot(&self.snapshot_slot)", 2],
+  // Le refus de l'emplacement réservé est écrit une fois et une seule : dans la
+  // forme des archives. L'écrire aussi dans le retour interdirait le rollback
+  // signé d'un `restore_service` ; ne l'écrire nulle part laisserait une
+  // sauvegarde écraser ce que le mécanisme de retour détient.
+  ["self.snapshot_slot == RESERVED_SNAPSHOT_SLOT", 1],
 ]) {
   const occurrences = planV2Protocol.split(fragment).length - 1;
   if (occurrences !== expected) {
@@ -2038,6 +2094,17 @@ for (const forbidden of [
   "pub environment:",
   "pub headers:",
   "pub tls_certificate:",
+  // Le profil privé n'ouvre aucun de ces champs non plus : le volume, la table
+  // de sortie, le chemin et le digest d'une archive, l'adresse du pair du
+  // tunnel et la direction d'un retour sont des constantes ou des faits, jamais
+  // des valeurs qu'une requête pourrait déplacer.
+  "pub volume:",
+  "pub data_volume:",
+  "pub egress:",
+  "pub snapshot_path:",
+  "pub archive_digest:",
+  "pub backend_address:",
+  "pub peer_address:",
 ]) {
   if (planV2Protocol.includes(forbidden)) {
     failures.push(`plan_v2.rs (protocole): un schéma déclare un champ interdit (${forbidden})`);
@@ -2056,7 +2123,7 @@ for (const bound of [
   'Self::PublishRoute => "publish_route",',
   'Self::RetireRoute => "retire_route",',
   "Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],",
-  "| Self::DeployWebService\n            | Self::RemoveWebService\n            | Self::DeployEntrypoint\n            | Self::RemoveEntrypoint\n            | Self::PublishRoute\n            | Self::RetireRoute\n            | Self::PrepareLink\n            | Self::WithdrawLink\n            | Self::AttachLinkPeer\n            | Self::DetachLinkPeer\n            | Self::JoinLinkPeer\n            | Self::LeaveLinkPeer => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
+  "| Self::DeployWebService\n            | Self::RemoveWebService\n            | Self::DeployEntrypoint\n            | Self::RemoveEntrypoint\n            | Self::PublishRoute\n            | Self::RetireRoute\n            | Self::PrepareLink\n            | Self::WithdrawLink\n            | Self::AttachLinkPeer\n            | Self::DetachLinkPeer\n            | Self::JoinLinkPeer\n            | Self::LeaveLinkPeer\n            | Self::DeployPrivateService\n            | Self::RemovePrivateService\n            | Self::PublishLinkRoute\n            | Self::RetireLinkRoute\n            | Self::SnapshotService\n            | Self::DiscardSnapshot\n            | Self::RestoreService => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
 ]) {
   if (!approvalProtocol.includes(bound)) {
     failures.push(`approval.rs (protocole): opération du profil public absente (${bound})`);
@@ -2078,6 +2145,24 @@ for (const bound of [
     failures.push(`approval.rs (protocole): opération du passage privé absente (${bound})`);
   }
 }
+// Les sept opérations du profil privé existent dans la même enveloppe et y
+// demandent la même paire mutante. La sauvegarde est celle qu'il faut nommer :
+// elle arrête le service, écrit une archive et le redémarre, donc elle mute la
+// machine autant qu'un déploiement, quoi que le mot « sauvegarde » suggère.
+for (const bound of [
+  'Self::DeployPrivateService => "deploy_private_service",',
+  'Self::RemovePrivateService => "remove_private_service",',
+  'Self::PublishLinkRoute => "publish_link_route",',
+  'Self::RetireLinkRoute => "retire_link_route",',
+  'Self::SnapshotService => "snapshot_service",',
+  'Self::DiscardSnapshot => "discard_snapshot",',
+  'Self::RestoreService => "restore_service",',
+  "| Self::SnapshotService\n            | Self::DiscardSnapshot\n            | Self::RestoreService => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
+]) {
+  if (!approvalProtocol.includes(bound)) {
+    failures.push(`approval.rs (protocole): opération du profil privé absente (${bound})`);
+  }
+}
 // La Console ne possède pas plus de ré-encodeur canonique au schéma 2 qu'au
 // schéma 1 : elle vérifie les octets reçus contre leurs digests avant de rien
 // afficher, elle revérifie avant de signer, et ce que l'humain doit lire est
@@ -2088,7 +2173,6 @@ for (const bound of [
   "pub fn verify(view: &PlanPairView) -> Result<Self, PublicationPlanError>",
   "verify_plan_v2_document(view.plan_document.as_bytes(), &view.plan_sha256)",
   "verify_plan_v2_document(view.rollback_document.as_bytes(), &view.rollback_sha256)",
-  "if !plan.is_undone_by(&rollback) {",
   "pub fn confirmation_lines(&self) -> Vec<String> {",
   "if Self::verify(documents)? != *self {",
   "if self.plan.infrastructure_id() != association.summary.infrastructure_id.as_str() {",
@@ -2106,6 +2190,37 @@ for (const bound of [
   'format!("En-tête d’isolation : {header}")',
   'format!("Empreinte du plan : {}", self.plan_sha256)',
   'format!("Empreinte du rollback : {}", self.rollback_sha256)',
+  // Une paire dont les deux documents sont un seul document n'est pas une
+  // paire : un retour nommant déjà l'emplacement réservé s'annule lui-même, et
+  // l'humain approuverait le même plan comme son propre rollback. Le refus
+  // porte sur les documents, donc il vaut pour tous les groupes.
+  "if !plan.is_undone_by(&rollback) || plan == rollback {",
+  // Ce que la porte privée ajoute, ligne par ligne : l'origine exacte, le seul
+  // chemin d'écriture durable, les quatre lignes d'environnement — trois
+  // constantes de durcissement et la seule valeur approuvée — et la table qui
+  // refuse au service toute sortie.
+  '"Origine : {PRIVATE_SERVICE_ORIGIN_SCHEME}://{}"',
+  'format!("Volume persistant : {PRIVATE_SERVICE_DATA_VOLUME}")',
+  "for hardening in PRIVATE_SERVICE_ENVIRONMENT_HARDENING {",
+  'format!("Ligne d’environnement : {hardening}")',
+  '"Ligne d’environnement : {PRIVATE_SERVICE_ORIGIN_VARIABLE}=\\',
+  '"Confinement de sortie : table {PRIVATE_SERVICE_EGRESS_TABLE}, le service ne \\',
+  "parle à personne : sortie refusée hors loopback et réponses",
+  // La route de lien nomme le pair du tunnel, jamais le loopback de la machine,
+  // et dit à quoi ressemble une panne du passage.
+  '"Service joint : {LINK_INITIATOR_TUNNEL_ADDRESS}:{}, publié par le seul \\',
+  "Panne du passage : le nom rend l’erreur de passerelle du point d’entrée, \\",
+  // Les archives : l'immuabilité d'un côté, et de l'autre la phrase que le
+  // contrat exige — le rollback d'une destruction recrée une archive de l'état
+  // courant, jamais l'archive détruite.
+  'format!("Emplacement : {}", document.snapshot_slot)',
+  "Immuabilité : un emplacement existant est refusé",
+  "Ce que le rollback fait vraiment : il recrée une archive de l’état \\",
+  "courant sous ce nom, jamais l’archive détruite, que rien ne ramène",
+  // Le retour dit d'où vient son propre retour.
+  'format!("Emplacement restauré : {}", document.snapshot_slot)',
+  '"Retour : le rollback restaure ce que « {RESERVED_SNAPSHOT_SLOT} » détient, \\',
+  "écrit avant que la moindre donnée ne soit touchée",
 ]) {
   if (!publicationPlanRuntime.includes(bound)) {
     failures.push(`publication_plan.rs: garde du plan présenté absente (${bound})`);
@@ -2115,8 +2230,13 @@ for (const bound of [
 // digest. Comme au-dessus, c'est compté : un service dont l'image aurait
 // disparu de ses lignes passerait une garde de simple présence.
 for (const [fragment, expected] of [
-  ['format!("Image : {}", document.image_reference)', 2],
-  ['format!("Digest de l’image : {}", document.image_digest)', 2],
+  ['format!("Image : {}", document.image_reference)', 3],
+  ['format!("Digest de l’image : {}", document.image_digest)', 3],
+  // Les quatre genres de plan qui nomment un profil le montrent. Un service
+  // privé, une archive ou un retour dont le profil aurait disparu des lignes
+  // passerait une garde de simple présence, puisque le service sans état, lui,
+  // le montre toujours.
+  ['format!("Profil de service : {}", document.service_profile)', 4],
 ]) {
   const occurrences = publicationPlanRuntime.split(fragment).length - 1;
   if (occurrences !== expected) {

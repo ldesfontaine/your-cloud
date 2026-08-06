@@ -71,14 +71,17 @@ pub const MAX_SIGNED_APPROVAL_BYTES: usize = 1_024;
 /// previous palier: it states what it verified and what it consumed, and it
 /// changes nothing. The two probe operations are the first ones that ask to
 /// change a machine, the six operations of the public profile are the ones that
-/// describe a service, an entrypoint and a published route, and the six
-/// operations of the private passage are the ones that describe one machine's
-/// own side of a link and the two junctions that bound it. Each of them belongs
-/// to an exact pair of a plan and its rollback — what each describes is the plan
-/// document whose digest the envelope names, never anything the envelope itself
-/// could spell. An operation name outside this list has no variant, so an
-/// envelope naming an installation, an arbitrary container or an operation of a
-/// later palier is refused while it is still being parsed.
+/// describe a service, an entrypoint and a published route, the six operations
+/// of the private passage are the ones that describe one machine's own side of a
+/// link and the two junctions that bound it, and the seven operations of the
+/// private profile are the ones that describe a service whose data outlives its
+/// container, the name that publishes it through the passage, and the archives
+/// of its data. Each of them belongs to an exact pair of a plan and its
+/// rollback — what each describes is the plan document whose digest the envelope
+/// names, never anything the envelope itself could spell. An operation name
+/// outside this list has no variant, so an envelope naming an installation, an
+/// arbitrary container or an operation of a later palier is refused while it is
+/// still being parsed.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalOperation {
@@ -97,6 +100,13 @@ pub enum ApprovalOperation {
     DetachLinkPeer,
     JoinLinkPeer,
     LeaveLinkPeer,
+    DeployPrivateService,
+    RemovePrivateService,
+    PublishLinkRoute,
+    RetireLinkRoute,
+    SnapshotService,
+    DiscardSnapshot,
+    RestoreService,
 }
 
 impl ApprovalOperation {
@@ -117,6 +127,13 @@ impl ApprovalOperation {
             Self::DetachLinkPeer => "detach_link_peer",
             Self::JoinLinkPeer => "join_link_peer",
             Self::LeaveLinkPeer => "leave_link_peer",
+            Self::DeployPrivateService => "deploy_private_service",
+            Self::RemovePrivateService => "remove_private_service",
+            Self::PublishLinkRoute => "publish_link_route",
+            Self::RetireLinkRoute => "retire_link_route",
+            Self::SnapshotService => "snapshot_service",
+            Self::DiscardSnapshot => "discard_snapshot",
+            Self::RestoreService => "restore_service",
         }
     }
 
@@ -132,7 +149,11 @@ impl ApprovalOperation {
     /// publishing one does. The six operations of the private passage are in the
     /// same list for the same reason — withdrawing a link and leaving a peer
     /// read the machine to find what they are about to remove, and preparing a
-    /// link reads it to refuse regenerating a key that already exists.
+    /// link reads it to refuse regenerating a key that already exists. The seven
+    /// of the private profile are there too, and the archives are the case worth
+    /// naming: a snapshot stops the service, writes an archive and restarts it,
+    /// so it mutates the machine as much as a deployment does, whatever the word
+    /// "backup" suggests.
     pub fn required_privileges(self) -> &'static [ApprovalPrivilege] {
         match self {
             Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],
@@ -149,7 +170,14 @@ impl ApprovalOperation {
             | Self::AttachLinkPeer
             | Self::DetachLinkPeer
             | Self::JoinLinkPeer
-            | Self::LeaveLinkPeer => &[
+            | Self::LeaveLinkPeer
+            | Self::DeployPrivateService
+            | Self::RemovePrivateService
+            | Self::PublishLinkRoute
+            | Self::RetireLinkRoute
+            | Self::SnapshotService
+            | Self::DiscardSnapshot
+            | Self::RestoreService => &[
                 ApprovalPrivilege::MutateLocalState,
                 ApprovalPrivilege::ReadLocalState,
             ],
@@ -674,10 +702,10 @@ mod tests {
         );
     }
 
-    /// The fifteen operations this palier's envelope may name, in declaration
-    /// order. Holding the list in one place is what keeps the tests below from
-    /// silently covering fourteen of fifteen.
-    const DECLARED_OPERATIONS: [ApprovalOperation; 15] = [
+    /// The twenty-two operations this palier's envelope may name, in
+    /// declaration order. Holding the list in one place is what keeps the tests
+    /// below from silently covering twenty-one of twenty-two.
+    const DECLARED_OPERATIONS: [ApprovalOperation; 22] = [
         ApprovalOperation::DiagnoseProtocolReadOnly,
         ApprovalOperation::DeployOciProbe,
         ApprovalOperation::RemoveOciProbe,
@@ -693,11 +721,18 @@ mod tests {
         ApprovalOperation::DetachLinkPeer,
         ApprovalOperation::JoinLinkPeer,
         ApprovalOperation::LeaveLinkPeer,
+        ApprovalOperation::DeployPrivateService,
+        ApprovalOperation::RemovePrivateService,
+        ApprovalOperation::PublishLinkRoute,
+        ApprovalOperation::RetireLinkRoute,
+        ApprovalOperation::SnapshotService,
+        ApprovalOperation::DiscardSnapshot,
+        ApprovalOperation::RestoreService,
     ];
 
-    /// The fourteen operations that describe a state of a machine, which is
+    /// The twenty-one operations that describe a state of a machine, which is
     /// every declared operation but the read-only diagnostic.
-    const MUTATING_OPERATIONS: [ApprovalOperation; 14] = [
+    const MUTATING_OPERATIONS: [ApprovalOperation; 21] = [
         ApprovalOperation::DeployOciProbe,
         ApprovalOperation::RemoveOciProbe,
         ApprovalOperation::DeployWebService,
@@ -712,6 +747,13 @@ mod tests {
         ApprovalOperation::DetachLinkPeer,
         ApprovalOperation::JoinLinkPeer,
         ApprovalOperation::LeaveLinkPeer,
+        ApprovalOperation::DeployPrivateService,
+        ApprovalOperation::RemovePrivateService,
+        ApprovalOperation::PublishLinkRoute,
+        ApprovalOperation::RetireLinkRoute,
+        ApprovalOperation::SnapshotService,
+        ApprovalOperation::DiscardSnapshot,
+        ApprovalOperation::RestoreService,
     ];
 
     #[test]
@@ -735,6 +777,19 @@ mod tests {
             (ApprovalOperation::DetachLinkPeer, "detach_link_peer"),
             (ApprovalOperation::JoinLinkPeer, "join_link_peer"),
             (ApprovalOperation::LeaveLinkPeer, "leave_link_peer"),
+            (
+                ApprovalOperation::DeployPrivateService,
+                "deploy_private_service",
+            ),
+            (
+                ApprovalOperation::RemovePrivateService,
+                "remove_private_service",
+            ),
+            (ApprovalOperation::PublishLinkRoute, "publish_link_route"),
+            (ApprovalOperation::RetireLinkRoute, "retire_link_route"),
+            (ApprovalOperation::SnapshotService, "snapshot_service"),
+            (ApprovalOperation::DiscardSnapshot, "discard_snapshot"),
+            (ApprovalOperation::RestoreService, "restore_service"),
         ] {
             assert_eq!(
                 serde_json::to_value(operation).unwrap(),
@@ -754,7 +809,7 @@ mod tests {
             );
             names.push(operation.as_str());
         }
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 22);
         for (privilege, wire_name) in [
             (ApprovalPrivilege::ReadLocalState, "read_local_state"),
             (ApprovalPrivilege::MutateLocalState, "mutate_local_state"),
@@ -789,11 +844,11 @@ mod tests {
         }
         assert!(canonical_privileges(&DECLARED));
 
-        // Held for the fifteen operations rather than for the three of the
+        // Held for the twenty-two operations rather than for the three of the
         // first palier: the invariant is about every list this side can sign,
         // and an operation added without being listed here would be one whose
         // privilege order nobody checked.
-        assert_eq!(DECLARED_OPERATIONS.len(), 15);
+        assert_eq!(DECLARED_OPERATIONS.len(), 22);
         for operation in DECLARED_OPERATIONS {
             let required = operation.required_privileges();
             assert!(
@@ -806,7 +861,7 @@ mod tests {
     /// Each operation carries exactly its own privileges, and the read-only one
     /// still refuses to mutate whatever else its envelope carries.
     ///
-    /// The equality runs both ways, for each of the fourteen operations that
+    /// The equality runs both ways, for each of the twenty-one operations that
     /// describe a state: the diagnostic cannot be given the mutating pair, and
     /// none of them can be given the reading privilege alone or the mutating one
     /// alone. Naming an operation is therefore the whole of asking for a power
