@@ -37,6 +37,13 @@ const (
 	// the sheet describes and may never describe what it runs.
 	unitDirectoryMode = 0o755
 	unitFileMode      = 0o644
+
+	// lingerReadyTimeout and lingerReadyPollInterval bound the wait between
+	// loginctl's answer and logind actually creating the account's runtime
+	// directory. The wait exists because the race was observed in the LAB;
+	// the bound exists because an Auxiliary may not hang.
+	lingerReadyTimeout      = 15 * time.Second
+	lingerReadyPollInterval = 200 * time.Millisecond
 )
 
 // SystemExecutor is the real effects of this package on a real machine.
@@ -74,9 +81,15 @@ func (executor SystemExecutor) Capabilities(account string) (Capabilities, error
 }
 
 // CreateProbeAccount creates a locked system account with its own group, its own
-// home and no login shell.
+// home, no login shell, and the subordinate identifier ranges a rootless engine
+// maps containers into.
+//
+// The ranges are allocated here explicitly because useradd does not do it for
+// system accounts: shadow reserves automatic allocation for ordinary users, and
+// an account without ranges runs an engine that can map nothing beyond its own
+// identifier — proven blocking in the LAB before this allocation was written.
 func (executor SystemExecutor) CreateProbeAccount(account, home string) error {
-	_, err := executor.run(commandTimeout, "useradd",
+	if _, err := executor.run(commandTimeout, "useradd",
 		"--system",
 		"--user-group",
 		"--home-dir", home,
@@ -84,15 +97,94 @@ func (executor SystemExecutor) CreateProbeAccount(account, home string) error {
 		"--shell", "/usr/sbin/nologin",
 		"--comment", "Your Cloud OCI validation probe",
 		account,
+	); err != nil {
+		return err
+	}
+	start, err := nextSubordinateRangeStart("/etc/subuid", "/etc/subgid")
+	if err != nil {
+		return err
+	}
+	span := fmt.Sprintf("%d-%d", start, start+subordinateRangeSize-1)
+	_, err = executor.run(commandTimeout, "usermod",
+		"--add-subuids", span,
+		"--add-subgids", span,
+		account,
 	)
 	return err
 }
 
+const (
+	// subordinateRangeSize is the conventional 16-bit range a rootless engine
+	// expects; shadow allocates the same span for ordinary users.
+	subordinateRangeSize = 65536
+	// subordinateRangeFloor is where allocation starts on a machine whose
+	// files name no range yet, matching shadow's SUB_UID_MIN default.
+	subordinateRangeFloor = 100000
+)
+
+// nextSubordinateRangeStart reads the machine's own allocation files and
+// answers the first identifier above every range they already name.
+//
+// The files are the authority, not a counter of this product: whoever
+// allocated before — shadow for an ordinary user, an administrator by hand —
+// their ranges are what a new one must not overlap.
+func nextSubordinateRangeStart(paths ...string) (uint64, error) {
+	var start uint64 = subordinateRangeFloor
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return 0, fmt.Errorf("read %s: %w", path, err)
+		}
+		for _, line := range strings.Split(string(content), "\n") {
+			fields := strings.Split(strings.TrimSpace(line), ":")
+			if len(fields) != 3 {
+				continue
+			}
+			first, firstErr := strconv.ParseUint(fields[1], 10, 64)
+			count, countErr := strconv.ParseUint(fields[2], 10, 64)
+			if firstErr != nil || countErr != nil {
+				continue
+			}
+			if end := first + count; end > start {
+				start = end
+			}
+		}
+	}
+	return start, nil
+}
+
 // EnableLinger keeps that account's systemd user manager running without a
 // session, which is what carries an approved state across a reboot.
+//
+// loginctl answers before logind has created the account's runtime directory,
+// and everything that runs as the account next — the engine, the user unit
+// manager — needs that directory to exist. Returning early would hand the
+// caller a linger that is enabled and unusable, so this waits, bounded, for
+// the state it announced; a machine that never produces it is named instead
+// of retried forever.
 func (executor SystemExecutor) EnableLinger(account string) error {
-	_, err := executor.run(commandTimeout, "loginctl", "enable-linger", account)
-	return err
+	if _, err := executor.run(commandTimeout, "loginctl", "enable-linger", account); err != nil {
+		return err
+	}
+	entry, err := user.Lookup(account)
+	if err != nil {
+		return fmt.Errorf("the account %s does not exist on this machine", account)
+	}
+	runtimeDirectory := "/run/user/" + entry.Uid
+	deadline := time.Now().Add(lingerReadyTimeout)
+	for {
+		if info, statErr := os.Stat(runtimeDirectory); statErr == nil && info.IsDir() {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("linger is enabled for %s but %s never appeared within %s",
+				account, runtimeDirectory, lingerReadyTimeout)
+		}
+		time.Sleep(lingerReadyPollInterval)
+	}
 }
 
 // ReadUnitFile reads the sheet, and reports its absence as an answer.
@@ -235,8 +327,11 @@ func (executor SystemExecutor) ContainerImage(account, container string) (string
 		"podman", "container", "inspect", "--format", "{{.ImageName}}", container)
 	if err != nil {
 		// An absent container is an answer; an engine that could not be asked is
-		// not, and is never reported as an absence.
-		if strings.Contains(strings.ToLower(output), "no such container") {
+		// not, and is never reported as an absence. The engine names the absence
+		// on its error stream, which runAs carries inside the error, so the
+		// error text is what holds the answer — proven in the LAB when reading
+		// it from standard output alone turned every absence into a failure.
+		if strings.Contains(strings.ToLower(err.Error()), "no such container") {
 			return "", nil
 		}
 		return "", err
@@ -281,14 +376,26 @@ func (executor SystemExecutor) ProbeAnswers(port int) error {
 }
 
 // run executes one fixed argument vector as root, with a replaced environment.
+//
+// The working directory is fixed rather than inherited: a forced SSH command
+// starts wherever the caller's account lives, and what runs here must behave
+// identically wherever the Auxiliary was launched from.
+//
+// Only standard output is returned. A program that answers on stdout while
+// warning on stderr has still answered, and a caller comparing the answer to an
+// expected value must not have that comparison falsified by a warning. The
+// stderr text travels in the error instead, where a human reads it.
 func (executor SystemExecutor) run(timeout time.Duration, name string, arguments ...string) (string, error) {
 	execution, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	command := exec.CommandContext(execution, name, arguments...)
+	command.Dir = "/"
 	command.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-	output, err := command.CombinedOutput()
+	var errorOutput strings.Builder
+	command.Stderr = &errorOutput
+	output, err := command.Output()
 	if err != nil {
-		return string(output), fmt.Errorf("%s failed: %w", name, err)
+		return string(output), fmt.Errorf("%s failed: %w: %s", name, err, strings.TrimSpace(errorOutput.String()))
 	}
 	return string(output), nil
 }
@@ -310,6 +417,12 @@ func (executor SystemExecutor) runAs(account string, timeout time.Duration, name
 	defer cancel()
 	command := exec.CommandContext(execution, "runuser",
 		append([]string{"-u", account, "--", name}, arguments...)...)
+	// The working directory is fixed for the same reason as in run, and it is
+	// load-bearing here: a rootless engine re-executes itself inside the user
+	// namespace and chdir()s to the inherited directory, which the probe
+	// account has no right to read when the Auxiliary was launched from
+	// root's home — the exact situation a forced SSH command produces.
+	command.Dir = "/"
 	command.Env = []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=" + entry.HomeDir,
@@ -317,9 +430,11 @@ func (executor SystemExecutor) runAs(account string, timeout time.Duration, name
 		"XDG_RUNTIME_DIR=" + runtimeDirectory,
 		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDirectory + "/bus",
 	}
-	output, err := command.CombinedOutput()
+	var errorOutput strings.Builder
+	command.Stderr = &errorOutput
+	output, err := command.Output()
 	if err != nil {
-		return string(output), fmt.Errorf("%s failed for %s: %w", name, account, err)
+		return string(output), fmt.Errorf("%s failed for %s: %w: %s", name, account, err, strings.TrimSpace(errorOutput.String()))
 	}
 	return string(output), nil
 }

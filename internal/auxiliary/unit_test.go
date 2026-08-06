@@ -26,6 +26,7 @@ func TestTheQuadletSheetDeclaresOnlyTheControlsThisPalierOwes(t *testing.T) {
 		"ReadOnly=true",
 		"NoNewPrivileges=true",
 		"DropCapability=ALL",
+		"Sysctl=net.ipv4.ip_unprivileged_port_start=0",
 		"WantedBy=default.target",
 	} {
 		if !strings.Contains(sheet, line) {

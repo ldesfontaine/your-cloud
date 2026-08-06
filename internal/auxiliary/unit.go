@@ -73,6 +73,10 @@ func PinnedImage() string {
 //   - PublishPort binds the loopback address only, so nothing is exposed;
 //   - DropCapability=ALL and NoNewPrivileges leave the process with neither the
 //     capabilities of its user namespace nor a way to regain any;
+//   - Sysctl opens the low ports inside the container's own network namespace,
+//     because whoami listens on 80 there and a capability-stripped process may
+//     not bind it otherwise; the sysctl is scoped to that namespace and grants
+//     nothing on the host — proven blocking in the LAB before it was added;
 //   - ReadOnly makes the container's own filesystem unwritable, which the probe
 //     can afford because it keeps no data at all;
 //   - Pull=never keeps starting the service off the network: the one fetch this
@@ -94,6 +98,7 @@ Pull=never
 ReadOnly=true
 NoNewPrivileges=true
 DropCapability=ALL
+Sysctl=net.ipv4.ip_unprivileged_port_start=0
 
 [Service]
 Restart=on-failure
