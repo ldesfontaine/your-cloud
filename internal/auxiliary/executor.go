@@ -199,6 +199,46 @@ type Executor interface {
 	// a withdrawal removes, it removes one named effect at a time.
 	RemoveLinkInterface() error
 
+	// LinkRules, WriteLinkRules and RemoveLinkRules are the bounding table of the
+	// passage, and they are three methods rather than two for the reason the host
+	// ports policy is: what is on disk and what the kernel holds are one fact
+	// here, so persisting and applying are one effect and removing is its exact
+	// inverse.
+	//
+	// Writing replaces the root-owned file and loads it into the kernel in the
+	// same call, so a machine that has approved a junction is never running
+	// without the bounds it just wrote. Removing deletes the table from the
+	// kernel by its own name and then removes the file: it names one table, so
+	// every other table this machine carries — an administrator's firewall above
+	// all — is untouched. The content is rendered from constants and the one
+	// approved port, and never from anything else a plan carries.
+	LinkRules() ([]byte, bool, error)
+	WriteLinkRules(content []byte) error
+	RemoveLinkRules() error
+
+	// LinkLoopbackPolicy, WriteLinkLoopbackPolicy and RemoveLinkLoopbackPolicy
+	// are the one host relaxation a passage declares, on the initiator alone.
+	//
+	// They are the entrypoint's three methods again, over another file and
+	// another setting, and they behave identically: writing persists and applies,
+	// removing deletes the file and puts the kernel back to the value it carries
+	// when nothing has raised it. The setting is scoped to the passage's own
+	// interface, so what a removal puts back is scoped to it as well.
+	LinkLoopbackPolicy() ([]byte, bool, error)
+	WriteLinkLoopbackPolicy(content []byte) error
+	RemoveLinkLoopbackPolicy() error
+
+	// EnableLinkRulesAtBoot and DisableLinkRulesAtBoot decide whether the oneshot
+	// unit that puts the bounds back after a reboot runs at the next one.
+	//
+	// The unit file itself travels through the three file methods above, because
+	// it is exactly what they describe. What these two add is the one thing a
+	// file cannot say about itself: enabling makes the manager run it at boot
+	// without running it now, since the junction has already applied both files
+	// itself, and disabling takes that away before the file is removed.
+	EnableLinkRulesAtBoot() error
+	DisableLinkRulesAtBoot() error
+
 	// EnableNetworkManagement makes this machine's network manager run now and
 	// after a reboot, and ReloadNetworkConfiguration makes it read the passage's
 	// two files again.

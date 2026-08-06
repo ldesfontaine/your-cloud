@@ -434,6 +434,21 @@ func withdrawLink(executor Executor, subject instance) (*Application, bool, erro
 			LinkInterfaceName,
 		)
 	}
+	// The bounds are part of the same refusal, and not of the same reading: a
+	// machine whose peer is gone and whose table is still posed is a departure
+	// that stopped halfway, and withdrawing over it would leave a table, a unit
+	// and a host relaxation behind — which is exactly what this operation
+	// promises not to do. The departure's own approved plan takes them away.
+	bounded, err := linkBoundsLeftBehind(executor)
+	if err != nil {
+		return nil, false, err
+	}
+	if bounded {
+		return nil, false, fmt.Errorf(
+			"this machine still holds the bounds of a junction on %s: withdrawing the passage would leave them behind with nothing left to bound, so it is refused before any effect and the junction is undone by its own approved plan first",
+			LinkInterfaceName,
+		)
+	}
 	_, networkPresent, err := executor.ReadUnitFile(linkNetworkPath)
 	if err != nil {
 		return nil, false, fmt.Errorf("read the passage's current addressing: %w", err)
@@ -508,10 +523,16 @@ func withdrawLink(executor Executor, subject instance) (*Application, bool, erro
 // that a reader has to hold two versions of in their head.
 //
 // Everything that could refuse happens first and reads only: this machine has to
-// hold a prepared passage, and it has to hold it in the role this junction is
-// for. A junction written on a machine with no key and no interface would be a
-// peer attached to nothing, and it is refused by name while that machine is
-// still untouched.
+// hold a prepared passage, it has to hold it in the role this junction is for,
+// and — on the machine the service actually lives on — the approved port has to
+// be one a managed service of this machine publishes. A junction written on a
+// machine with no key and no interface would be a peer attached to nothing, and
+// it is refused by name while that machine is still untouched.
+//
+// What a junction writes beyond its peer is the bounds of the passage: the one
+// nftables table of this role, the host relaxation the initiator's redirection
+// needs, and the unit that puts both back at the next boot. They are posed
+// before the peer, and the whole of why is written where they are.
 func joinLinkPeer(executor Executor, subject instance) (*Application, bool, error) {
 	where, err := linkPlacementFor(subject.linkRole)
 	if err != nil {
@@ -545,6 +566,18 @@ func joinLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 			held.role, where.role,
 		)
 	}
+	// The bounding table of this palier and the rule that the service port must
+	// name a managed service present on the joined machine both live here, in
+	// this read-only stretch, beside the refusals above and before the first
+	// effect below. A port nothing manages is refused with this machine still
+	// untouched, exactly as a route towards one is.
+	if err := requireBoundedService(executor, where, subject.servicePort); err != nil {
+		return nil, false, err
+	}
+	bounds, err := readLinkBounds(executor, where, subject.servicePort)
+	if err != nil {
+		return nil, false, err
+	}
 	established, err := executor.LinkInterfaceActive()
 	if err != nil {
 		return nil, false, fmt.Errorf("read the current state of %s: %w", LinkInterfaceName, err)
@@ -556,18 +589,13 @@ func joinLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 	// a preparation carries an attached peer forward untouched — and not who is
 	// allowed to write a constant back where it belongs.
 
-	// `#97` owns the bounding tables of this palier and the rule that the service
-	// port must name a managed service present on the joined machine. Both belong
-	// here, in this read-only stretch, beside the refusals above and before the
-	// first effect below: subject.servicePort is carried this far for exactly
-	// that, and nothing of this flow has to be reshaped to hold them.
-
 	desiredNetdev := append(renderLinkNetdev(where),
 		renderLinkPeerSection(where, subject.peerPublicKey, subject.peerEndpointHost)...)
 	desiredNetwork := append(renderLinkNetwork(where), renderLinkRouteSection(where)...)
 
 	if bytes.Equal(currentNetdev, desiredNetdev) &&
 		networkPresent && bytes.Equal(currentNetwork, desiredNetwork) &&
+		bounds.held &&
 		established {
 		return &Application{
 			Operation:    subject.operation,
@@ -580,9 +608,15 @@ func joinLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 	// Everything below this line changes the machine.
 	const touched = true
 
-	// `#97` poses the bounding table here, before the peer exists rather than
-	// after it: a passage that carried anything at all before its bounds were
-	// posed would be a passage that was briefly unbounded.
+	// The bounds are posed here, before the peer exists rather than after it: a
+	// passage that carried anything at all before its bounds were posed would be
+	// a passage that was briefly unbounded. Their own order is fixed once, where
+	// they are written, and a table that drifted is reapplied from here — the
+	// whole file is rewritten, so reaching the approved bounds again is one
+	// application and never an accumulation.
+	if err := poseLinkBounds(executor, where, subject.servicePort); err != nil {
+		return nil, touched, err
+	}
 
 	if err := executor.WriteUnitFile(linkNetdevPath, desiredNetdev); err != nil {
 		return nil, touched, fmt.Errorf("write the peer of the passage: %w", err)
@@ -607,8 +641,13 @@ func joinLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 	}, touched, nil
 }
 
-// partLinkPeer detaches exactly the peer the approved plan names, and leaves the
-// passage itself standing.
+// partLinkPeer detaches exactly the peer the approved plan names together with
+// the bounds that peer was posed with, and leaves the passage itself standing.
+//
+// What it removes is the junction and nothing else: the table this junction
+// posed is deleted by its own name, so every other table this machine carries is
+// untouched, and the interface, the key, the machine's own address and its
+// network manager are exactly where they were.
 //
 // An absent peer is not a failure and not a repair: it is the approved state,
 // already held, and nothing is touched to announce it. A peer that is there but
@@ -631,8 +670,17 @@ func partLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 	}
 	peer := sectionAfter(currentNetdev, netdevPresent, linkPeerSectionMarker)
 	route := sectionAfter(currentNetwork, networkPresent, linkRouteSectionMarker)
+	bounds, err := readLinkBounds(executor, where, subject.servicePort)
+	if err != nil {
+		return nil, false, err
+	}
 
-	if len(peer) == 0 && len(route) == 0 {
+	// The bounds are part of what a departure undoes, so they are part of what
+	// decides that there is nothing to undo. A machine holding no peer and a
+	// table somebody left behind is not the approved state: it is a drift, and
+	// the departure takes the leftovers away rather than announcing that all is
+	// well.
+	if len(peer) == 0 && len(route) == 0 && !bounds.present() {
 		return &Application{
 			Operation:    subject.operation,
 			UnitPath:     linkNetdevPath,
@@ -651,7 +699,11 @@ func partLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 			where.role,
 		)
 	}
-	if !bytes.Contains(peer, []byte("\nPublicKey="+subject.peerPublicKey+"\n")) {
+	// The peer is held against the one the plan names only where there is a peer
+	// to hold: a machine that has already lost its peer and still carries the
+	// bounds of it is undone by this plan, and refusing it for a peer that is not
+	// there would leave a table nothing would ever take away.
+	if len(peer) != 0 && !bytes.Contains(peer, []byte("\nPublicKey="+subject.peerPublicKey+"\n")) {
 		return nil, false, fmt.Errorf(
 			"this machine holds another peer than the one the approved plan names: undoing it would take away a junction no human approved the removal of, so it is refused before any effect",
 		)
@@ -659,9 +711,6 @@ func partLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 
 	// Everything below this line changes the machine.
 	const touched = true
-
-	// `#97` removes the bounding table here, with the junction it was posed for
-	// and with nothing else.
 
 	if err := executor.WriteUnitFile(linkNetdevPath, renderLinkNetdev(where)); err != nil {
 		return nil, touched, fmt.Errorf("remove the peer of the passage: %w", err)
@@ -671,6 +720,16 @@ func partLinkPeer(executor Executor, subject instance) (*Application, bool, erro
 	}
 	if err := executor.ReloadNetworkConfiguration(); err != nil {
 		return nil, touched, fmt.Errorf("make the network manager read the detachment: %w", err)
+	}
+	// The bounds are removed here, once the peer is gone and not before it. `#96`
+	// pencilled this seam at the head of this stretch and it is written below it
+	// instead, for the reason the junction poses them before its peer: bounds
+	// removed first would leave a peer that nothing bounds for as long as the
+	// detachment takes, which is the one state neither operation may pass
+	// through. What a departure cuts by removing them last is an established
+	// service flow whose peer has already stopped being reachable.
+	if err := removeLinkBounds(executor, bounds); err != nil {
+		return nil, touched, err
 	}
 	return &Application{
 		Operation:    subject.operation,
@@ -693,6 +752,7 @@ func observeLink(executor Executor) Observation {
 		LinkKey:       observedUnknown,
 		LinkInterface: observedUnknown,
 		LinkPeer:      observedUnknown,
+		LinkBounds:    observedUnknown,
 	}
 	if content, present, err := executor.ReadUnitFile(linkNetdevPath); err == nil {
 		observed.UnitFile = observedAbsent
@@ -714,6 +774,16 @@ func observeLink(executor Executor) Observation {
 		observed.LinkInterface = observedInactive
 		if established {
 			observed.LinkInterface = observedActive
+		}
+	}
+	// The bounds are read as one word for the three files they are made of, and
+	// the word is deliberately the widest of the three: anything of them still
+	// there is a passage this machine is still bounding, and a human reading this
+	// needs to know that something is left rather than which file it is.
+	if bounded, err := linkBoundsLeftBehind(executor); err == nil {
+		observed.LinkBounds = observedAbsent
+		if bounded {
+			observed.LinkBounds = observedPresent
 		}
 	}
 	return observed

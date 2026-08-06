@@ -116,13 +116,18 @@ type Observation struct {
 	// Fragment is filled only while the instance that was being applied is a
 	// route, because it is the only instance whose state is a fragment file.
 	Fragment string `json:"fragment,omitempty"`
-	// LinkKey, LinkInterface and LinkPeer are filled only for a passage. The key
-	// is reported present or absent and never by its value: the public half would
-	// say more than an observation needs, and the private half is not something
-	// any function of this package can reach.
+	// LinkKey, LinkInterface, LinkPeer and LinkBounds are filled only for a
+	// passage. The key is reported present or absent and never by its value: the
+	// public half would say more than an observation needs, and the private half
+	// is not something any function of this package can reach. The bounds are
+	// reported the same way and for the reason the peer is: after a rollback that
+	// failed in its turn, whether this machine is left holding a peer nothing
+	// bounds — or bounds with nothing left to bound — is exactly what a human has
+	// to read, and neither can be inferred from the other.
 	LinkKey       string `json:"link_key,omitempty"`
 	LinkInterface string `json:"link_interface,omitempty"`
 	LinkPeer      string `json:"link_peer,omitempty"`
+	LinkBounds    string `json:"link_bounds,omitempty"`
 }
 
 // ControlledFailure is a failure that happened after this machine had already
@@ -178,10 +183,11 @@ func (failure *ControlledFailure) Error() string {
 	if failure.Observed.LinkKey != "" {
 		return fmt.Sprintf(
 			"%s failed after this machine was changed (%v): the approved rollback was attempted and failed in its turn (%v): "+
-				"this machine is left in a partial state, observed as description %s, key %s, interface %s, peer %s",
+				"this machine is left in a partial state, observed as description %s, key %s, interface %s, peer %s, bounds %s",
 			failure.Operation, failure.Cause, failure.Rollback,
 			failure.Observed.UnitFile, failure.Observed.LinkKey,
 			failure.Observed.LinkInterface, failure.Observed.LinkPeer,
+			failure.Observed.LinkBounds,
 		)
 	}
 	return fmt.Sprintf(

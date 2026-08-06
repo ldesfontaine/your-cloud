@@ -854,6 +854,121 @@ func (executor SystemExecutor) RemoveLinkInterface() error {
 	return err
 }
 
+// LinkRules reads the bounding table this machine holds on disk, and reports its
+// absence as an answer.
+func (executor SystemExecutor) LinkRules() ([]byte, bool, error) {
+	return executor.ReadUnitFile(linkRulesPath)
+}
+
+// WriteLinkRules persists the bounding table and loads it into the kernel.
+//
+// The two halves are one effect for the reason the host ports policy is: a file
+// alone would only bound the passage at the next boot, so a machine that had
+// just joined a peer would be carrying a passage it had not yet bounded, and a
+// table loaded alone would be gone at that boot. The file is loaded by its own
+// path rather than by re-reading anything else, and what it contains makes
+// loading it twice mean the same as loading it once.
+func (executor SystemExecutor) WriteLinkRules(content []byte) error {
+	if err := executor.WriteUnitFile(linkRulesPath, content); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, nftProgram, "--file", linkRulesPath)
+	return err
+}
+
+// RemoveLinkRules takes the bounding table out of the kernel and then off the
+// disk, and names exactly one table while doing it.
+//
+// The table is added before it is deleted, which is the idiom the file itself
+// opens with and is here for the same reason: adding is what makes the deletion
+// succeed whether or not this machine was holding the table, and an added table
+// with no chain in it filters nothing at all, so the two calls together have no
+// instant in which this machine behaves differently than it would have. Every
+// other table this machine carries — an administrator's own firewall above all —
+// is never named and therefore never touched.
+func (executor SystemExecutor) RemoveLinkRules() error {
+	if _, err := executor.run(commandTimeout, nftProgram,
+		"add", "table", linkTableFamily, linkTableName); err != nil {
+		return err
+	}
+	if _, err := executor.run(commandTimeout, nftProgram,
+		"delete", "table", linkTableFamily, linkTableName); err != nil {
+		return err
+	}
+	return executor.RemoveUnitFile(linkRulesPath)
+}
+
+// LinkLoopbackPolicy reads the one host relaxation a junction declares.
+func (executor SystemExecutor) LinkLoopbackPolicy() ([]byte, bool, error) {
+	return executor.ReadUnitFile(linkLoopbackPolicyPath)
+}
+
+// WriteLinkLoopbackPolicy persists that relaxation and applies it immediately.
+//
+// It applies exactly the file it just wrote rather than re-reading everything
+// this machine holds under /etc/sysctl.d, which is where it departs from the
+// entrypoint's own policy: the setting names an interface, so it must fail
+// loudly on a machine where that interface is not there, and an unrelated file
+// somebody else owns has no business deciding whether a junction succeeded. The
+// same command is what the boot unit runs, so a machine coming back from a
+// reboot passes through this exact state by this exact path.
+func (executor SystemExecutor) WriteLinkLoopbackPolicy(content []byte) error {
+	if err := executor.WriteUnitFile(linkLoopbackPolicyPath, content); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, sysctlProgram, "--quiet", "--load", linkLoopbackPolicyPath)
+	return err
+}
+
+// RemoveLinkLoopbackPolicy removes the file and puts the kernel back to the
+// value it carries when nothing has raised it.
+//
+// The setting is put back by name because sysctl has no "forget this line", and
+// unknown keys are ignored because the interface the key names may already be
+// gone by the time a passage is dismantled — an absent interface is an answer
+// here and not a failure. Nothing else of this machine's policy is re-read: what
+// this product takes away is exactly what this product put there.
+func (executor SystemExecutor) RemoveLinkLoopbackPolicy() error {
+	if err := executor.RemoveUnitFile(linkLoopbackPolicyPath); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, sysctlProgram, "--ignore", "--write",
+		linkRouteLocalnetKey+"="+strconv.Itoa(defaultRouteLocalnet))
+	return err
+}
+
+// defaultRouteLocalnet is the value a Linux interface carries when nothing has
+// raised it, and the one a dismantled junction puts back.
+const defaultRouteLocalnet = 0
+
+// EnableLinkRulesAtBoot makes the oneshot unit run at the next boot, and not
+// now.
+//
+// The manager is made to read the file first, because it was written moments
+// ago. What is deliberately not done is starting the unit: the junction has
+// already applied both files itself, and running them again would be a second
+// application of a state this machine already holds.
+func (executor SystemExecutor) EnableLinkRulesAtBoot() error {
+	if _, err := executor.run(commandTimeout, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, "systemctl", "enable", linkRulesUnitName)
+	return err
+}
+
+// DisableLinkRulesAtBoot takes that away, while the unit file is still there.
+//
+// The order is not a detail: a manager asked to disable a unit whose file has
+// already been removed cannot read the [Install] section that says what to
+// remove, so the enablement is undone first and the file goes afterwards.
+func (executor SystemExecutor) DisableLinkRulesAtBoot() error {
+	if _, err := executor.run(commandTimeout, "systemctl", "disable", linkRulesUnitName); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, "systemctl", "daemon-reload")
+	return err
+}
+
 // EnableNetworkManagement makes systemd-networkd run now and after a reboot.
 //
 // It is one command rather than two because the two halves are one effect, for

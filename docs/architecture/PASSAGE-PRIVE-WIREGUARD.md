@@ -1,6 +1,8 @@
 # Passage privé WireGuard borné au service
 
-> Statut : proposition de contrat pour le palier `#16`, suivie par `#93`.
+> Statut : proposition de contrat pour le palier `#16`, suivie par `#93`, dont
+> l'application est portée par `#96` (cycle de vie WireGuard) et `#97` (bornes
+> `nftables`, règle de présence et matrice des refus).
 > Il étend le contrat du plan aux opérations de lien entre deux machines
 > enrôlées, fixe le sort des clés, les constantes du scénario de référence et
 > les règles qui bornent le passage au seul service approuvé. Rien ici n'est
@@ -244,3 +246,102 @@ clés, interface, pairs, idempotence, rollback, refus. Les tables `nftables`, la
 règle de présence du `service_port` et la matrice complète des refus du palier
 sont `#97`, et les points de couture sont nommés dans le flux des jonctions —
 les règles se posent avant que le pair existe et se retirent avec lui.
+
+## Addendum d'application : comment les bornes tiennent vraiment (`#97`)
+
+Le contrat dit ce que le passage a le droit de porter. Cet addendum dit par quel
+mécanisme la machine le tient, parce que cinq décisions d'application ne se
+déduisent pas du texte ci-dessus et qu'une d'elles ajoute une relaxation d'hôte
+qu'il faut nommer.
+
+**Une table nommée, posée par la jonction, appliquée en même temps qu'écrite.**
+Chaque jonction écrit `/etc/your-cloud/link/rules.nft`, root-owned comme la clé,
+et le charge dans le noyau dans le même effet — un fichier seul ne bornerait
+qu'au prochain démarrage, une table seule disparaîtrait à ce démarrage. Le
+fichier s'ouvre sur `add table` / `delete table` / définition complète : ajouter
+ne fait rien quand la table est déjà là, ce qui garantit que la suppression
+réussit, et la définition réécrit tout. Recharger deux fois vaut recharger une
+fois, et une dérive est réappliquée entière plutôt que cumulée. Le retrait
+supprime **la table par son nom** puis le fichier : le pare-feu qu'une machine
+tient par ailleurs n'est jamais nommé, donc jamais touché.
+
+**Cette table ne peut qu'enlever, jamais donner.** Ses chaînes de base ont une
+politique `accept` et ne coupent que ce qui entre ou sort par `yc-link0`. Ce
+n'est pas une facilité d'écriture : deux tables au même hook se traversent
+toutes les deux, donc une politique `drop` ici déciderait pour tout le reste de
+la machine — SSH compris — et un `accept` ici n'ouvre rien que la machine ne
+faisait déjà. Une conséquence est écrite dans le fichier et tenue par un test :
+**aucune règle sans portée d'interface**, sauf une. Cette exception est
+l'`accept` de l'UDP `51820` de l'écouteur ; elle ne donne aucun droit et elle
+existe pour que le seul port public que le passage ajoute à cette machine se
+lise dans le jeu de règles de la machine, à côté du reste du passage, plutôt que
+de se déduire d'une socket. Ce produit ne tient aucun pare-feu d'hôte, et cette
+table n'en est pas un.
+
+**Une redirection sur l'initiateur, et pourquoi elle est le moindre
+élargissement.** Un service géré publie sur `127.0.0.1` et sur rien d'autre :
+c'est une constante des fiches de service, et c'est elle qui est portante. Le
+trafic du tunnel arrive pourtant sur `10.66.66.2`, où rien n'écoute. Deux
+réponses étaient possibles : faire écouter les services sur l'adresse du tunnel,
+ce qui élargirait **chaque** fiche de service au bénéfice d'un seul lien ; ou
+rediriger, sur la seule machine concernée et pour le seul port approuvé. C'est
+la seconde qui est retenue. La table de l'initiateur porte donc une chaîne
+`nat prerouting` qui envoie `iif yc-link0`, `saddr 10.66.66.1`, `tcp dport
+service_port` vers `127.0.0.1:service_port`, et rien d'autre.
+
+Le noyau refuse de router vers une adresse de loopback depuis une interface
+réelle tant qu'on ne le lui permet pas, donc cette redirection exige
+`net.ipv4.conf.yc-link0.route_localnet=1`. Le réglage est **porté par
+l'interface du passage et jamais par `all`** : toutes les autres interfaces de
+la machine, celle du LAN en premier, continuent de refuser une destination
+loopback. Il est écrit dans `/etc/sysctl.d/your-cloud-link.conf`, posé avec la
+jonction et retiré avec elle, exactement comme la politique de ports de l'entrée
+publique — même forme, même discipline, même retrait qui remet la valeur par
+défaut par son nom.
+
+**Le résidu est nommé plutôt que tu.** `route_localnet` sur `yc-link0` autorise
+le pair du tunnel à atteindre le `127.0.0.1` de la machine du LAN — **sur le
+seul port redirigé**. Deux couches indépendantes le tiennent, et aucune ne
+couvre pour l'autre : la redirection choisit la destination et ne redirige que
+le port approuvé, donc tout autre port garde une destination où rien ne répond ;
+et la chaîne de filtrage, séparément, n'accepte que `tcp dport service_port`
+depuis `10.66.66.1` et jette le reste. Les deux sont éprouvées séparément.
+
+**La persistance au redémarrage est une unité oneshot déclarée par le plan.**
+Ni la table ni le réglage ne survivent seuls à un redémarrage, et le mécanisme
+habituel ne suffit pas ici : `/etc/sysctl.d` est lu par `systemd-sysctl` bien
+avant qu'un gestionnaire de réseau ait créé l'interface, donc une ligne portée
+par `yc-link0` s'y appliquerait à rien. Une unité `your-cloud-link-rules.service`
+— `Type=oneshot`, ordonnée après `systemd-networkd` — applique les deux
+fichiers, dans l'ordre où la jonction les a appliqués. Elle est écrite et activée
+par la jonction et retirée par le départ : c'est un effet déclaré du plan, comme
+la politique d'hôte de l'entrée, et non une étape d'amorçage. C'est ce qui rend
+le critère 7 vrai des règles et pas seulement du tunnel.
+
+**Les bornes se posent avant le pair et se retirent après lui.** L'ordre est
+l'argument entier : à l'aller, la relaxation puis la table puis l'unité, et
+seulement ensuite le pair — pendant toute cette suite l'interface n'a aucun pair,
+donc le passage ne porte rien. Au retour, l'inverse exact : le pair d'abord, puis
+l'unité, la table et la relaxation. Retirer les bornes en premier laisserait un
+pair que rien ne borne pendant la durée du détachement, ce qui est le seul état
+qu'aucune des deux opérations n'a le droit de traverser ; les retirer en dernier
+ne coupe qu'un flux établi vers un pair déjà injoignable.
+
+**La règle de présence est asymétrique, et c'est voulu.** Sur la machine du
+service — l'initiateur du scénario de référence — le `service_port` doit nommer
+le port loopback d'un service géré dont cette machine tient la fiche, lu comme
+la route du palier `#15` le lit, et refusé avant tout effet sinon. L'écouteur
+n'a aucun service local à nommer : le lui demander refuserait toutes les
+jonctions correctes. Ce qui le borne est que le port qu'il peut atteindre est
+celui que l'humain a approuvé sur les deux plans.
+
+**Ce qu'aucune jonction ne peut nommer.** L'adresse qu'une règle atteint est la
+constante du rôle opposé. Aucun champ d'aucun document de ce contrat ne la
+nomme, donc une jonction dont les règles viseraient un autre destinataire n'est
+pas un refus à écrire : c'est un document qui n'existe pas.
+
+**Ce que la preuve machine `#98` doit encore constater.** Que le fichier de
+règles est bien rechargé au démarrage par son unité ; que la redirection vers le
+loopback fonctionne réellement à travers le tunnel ; que `route_localnet` est
+bien porté par la seule interface du passage ; et ce qu'un flux établi devient
+quand les règles sont retirées.

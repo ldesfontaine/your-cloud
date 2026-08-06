@@ -385,6 +385,29 @@ type fakeExecutor struct {
 	linkInterfaceRemovals int
 	networkEnablings      int
 	networkReloads        int
+	// nftTables is this fake machine's kernel, as far as nftables is concerned:
+	// one entry per table it holds. It is keyed by the family and the name
+	// together, because that is what an effect of this package names, and it is
+	// seeded with a table of somebody else's in the cases that prove a removal
+	// takes away one table and never a ruleset.
+	nftTables map[string][]byte
+	// linkRules is the file the bounds live in on disk, and linkRuleApplications
+	// counts how many times a run made the kernel read it — an application that
+	// wrote the file without loading it would leave the two disagreeing, which is
+	// exactly what the seam exists to prevent.
+	linkRules            []byte
+	linkRulesPresent     bool
+	linkRuleApplications int
+	// linkPolicy is the interface-scoped host relaxation, held exactly as the
+	// entrypoint's own policy is.
+	linkPolicy             []byte
+	linkPolicyPresent      bool
+	linkPolicyApplications int
+	// linkRulesAtBoot is whether the oneshot unit would run at the next boot, and
+	// the two counters say how many times a run decided it.
+	linkRulesAtBoot    bool
+	linkBootEnablings  int
+	linkBootDisablings int
 }
 
 func newFakeExecutor() *fakeExecutor {
@@ -394,6 +417,7 @@ func newFakeExecutor() *fakeExecutor {
 		failures:     map[string]error{},
 		tolerated:    map[string]int{},
 		calls:        map[string]int{},
+		nftTables:    map[string][]byte{},
 	}
 }
 
@@ -696,6 +720,96 @@ func (executor *fakeExecutor) RemoveLinkInterface() error {
 	}
 	executor.linkInterfaceRemovals++
 	executor.linkActive = false
+	return nil
+}
+
+// LinkRules, WriteLinkRules and RemoveLinkRules hold the bounds the way the real
+// machine does: the file and the kernel are written together and removed
+// together, and the removal names one table.
+func (executor *fakeExecutor) LinkRules() ([]byte, bool, error) {
+	executor.reads = append(executor.reads, "LinkRules")
+	if err := executor.fail("LinkRules"); err != nil {
+		return nil, false, err
+	}
+	if !executor.linkRulesPresent {
+		return nil, false, nil
+	}
+	return executor.linkRules, true, nil
+}
+
+func (executor *fakeExecutor) WriteLinkRules(content []byte) error {
+	executor.effects = append(executor.effects, "WriteLinkRules")
+	if err := executor.fail("WriteLinkRules"); err != nil {
+		return err
+	}
+	executor.linkRules = content
+	executor.linkRulesPresent = true
+	executor.linkRuleApplications++
+	executor.nftTables[linkTableFamily+" "+linkTableName] = content
+	return nil
+}
+
+func (executor *fakeExecutor) RemoveLinkRules() error {
+	executor.effects = append(executor.effects, "RemoveLinkRules")
+	if err := executor.fail("RemoveLinkRules"); err != nil {
+		return err
+	}
+	executor.linkRules = nil
+	executor.linkRulesPresent = false
+	delete(executor.nftTables, linkTableFamily+" "+linkTableName)
+	return nil
+}
+
+func (executor *fakeExecutor) LinkLoopbackPolicy() ([]byte, bool, error) {
+	executor.reads = append(executor.reads, "LinkLoopbackPolicy")
+	if err := executor.fail("LinkLoopbackPolicy"); err != nil {
+		return nil, false, err
+	}
+	if !executor.linkPolicyPresent {
+		return nil, false, nil
+	}
+	return executor.linkPolicy, true, nil
+}
+
+func (executor *fakeExecutor) WriteLinkLoopbackPolicy(content []byte) error {
+	executor.effects = append(executor.effects, "WriteLinkLoopbackPolicy")
+	if err := executor.fail("WriteLinkLoopbackPolicy"); err != nil {
+		return err
+	}
+	executor.linkPolicy = content
+	executor.linkPolicyPresent = true
+	executor.linkPolicyApplications++
+	return nil
+}
+
+func (executor *fakeExecutor) RemoveLinkLoopbackPolicy() error {
+	executor.effects = append(executor.effects, "RemoveLinkLoopbackPolicy")
+	if err := executor.fail("RemoveLinkLoopbackPolicy"); err != nil {
+		return err
+	}
+	executor.linkPolicy = nil
+	executor.linkPolicyPresent = false
+	executor.linkPolicyApplications++
+	return nil
+}
+
+func (executor *fakeExecutor) EnableLinkRulesAtBoot() error {
+	executor.effects = append(executor.effects, "EnableLinkRulesAtBoot")
+	if err := executor.fail("EnableLinkRulesAtBoot"); err != nil {
+		return err
+	}
+	executor.linkBootEnablings++
+	executor.linkRulesAtBoot = true
+	return nil
+}
+
+func (executor *fakeExecutor) DisableLinkRulesAtBoot() error {
+	executor.effects = append(executor.effects, "DisableLinkRulesAtBoot")
+	if err := executor.fail("DisableLinkRulesAtBoot"); err != nil {
+		return err
+	}
+	executor.linkBootDisablings++
+	executor.linkRulesAtBoot = false
 	return nil
 }
 
@@ -1103,6 +1217,12 @@ func linkMachine() *fakeExecutor {
 // preparedLinkMachine is a machine already holding exactly one prepared side of
 // the passage: its own key, both files as the role describes them, and the
 // interface up.
+//
+// The initiator carries one thing more, and it is not decoration: it is the
+// machine the service lives on in the reference scenario, so it holds the sheet
+// of the managed service its junction will be bounded to. A machine without it
+// is a machine whose junction is refused by the presence rule, which is a case
+// of its own rather than the nominal one.
 func preparedLinkMachine(role string) *fakeExecutor {
 	where := linkPlacements[role]
 	executor := linkMachine()
@@ -1112,11 +1232,19 @@ func preparedLinkMachine(role string) *fakeExecutor {
 	executor.hold(linkNetdevPath, renderLinkNetdev(where))
 	executor.hold(linkNetworkPath, renderLinkNetwork(where))
 	executor.linkActive = true
+	if where.goesOut {
+		executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort))
+	}
 	return executor
 }
 
-// joinedLinkMachine is that same machine with the one approved peer attached,
-// exactly as the junction plan of its own role describes it.
+// joinedLinkMachine is that same machine with the one approved peer attached and
+// the bounds that peer was posed with, exactly as the junction plan of its own
+// role describes them.
+//
+// It also carries a table of somebody else's, so that every case asserting what
+// a departure removes is asserting it against a machine that has a ruleset to
+// damage.
 func joinedLinkMachine(role string) *fakeExecutor {
 	where := linkPlacements[role]
 	executor := preparedLinkMachine(role)
@@ -1124,5 +1252,20 @@ func joinedLinkMachine(role string) *fakeExecutor {
 		renderLinkPeerSection(where, fixturePeerPublicKey, fixtureEndpointHost)...))
 	executor.hold(linkNetworkPath, append(renderLinkNetwork(where),
 		renderLinkRouteSection(where)...))
+	executor.nftTables[foreignTable] = []byte("table " + foreignTable + " { }")
+	executor.linkRules = renderLinkRules(where, fixturePort)
+	executor.linkRulesPresent = true
+	executor.nftTables[linkTableFamily+" "+linkTableName] = executor.linkRules
+	executor.hold(linkRulesUnitPath, renderLinkRulesUnit())
+	executor.linkRulesAtBoot = true
+	if where.goesOut {
+		executor.linkPolicy = renderLinkLoopbackPolicy()
+		executor.linkPolicyPresent = true
+	}
 	return executor
 }
+
+// foreignTable is a table this product never wrote and must never remove: it is
+// how "retirer la jonction retire la table et rien d'autre" is held against a
+// machine rather than against a sentence.
+const foreignTable = "inet somebody-elses-firewall"

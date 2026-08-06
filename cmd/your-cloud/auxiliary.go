@@ -372,6 +372,7 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 			{"link key", report.Observed.LinkKey},
 			{"link interface", report.Observed.LinkInterface},
 			{"link peer", report.Observed.LinkPeer},
+			{"link bounds", report.Observed.LinkBounds},
 		} {
 			if word[1] == "" {
 				continue

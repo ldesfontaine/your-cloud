@@ -145,31 +145,51 @@ func managedProfiles() []string {
 	return profiles
 }
 
-// requireManagedBackend holds the contract's own sentence — a backend port
-// "doit nommer le port loopback d'un service géré présent" — against this
-// machine, before anything is written.
+// publishesLoopbackPort answers whether a managed service of this machine
+// publishes one loopback port, reading only.
 //
 // The question is answered from the sheets this Auxiliary itself wrote and not
-// from a socket that happens to be listening: what a route may be published
-// towards is a managed service of this machine, described by a plan a human
-// approved, and not whatever process got to the port first. A port nothing
-// manages is refused here, with nothing touched.
-func requireManagedBackend(executor Executor, backendPort int) error {
-	published := "PublishPort=" + loopbackAddress + ":" + strconv.Itoa(backendPort) + ":"
+// from a socket that happens to be listening: what may be named is a managed
+// service of this machine, described by a plan a human approved, and not
+// whatever process got to the port first.
+//
+// It is the presence rule of the palier `#15` as a fact rather than as a
+// refusal, because two contracts now hold that same sentence against a machine
+// — the route the entry publishes and the passage's bounded service — and each
+// of them refuses in its own words. The reading is here, once; the sentence a
+// human is given belongs to the caller.
+func publishesLoopbackPort(executor Executor, port int) (bool, error) {
+	published := "PublishPort=" + loopbackAddress + ":" + strconv.Itoa(port) + ":"
 	for _, profile := range managedProfiles() {
 		where := profilePlacements[profile]
 		sheet, present, err := executor.ReadUnitFile(where.unitPath())
 		if err != nil {
-			return fmt.Errorf("read the sheet of the %s profile: %w", profile, err)
+			return false, fmt.Errorf("read the sheet of the %s profile: %w", profile, err)
 		}
 		if !present {
 			continue
 		}
 		for _, line := range strings.Split(string(sheet), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), published) {
-				return nil
+				return true, nil
 			}
 		}
+	}
+	return false, nil
+}
+
+// requireManagedBackend holds the contract's own sentence — a backend port
+// "doit nommer le port loopback d'un service géré présent" — against this
+// machine, before anything is written.
+//
+// A port nothing manages is refused here, with nothing touched.
+func requireManagedBackend(executor Executor, backendPort int) error {
+	published, err := publishesLoopbackPort(executor, backendPort)
+	if err != nil {
+		return err
+	}
+	if published {
+		return nil
 	}
 	return fmt.Errorf(
 		"no managed service of this machine publishes %s:%d: a route towards a port nothing manages is refused before any effect",

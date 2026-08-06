@@ -3,8 +3,9 @@ package auxiliary
 // This file is everything the private passage is on a machine, held against the
 // contract that describes it: the key that is generated once and never again,
 // the two files a role decides every byte of, the single peer a junction
-// attaches, the refusals that keep the four plans in their order, and the
-// conduct of a failure that happened after the first effect.
+// attaches, the one table that bounds what the passage may carry, the refusals
+// that keep the four plans in their order, and the conduct of a failure that
+// happened after the first effect.
 //
 // One property runs through all of it and is proven on its own at the end: no
 // operation of this passage, successful or failed, ever carries private
@@ -13,6 +14,7 @@ package auxiliary
 // something really did carry the private half.
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -230,7 +232,13 @@ func TestTheListenersJunctionAttachesOnePeerBoundedToItsOwnAddress(t *testing.T)
 	if !application.Changed || application.ServiceState != ServiceStateActive {
 		t.Fatalf("the junction announced no change: %+v", application)
 	}
-	expected := []string{"WriteUnitFile", "WriteUnitFile", "ReloadNetworkConfiguration"}
+	// The bounds are posed before the peer is written, and the peer is written
+	// before the manager is asked to read anything: the listener holds no host
+	// relaxation, because it redirects nothing.
+	expected := []string{
+		"WriteLinkRules", "WriteUnitFile", "EnableLinkRulesAtBoot",
+		"WriteUnitFile", "WriteUnitFile", "ReloadNetworkConfiguration",
+	}
 	if strings.Join(executor.effects, ",") != strings.Join(expected, ",") {
 		t.Fatalf("unexpected effects: %q", executor.effects)
 	}
@@ -346,6 +354,482 @@ func TestADepartureTakesThePeerAwayAndLeavesThePassageStanding(t *testing.T) {
 		if executor.networkReloads != 1 {
 			t.Fatalf("the %s's departure reloaded the manager %d times", role, executor.networkReloads)
 		}
+	}
+}
+
+// TestAJunctionPosesItsBoundsBeforeThePeerAndADepartureRemovesThemAfterIt is the
+// order this palier's whole safety argument rests on, read on both roles.
+//
+// A passage that carried anything before its bounds were posed would have been
+// briefly unbounded, and a peer left standing after its bounds were removed
+// would be unbounded for as long as the detachment takes. So the bounds come
+// first on the way in and last on the way out, and the two sequences below are
+// exact inverses of one another.
+func TestAJunctionPosesItsBoundsBeforeThePeerAndADepartureRemovesThemAfterIt(t *testing.T) {
+	t.Parallel()
+	for role, expected := range map[string][]string{
+		plan.LinkRoleListener: {
+			"WriteLinkRules", "WriteUnitFile", "EnableLinkRulesAtBoot",
+			"WriteUnitFile", "WriteUnitFile", "ReloadNetworkConfiguration",
+		},
+		plan.LinkRoleInitiator: {
+			"WriteLinkLoopbackPolicy", "WriteLinkRules", "WriteUnitFile", "EnableLinkRulesAtBoot",
+			"WriteUnitFile", "WriteUnitFile", "ReloadNetworkConfiguration",
+		},
+	} {
+		executor := preparedLinkMachine(role)
+		accepted, input := approvedJunction(t, role, false)
+
+		if _, err := Apply(executor, accepted, input); err != nil {
+			t.Fatalf("the %s's nominal junction was refused: %v", role, err)
+		}
+		if strings.Join(executor.effects, ",") != strings.Join(expected, ",") {
+			t.Fatalf("the %s's junction acted in another order: %q", role, executor.effects)
+		}
+		// The same property read from the paths rather than from the seam names:
+		// the unit that puts the bounds back exists before the file that names the
+		// peer is rewritten.
+		if index(executor.writtenPaths, linkRulesUnitPath) > index(executor.writtenPaths, linkNetdevPath) {
+			t.Fatalf("the %s wrote its peer before the bounds of it: %q", role, executor.writtenPaths)
+		}
+		if !executor.linkRulesAtBoot || executor.linkRuleApplications != 1 {
+			t.Fatalf("the %s's junction did not apply its bounds once and keep them for the next boot: %+v",
+				role, executor)
+		}
+	}
+
+	for role, expected := range map[string][]string{
+		plan.LinkRoleListener: {
+			"WriteUnitFile", "WriteUnitFile", "ReloadNetworkConfiguration",
+			"DisableLinkRulesAtBoot", "RemoveUnitFile", "RemoveLinkRules",
+		},
+		plan.LinkRoleInitiator: {
+			"WriteUnitFile", "WriteUnitFile", "ReloadNetworkConfiguration",
+			"DisableLinkRulesAtBoot", "RemoveUnitFile", "RemoveLinkRules",
+			"RemoveLinkLoopbackPolicy",
+		},
+	} {
+		executor := joinedLinkMachine(role)
+		accepted, input := approvedJunction(t, role, true)
+
+		if _, err := Apply(executor, accepted, input); err != nil {
+			t.Fatalf("the %s's departure was refused: %v", role, err)
+		}
+		if strings.Join(executor.effects, ",") != strings.Join(expected, ",") {
+			t.Fatalf("the %s's departure acted in another order: %q", role, executor.effects)
+		}
+		if executor.linkRulesPresent || executor.linkPolicyPresent ||
+			executor.holds(linkRulesUnitPath) || executor.linkRulesAtBoot {
+			t.Fatalf("the %s's departure left part of the bounds behind: %+v", role, executor)
+		}
+		// Retiring the junction retires this table and nothing else: a firewall
+		// this product never wrote is still exactly where it was.
+		if _, standing := executor.nftTables[foreignTable]; !standing {
+			t.Fatalf("the %s's departure removed a table no plan of this product wrote", role)
+		}
+		if _, gone := executor.nftTables[linkTableFamily+" "+linkTableName]; gone {
+			t.Fatalf("the %s's departure left its own table in the kernel", role)
+		}
+	}
+}
+
+// index is where one value first appears in a recorded sequence, or a position
+// past the end when it never does.
+func index(recorded []string, value string) int {
+	for position, entry := range recorded {
+		if entry == value {
+			return position
+		}
+	}
+	return len(recorded)
+}
+
+// TestTheListenersTableLetsOneCoupleOutAndNothingIn is the contract's own
+// sentence about the public machine, held against the bytes it writes.
+//
+// Out: TCP towards the initiator's tunnel address on the approved port, and
+// nothing else — SSH, every other port and every other destination fall to the
+// drop. In: the replies of those connections alone. Relayed: nothing.
+func TestTheListenersTableLetsOneCoupleOutAndNothingIn(t *testing.T) {
+	t.Parallel()
+	rules := string(renderLinkRules(linkPlacements[plan.LinkRoleListener], fixturePort))
+
+	for _, line := range []string{
+		"table inet your-cloud-link {",
+		`oifname "yc-link0" ip daddr 10.66.66.2 tcp dport 8080 accept`,
+		`oifname "yc-link0" drop`,
+		`iifname "yc-link0" ct state established accept`,
+		`iifname "yc-link0" drop`,
+		"udp dport 51820 accept",
+	} {
+		if !strings.Contains(rules, line) {
+			t.Fatalf("the listener's table does not carry %q:\n%s", line, rules)
+		}
+	}
+	// The idiom that makes loading this file twice mean what loading it once
+	// means. Without it a reapplied plan would either fail or append.
+	for _, line := range []string{
+		"add table inet your-cloud-link",
+		"delete table inet your-cloud-link",
+	} {
+		if !strings.Contains(rules, line) {
+			t.Fatalf("the listener's table cannot be reapplied idempotently:\n%s", rules)
+		}
+	}
+	// The listener answers nothing on the passage, and it redirects nothing:
+	// there is no service on this side to redirect towards.
+	for _, forbidden := range []string{"dnat", "prerouting", "127.0.0.1"} {
+		if strings.Contains(rules, forbidden) {
+			t.Fatalf("the listener's table carries %q, which is the initiator's:\n%s", forbidden, rules)
+		}
+	}
+	// Nothing is relayed, in either direction.
+	forward := chainOf(t, rules, "forward")
+	if !strings.Contains(forward, `iifname "yc-link0" drop`) ||
+		!strings.Contains(forward, `oifname "yc-link0" drop`) {
+		t.Fatalf("the listener relays through the passage:\n%s", forward)
+	}
+}
+
+// TestTheInitiatorsTableRedirectsTheApprovedPortAndHoldsBothLayers is the
+// wrinkle of this palier, written down.
+//
+// A managed service publishes on 127.0.0.1 and on nothing else, so the tunnel
+// arrives at an address nothing answers at. The redirection sends exactly the
+// approved port to exactly that loopback port; the filter chain refuses
+// everything else on its own. The two are separate layers and this holds both:
+// the redirection decides the destination, and no rule of the filter chain names
+// a port other than the approved one.
+func TestTheInitiatorsTableRedirectsTheApprovedPortAndHoldsBothLayers(t *testing.T) {
+	t.Parallel()
+	where := linkPlacements[plan.LinkRoleInitiator]
+	rules := string(renderLinkRules(where, fixturePort))
+
+	for _, line := range []string{
+		`iifname "yc-link0" ip saddr 10.66.66.1 tcp dport 8080 dnat ip to 127.0.0.1:8080`,
+		`iifname "yc-link0" ip saddr 10.66.66.1 tcp dport 8080 accept`,
+		`iifname "yc-link0" drop`,
+		`oifname "yc-link0" ct state established accept`,
+		`oifname "yc-link0" drop`,
+	} {
+		if !strings.Contains(rules, line) {
+			t.Fatalf("the initiator's table does not carry %q:\n%s", line, rules)
+		}
+	}
+	// The machine of the LAN holds no inbound port from the Internet and answers
+	// nothing publicly: the tunnel goes out, so there is no public accept here at
+	// all — the listener's one unscoped line has no counterpart on this side.
+	if strings.Contains(rules, "udp dport") {
+		t.Fatalf("the initiator's table names a public port:\n%s", rules)
+	}
+	// The second layer, read on its own: every port either chain names is the
+	// approved one. A packet sent through the tunnel to another port is not
+	// redirected — so it arrives where nothing answers — and is dropped besides.
+	for _, line := range linkRuleLines([]byte(rules)) {
+		if !strings.Contains(line, "dport") {
+			continue
+		}
+		if !strings.Contains(line, "dport 8080") {
+			t.Fatalf("a rule of the initiator names another port than the approved one: %q", line)
+		}
+	}
+	// And nothing of the LAN this machine sits on is reachable through the
+	// passage, because nothing is forwarded at all.
+	forward := chainOf(t, rules, "forward")
+	if !strings.Contains(forward, `iifname "yc-link0" drop`) ||
+		!strings.Contains(forward, `oifname "yc-link0" drop`) {
+		t.Fatalf("the initiator relays the passage into its LAN:\n%s", forward)
+	}
+	// The relaxation the redirection needs is scoped to the passage's own
+	// interface and never to every interface of this machine.
+	policy := string(renderLinkLoopbackPolicy())
+	if !strings.Contains(policy, "net.ipv4.conf.yc-link0.route_localnet=1") {
+		t.Fatalf("the redirection is declared without the relaxation it needs:\n%s", policy)
+	}
+	if strings.Contains(policy, "conf.all.") || strings.Contains(policy, "conf.default.") {
+		t.Fatalf("the relaxation is not scoped to the passage's interface:\n%s", policy)
+	}
+}
+
+// chainOf is one chain of a rendered table, so that a case can hold a property
+// against the chain it is about rather than against the whole file.
+func chainOf(t *testing.T, rules, name string) string {
+	t.Helper()
+	opening := "\tchain " + name + " {\n"
+	start := strings.Index(rules, opening)
+	if start < 0 {
+		t.Fatalf("the table declares no %s chain:\n%s", name, rules)
+	}
+	rest := rules[start+len(opening):]
+	end := strings.Index(rest, "\n\t}")
+	if end < 0 {
+		t.Fatalf("the %s chain is never closed:\n%s", name, rules)
+	}
+	return rest[:end]
+}
+
+// TestNoRuleOfTheBoundingTableEscapesTheTunnelInterface is the property that
+// makes this table safe to pose on a machine that is already doing something
+// else, and it is read from the bytes rather than from a promise.
+//
+// Every rule of either role names yc-link0, by the interface it came in on or by
+// the one it is going out of, so this table can decide nothing about the traffic
+// of any other interface. The single exception is the listener's public accept,
+// which is deliberately global — and which grants nothing, because a table whose
+// chains only ever drop what arrives on the tunnel cannot open a port.
+func TestNoRuleOfTheBoundingTableEscapesTheTunnelInterface(t *testing.T) {
+	t.Parallel()
+	unscoped := map[string][]string{
+		plan.LinkRoleListener:  {"udp dport 51820 accept"},
+		plan.LinkRoleInitiator: {},
+	}
+	for role, allowed := range unscoped {
+		rules := renderLinkRules(linkPlacements[role], fixturePort)
+		lines := linkRuleLines(rules)
+		if len(lines) == 0 {
+			t.Fatalf("the %s's table was read as carrying no rule at all:\n%s", role, rules)
+		}
+		for _, line := range lines {
+			if strings.Contains(line, linkInputScope) || strings.Contains(line, linkOutputScope) {
+				continue
+			}
+			named := false
+			for _, exception := range allowed {
+				if line == exception {
+					named = true
+				}
+			}
+			if !named {
+				t.Fatalf("the %s carries a rule that is about no interface in particular: %q", role, line)
+			}
+		}
+		// Every chain of this table is a policy-accept chain: it removes what the
+		// passage may not carry and never grants anything.
+		if strings.Contains(string(rules), "policy drop") {
+			t.Fatalf("the %s's table drops by policy, which would decide for every other table of this machine:\n%s",
+				role, rules)
+		}
+	}
+}
+
+// TestBoundsThatDriftedAreReappliedAsAChange holds the passage's bounds to the
+// rule every other file of this product is held to: the approved plan is the
+// state that must hold, and reaching it again is a change rather than a repair
+// nobody sees.
+func TestBoundsThatDriftedAreReappliedAsAChange(t *testing.T) {
+	t.Parallel()
+	for name, drift := range map[string]func(*fakeExecutor){
+		"a table somebody edited": func(executor *fakeExecutor) {
+			executor.linkRules = []byte("table inet your-cloud-link { }\n")
+		},
+		"a table somebody flushed": func(executor *fakeExecutor) {
+			executor.linkRulesPresent = false
+			executor.linkRules = nil
+		},
+		"a boot unit somebody removed": func(executor *fakeExecutor) {
+			executor.drop(linkRulesUnitPath)
+		},
+		"a host relaxation somebody removed": func(executor *fakeExecutor) {
+			executor.linkPolicyPresent = false
+			executor.linkPolicy = nil
+		},
+	} {
+		executor := joinedLinkMachine(plan.LinkRoleInitiator)
+		drift(executor)
+		accepted, input := approvedJunction(t, plan.LinkRoleInitiator, false)
+
+		application, err := Apply(executor, accepted, input)
+		if err != nil {
+			t.Fatalf("%s was reported as an error: %v", name, err)
+		}
+		if !application.Changed {
+			t.Fatalf("%s was not reapplied: %+v", name, application)
+		}
+		if !bytes.Equal(executor.linkRules, renderLinkRules(linkPlacements[plan.LinkRoleInitiator], fixturePort)) {
+			t.Fatalf("%s left the machine holding other bounds than the approved ones:\n%s", name, executor.linkRules)
+		}
+		if !executor.linkPolicyPresent || !executor.holds(linkRulesUnitPath) || !executor.linkRulesAtBoot {
+			t.Fatalf("%s was reapplied without the whole of the bounds: %+v", name, executor)
+		}
+		// The table is rewritten whole rather than added to: one application, and
+		// the file loaded again is the file the plan describes.
+		if executor.linkRuleApplications != 1 {
+			t.Fatalf("%s applied the bounds %d times", name, executor.linkRuleApplications)
+		}
+	}
+}
+
+// TestTheListenerIsAskedForNoServiceItDoesNotHost is the other half of the
+// presence rule, and the reason it is not symmetric.
+//
+// The refusals the initiator owes are in the matrix above. The listener owes
+// none: the service being reached lives on the machine at the other end of the
+// tunnel, so a listener asked to prove a local service would refuse every
+// correct junction of the reference scenario. What bounds the listener is that
+// the port it may reach is the one the human approved on both plans.
+func TestTheListenerIsAskedForNoServiceItDoesNotHost(t *testing.T) {
+	t.Parallel()
+	executor := preparedLinkMachine(plan.LinkRoleListener)
+	accepted, input := approvedListenerPeer(t, plan.OperationAttachLinkPeer, fixturePort)
+
+	if _, err := Apply(executor, accepted, input); err != nil {
+		t.Fatalf("the listener was asked for a service it does not host: %v", err)
+	}
+	if !executor.linkRulesPresent {
+		t.Fatal("the listener was joined without the bounds of its own role")
+	}
+	// And it holds no host relaxation: it redirects nothing, because there is
+	// nothing on this side to redirect towards.
+	if executor.linkPolicyPresent {
+		t.Fatal("the listener declared a relaxation only the initiator needs")
+	}
+}
+
+// TestAJunctionThatFailsAfterPosingItsBoundsAttemptsTheApprovedDeparture is the
+// conduct of a failure that happened once the bounds were already on the
+// machine.
+//
+// The rollback is the second document a human signed — the departure of the very
+// junction being made — and what it removes is what the junction had posed. A
+// failure at the first of the bounds leaves nothing to undo; a failure after all
+// of them leaves the whole of them to take away, and the table of somebody else
+// is untouched in both cases.
+func TestAJunctionThatFailsAfterPosingItsBoundsAttemptsTheApprovedDeparture(t *testing.T) {
+	t.Parallel()
+	for failing, posed := range map[string]bool{
+		"WriteLinkLoopbackPolicy": false,
+		"EnableLinkRulesAtBoot":   true,
+	} {
+		executor := preparedLinkMachine(plan.LinkRoleInitiator)
+		executor.nftTables[foreignTable] = []byte("table " + foreignTable + " { }")
+		executor.failures[failing] = errors.New("the machine refused this effect")
+		accepted, input := approvedInitiatorPeer(t, plan.OperationJoinLinkPeer, fixturePort)
+
+		_, err := Apply(executor, accepted, input)
+		var failure *ControlledFailure
+		if !errors.As(err, &failure) {
+			t.Fatalf("a failure at %s was not a controlled failure: %v", failing, err)
+		}
+		if failure.Outcome != OutcomeRolledBack {
+			t.Fatalf("a failure at %s concluded %q: %+v", failing, failure.Outcome, failure)
+		}
+		// Whatever the junction had reached, the machine holds none of the bounds
+		// afterwards, and no peer either.
+		if executor.linkRulesPresent || executor.linkPolicyPresent || executor.holds(linkRulesUnitPath) {
+			t.Fatalf("a failure at %s left bounds no junction stands behind: %+v", failing, executor)
+		}
+		if _, held := executor.nftTables[linkTableFamily+" "+linkTableName]; held {
+			t.Fatalf("a failure at %s left its table in the kernel", failing)
+		}
+		if _, standing := executor.nftTables[foreignTable]; !standing {
+			t.Fatalf("a failure at %s took away a table no plan of this product wrote", failing)
+		}
+		if strings.Contains(string(executor.held(linkNetdevPath)), "[WireGuardPeer]") {
+			t.Fatalf("a failure at %s left a peer behind", failing)
+		}
+		if posed && count(executor.effects, "RemoveLinkRules") != 1 {
+			t.Fatalf("a failure at %s did not have its bounds removed by the approved departure: %q",
+				failing, executor.effects)
+		}
+	}
+}
+
+// TestAJunctionLeftInAPartialStateSaysWhetherItsBoundsAreStillPosed is the limit
+// of what this Auxiliary promises once a junction's own rollback has failed too.
+//
+// The state worth naming here is the one nothing else could establish: a machine
+// whose peer was taken away by a departure that then failed, and whose bounds
+// are still in the kernel. Neither fact can be inferred from the other, so both
+// are read and both are said.
+func TestAJunctionLeftInAPartialStateSaysWhetherItsBoundsAreStillPosed(t *testing.T) {
+	t.Parallel()
+	executor := preparedLinkMachine(plan.LinkRoleInitiator)
+	executor.failures["ReloadNetworkConfiguration"] = errors.New("the manager would not read it")
+	accepted, input := approvedInitiatorPeer(t, plan.OperationJoinLinkPeer, fixturePort)
+
+	_, err := Apply(executor, accepted, input)
+	var failure *ControlledFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("a failure after a mutation was reported as a plain refusal: %v", err)
+	}
+	if failure.Outcome != OutcomePartial || failure.Observed == nil {
+		t.Fatalf("a rollback that failed claimed more than it reached: %+v", failure)
+	}
+	// The departure got as far as the very reload that had failed the junction,
+	// so it never reached the bounds it removes last. That is exactly the state
+	// this word exists for.
+	if failure.Observed.LinkBounds != observedPresent {
+		t.Fatalf("the observation does not say that this machine is still bounding a passage: %+v",
+			*failure.Observed)
+	}
+	if !strings.Contains(err.Error(), "bounds present") {
+		t.Fatalf("the partial state does not name the bounds in its own sentence: %v", err)
+	}
+}
+
+// TestADepartureTakesAwayBoundsAPeerHasAlreadyLeftBehind is the drift a
+// departure has to be able to undo.
+//
+// A machine whose peer is gone and whose table is still posed is not the
+// approved state and is not a machine to refuse: refusing it would leave a table
+// no plan would ever take away. What is held against the plan's peer is held
+// only where there is a peer to hold.
+func TestADepartureTakesAwayBoundsAPeerHasAlreadyLeftBehind(t *testing.T) {
+	t.Parallel()
+	executor := joinedLinkMachine(plan.LinkRoleListener)
+	where := linkPlacements[plan.LinkRoleListener]
+	executor.hold(linkNetdevPath, renderLinkNetdev(where))
+	executor.hold(linkNetworkPath, renderLinkNetwork(where))
+	accepted, input := approvedListenerPeer(t, plan.OperationDetachLinkPeer, fixturePort)
+
+	application, err := Apply(executor, accepted, input)
+	if err != nil {
+		t.Fatalf("a departure from a machine holding only the bounds was refused: %v", err)
+	}
+	if !application.Changed {
+		t.Fatalf("a machine still holding the bounds was announced as already undone: %+v", application)
+	}
+	if executor.linkRulesPresent || executor.holds(linkRulesUnitPath) {
+		t.Fatalf("the departure left the bounds it came to remove: %+v", executor)
+	}
+}
+
+// TestTheBoundsComeBackAfterARebootByTheirOwnDeclaredUnit is criterion seven for
+// the rules, read as far as a unit test can read it.
+//
+// A machine cannot be rebooted here, so what is proven is the mechanism: the two
+// files the bounds are made of are on disk, a oneshot unit that applies both of
+// them is on disk beside them, and that unit has been enabled rather than merely
+// run. Why it exists at all is the part no other mechanism covers — an
+// interface-scoped sysctl under /etc/sysctl.d is read long before the interface
+// it names exists — and the machine constat is `#98`.
+func TestTheBoundsComeBackAfterARebootByTheirOwnDeclaredUnit(t *testing.T) {
+	t.Parallel()
+	executor := preparedLinkMachine(plan.LinkRoleInitiator)
+	accepted, input := approvedInitiatorPeer(t, plan.OperationJoinLinkPeer, fixturePort)
+
+	if _, err := Apply(executor, accepted, input); err != nil {
+		t.Fatalf("the nominal initiator junction was refused: %v", err)
+	}
+	if !executor.linkRulesAtBoot || executor.linkBootEnablings != 1 {
+		t.Fatalf("the bounds were not given to something that puts them back: %+v", executor)
+	}
+	unit := string(executor.held(linkRulesUnitPath))
+	for _, line := range []string{
+		"Type=oneshot",
+		"After=systemd-networkd.service",
+		"--load " + linkLoopbackPolicyPath,
+		"--file " + linkRulesPath,
+		"WantedBy=multi-user.target",
+	} {
+		if !strings.Contains(unit, line) {
+			t.Fatalf("the unit that puts the bounds back does not declare %q:\n%s", line, unit)
+		}
+	}
+	// The order the unit applies them in is the order the junction applied them
+	// in: the relaxation before the table that depends on it.
+	if strings.Index(unit, "--load "+linkLoopbackPolicyPath) > strings.Index(unit, "--file "+linkRulesPath) {
+		t.Fatalf("the unit puts the bounds back in another order than the junction posed them:\n%s", unit)
 	}
 }
 
@@ -529,6 +1013,23 @@ func TestAPassageIsRefusedBeforeAnyEffectWhenThisMachineCannotHoldIt(t *testing.
 			},
 			named: "this machine still holds a junction",
 		},
+		// The bounds are part of the same refusal: a departure that stopped after
+		// the peer left a table with nothing to bound, and a withdrawal over it
+		// would leave that table, its unit and its relaxation behind — which is
+		// exactly what a withdrawal promises not to do.
+		"a withdrawal while the bounds of a junction are still posed": {
+			machine: func() *fakeExecutor {
+				executor := joinedLinkMachine(plan.LinkRoleListener)
+				where := linkPlacements[plan.LinkRoleListener]
+				executor.hold(linkNetdevPath, renderLinkNetdev(where))
+				executor.hold(linkNetworkPath, renderLinkNetwork(where))
+				return executor
+			},
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedLink(t, plan.OperationWithdrawLink, plan.LinkRoleListener)
+			},
+			named: "this machine still holds the bounds of a junction",
+		},
 		"a departure naming another peer than the one this machine holds": {
 			machine: func() *fakeExecutor {
 				executor := preparedLinkMachine(plan.LinkRoleListener)
@@ -544,6 +1045,37 @@ func TestAPassageIsRefusedBeforeAnyEffectWhenThisMachineCannotHoldIt(t *testing.
 			},
 			named: "this machine holds another peer than the one the approved plan names",
 		},
+		// The presence rule of the palier `#15`, read on the machine the service
+		// actually lives on. What a passage may be bounded to is a managed service
+		// this machine holds a sheet for, and not whatever process got to the port
+		// first.
+		"an initiator junction on a machine that manages no service at all": {
+			machine: func() *fakeExecutor {
+				executor := preparedLinkMachine(plan.LinkRoleInitiator)
+				executor.drop(bentoPDFPlacement.unitPath())
+				return executor
+			},
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedInitiatorPeer(t, plan.OperationJoinLinkPeer, fixturePort)
+			},
+			named: "no managed service of this machine publishes 127.0.0.1:8080",
+		},
+		"an initiator junction whose managed service publishes another port": {
+			machine: func() *fakeExecutor {
+				executor := preparedLinkMachine(plan.LinkRoleInitiator)
+				executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort+1))
+				return executor
+			},
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedInitiatorPeer(t, plan.OperationJoinLinkPeer, fixturePort)
+			},
+			named: "no managed service of this machine publishes 127.0.0.1:8080",
+		},
+		// There is deliberately no case here for a junction whose rules would name
+		// another destination than the peer, and there could not be one: the
+		// address a rule reaches is the constant of the opposite role, and no field
+		// of any document of this contract can name one. A test forging such a plan
+		// would be a test of a document shape that does not exist.
 		"a passage whose addressing names no address of the reserved subnet": {
 			machine: func() *fakeExecutor {
 				executor := preparedLinkMachine(plan.LinkRoleListener)
@@ -692,6 +1224,11 @@ func TestAPassageLeftInAPartialStateIsObservedInItsOwnWords(t *testing.T) {
 	if observed.LinkPeer != observedAbsent || observed.LinkInterface != observedInactive {
 		t.Fatalf("the observation claimed something no plan ever attached: %+v", observed)
 	}
+	// A preparation poses no bounds, so there are none to be left holding, and
+	// the observation says so rather than staying silent about it.
+	if observed.LinkBounds != observedAbsent {
+		t.Fatalf("the observation named bounds no preparation ever posed: %+v", observed)
+	}
 	// The four words of an account and a container are absent rather than
 	// admitted unknown: nobody looked at them, because a passage has none.
 	if observed.Account != "" || observed.Service != "" || observed.Container != "" {
@@ -778,6 +1315,14 @@ func TestNoOperationOfThePrivatePassageEverCarriesPrivateMaterial(t *testing.T) 
 		}
 		for path, content := range executor.files {
 			said = append(said, path, string(content))
+		}
+		// The bounds are bytes this machine holds outside its file map — one on
+		// disk and in the kernel, one under /etc/sysctl.d — so they are swept too:
+		// what is searched is everything a run produces, not everything that
+		// happens to be in one map.
+		said = append(said, string(executor.linkRules), string(executor.linkPolicy))
+		for _, table := range executor.nftTables {
+			said = append(said, string(table))
 		}
 		for _, spoken := range said {
 			if strings.Contains(spoken, fixtureLinkPrivateKey) {
