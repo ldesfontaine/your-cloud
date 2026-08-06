@@ -98,12 +98,21 @@ provision_console() {
     note swap "already enabled"
   fi
 
-  if remote lab-console "test -f /usr/lib/x86_64-linux-gnu/pkgconfig/gdk-pixbuf-2.0.pc"; then
+  # The guard names the newest dependency, not the first one: a machine
+  # provisioned before the list grew passes the old guard and would silently
+  # keep its old surface, which is exactly the drift this file exists to
+  # prevent.
+  if remote lab-console "test -f /usr/lib/x86_64-linux-gnu/pkgconfig/webkit2gtk-4.1.pc"; then
     note "build dependencies" "already installed"
   else
+    # The WebKit and rsvg lines are what the console crate itself links
+    # against; without them only the Assistant crate compiles here, and the
+    # console crate's own tests have no ground to run on.
     remote lab-console "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
       && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-        build-essential pkg-config libgtk-3-dev gdb >/dev/null"
+        build-essential pkg-config libgtk-3-dev gdb \
+        libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+        >/dev/null"
     note "build dependencies" "installed"
   fi
   # `gdb` is not optional: the secret-crash suite runs `gcore`.
