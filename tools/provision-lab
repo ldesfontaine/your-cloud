@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Provision the `quick` topology's machines with the toolchains this palier needs.
+#
+# `labctl topology create` gives bare Debian machines. Everything the proofs
+# compile with is installed here, and a topology destroyed by a closure is
+# reprovisioned by re-running this — which is the whole reason it exists as a
+# file rather than as a paragraph someone has to retype.
+#
+# **The versions are not written here.** They are read from the hosted gate's
+# own workflow, so a LAB machine and a hosted runner cannot drift apart. A
+# recipe that repeated the numbers would be a second place to update, and the
+# one that gets forgotten is always the one nobody runs.
+#
+# Every step is idempotent: what is already in place is left alone and named as
+# such. Nothing here is a proof — it is the ground a proof stands on.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat >&2 <<'EOF'
+usage: provision-lab [lab-console | lab-machine-1 | all]
+
+  lab-console    swap, GTK build dependencies and the pinned Rust toolchain
+  lab-machine-1  the pinned Go toolchain
+  all            both, in that order (default)
+
+Both machines must already exist and be running:
+
+  tools/labctl topology create quick
+EOF
+  exit 2
+}
+
+target=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$target" in
+  lab-console | lab-machine-1 | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+labctl="$root/tools/labctl"
+workflow="$root/.github/workflows/ci.yml"
+expected_origin=your-cloud/labctl
+swap_bytes=4G
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+step() { printf '\n==> %s\n' "$*"; }
+note() { printf '  %-46s %s\n' "$1" "$2"; }
+
+[[ -f "$workflow" ]] || fail "the hosted gate's workflow is absent: $workflow"
+
+# The single source of truth for both toolchains. A version that cannot be read
+# is a hard stop: guessing one would provision a LAB that proves something about
+# a compiler the gate never runs.
+rust_version=$(sed -n 's/^ *RUSTUP_TOOLCHAIN: *"\([0-9.]*\)".*/\1/p' "$workflow" | head -1)
+go_version=$(sed -n 's/^ *go-version: *"\([0-9.]*\)".*/\1/p' "$workflow" | head -1)
+[[ "$rust_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || fail "cannot read the pinned Rust toolchain from the workflow"
+[[ "$go_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || fail "cannot read the pinned Go toolchain from the workflow"
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+guard() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+}
+
+remote() { "$labctl" ssh "$1" -- "$2"; }
+
+provision_console() {
+  step "lab-console — swap, GTK build dependencies, Rust $rust_version"
+  guard lab-console
+
+  # The crate depends on `gtk`, whose compilation is killed by the OOM reaper
+  # with this machine's memory. The swapfile is deliberately left out of
+  # `/etc/fstab`: `tests/lab/v0.1.0/prove` re-enables it after every start, and
+  # that path stays exercised rather than becoming dead code.
+  if remote lab-console "test -f /swapfile"; then
+    note swapfile "already present"
+  else
+    remote lab-console "fallocate -l $swap_bytes /swapfile && chmod 600 /swapfile \
+      && mkswap /swapfile >/dev/null"
+    note swapfile "created ($swap_bytes)"
+  fi
+  if [[ -z "$(remote lab-console 'swapon --noheadings --show' || true)" ]]; then
+    remote lab-console "swapon /swapfile"
+    note swap "enabled"
+  else
+    note swap "already enabled"
+  fi
+
+  if remote lab-console "test -f /usr/lib/x86_64-linux-gnu/pkgconfig/gdk-pixbuf-2.0.pc"; then
+    note "build dependencies" "already installed"
+  else
+    remote lab-console "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        build-essential pkg-config libgtk-3-dev gdb >/dev/null"
+    note "build dependencies" "installed"
+  fi
+  # `gdb` is not optional: the secret-crash suite runs `gcore`.
+  remote lab-console "command -v gdb >/dev/null" || fail "gdb is absent after installation"
+
+  if remote lab-console ". /root/.cargo/env 2>/dev/null && cargo +$rust_version --version >/dev/null 2>&1"; then
+    note "Rust $rust_version" "already installed"
+  else
+    remote lab-console "curl -fsSL https://sh.rustup.rs -o /root/rustup.sh \
+      && sh /root/rustup.sh -y --profile minimal --default-toolchain $rust_version \
+        --no-modify-path >/dev/null \
+      && rm -f /root/rustup.sh"
+    note "Rust $rust_version" "installed"
+  fi
+  note observed "$(remote lab-console ". /root/.cargo/env && cargo +$rust_version --version")"
+}
+
+provision_machine() {
+  step "lab-machine-1 — Go $go_version"
+  guard lab-machine-1
+
+  if remote lab-machine-1 "/usr/local/go/bin/go version 2>/dev/null | grep -q 'go$go_version '"; then
+    note "Go $go_version" "already installed"
+  else
+    remote lab-machine-1 "curl -fsSL -o /tmp/go.tgz \
+        https://go.dev/dl/go$go_version.linux-amd64.tar.gz \
+      && rm -rf /usr/local/go \
+      && tar -C /usr/local -xzf /tmp/go.tgz \
+      && rm -f /tmp/go.tgz"
+    note "Go $go_version" "installed"
+  fi
+  note observed "$(remote lab-machine-1 '/usr/local/go/bin/go version')"
+}
+
+case "$target" in
+  lab-console) provision_console ;;
+  lab-machine-1) provision_machine ;;
+  all)
+    provision_console
+    provision_machine
+    ;;
+esac
+
+printf '\nPROVISION_LAB_OK rust=%s go=%s\n' "$rust_version" "$go_version"

@@ -69,8 +69,10 @@ L'ordre est celui des dépendances de #13 : `personal-access` (#51, #52),
 - **La fermeture coûte un reprovisionnement.** `topology destroy` emporte la
   chaîne d'outils, les paquets et le cache de compilation de `lab-console` ;
   seul `labctl stop` les conserve. Une passe complète est donc jouable une
-  fois, puis le LAB doit être reprovisionné avant la suivante. C'est le prix
-  du critère qui exige une fermeture, et il se paie en connaissance de cause.
+  fois, puis le LAB doit être reprovisionné avant la suivante — par
+  [`tools/provision-lab`](../../../tools/provision-lab), qui lit les versions
+  épinglées dans le workflow de la porte hébergée. C'est le prix du critère qui
+  exige une fermeture, et il se paie en une commande.
 
 ## [`enrolment-bounds/`](enrolment-bounds/) — la borne des soixante-quatre
 

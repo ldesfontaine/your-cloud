@@ -94,6 +94,44 @@ La sortie TSV possède les colonnes fixes `vm`, `state`, `ips`, `template`,
 VM arrêtée sans adresse rend `-`. Une erreur d'inspection d'une VM active reste
 bloquante.
 
+## Provisionnement des machines
+
+`labctl topology create` rend des machines Debian **nues**. Les chaînes d'outils
+que les preuves compilent sont posées par
+[`tools/provision-lab`](../../tools/provision-lab) :
+
+```text
+tools/labctl topology create quick
+tools/provision-lab [lab-console | lab-machine-1 | all]
+```
+
+`lab-console` reçoit le swap, les dépendances de construction GTK et la chaîne
+Rust ; `lab-machine-1` reçoit la chaîne Go, dont elle est la seule porteuse du
+LAB. Chaque étape est idempotente : ce qui est déjà en place est laissé tel quel
+et nommé comme tel.
+
+**Les versions ne sont pas écrites dans cette recette.** Elles sont lues dans le
+workflow de la porte hébergée, si bien qu'une machine du LAB et un runner
+hébergé ne peuvent pas diverger. Une recette qui recopierait les numéros
+créerait un second endroit à mettre à jour, et celui qu'on oublie est toujours
+celui que personne ne lance. Une version illisible est un arrêt franc :
+deviner reviendrait à provisionner un LAB qui prouve quelque chose d'un
+compilateur que la porte n'exécute jamais.
+
+Deux points que le provisionnement ne règle pas seul :
+
+- le swapfile est **délibérément absent de `/etc/fstab`**. Sans lui la
+  compilation du crate de la Console est tuée par l'OOM sur cette machine, et
+  [`tests/lab/v0.1.0/prove`](../../tests/lab/v0.1.0/prove) le remonte après
+  chaque démarrage — ce chemin reste ainsi éprouvé plutôt que de devenir du code
+  mort ;
+- `gdb` n'est pas facultatif : la suite `secret-crash-contract` lance `gcore`.
+
+Une fermeture par `topology destroy` emporte tout ce provisionnement ; seul
+`labctl stop` le conserve. Rejouer `provision-lab` est donc le prix d'une
+fermeture, et c'est précisément pour que ce prix soit une commande et non une
+procédure de mémoire que ce fichier existe.
+
 Pour `v0.0.1`,
 [`tests/lab/v0.0.1/prove`](../../tests/lab/v0.0.1/prove) est l'entrée
 d'orchestration. Le poste de développement ne fait qu'empaqueter le lot non
