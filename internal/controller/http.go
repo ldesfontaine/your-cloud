@@ -187,6 +187,14 @@ func (handler *ControllerHandler) ServeHTTP(response http.ResponseWriter, reques
 		handler.serveListenerPeerPlans(response, request, certificate)
 	case "/v0/initiator-peer-plans":
 		handler.serveInitiatorPeerPlans(response, request, certificate)
+	case "/v0/private-service-plans":
+		handler.servePrivateServicePlans(response, request, certificate)
+	case "/v0/link-route-plans":
+		handler.serveLinkRoutePlans(response, request, certificate)
+	case "/v0/snapshot-plans":
+		handler.serveSnapshotPlans(response, request, certificate)
+	case "/v0/restore-plans":
+		handler.serveRestorePlans(response, request, certificate)
 	default:
 		if rotationID, ok := deviceRotationRoute(request.URL.Path); ok {
 			handler.serveDeviceRotation(response, request, certificate, rotationID)
@@ -696,7 +704,8 @@ func controllerRouteMethods(path string) ([]string, bool) {
 	case "/v0/recovery-key":
 		return []string{http.MethodPut}, true
 	case "/v0/probe-plans", "/v0/service-plans", "/v0/entrypoint-plans", "/v0/route-plans",
-		"/v0/link-plans", "/v0/listener-peer-plans", "/v0/initiator-peer-plans":
+		"/v0/link-plans", "/v0/listener-peer-plans", "/v0/initiator-peer-plans",
+		"/v0/private-service-plans", "/v0/link-route-plans", "/v0/snapshot-plans", "/v0/restore-plans":
 		return []string{http.MethodPost}, true
 	}
 	if _, ok := machineRoute(path); ok {

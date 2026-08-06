@@ -402,6 +402,19 @@ func approvedInstances(accepted *approval.Acceptance, input *Input) (instance, i
 			planSchema, rollbackSchema,
 		)
 	}
+	// A pair whose two digests are one digest is one document approved as its own
+	// undoing, and this Auxiliary refuses it before either document is decoded.
+	//
+	// No Controller of this product can build such a pair — every builder refuses
+	// to freeze two identical documents. That is exactly why the check is here:
+	// this package assumes the Controller may have written the envelope itself,
+	// and until the private profile's return arrived, no document of any schema
+	// was even capable of being its own exact inverse. One now is, so the refusal
+	// stops being unreachable and starts being a rule.
+	if accepted.Envelope.PlanSHA256 == accepted.Envelope.RollbackSHA256 {
+		return instance{}, instance{}, errors.New(
+			"the approval names one digest as both the plan and its rollback: a document is not its own undoing")
+	}
 	switch planSchema {
 	case plan.SchemaVersion:
 		return probeInstances(accepted, input)
@@ -473,12 +486,14 @@ func probeInstances(accepted *approval.Acceptance, input *Input) (instance, inst
 // serviceInstances holds one schema 2 pair against the approval that carries it,
 // and turns it into the two instances the effects act on.
 //
-// The three document shapes of schema 2 become the three instance kinds here,
-// and this is the only place that mapping exists. Until `#91` landed, the four
-// entrypoint and route operations were refused at this exact point by name; they
-// are performed now, so what remains is the one refusal that outlives them — a
-// document shape this package has no placement for is refused before any effect,
-// because there is nowhere for it to be placed.
+// The document shapes of schema 2 become the instance kinds here, and this is the
+// only place that mapping exists. Until `#91` landed, the four entrypoint and
+// route operations were refused at this exact point by name; they are performed
+// now. The four shapes of the private profile are refused at this exact point
+// today, also by name, until `#102` and `#103` land — and after them what remains
+// is the one refusal that outlives every window: a document shape this package
+// has no placement for is refused before any effect, because there is nowhere for
+// it to be placed.
 func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, instance, error) {
 	envelope := accepted.Envelope
 	requested, err := v2DocumentMatching(input.PlanDocument, envelope.PlanSHA256, "plan")
@@ -560,11 +575,27 @@ func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, in
 				routeHost: undoing.RouteHost, backendPort: undoing.BackendPort,
 			},
 			nil
+	case plan.PrivateServiceDocument, plan.LinkRouteDocument, plan.SnapshotDocument, plan.RestoreDocument:
+		// The window of the private profile, named here so that the issues which
+		// close it have one refusal to replace rather than a silence to notice.
+		//
+		// The approval package holds these seven operations in its closed list, so
+		// a human may sign one and this Auxiliary may be handed a real, valid,
+		// canonically frozen pair of that contract. Performing them is `#102` — the
+		// service, its volume, its closed environment and its egress table, and the
+		// archive flows — and `#103` — the route the passage publishes. Until then
+		// each of them is refused right here: by name, before any effect, and
+		// before this machine is read at all. A window that let one through unread
+		// would be this Auxiliary acting on a contract it does not implement.
+		return instance{}, instance{}, fmt.Errorf(
+			"the approved plan describes %q, which this Auxiliary does not yet perform",
+			requested.OperationName(),
+		)
 	default:
 		// Unreachable while the plan package's closed interface holds exactly the
-		// three shapes above, and kept as a refusal rather than a panic so that a
-		// fourth shape added there without a placement here is refused instead of
-		// placed by accident.
+		// shapes above, and kept as a refusal rather than a panic so that a further
+		// shape added there without a placement here is refused instead of placed
+		// by accident.
 		return instance{}, instance{}, fmt.Errorf(
 			"the approved plan describes %q, which this Auxiliary has no placement for",
 			requested.OperationName(),

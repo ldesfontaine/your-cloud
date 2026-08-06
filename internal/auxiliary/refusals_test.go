@@ -548,13 +548,18 @@ func TestNothingIsTouchedWhileTheApprovedEntrypointDocumentsAreStillInDoubt(t *t
 			},
 			named: "the approved plan describes",
 		},
-		"an entrypoint rollback that is a second deployment rather than an undoing": {
+		// An entrypoint has no value a human chooses, so a rollback that is a
+		// second deployment of the same entrypoint is byte for byte the plan
+		// itself. That is refused one step earlier than the exact-inverse check,
+		// on the digests alone and with nothing decoded: an approval that names one
+		// digest twice has approved a document as its own undoing.
+		"an entrypoint rollback that is the plan itself": {
 			forge: func(t *testing.T, subject *approvedInput) {
 				frozen := frozenEntrypointPair(t, plan.OperationDeployEntrypoint)
 				subject.input.RollbackDocument = frozen.PlanDocument
 				subject.accepted.Envelope.RollbackSHA256 = frozen.PlanSHA256
 			},
-			named: "does not undo exactly the approved plan",
+			named: "a document is not its own undoing",
 		},
 		"an entrypoint plan naming its image by a tag rather than by a digest": {
 			forge: func(t *testing.T, subject *approvedInput) {

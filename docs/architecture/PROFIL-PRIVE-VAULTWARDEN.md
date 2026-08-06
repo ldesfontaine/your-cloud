@@ -1,9 +1,10 @@
 # Profil privé Vaultwarden : données, sauvegardes et trajet par le passage
 
-> Statut : proposition de contrat pour le palier `#17`, suivie par `#99`.
+> Statut : contrat d'architecture validé (`#99`) pour le palier `#17`.
 > Il étend le schéma 2 au premier service à données du produit, fixe ses
 > sauvegardes, son confinement et la route qui le publie par le seul passage
-> privé. Rien ici n'est implémenté tant que ce contrat n'est pas validé.
+> privé. Les implémentations le suivent depuis `#100` (plans et surface du
+> Controller) ; la preuve LAB du palier reste `#104`.
 
 ## Ce que ce profil est, et n'est pas
 
@@ -132,6 +133,75 @@ répondre et le nom déclaré rend l'erreur de passerelle du point d'entrée —
 jamais un faux succès, jamais une route de repli. L'état est observable
 (la jonction manque), la reprise est une nouvelle jonction approuvée, et
 la preuve constate les trois temps : panne, état honnête, reprise.
+
+## Surface du Controller étendue de quatre routes
+
+`PROFIL-PUBLIC-BENTOPDF.md` avait étendu la surface métier du Controller de
+trois routes, `PASSAGE-PRIVE-WIREGUARD.md` de trois autres. Le présent contrat
+l'étend de quatre, et d'aucune autre :
+
+| Méthode et route | Effet autorisé |
+|---|---|
+| `POST /v0/private-service-plans` | construire et geler la paire plan/rollback d'un service à données sur une machine de l'inventaire — profil, port de loopback, origine —, sans muter aucune machine |
+| `POST /v0/link-route-plans` | construire et geler la paire plan/rollback de la route publiée par le seul passage, sans muter aucune machine |
+| `POST /v0/snapshot-plans` | construire et geler la paire plan/rollback d'une archive nommée, sans muter aucune machine |
+| `POST /v0/restore-plans` | construire et geler le retour et le document qui revient de lui, sans muter aucune machine |
+
+Décisions attachées à ces routes :
+
+- **Quatre routes sœurs plutôt qu'une route à discriminant**, pour la raison
+  déjà retenue aux deux paliers précédents : une route unique aurait exigé un
+  schéma de requête déclarant les champs des quatre groupes, donc une lecture
+  avant refus. Séparées, chaque requête est une liste fermée, et un champ d'un
+  autre groupe est refusé par le décodage strict avant que sa valeur soit lue.
+- **Deux groupes portent exactement les champs d'un groupe plus ancien** : une
+  route de lien nomme un hôte et un port comme une route publique, un retour
+  nomme un profil et un emplacement comme une sauvegarde. Ce sont malgré tout
+  des routes distinctes, parce qu'elles construisent des plans distincts : les
+  documents décrivent des états différents et se hachent différemment, et une
+  route qui trancherait entre eux sur un drapeau ferait du choix de l'humain une
+  valeur qu'il faut lire correctement. Un test tient les digests deux à deux
+  écartés à champs identiques.
+- **La route du retour ne porte pas d'opération.** Un `restore_service` n'a
+  qu'une direction : un champ pour elle serait une valeur approuvable qui ne
+  peut prendre qu'une valeur. Et le document qui l'annule n'en est pas une
+  seconde — c'est un `restore_service` visant `previous`, que le paquet `plan`
+  construit et qu'aucune requête ne peut nommer.
+- Elles empruntent la **même authentification de session** que les routes métier
+  existantes : aucun nouveau chemin d'autorité, aucun nouveau code d'erreur. Une
+  machine hors inventaire reçoit `422 machine_not_active`, dans la liste fermée
+  existante.
+- Les deux documents voyagent comme **chaînes JSON portant leurs octets
+  canoniques exacts**, accompagnés de leurs digests, dans la même vue que les
+  routes des paliers précédents ; son `schema_version` vaut `2` et dit sous quel
+  contrat les deux documents ont été écrits.
+- La Console ne choisit **ni l'infrastructure, ni l'image, ni le digest, ni le
+  volume persistant, ni les lignes d'environnement, ni la table de sortie, ni
+  l'adresse du pair du tunnel** : l'infrastructure est celle dont ce Controller
+  est l'autorité, et le reste est une constante que le profil ou le passage
+  décide. Aucune de ces valeurs n'est un champ, donc aucune requête ne peut
+  déplacer un chemin d'écriture ni élargir le passage.
+
+Ce que le schéma fixe autour de ces routes :
+
+- **Les deux listes de profils sont fermées l'une contre l'autre.**
+  `deploy_web_service` ne connaît que `bentopdf`, `deploy_private_service` que
+  `vaultwarden`, et le refus croisé est une recherche qui échoue plutôt qu'une
+  comparaison qu'il faut penser à écrire. Les sauvegardes se ferment sur la
+  liste privée : un profil sans volume n'a rien à archiver.
+- **`previous` n'apparaît que dans un document du produit**, le rollback signé
+  d'un `restore_service`. La validation le refuse dans `snapshot_service` et
+  dans `discard_snapshot` ; elle l'accepte dans `restore_service`, parce qu'un
+  rollback est un plan à part entière, affiché, haché, transporté et décodé
+  comme les autres — et c'est le constructeur, seul à l'écrire, qui refuse qu'un
+  humain le soumette comme direction avant.
+- **`snapshot_service` mute.** Il arrête le service, écrit une archive et le
+  redémarre : l'enveloppe lui exige `mutate_local_state` autant qu'à un
+  déploiement, malgré ce que le mot « sauvegarde » suggère.
+- L'Auxiliaire **lit ces quatre formes de document et n'en exécute aucune** :
+  chacune est refusée en la nommant, avant tout effet et avant toute lecture de
+  la machine, jusqu'aux paliers qui les appliquent. La fenêtre est délibérée et
+  un test la tient sur des paires réelles, gelées comme la Console les remettra.
 
 ## Ce que la preuve devra constater
 

@@ -19,6 +19,18 @@ const (
 	vectorRouteHost      = "bentopdf.lab.your-cloud.test"
 	vectorBackendPort    = 8080
 
+	// The inputs of the private profile's vectors. The origin and the published
+	// name are the same string on purpose: that is what the contract describes —
+	// the service answers under the exact name the route serves — and a vector
+	// that used two names would prove the encoding without proving the shape of
+	// the scenario it encodes.
+	vectorPrivateProfile   = ServiceProfileVaultwarden
+	vectorOriginHost       = "vault.lab.your-cloud.test"
+	vectorLinkRouteHost    = "vault.lab.your-cloud.test"
+	vectorLinkBackendPort  = 8080
+	vectorPrivateLocalPort = 8080
+	vectorSnapshotSlot     = "nightly"
+
 	// The six canonical documents of the schema 2 vectors, byte for byte. A
 	// transport may reindent them; the Controller emits exactly these bytes.
 	vectorWebServicePlanDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
@@ -86,6 +98,85 @@ const (
 		"650000001c62656e746f7064662e6c61622e796f75722d636c6f75642e746573" +
 		"7400001f90"
 
+	// The eight canonical documents of the private profile's vectors, byte for
+	// byte, under the same rule.
+	//
+	// The rollback of the restore is the one document of the product that names
+	// the reserved slot. It is pinned here for exactly that reason: it is built,
+	// signed, transported and decoded like any other plan, and the Rust side has
+	// to produce these bytes rather than a shape of its own.
+	vectorPrivateServicePlanDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"deploy_private_service",` +
+		`"service_profile":"vaultwarden","image_reference":"docker.io/vaultwarden/server",` +
+		`"image_digest":"sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8",` +
+		`"local_port":8080,"origin_host":"vault.lab.your-cloud.test"}`
+	vectorPrivateServiceRollbackDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"remove_private_service",` +
+		`"service_profile":"vaultwarden","image_reference":"docker.io/vaultwarden/server",` +
+		`"image_digest":"sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8",` +
+		`"local_port":8080,"origin_host":"vault.lab.your-cloud.test"}`
+	vectorLinkRoutePlanDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"publish_link_route",` +
+		`"route_host":"vault.lab.your-cloud.test","backend_port":8080}`
+	vectorLinkRouteRollbackDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"retire_link_route",` +
+		`"route_host":"vault.lab.your-cloud.test","backend_port":8080}`
+	vectorSnapshotPlanDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"snapshot_service",` +
+		`"service_profile":"vaultwarden","snapshot_slot":"nightly"}`
+	vectorSnapshotRollbackDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"discard_snapshot",` +
+		`"service_profile":"vaultwarden","snapshot_slot":"nightly"}`
+	vectorRestorePlanDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"restore_service",` +
+		`"service_profile":"vaultwarden","snapshot_slot":"nightly"}`
+	vectorRestoreRollbackDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"restore_service",` +
+		`"service_profile":"vaultwarden","snapshot_slot":"previous"}`
+
+	// The eight transcripts of the private profile, byte for byte, under the same
+	// obligation on the Rust side — tracked for this palier by `#101`.
+	vectorPrivateServicePlanTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d31000000166465706c6f795f70726976" +
+		"6174655f736572766963650000000b7661756c7477617264656e0000001c646f" +
+		"636b65722e696f2f7661756c7477617264656e2f73657276657200000020ebdf" +
+		"e70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e80000" +
+		"1f90000000197661756c742e6c61622e796f75722d636c6f75642e74657374"
+	vectorPrivateServiceRollbackTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d310000001672656d6f76655f70726976" +
+		"6174655f736572766963650000000b7661756c7477617264656e0000001c646f" +
+		"636b65722e696f2f7661756c7477617264656e2f73657276657200000020ebdf" +
+		"e70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e80000" +
+		"1f90000000197661756c742e6c61622e796f75722d636c6f75642e74657374"
+	vectorLinkRoutePlanTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d31000000127075626c6973685f6c696e" +
+		"6b5f726f757465000000197661756c742e6c61622e796f75722d636c6f75642e" +
+		"7465737400001f90"
+	vectorLinkRouteRollbackTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d31000000117265746972655f6c696e6b" +
+		"5f726f757465000000197661756c742e6c61622e796f75722d636c6f75642e74" +
+		"65737400001f90"
+	vectorSnapshotPlanTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d3100000010736e617073686f745f7365" +
+		"72766963650000000b7661756c7477617264656e000000076e696768746c79"
+	vectorSnapshotRollbackTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d3100000010646973636172645f736e61" +
+		"7073686f740000000b7661756c7477617264656e000000076e696768746c79"
+	vectorRestorePlanTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d310000000f726573746f72655f736572" +
+		"766963650000000b7661756c7477617264656e000000076e696768746c79"
+	vectorRestoreRollbackTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d310000000f726573746f72655f736572" +
+		"766963650000000b7661756c7477617264656e0000000870726576696f7573"
+
 	// The six digests an approval envelope of these vectors names as plan_sha256
 	// and rollback_sha256, in the exact spelling that envelope requires.
 	vectorWebServicePlanSHA256     = "99f6e6401d74583f64e4200e6e47cd365ab299466eebe1c1a7210f260b0366ae"
@@ -94,6 +185,27 @@ const (
 	vectorEntrypointRollbackSHA256 = "1b91a7fa77b7d02cc16ce5d694b1709f641a341c849b4459de0ee3960d1cfcd8"
 	vectorRoutePlanSHA256          = "3d92c310868a8ba98aca5501c069bd0e4674757f787c8095e7c39d65d8d20a89"
 	vectorRouteRollbackSHA256      = "93e844abe96e68f157eb715ace9ff423004b0c64c68536d4e79ebc8206da1324"
+
+	// The eight digests of the private profile, under the same rule.
+	vectorPrivateServicePlanSHA256     = "b4d69bc7fcd277a5c165cd9494f2a88cb3ea8acf06f66906a10f831292f03372"
+	vectorPrivateServiceRollbackSHA256 = "c1650b0d359671aafc7fc19bc1d0f050bcf561558cfe3a82bfd897c16d0c7ba0"
+	vectorLinkRoutePlanSHA256          = "384fe095408f815bcc6d9b0be5655eaadabefe01c1a717bd0ff641567a5f3fbd"
+	vectorLinkRouteRollbackSHA256      = "c17842e513bd8af2da8cee699db20c24b59ae00d2fcfddfa0004caad1cc2d1db"
+	vectorSnapshotPlanSHA256           = "3de5108f5e7f2934579128bcfa8a09b3a6bbb16739b37f53e61d941261c7c6e3"
+	vectorSnapshotRollbackSHA256       = "0bedf38650c70b58a36e8a0a28944dd53bd9720bce77012be2227ffa85192cae"
+	vectorRestorePlanSHA256            = "6a6b71a15f969916a426fdfdcefca22ab670935a04459079eb724c18e180aebc"
+	vectorRestoreRollbackSHA256        = "1be3be0186ff3be565e6c4df4fc5a864a8a28f1c3929d029b3ec6ecb38c11b5a"
+
+	// The two digests of a route of the public profile carrying exactly the host
+	// and the port of the link route vectors above.
+	//
+	// They exist so that the shared-tail property is pinned rather than merely
+	// computed: publish_route and publish_link_route describe two different
+	// states with identical field lists and identical values, and these are the
+	// bytes that prove the two never hash the same. The Rust side pins them for
+	// the same reason.
+	vectorSameFieldsRouteSHA256       = "28513b85c3cb68488757f68009171820350d573efc10009eef0d540ffab193cf"
+	vectorSameFieldsRetireRouteSHA256 = "cc1300fdc24448cb152cc9dbc42f8c9bcefe1f915012855d30abf8005cb15d57"
 
 	// A real digest of another image of the same registry. It is refused for the
 	// same reason the resolved probe digest is: the plan names one pin and
@@ -136,6 +248,53 @@ func vectorRoute() RouteDocument {
 	}
 }
 
+func vectorPrivateService() PrivateServiceDocument {
+	return PrivateServiceDocument{
+		SchemaVersion:    SchemaVersionV2,
+		InfrastructureID: vectorInfrastructure,
+		MachineID:        vectorMachine,
+		Operation:        OperationDeployPrivateService,
+		ServiceProfile:   vectorPrivateProfile,
+		ImageReference:   VaultwardenImageReference,
+		ImageDigest:      VaultwardenImageDigest,
+		LocalPort:        vectorPrivateLocalPort,
+		OriginHost:       vectorOriginHost,
+	}
+}
+
+func vectorLinkRoute() LinkRouteDocument {
+	return LinkRouteDocument{
+		SchemaVersion:    SchemaVersionV2,
+		InfrastructureID: vectorInfrastructure,
+		MachineID:        vectorMachine,
+		Operation:        OperationPublishLinkRoute,
+		RouteHost:        vectorLinkRouteHost,
+		BackendPort:      vectorLinkBackendPort,
+	}
+}
+
+func vectorSnapshot() SnapshotDocument {
+	return SnapshotDocument{
+		SchemaVersion:    SchemaVersionV2,
+		InfrastructureID: vectorInfrastructure,
+		MachineID:        vectorMachine,
+		Operation:        OperationSnapshotService,
+		ServiceProfile:   vectorPrivateProfile,
+		SnapshotSlot:     vectorSnapshotSlot,
+	}
+}
+
+func vectorRestore() RestoreDocument {
+	return RestoreDocument{
+		SchemaVersion:    SchemaVersionV2,
+		InfrastructureID: vectorInfrastructure,
+		MachineID:        vectorMachine,
+		Operation:        OperationRestoreService,
+		ServiceProfile:   vectorPrivateProfile,
+		SnapshotSlot:     vectorSnapshotSlot,
+	}
+}
+
 // hostilePlanDocument encodes a document without validating it, which is what a
 // hostile test needs: the refusal under test must come from the decoder rather
 // than from the encoder refusing to produce the bytes in the first place. Both
@@ -159,13 +318,15 @@ func decodedHex(t *testing.T, value string) []byte {
 }
 
 // TestDeterministicSchemaTwoVectorsAreHeldWithTheRustSide is the
-// interoperability proof of the schema 2 encoding, for each of the three
-// operation groups.
+// interoperability proof of the schema 2 encoding, for each of its operation
+// groups.
 //
 // Every transcript, every digest and every canonical document is pinned here
-// literally. The Rust implementation of #89 pins the same values from its own
-// encoder, so a single byte of drift in either implementation fails here rather
-// than producing plans the other side hashes differently on a real machine.
+// literally. The Rust implementation pins the same values from its own encoder —
+// #89 for the three groups of the public profile, #101 for the four of the
+// private one — so a single byte of drift in either implementation fails here
+// rather than producing plans the other side hashes differently on a real
+// machine.
 func TestDeterministicSchemaTwoVectorsAreHeldWithTheRustSide(t *testing.T) {
 	t.Parallel()
 	for _, subject := range []struct {
@@ -219,6 +380,66 @@ func TestDeterministicSchemaTwoVectorsAreHeldWithTheRustSide(t *testing.T) {
 			planSHA256:         vectorRoutePlanSHA256,
 			rollbackSHA256:     vectorRouteRollbackSHA256,
 			transcriptLength:   134,
+		},
+		{
+			group: "private service",
+			build: func() (V2Pair, error) {
+				return BuildPrivateServicePair(OperationDeployPrivateService, vectorInfrastructure,
+					vectorMachine, vectorPrivateProfile, vectorPrivateLocalPort, vectorOriginHost)
+			},
+			planDocument:       vectorPrivateServicePlanDocument,
+			rollbackDocument:   vectorPrivateServiceRollbackDocument,
+			planTranscript:     vectorPrivateServicePlanTranscriptHex,
+			rollbackTranscript: vectorPrivateServiceRollbackTranscriptHex,
+			planSHA256:         vectorPrivateServicePlanSHA256,
+			rollbackSHA256:     vectorPrivateServiceRollbackSHA256,
+			transcriptLength:   223,
+		},
+		{
+			group: "link route",
+			build: func() (V2Pair, error) {
+				return BuildLinkRoutePair(OperationPublishLinkRoute, vectorInfrastructure,
+					vectorMachine, vectorLinkRouteHost, vectorLinkBackendPort)
+			},
+			planDocument:       vectorLinkRoutePlanDocument,
+			rollbackDocument:   vectorLinkRouteRollbackDocument,
+			planTranscript:     vectorLinkRoutePlanTranscriptHex,
+			rollbackTranscript: vectorLinkRouteRollbackTranscriptHex,
+			planSHA256:         vectorLinkRoutePlanSHA256,
+			rollbackSHA256:     vectorLinkRouteRollbackSHA256,
+			transcriptLength:   136,
+		},
+		{
+			group: "snapshot",
+			build: func() (V2Pair, error) {
+				return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+					vectorMachine, vectorPrivateProfile, vectorSnapshotSlot)
+			},
+			planDocument:       vectorSnapshotPlanDocument,
+			rollbackDocument:   vectorSnapshotRollbackDocument,
+			planTranscript:     vectorSnapshotPlanTranscriptHex,
+			rollbackTranscript: vectorSnapshotRollbackTranscriptHex,
+			planSHA256:         vectorSnapshotPlanSHA256,
+			rollbackSHA256:     vectorSnapshotRollbackSHA256,
+			transcriptLength:   127,
+		},
+		{
+			// The restore is the one group whose rollback is the same operation on
+			// another slot, so its two vectors differ by that slot alone — and the
+			// reserved one appears here, in the one document of the product that
+			// names it.
+			group: "restore",
+			build: func() (V2Pair, error) {
+				return BuildRestorePair(vectorInfrastructure, vectorMachine,
+					vectorPrivateProfile, vectorSnapshotSlot)
+			},
+			planDocument:       vectorRestorePlanDocument,
+			rollbackDocument:   vectorRestoreRollbackDocument,
+			planTranscript:     vectorRestorePlanTranscriptHex,
+			rollbackTranscript: vectorRestoreRollbackTranscriptHex,
+			planSHA256:         vectorRestorePlanSHA256,
+			rollbackSHA256:     vectorRestoreRollbackSHA256,
+			transcriptLength:   126,
 		},
 	} {
 		pair, err := subject.build()
@@ -280,17 +501,152 @@ func TestNoTwoSchemaTwoDigestsCollideAcrossOperationGroups(t *testing.T) {
 		vectorRollbackSHA256: "schema 1 probe removal",
 	}
 	for name, digest := range map[string]string{
-		"web service deployment": vectorWebServicePlanSHA256,
-		"web service removal":    vectorWebServiceRollbackSHA256,
-		"entrypoint deployment":  vectorEntrypointPlanSHA256,
-		"entrypoint removal":     vectorEntrypointRollbackSHA256,
-		"route publication":      vectorRoutePlanSHA256,
-		"route retirement":       vectorRouteRollbackSHA256,
+		"web service deployment":     vectorWebServicePlanSHA256,
+		"web service removal":        vectorWebServiceRollbackSHA256,
+		"entrypoint deployment":      vectorEntrypointPlanSHA256,
+		"entrypoint removal":         vectorEntrypointRollbackSHA256,
+		"route publication":          vectorRoutePlanSHA256,
+		"route retirement":           vectorRouteRollbackSHA256,
+		"private service deployment": vectorPrivateServicePlanSHA256,
+		"private service removal":    vectorPrivateServiceRollbackSHA256,
+		"link route publication":     vectorLinkRoutePlanSHA256,
+		"link route retirement":      vectorLinkRouteRollbackSHA256,
+		"snapshot":                   vectorSnapshotPlanSHA256,
+		"snapshot discard":           vectorSnapshotRollbackSHA256,
+		"restore":                    vectorRestorePlanSHA256,
+		"restore of the return slot": vectorRestoreRollbackSHA256,
 	} {
 		if other, collision := seen[digest]; collision {
 			t.Fatalf("%s and %s name the same digest", name, other)
 		}
 		seen[digest] = name
+	}
+}
+
+// TestTwoOperationsCarryingTheSameFieldsStillCarryTwoDigests is the property the
+// transcript layout rests on once two groups have the same tail.
+//
+// A route of the public profile and a route of the private passage name a host
+// and a port and nothing else; a snapshot and a restore name a profile and a slot
+// and nothing else. Their tails are byte for byte identical, and the four
+// documents are four states: publishing a name to a loopback service is not
+// publishing it through the tunnel, and archiving data is not replacing it. What
+// keeps their digests apart is the operation string, hashed ahead of the tail at
+// a determined offset — so this test builds each couple with identical field
+// values and requires the digests to differ.
+//
+// It is written against the pinned vectors rather than against freshly built
+// documents so that a failure names a value a reader can look up.
+func TestTwoOperationsCarryingTheSameFieldsStillCarryTwoDigests(t *testing.T) {
+	t.Parallel()
+	route, err := BuildRoutePair(OperationPublishRoute, vectorInfrastructure,
+		vectorMachine, vectorLinkRouteHost, vectorLinkBackendPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkRoute, err := BuildLinkRoutePair(OperationPublishLinkRoute, vectorInfrastructure,
+		vectorMachine, vectorLinkRouteHost, vectorLinkBackendPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+		vectorMachine, vectorPrivateProfile, vectorSnapshotSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore, err := BuildRestorePair(vectorInfrastructure, vectorMachine,
+		vectorPrivateProfile, vectorSnapshotSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, couple := range map[string]struct{ left, right V2Document }{
+		"a public route and a link route carrying the same host and port": {route.Plan, linkRoute.Plan},
+		"their two retirements": {route.Rollback, linkRoute.Rollback},
+		"a snapshot and a restore naming the same profile and slot": {snapshot.Plan, restore.Plan},
+	} {
+		leftTranscript, err := couple.left.Transcript()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		rightTranscript, err := couple.right.Transcript()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(leftTranscript) == len(rightTranscript) &&
+			bytes.Equal(leftTranscript[len(TranscriptDomainV2):], rightTranscript[len(TranscriptDomainV2):]) {
+			t.Fatalf("%s: the two transcripts are the same bytes", name)
+		}
+		leftDigest, err := couple.left.SHA256()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		rightDigest, err := couple.right.SHA256()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if leftDigest == rightDigest {
+			t.Fatalf("%s: %s and %s share a digest",
+				name, couple.left.OperationName(), couple.right.OperationName())
+		}
+	}
+
+	// The same statement at the level of the pinned vectors, so that a drift in
+	// either encoder fails against values a reader can look up rather than
+	// against values the test just computed.
+	//
+	// The two route digests below cover the same host and the same port as the
+	// link route vector — that is the whole point of pinning a second route here
+	// rather than reusing the public profile's own vector, whose host differs. The
+	// snapshot and the restore vectors already carry identical fields, so they are
+	// held directly.
+	frozenRoute, err := route.Freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frozenRoute.PlanSHA256 != vectorSameFieldsRouteSHA256 ||
+		frozenRoute.RollbackSHA256 != vectorSameFieldsRetireRouteSHA256 {
+		t.Fatalf("the route vector of the shared-fields proof drifted: %+v", frozenRoute)
+	}
+	if vectorSameFieldsRouteSHA256 == vectorLinkRoutePlanSHA256 ||
+		vectorSameFieldsRetireRouteSHA256 == vectorLinkRouteRollbackSHA256 {
+		t.Fatal("the two published names of the palier share a digest")
+	}
+	if vectorSnapshotPlanSHA256 == vectorRestorePlanSHA256 {
+		t.Fatal("archiving and returning share a digest")
+	}
+
+	// Rewriting the operation of one of these documents into the other's is not a
+	// refusal and must not be: the result is a well-formed document of the other
+	// group, describing another state. It is a second plan, and the only thing
+	// that makes it one rather than the first plan reworded is that its digest
+	// differs — so a transport that rewrote it carries a document no approval
+	// names.
+	for name, subject := range map[string]struct {
+		document string
+		from, to string
+		digest   string
+	}{
+		"a route rewritten into a link route": {vectorRoutePlanDocument,
+			OperationPublishRoute, OperationPublishLinkRoute, vectorRoutePlanSHA256},
+		"a snapshot rewritten into a restore": {vectorSnapshotPlanDocument,
+			OperationSnapshotService, OperationRestoreService, vectorSnapshotPlanSHA256},
+	} {
+		rewritten := strings.Replace(subject.document, `"`+subject.from+`"`, `"`+subject.to+`"`, 1)
+		decoded, err := DecodeV2([]byte(rewritten))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if decoded.OperationName() != subject.to {
+			t.Fatalf("%s: the rewritten document names %q", name, decoded.OperationName())
+		}
+		digest, err := decoded.SHA256()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if digest == subject.digest {
+			t.Fatalf("%s: rewriting the operation left the digest where it was", name)
+		}
 	}
 }
 
@@ -360,6 +716,81 @@ func TestChangingAnySingleFieldChangesTheSchemaTwoDigest(t *testing.T) {
 		}
 	}
 	requireEveryWireFieldIsHeld(t, vectorRoutePlanDocument, keysOf(route))
+
+	privateService := map[string]func(*PrivateServiceDocument){
+		"infrastructure_id": func(d *PrivateServiceDocument) { d.InfrastructureID = otherInfrastructure },
+		"machine_id":        func(d *PrivateServiceDocument) { d.MachineID = "lab-machine-2" },
+		"operation":         func(d *PrivateServiceDocument) { d.Operation = OperationRemovePrivateService },
+		"local_port":        func(d *PrivateServiceDocument) { d.LocalPort = vectorPrivateLocalPort + 1 },
+		"schema_version":    func(d *PrivateServiceDocument) { d.SchemaVersion = SchemaVersion },
+		"service_profile":   func(d *PrivateServiceDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"image_reference":   func(d *PrivateServiceDocument) { d.ImageReference = "ghcr.io/attacker/vaultwarden" },
+		"image_digest":      func(d *PrivateServiceDocument) { d.ImageDigest = otherPinnedDigest },
+		"origin_host":       func(d *PrivateServiceDocument) { d.OriginHost = "other.lab.your-cloud.test" },
+	}
+	privateReference := rawPrivateServiceTranscript(t, vectorPrivateService())
+	for field, mutate := range privateService {
+		moved := vectorPrivateService()
+		mutate(&moved)
+		if bytes.Equal(rawPrivateServiceTranscript(t, moved), privateReference) {
+			t.Fatalf("private service %s is outside the hashed bytes", field)
+		}
+	}
+	requireEveryWireFieldIsHeld(t, vectorPrivateServicePlanDocument, keysOf(privateService))
+
+	linkRoute := map[string]func(*LinkRouteDocument){
+		"infrastructure_id": func(d *LinkRouteDocument) { d.InfrastructureID = otherInfrastructure },
+		"machine_id":        func(d *LinkRouteDocument) { d.MachineID = "lab-machine-2" },
+		"operation":         func(d *LinkRouteDocument) { d.Operation = OperationRetireLinkRoute },
+		"schema_version":    func(d *LinkRouteDocument) { d.SchemaVersion = SchemaVersion },
+		"route_host":        func(d *LinkRouteDocument) { d.RouteHost = "other.lab.your-cloud.test" },
+		"backend_port":      func(d *LinkRouteDocument) { d.BackendPort = vectorLinkBackendPort + 1 },
+	}
+	linkRouteReference := rawLinkRouteTranscript(vectorLinkRoute())
+	for field, mutate := range linkRoute {
+		moved := vectorLinkRoute()
+		mutate(&moved)
+		if bytes.Equal(rawLinkRouteTranscript(moved), linkRouteReference) {
+			t.Fatalf("link route %s is outside the hashed bytes", field)
+		}
+	}
+	requireEveryWireFieldIsHeld(t, vectorLinkRoutePlanDocument, keysOf(linkRoute))
+
+	snapshot := map[string]func(*SnapshotDocument){
+		"infrastructure_id": func(d *SnapshotDocument) { d.InfrastructureID = otherInfrastructure },
+		"machine_id":        func(d *SnapshotDocument) { d.MachineID = "lab-machine-2" },
+		"operation":         func(d *SnapshotDocument) { d.Operation = OperationDiscardSnapshot },
+		"schema_version":    func(d *SnapshotDocument) { d.SchemaVersion = SchemaVersion },
+		"service_profile":   func(d *SnapshotDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"snapshot_slot":     func(d *SnapshotDocument) { d.SnapshotSlot = "weekly" },
+	}
+	snapshotReference := rawSnapshotTranscript(vectorSnapshot())
+	for field, mutate := range snapshot {
+		moved := vectorSnapshot()
+		mutate(&moved)
+		if bytes.Equal(rawSnapshotTranscript(moved), snapshotReference) {
+			t.Fatalf("snapshot %s is outside the hashed bytes", field)
+		}
+	}
+	requireEveryWireFieldIsHeld(t, vectorSnapshotPlanDocument, keysOf(snapshot))
+
+	restore := map[string]func(*RestoreDocument){
+		"infrastructure_id": func(d *RestoreDocument) { d.InfrastructureID = otherInfrastructure },
+		"machine_id":        func(d *RestoreDocument) { d.MachineID = "lab-machine-2" },
+		"operation":         func(d *RestoreDocument) { d.Operation = OperationSnapshotService },
+		"schema_version":    func(d *RestoreDocument) { d.SchemaVersion = SchemaVersion },
+		"service_profile":   func(d *RestoreDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"snapshot_slot":     func(d *RestoreDocument) { d.SnapshotSlot = ReservedSnapshotSlot },
+	}
+	restoreReference := rawRestoreTranscript(vectorRestore())
+	for field, mutate := range restore {
+		moved := vectorRestore()
+		mutate(&moved)
+		if bytes.Equal(rawRestoreTranscript(moved), restoreReference) {
+			t.Fatalf("restore %s is outside the hashed bytes", field)
+		}
+	}
+	requireEveryWireFieldIsHeld(t, vectorRestorePlanDocument, keysOf(restore))
 }
 
 // The raw transcripts below rebuild the layout for documents Validate refuses,
@@ -388,6 +819,38 @@ func rawRouteTranscript(document RouteDocument) []byte {
 		document.MachineID, document.Operation)
 	transcript = appendField(transcript, []byte(document.RouteHost))
 	return appendUint32(transcript, uint32(document.BackendPort))
+}
+
+func rawPrivateServiceTranscript(t *testing.T, document PrivateServiceDocument) []byte {
+	t.Helper()
+	transcript := appendV2Head(document.SchemaVersion, document.InfrastructureID,
+		document.MachineID, document.Operation)
+	transcript = appendField(transcript, []byte(document.ServiceProfile))
+	transcript = appendField(transcript, []byte(document.ImageReference))
+	transcript = appendField(transcript, decodedHex(t, strings.TrimPrefix(document.ImageDigest, "sha256:")))
+	transcript = appendUint32(transcript, uint32(document.LocalPort))
+	return appendField(transcript, []byte(document.OriginHost))
+}
+
+func rawLinkRouteTranscript(document LinkRouteDocument) []byte {
+	transcript := appendV2Head(document.SchemaVersion, document.InfrastructureID,
+		document.MachineID, document.Operation)
+	transcript = appendField(transcript, []byte(document.RouteHost))
+	return appendUint32(transcript, uint32(document.BackendPort))
+}
+
+func rawSnapshotTranscript(document SnapshotDocument) []byte {
+	transcript := appendV2Head(document.SchemaVersion, document.InfrastructureID,
+		document.MachineID, document.Operation)
+	transcript = appendField(transcript, []byte(document.ServiceProfile))
+	return appendField(transcript, []byte(document.SnapshotSlot))
+}
+
+func rawRestoreTranscript(document RestoreDocument) []byte {
+	transcript := appendV2Head(document.SchemaVersion, document.InfrastructureID,
+		document.MachineID, document.Operation)
+	transcript = appendField(transcript, []byte(document.ServiceProfile))
+	return appendField(transcript, []byte(document.SnapshotSlot))
 }
 
 func keysOf[V any](table map[string]V) map[string]struct{} {
@@ -440,6 +903,17 @@ func TestDecodeV2RefusesEveryWebServiceDocumentOutsideTheContract(t *testing.T) 
 		"unknown profile":      func(d *WebServiceDocument) { d.ServiceProfile = "bentopdf-simple" },
 		"upper-case profile":   func(d *WebServiceDocument) { d.ServiceProfile = "BentoPDF" },
 		"empty profile":        func(d *WebServiceDocument) { d.ServiceProfile = "" },
+		// The data-bearing profile at the stateless door, alone and with its own
+		// image. It is refused for the reason the private door refuses the
+		// stateless profile: a service whose data outlives its container has no
+		// business being described by a sheet that declares no volume.
+		"the private profile": func(d *WebServiceDocument) { d.ServiceProfile = ServiceProfileVaultwarden },
+		"the private profile and its image": func(d *WebServiceDocument) {
+			d.ServiceProfile = ServiceProfileVaultwarden
+			d.ImageReference = VaultwardenImageReference
+			d.ImageDigest = VaultwardenImageDigest
+		},
+		"private operation":    func(d *WebServiceDocument) { d.Operation = OperationDeployPrivateService },
 		"other registry":       func(d *WebServiceDocument) { d.ImageReference = "docker.io/alam00000/bentopdf" },
 		"other repository":     func(d *WebServiceDocument) { d.ImageReference = "ghcr.io/attacker/bentopdf" },
 		"registry-less":        func(d *WebServiceDocument) { d.ImageReference = "alam00000/bentopdf" },
@@ -589,6 +1063,269 @@ func TestDecodeV2RefusesEveryRouteDocumentOutsideTheContract(t *testing.T) {
 	}
 }
 
+// TestDecodeV2RefusesEveryPrivateServiceDocumentOutsideTheContract is the
+// hostile table of the private service group.
+//
+// The two rows that matter most are the profile ones, and they run in both
+// directions here and in the stateless table above: a data-bearing service does
+// not pass through the stateless door, and a stateless service does not pass
+// through the private one. Everything else is the surface origin_host adds.
+func TestDecodeV2RefusesEveryPrivateServiceDocumentOutsideTheContract(t *testing.T) {
+	t.Parallel()
+	if _, err := DecodeV2([]byte(vectorPrivateServicePlanDocument)); err != nil {
+		t.Fatalf("the nominal document must decode: %v", err)
+	}
+	if _, err := DecodeV2([]byte(vectorPrivateServiceRollbackDocument)); err != nil {
+		t.Fatalf("the nominal rollback must decode: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*PrivateServiceDocument){
+		"schema 1 version":     func(d *PrivateServiceDocument) { d.SchemaVersion = SchemaVersion },
+		"absent schema":        func(d *PrivateServiceDocument) { d.SchemaVersion = 0 },
+		"upper-case UUID":      func(d *PrivateServiceDocument) { d.InfrastructureID = strings.ToUpper(vectorInfrastructure) },
+		"empty infrastructure": func(d *PrivateServiceDocument) { d.InfrastructureID = "" },
+		"traversal machine":    func(d *PrivateServiceDocument) { d.MachineID = "../../etc/shadow" },
+		"unknown operation":    func(d *PrivateServiceDocument) { d.Operation = "install_container" },
+		"stateless operation":  func(d *PrivateServiceDocument) { d.Operation = OperationDeployWebService },
+		"snapshot operation":   func(d *PrivateServiceDocument) { d.Operation = OperationSnapshotService },
+		"link route operation": func(d *PrivateServiceDocument) { d.Operation = OperationPublishLinkRoute },
+		"empty operation":      func(d *PrivateServiceDocument) { d.Operation = "" },
+
+		// The stateless profile at the private door, in the exact spelling the
+		// other palier pins. It is refused as an unknown name is refused, and
+		// before its image is compared.
+		"the stateless profile": func(d *PrivateServiceDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"the stateless profile and its image": func(d *PrivateServiceDocument) {
+			d.ServiceProfile = ServiceProfileBentoPDF
+			d.ImageReference = BentoPDFImageReference
+			d.ImageDigest = BentoPDFImageDigest
+		},
+		"unknown profile":    func(d *PrivateServiceDocument) { d.ServiceProfile = "vaultwarden-lite" },
+		"upper-case profile": func(d *PrivateServiceDocument) { d.ServiceProfile = "Vaultwarden" },
+		"empty profile":      func(d *PrivateServiceDocument) { d.ServiceProfile = "" },
+
+		"other registry":       func(d *PrivateServiceDocument) { d.ImageReference = "ghcr.io/vaultwarden/server" },
+		"other repository":     func(d *PrivateServiceDocument) { d.ImageReference = "docker.io/attacker/server" },
+		"registry-less":        func(d *PrivateServiceDocument) { d.ImageReference = "vaultwarden/server" },
+		"tagged reference":     func(d *PrivateServiceDocument) { d.ImageReference = VaultwardenImageReference + ":1.37.1" },
+		"entrypoint reference": func(d *PrivateServiceDocument) { d.ImageReference = EntrypointImageReference },
+		"resolved amd64 digest": func(d *PrivateServiceDocument) {
+			d.ImageDigest = "sha256:e9efdf001bf0d68c21f2cbfb8e1d9b5961a7ca9c85e0a7e58bf51a13b997d744"
+		},
+		"stateless digest":  func(d *PrivateServiceDocument) { d.ImageDigest = BentoPDFImageDigest },
+		"upper-case digest": func(d *PrivateServiceDocument) { d.ImageDigest = strings.ToUpper(VaultwardenImageDigest) },
+		"short digest":      func(d *PrivateServiceDocument) { d.ImageDigest = "sha256:ebdf" },
+		"reference with digest": func(d *PrivateServiceDocument) {
+			d.ImageReference = VaultwardenImageReference + "@" + VaultwardenImageDigest
+		},
+
+		"privileged port":  func(d *PrivateServiceDocument) { d.LocalPort = 443 },
+		"absent port":      func(d *PrivateServiceDocument) { d.LocalPort = 0 },
+		"negative port":    func(d *PrivateServiceDocument) { d.LocalPort = -1 },
+		"port above range": func(d *PrivateServiceDocument) { d.LocalPort = MaxLocalPort + 1 },
+
+		// The whole corpus of the host bound, applied to the field that reuses it.
+		"empty origin":            func(d *PrivateServiceDocument) { d.OriginHost = "" },
+		"origin below bound":      func(d *PrivateServiceDocument) { d.OriginHost = "ab" },
+		"origin above bound":      func(d *PrivateServiceDocument) { d.OriginHost = strings.Repeat("a", 249) + ".test" },
+		"wildcard origin":         func(d *PrivateServiceDocument) { d.OriginHost = "*.lab.your-cloud.test" },
+		"upper-case origin":       func(d *PrivateServiceDocument) { d.OriginHost = "Vault.lab.your-cloud.test" },
+		"origin carrying scheme":  func(d *PrivateServiceDocument) { d.OriginHost = "https://vault.lab.your-cloud.test" },
+		"origin carrying a port":  func(d *PrivateServiceDocument) { d.OriginHost = "vault.lab.your-cloud.test:443" },
+		"origin carrying a path":  func(d *PrivateServiceDocument) { d.OriginHost = "vault.lab.your-cloud.test/admin" },
+		"origin carrying a space": func(d *PrivateServiceDocument) { d.OriginHost = "vault lab.your-cloud.test" },
+		"origin carrying a break": func(d *PrivateServiceDocument) { d.OriginHost = "vault.lab.test\nevil.test" },
+		"origin on a hyphen":      func(d *PrivateServiceDocument) { d.OriginHost = "-vault.lab.your-cloud.test" },
+		"origin on a dot":         func(d *PrivateServiceDocument) { d.OriginHost = ".lab.your-cloud.test" },
+		"origin with empty label": func(d *PrivateServiceDocument) { d.OriginHost = "vault..lab.your-cloud.test" },
+		"non ASCII origin":        func(d *PrivateServiceDocument) { d.OriginHost = "coffre.lab.your-cloud.tëst" },
+		"trailing NUL origin":     func(d *PrivateServiceDocument) { d.OriginHost = "vault.lab.your-cloud.test\x00" },
+	} {
+		document := vectorPrivateService()
+		mutate(&document)
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+// TestDecodeV2RefusesEveryLinkRouteDocumentOutsideTheContract is the hostile
+// table of the link route group.
+//
+// It carries the fields of a route of the public profile, so what is proven here
+// is that it carries the bounds too: a name this decoder would refuse on one
+// operation is not accepted because the traffic behind it takes the tunnel.
+func TestDecodeV2RefusesEveryLinkRouteDocumentOutsideTheContract(t *testing.T) {
+	t.Parallel()
+	if _, err := DecodeV2([]byte(vectorLinkRoutePlanDocument)); err != nil {
+		t.Fatalf("the nominal document must decode: %v", err)
+	}
+	if _, err := DecodeV2([]byte(vectorLinkRouteRollbackDocument)); err != nil {
+		t.Fatalf("the nominal rollback must decode: %v", err)
+	}
+	for _, port := range []int{MinBackendPort, MaxBackendPort} {
+		document := vectorLinkRoute()
+		document.BackendPort = port
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err != nil {
+			t.Fatalf("the bound %d of the backend range was refused: %v", port, err)
+		}
+	}
+
+	for name, mutate := range map[string]func(*LinkRouteDocument){
+		"schema 1 version":     func(d *LinkRouteDocument) { d.SchemaVersion = SchemaVersion },
+		"absent schema":        func(d *LinkRouteDocument) { d.SchemaVersion = 0 },
+		"upper-case UUID":      func(d *LinkRouteDocument) { d.InfrastructureID = strings.ToUpper(vectorInfrastructure) },
+		"machine on hyphen":    func(d *LinkRouteDocument) { d.MachineID = "-lab-machine-1" },
+		"unknown operation":    func(d *LinkRouteDocument) { d.Operation = "publish_tunnel" },
+		"entrypoint operation": func(d *LinkRouteDocument) { d.Operation = OperationRemoveEntrypoint },
+		"private operation":    func(d *LinkRouteDocument) { d.Operation = OperationDeployPrivateService },
+		"snapshot operation":   func(d *LinkRouteDocument) { d.Operation = OperationSnapshotService },
+		"empty operation":      func(d *LinkRouteDocument) { d.Operation = "" },
+
+		"empty host":            func(d *LinkRouteDocument) { d.RouteHost = "" },
+		"host below bound":      func(d *LinkRouteDocument) { d.RouteHost = "ab" },
+		"host above bound":      func(d *LinkRouteDocument) { d.RouteHost = strings.Repeat("a", 249) + ".test" },
+		"wildcard host":         func(d *LinkRouteDocument) { d.RouteHost = "*.lab.your-cloud.test" },
+		"upper-case host":       func(d *LinkRouteDocument) { d.RouteHost = "Vault.lab.your-cloud.test" },
+		"trailing dot":          func(d *LinkRouteDocument) { d.RouteHost = "vault.lab.your-cloud.test." },
+		"consecutive dots":      func(d *LinkRouteDocument) { d.RouteHost = "vault..lab.your-cloud.test" },
+		"host carrying a rule":  func(d *LinkRouteDocument) { d.RouteHost = "vault.lab.test`)||Host(`evil.test" },
+		"host carrying a port":  func(d *LinkRouteDocument) { d.RouteHost = "vault.lab.your-cloud.test:443" },
+		"host carrying a break": func(d *LinkRouteDocument) { d.RouteHost = "vault.lab.test\nevil.test" },
+
+		"backend below range":  func(d *LinkRouteDocument) { d.BackendPort = MinBackendPort - 1 },
+		"privileged backend":   func(d *LinkRouteDocument) { d.BackendPort = 443 },
+		"absent backend":       func(d *LinkRouteDocument) { d.BackendPort = 0 },
+		"negative backend":     func(d *LinkRouteDocument) { d.BackendPort = -1 },
+		"backend above range":  func(d *LinkRouteDocument) { d.BackendPort = MaxBackendPort + 1 },
+		"backend beyond int16": func(d *LinkRouteDocument) { d.BackendPort = 70000 },
+	} {
+		document := vectorLinkRoute()
+		mutate(&document)
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+// TestDecodeV2RefusesEverySnapshotAndRestoreOutsideTheContract is the hostile
+// table of the two archive groups, and the whole surface of snapshot_slot.
+//
+// The reserved slot appears on both sides of this table on purpose: a snapshot
+// or a discard naming it is refused, because that slot belongs to the return
+// mechanism and a plan that wrote over it or destroyed it would remove the
+// possibility of returning; a restore naming it decodes, because that is exactly
+// what the signed rollback of a restore is. The asymmetry is the contract, and it
+// is stated here rather than left to be inferred.
+func TestDecodeV2RefusesEverySnapshotAndRestoreOutsideTheContract(t *testing.T) {
+	t.Parallel()
+	for name, document := range map[string]string{
+		"a snapshot":                     vectorSnapshotPlanDocument,
+		"a discard":                      vectorSnapshotRollbackDocument,
+		"a restore":                      vectorRestorePlanDocument,
+		"a restore of the reserved slot": vectorRestoreRollbackDocument,
+	} {
+		if _, err := DecodeV2([]byte(document)); err != nil {
+			t.Fatalf("%s must decode: %v", name, err)
+		}
+	}
+
+	// The bounds themselves are accepted, so that the refusals below name a
+	// malformation rather than an off-by-one.
+	for name, slot := range map[string]string{
+		"shortest accepted slot": "a",
+		"a single digit":         "0",
+		"longest accepted slot":  strings.Repeat("a", MaxSnapshotSlotBytes),
+		"hyphenated slot":        "before-upgrade-2026",
+		"trailing hyphen":        "nightly-",
+	} {
+		document := vectorSnapshot()
+		document.SnapshotSlot = slot
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err != nil {
+			t.Fatalf("%s was refused: %v", name, err)
+		}
+	}
+
+	malformedSlots := map[string]string{
+		"empty slot":             "",
+		"upper-case slot":        "Nightly",
+		"leading hyphen":         "-nightly",
+		"one character too long": strings.Repeat("a", MaxSnapshotSlotBytes+1),
+		"dotted slot":            "nightly.tar.gz",
+		"traversal slot":         "../../etc/shadow",
+		"absolute slot":          "/var/lib/your-cloud-svc-vaultwarden",
+		"parent slot":            "..",
+		"single dot":             ".",
+		"slot carrying a slash":  "nightly/latest",
+		"underscore slot":        "nightly_2",
+		"slot with a space":      "nightly copy",
+		"slot with a NUL":        "nightly\x00",
+		"slot with a break":      "nightly\nweekly",
+		"non ASCII slot":         "sauvegardé",
+	}
+
+	for name, mutate := range map[string]func(*SnapshotDocument){
+		"schema 1 version":      func(d *SnapshotDocument) { d.SchemaVersion = SchemaVersion },
+		"absent schema":         func(d *SnapshotDocument) { d.SchemaVersion = 0 },
+		"upper-case UUID":       func(d *SnapshotDocument) { d.InfrastructureID = strings.ToUpper(vectorInfrastructure) },
+		"traversal machine":     func(d *SnapshotDocument) { d.MachineID = "../../etc/shadow" },
+		"unknown operation":     func(d *SnapshotDocument) { d.Operation = "archive_service" },
+		"deploy operation":      func(d *SnapshotDocument) { d.Operation = OperationDeployPrivateService },
+		"link route operation":  func(d *SnapshotDocument) { d.Operation = OperationPublishLinkRoute },
+		"empty operation":       func(d *SnapshotDocument) { d.Operation = "" },
+		"the stateless profile": func(d *SnapshotDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"unknown profile":       func(d *SnapshotDocument) { d.ServiceProfile = "vaultwarden-lite" },
+		"empty profile":         func(d *SnapshotDocument) { d.ServiceProfile = "" },
+		"the reserved slot":     func(d *SnapshotDocument) { d.SnapshotSlot = ReservedSnapshotSlot },
+	} {
+		document := vectorSnapshot()
+		mutate(&document)
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("a snapshot naming %s was accepted", name)
+		}
+		discard := vectorSnapshot()
+		discard.Operation = OperationDiscardSnapshot
+		mutate(&discard)
+		if _, err := DecodeV2(hostilePlanDocument(t, discard)); err == nil {
+			t.Fatalf("a discard naming %s was accepted", name)
+		}
+	}
+	for name, slot := range malformedSlots {
+		document := vectorSnapshot()
+		document.SnapshotSlot = slot
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("a snapshot naming %s was accepted", name)
+		}
+	}
+
+	for name, mutate := range map[string]func(*RestoreDocument){
+		"schema 1 version":      func(d *RestoreDocument) { d.SchemaVersion = SchemaVersion },
+		"absent schema":         func(d *RestoreDocument) { d.SchemaVersion = 0 },
+		"non version 4 UUID":    func(d *RestoreDocument) { d.InfrastructureID = "8f14e45f-ceea-1167-a8b1-1f7bd0a0f4c2" },
+		"too short machine":     func(d *RestoreDocument) { d.MachineID = "ab" },
+		"unknown operation":     func(d *RestoreDocument) { d.Operation = "rollback_service" },
+		"deploy operation":      func(d *RestoreDocument) { d.Operation = OperationDeployPrivateService },
+		"public route":          func(d *RestoreDocument) { d.Operation = OperationPublishRoute },
+		"empty operation":       func(d *RestoreDocument) { d.Operation = "" },
+		"the stateless profile": func(d *RestoreDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"unknown profile":       func(d *RestoreDocument) { d.ServiceProfile = "vaultwarden-lite" },
+		"empty profile":         func(d *RestoreDocument) { d.ServiceProfile = "" },
+	} {
+		document := vectorRestore()
+		mutate(&document)
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("a restore naming %s was accepted", name)
+		}
+	}
+	for name, slot := range malformedSlots {
+		document := vectorRestore()
+		document.SnapshotSlot = slot
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("a restore naming %s was accepted", name)
+		}
+	}
+}
+
 // TestNoSchemaTwoDocumentBorrowsAFieldOfAnotherOperation is what the
 // discriminator exists for.
 //
@@ -600,47 +1337,76 @@ func TestDecodeV2RefusesEveryRouteDocumentOutsideTheContract(t *testing.T) {
 func TestNoSchemaTwoDocumentBorrowsAFieldOfAnotherOperation(t *testing.T) {
 	t.Parallel()
 	for name, document := range map[string]string{
-		"a service plan carrying a route host":    withExtraField(vectorWebServicePlanDocument, `"route_host":"evil.test"`),
-		"a service plan carrying a backend port":  withExtraField(vectorWebServicePlanDocument, `"backend_port":9090`),
-		"an entrypoint plan carrying a port":      withExtraField(vectorEntrypointPlanDocument, `"local_port":8080`),
-		"an entrypoint plan carrying a host":      withExtraField(vectorEntrypointPlanDocument, `"route_host":"evil.test"`),
-		"an entrypoint plan carrying a profile":   withExtraField(vectorEntrypointPlanDocument, `"service_profile":"bentopdf"`),
-		"a route plan carrying an image digest":   withExtraField(vectorRoutePlanDocument, `"image_digest":"`+BentoPDFImageDigest+`"`),
-		"a route plan carrying an image":          withExtraField(vectorRoutePlanDocument, `"image_reference":"`+BentoPDFImageReference+`"`),
-		"a route plan carrying a profile":         withExtraField(vectorRoutePlanDocument, `"service_profile":"bentopdf"`),
-		"a route plan carrying a local port":      withExtraField(vectorRoutePlanDocument, `"local_port":8080`),
-		"a service plan claiming a route":         strings.Replace(vectorWebServicePlanDocument, `"deploy_web_service"`, `"publish_route"`, 1),
-		"a route plan claiming a service":         strings.Replace(vectorRoutePlanDocument, `"publish_route"`, `"deploy_web_service"`, 1),
-		"an entrypoint plan claiming a service":   strings.Replace(vectorEntrypointPlanDocument, `"deploy_entrypoint"`, `"deploy_web_service"`, 1),
-		"a service plan claiming an entrypoint":   strings.Replace(vectorWebServicePlanDocument, `"deploy_web_service"`, `"deploy_entrypoint"`, 1),
-		"a service plan without its profile":      strings.Replace(vectorWebServicePlanDocument, `"service_profile":"bentopdf",`, "", 1),
-		"a service plan without its port":         strings.Replace(vectorWebServicePlanDocument, `,"local_port":8080`, "", 1),
-		"a route plan without its host":           strings.Replace(vectorRoutePlanDocument, `"route_host":"bentopdf.lab.your-cloud.test",`, "", 1),
-		"an entrypoint plan without its image":    strings.Replace(vectorEntrypointPlanDocument, `"image_reference":"docker.io/library/traefik",`, "", 1),
-		"a schema 1 probe plan":                   vectorPlanDocument,
-		"a schema 2 document with no operation":   strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route",`, "", 1),
-		"a schema 2 document naming a number":     strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route"`, `"operation":2`, 1),
-		"a schema 2 document naming null":         strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route"`, `"operation":null`, 1),
-		"a schema 2 document naming an object":    strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route"`, `"operation":{"name":"publish_route"}`, 1),
-		"a document repeating its operation":      withExtraField(vectorRoutePlanDocument, `"operation":"retire_route"`),
-		"a document repeating a bounded field":    withExtraField(vectorRoutePlanDocument, `"backend_port":9090`),
-		"a document with a non-canonical name":    strings.Replace(vectorRoutePlanDocument, `"route_host"`, `"Route_Host"`, 1),
-		"a document with a camel-case name":       strings.Replace(vectorRoutePlanDocument, `"backend_port"`, `"backendPort"`, 1),
-		"a document with a stringified port":      strings.Replace(vectorRoutePlanDocument, `"backend_port":8080`, `"backend_port":"8080"`, 1),
-		"a document with a fractional port":       strings.Replace(vectorRoutePlanDocument, `"backend_port":8080`, `"backend_port":8080.5`, 1),
-		"a document with an exponent port":        strings.Replace(vectorRoutePlanDocument, `"backend_port":8080`, `"backend_port":8.08e3`, 1),
-		"a document carrying a command":           withExtraField(vectorWebServicePlanDocument, `"command":"/bin/sh"`),
-		"a document carrying a volume":            withExtraField(vectorWebServicePlanDocument, `"volumes":["/etc:/etc"]`),
-		"a document carrying a privilege":         withExtraField(vectorEntrypointPlanDocument, `"privileged":true`),
-		"a document carrying a tag":               withExtraField(vectorEntrypointPlanDocument, `"tag":"latest"`),
-		"a document carrying middleware headers":  withExtraField(vectorRoutePlanDocument, `"headers":{"X-Forwarded-For":"1.2.3.4"}`),
-		"a document carrying a TLS certificate":   withExtraField(vectorRoutePlanDocument, `"tls_certificate":"-----BEGIN CERTIFICATE-----"`),
+		"a service plan carrying a route host":   withExtraField(vectorWebServicePlanDocument, `"route_host":"evil.test"`),
+		"a service plan carrying a backend port": withExtraField(vectorWebServicePlanDocument, `"backend_port":9090`),
+		"an entrypoint plan carrying a port":     withExtraField(vectorEntrypointPlanDocument, `"local_port":8080`),
+		"an entrypoint plan carrying a host":     withExtraField(vectorEntrypointPlanDocument, `"route_host":"evil.test"`),
+		"an entrypoint plan carrying a profile":  withExtraField(vectorEntrypointPlanDocument, `"service_profile":"bentopdf"`),
+		"a route plan carrying an image digest":  withExtraField(vectorRoutePlanDocument, `"image_digest":"`+BentoPDFImageDigest+`"`),
+		"a route plan carrying an image":         withExtraField(vectorRoutePlanDocument, `"image_reference":"`+BentoPDFImageReference+`"`),
+		"a route plan carrying a profile":        withExtraField(vectorRoutePlanDocument, `"service_profile":"bentopdf"`),
+		"a route plan carrying a local port":     withExtraField(vectorRoutePlanDocument, `"local_port":8080`),
+		"a service plan claiming a route":        strings.Replace(vectorWebServicePlanDocument, `"deploy_web_service"`, `"publish_route"`, 1),
+		"a route plan claiming a service":        strings.Replace(vectorRoutePlanDocument, `"publish_route"`, `"deploy_web_service"`, 1),
+		"an entrypoint plan claiming a service":  strings.Replace(vectorEntrypointPlanDocument, `"deploy_entrypoint"`, `"deploy_web_service"`, 1),
+		"a service plan claiming an entrypoint":  strings.Replace(vectorWebServicePlanDocument, `"deploy_web_service"`, `"deploy_entrypoint"`, 1),
+		"a service plan without its profile":     strings.Replace(vectorWebServicePlanDocument, `"service_profile":"bentopdf",`, "", 1),
+		"a service plan without its port":        strings.Replace(vectorWebServicePlanDocument, `,"local_port":8080`, "", 1),
+		"a route plan without its host":          strings.Replace(vectorRoutePlanDocument, `"route_host":"bentopdf.lab.your-cloud.test",`, "", 1),
+		"an entrypoint plan without its image":   strings.Replace(vectorEntrypointPlanDocument, `"image_reference":"docker.io/library/traefik",`, "", 1),
+		"a schema 1 probe plan":                  vectorPlanDocument,
+		"a schema 2 document with no operation":  strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route",`, "", 1),
+		"a schema 2 document naming a number":    strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route"`, `"operation":2`, 1),
+		"a schema 2 document naming null":        strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route"`, `"operation":null`, 1),
+		"a schema 2 document naming an object":   strings.Replace(vectorRoutePlanDocument, `"operation":"publish_route"`, `"operation":{"name":"publish_route"}`, 1),
+		"a document repeating its operation":     withExtraField(vectorRoutePlanDocument, `"operation":"retire_route"`),
+		"a document repeating a bounded field":   withExtraField(vectorRoutePlanDocument, `"backend_port":9090`),
+		"a document with a non-canonical name":   strings.Replace(vectorRoutePlanDocument, `"route_host"`, `"Route_Host"`, 1),
+		"a document with a camel-case name":      strings.Replace(vectorRoutePlanDocument, `"backend_port"`, `"backendPort"`, 1),
+		"a document with a stringified port":     strings.Replace(vectorRoutePlanDocument, `"backend_port":8080`, `"backend_port":"8080"`, 1),
+		"a document with a fractional port":      strings.Replace(vectorRoutePlanDocument, `"backend_port":8080`, `"backend_port":8080.5`, 1),
+		"a document with an exponent port":       strings.Replace(vectorRoutePlanDocument, `"backend_port":8080`, `"backend_port":8.08e3`, 1),
+		"a document carrying a command":          withExtraField(vectorWebServicePlanDocument, `"command":"/bin/sh"`),
+		"a document carrying a volume":           withExtraField(vectorWebServicePlanDocument, `"volumes":["/etc:/etc"]`),
+		"a document carrying a privilege":        withExtraField(vectorEntrypointPlanDocument, `"privileged":true`),
+		"a document carrying a tag":              withExtraField(vectorEntrypointPlanDocument, `"tag":"latest"`),
+		"a document carrying middleware headers": withExtraField(vectorRoutePlanDocument, `"headers":{"X-Forwarded-For":"1.2.3.4"}`),
+		"a document carrying a TLS certificate":  withExtraField(vectorRoutePlanDocument, `"tls_certificate":"-----BEGIN CERTIFICATE-----"`),
+		// Two couples of groups carry the same tail, and swapping the operation
+		// between them is the one substitution that produces another valid
+		// document rather than a refusal — it is another plan, describing another
+		// state, under another digest, which is what the shared-tail test holds.
+		// What may not cross is a field: the operation selects the shape before any
+		// field is read, and the shape then refuses everything the other group
+		// carries. The reserved slot is refused the moment the operation that names
+		// it stops being the return.
+		"a restore of the reserved slot as a discard":  strings.Replace(vectorRestoreRollbackDocument, `"restore_service"`, `"discard_snapshot"`, 1),
+		"a restore of the reserved slot as a snapshot": strings.Replace(vectorRestoreRollbackDocument, `"restore_service"`, `"snapshot_service"`, 1),
+		"a link route carrying a profile":              withExtraField(vectorLinkRoutePlanDocument, `"service_profile":"vaultwarden"`),
+		"a link route carrying a local port":           withExtraField(vectorLinkRoutePlanDocument, `"local_port":8080`),
+		"a link route carrying a peer address":         withExtraField(vectorLinkRoutePlanDocument, `"backend_address":"10.66.66.2"`),
+		"a private service carrying a route host":      withExtraField(vectorPrivateServicePlanDocument, `"route_host":"evil.test"`),
+		"a private service carrying a volume":          withExtraField(vectorPrivateServicePlanDocument, `"volume":"/etc"`),
+		"a private service carrying environment":       withExtraField(vectorPrivateServicePlanDocument, `"environment":["SIGNUPS_ALLOWED=true"]`),
+		"a private service carrying a slot":            withExtraField(vectorPrivateServicePlanDocument, `"snapshot_slot":"nightly"`),
+		"a private service without its origin":         strings.Replace(vectorPrivateServicePlanDocument, `,"origin_host":"vault.lab.your-cloud.test"`, "", 1),
+		"a snapshot carrying an image":                 withExtraField(vectorSnapshotPlanDocument, `"image_reference":"`+VaultwardenImageReference+`"`),
+		"a snapshot carrying an archive path":          withExtraField(vectorSnapshotPlanDocument, `"archive_path":"/tmp/out.tar.gz"`),
+		"a snapshot carrying a digest":                 withExtraField(vectorSnapshotPlanDocument, `"archive_sha256":"`+strings.Repeat("a", 64)+`"`),
+		"a snapshot without its slot":                  strings.Replace(vectorSnapshotPlanDocument, `,"snapshot_slot":"nightly"`, "", 1),
+		"a restore carrying a second slot":             withExtraField(vectorRestorePlanDocument, `"snapshot_slot":"previous"`),
+		"a restore carrying a local port":              withExtraField(vectorRestorePlanDocument, `"local_port":8080`),
+
 		"an empty document":                       "",
 		"two values":                              vectorRoutePlanDocument + "{}",
 		"an array of documents":                   "[" + vectorRoutePlanDocument + "]",
 		"a truncated document":                    strings.TrimSuffix(vectorRoutePlanDocument, "}"),
 		"an oversized document":                   strings.Replace(vectorRoutePlanDocument, vectorRouteHost, strings.Repeat("a", MaxPlanBytes), 1),
 		"an oversized service document":           strings.Replace(vectorWebServicePlanDocument, BentoPDFImageReference, strings.Repeat("a", MaxPlanBytes), 1),
+		"an oversized origin":                     strings.Replace(vectorPrivateServicePlanDocument, vectorOriginHost, strings.Repeat("a", MaxPlanBytes), 1),
+		"an oversized slot":                       strings.Replace(vectorSnapshotPlanDocument, vectorSnapshotSlot, strings.Repeat("a", MaxPlanBytes), 1),
+		"a private document repeating its origin": withExtraField(vectorPrivateServicePlanDocument, `"origin_host":"evil.test"`),
+		"a snapshot repeating its slot":           withExtraField(vectorSnapshotPlanDocument, `"snapshot_slot":"weekly"`),
 		"a document that is only its operation":   `{"operation":"publish_route"}`,
 		"a document whose operation is a schema1": `{"operation":"deploy_oci_probe"}`,
 	} {
@@ -659,9 +1425,13 @@ func TestNoSchemaTwoDocumentBorrowsAFieldOfAnotherOperation(t *testing.T) {
 func TestSchemaOneAndSchemaTwoRefuseOneAnother(t *testing.T) {
 	t.Parallel()
 	for name, document := range map[string]string{
-		"a service plan":     vectorWebServicePlanDocument,
-		"an entrypoint plan": vectorEntrypointPlanDocument,
-		"a route plan":       vectorRoutePlanDocument,
+		"a service plan":         vectorWebServicePlanDocument,
+		"an entrypoint plan":     vectorEntrypointPlanDocument,
+		"a route plan":           vectorRoutePlanDocument,
+		"a private service plan": vectorPrivateServicePlanDocument,
+		"a link route plan":      vectorLinkRoutePlanDocument,
+		"a snapshot plan":        vectorSnapshotPlanDocument,
+		"a restore plan":         vectorRestorePlanDocument,
 	} {
 		if _, err := Decode([]byte(document)); err == nil {
 			t.Fatalf("the schema 1 decoder accepted %s", name)
@@ -727,6 +1497,64 @@ func TestASchemaTwoPlanSurvivesTransportAndReturnsTheSameBytes(t *testing.T) {
   "schema_version": 2
 }`, vectorBackendPort, vectorRouteHost,
 				OperationPublishRoute, vectorMachine, vectorInfrastructure),
+		},
+		"private service": {
+			canonical: vectorPrivateServicePlanDocument,
+			digest:    vectorPrivateServicePlanSHA256,
+			reshaped: fmt.Sprintf(`{
+  "origin_host": %q,
+  "local_port": %d,
+  "image_digest": %q,
+  "image_reference": %q,
+  "service_profile": %q,
+  "operation": %q,
+  "machine_id": %q,
+  "infrastructure_id": %q,
+  "schema_version": 2
+}`, vectorOriginHost, vectorPrivateLocalPort, VaultwardenImageDigest, VaultwardenImageReference,
+				vectorPrivateProfile, OperationDeployPrivateService, vectorMachine, vectorInfrastructure),
+		},
+		"link route": {
+			canonical: vectorLinkRoutePlanDocument,
+			digest:    vectorLinkRoutePlanSHA256,
+			reshaped: fmt.Sprintf(`{
+  "backend_port": %d,
+  "route_host": %q,
+  "operation": %q,
+  "machine_id": %q,
+  "infrastructure_id": %q,
+  "schema_version": 2
+}`, vectorLinkBackendPort, vectorLinkRouteHost,
+				OperationPublishLinkRoute, vectorMachine, vectorInfrastructure),
+		},
+		"snapshot": {
+			canonical: vectorSnapshotPlanDocument,
+			digest:    vectorSnapshotPlanSHA256,
+			reshaped: fmt.Sprintf(`{
+  "snapshot_slot": %q,
+  "service_profile": %q,
+  "operation": %q,
+  "machine_id": %q,
+  "infrastructure_id": %q,
+  "schema_version": 2
+}`, vectorSnapshotSlot, vectorPrivateProfile,
+				OperationSnapshotService, vectorMachine, vectorInfrastructure),
+		},
+		// The rollback of a restore travels like any other document, and it is the
+		// one that names the reserved slot: a transport that reshaped it carries
+		// the same return, and the Auxiliary decodes it by these very rules.
+		"the return itself": {
+			canonical: vectorRestoreRollbackDocument,
+			digest:    vectorRestoreRollbackSHA256,
+			reshaped: fmt.Sprintf(`{
+  "snapshot_slot": %q,
+  "service_profile": %q,
+  "operation": %q,
+  "machine_id": %q,
+  "infrastructure_id": %q,
+  "schema_version": 2
+}`, ReservedSnapshotSlot, vectorPrivateProfile,
+				OperationRestoreService, vectorMachine, vectorInfrastructure),
 		},
 	} {
 		decoded, err := DecodeV2([]byte(subject.canonical))
@@ -804,6 +1632,40 @@ func TestTheRollbackOfASchemaTwoPairIsTheOtherPairItself(t *testing.T) {
 			reverse: func() (V2Pair, error) {
 				return BuildRoutePair(OperationRetireRoute, vectorInfrastructure,
 					vectorMachine, vectorRouteHost, vectorBackendPort)
+			},
+		},
+		"private service": {
+			forward: func() (V2Pair, error) {
+				return BuildPrivateServicePair(OperationDeployPrivateService, vectorInfrastructure,
+					vectorMachine, vectorPrivateProfile, vectorPrivateLocalPort, vectorOriginHost)
+			},
+			reverse: func() (V2Pair, error) {
+				return BuildPrivateServicePair(OperationRemovePrivateService, vectorInfrastructure,
+					vectorMachine, vectorPrivateProfile, vectorPrivateLocalPort, vectorOriginHost)
+			},
+		},
+		"link route": {
+			forward: func() (V2Pair, error) {
+				return BuildLinkRoutePair(OperationPublishLinkRoute, vectorInfrastructure,
+					vectorMachine, vectorLinkRouteHost, vectorLinkBackendPort)
+			},
+			reverse: func() (V2Pair, error) {
+				return BuildLinkRoutePair(OperationRetireLinkRoute, vectorInfrastructure,
+					vectorMachine, vectorLinkRouteHost, vectorLinkBackendPort)
+			},
+		},
+		// The archive pair is the one whose second direction the contract calls
+		// asymmetric in what it means, and symmetric in what it builds: the
+		// rollback of a discard is a snapshot of the same slot, and what that
+		// snapshot will archive is the state the machine holds when it runs.
+		"snapshot": {
+			forward: func() (V2Pair, error) {
+				return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+					vectorMachine, vectorPrivateProfile, vectorSnapshotSlot)
+			},
+			reverse: func() (V2Pair, error) {
+				return BuildSnapshotPair(OperationDiscardSnapshot, vectorInfrastructure,
+					vectorMachine, vectorPrivateProfile, vectorSnapshotSlot)
 			},
 		},
 	} {
@@ -921,6 +1783,65 @@ func TestARollbackOfSchemaTwoIsRecognisedOnlyWhenItUndoesExactlyThePlan(t *testi
 	}
 }
 
+// TestTheRollbackOfARestoreIsARestoreOfTheReservedSlot is the one rollback shape
+// of this schema that a reader could not guess from the operation table.
+//
+// A restore is undone by another restore, because the flow writes the state it is
+// about to replace into the reserved slot before replacing anything. The
+// returning document is therefore complete, readable and deterministic like every
+// other rollback of the product — and it is the only document that names that
+// slot. The forward direction cannot: a restore of the reserved slot would undo
+// itself, and a pair whose two halves are one document is not a pair.
+func TestTheRollbackOfARestoreIsARestoreOfTheReservedSlot(t *testing.T) {
+	t.Parallel()
+	pair, err := BuildRestorePair(vectorInfrastructure, vectorMachine,
+		vectorPrivateProfile, vectorSnapshotSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback, isRestore := pair.Rollback.(RestoreDocument)
+	if !isRestore {
+		t.Fatalf("the rollback of a restore is a %T", pair.Rollback)
+	}
+	if rollback.Operation != OperationRestoreService {
+		t.Fatalf("the rollback of a restore names %q", rollback.Operation)
+	}
+	if rollback.SnapshotSlot != ReservedSnapshotSlot {
+		t.Fatalf("the rollback of a restore names slot %q", rollback.SnapshotSlot)
+	}
+	subject, isRestore := pair.Plan.(RestoreDocument)
+	if !isRestore || subject.SnapshotSlot != vectorSnapshotSlot {
+		t.Fatalf("the plan of a restore pair is not the restore that was asked for: %+v", pair.Plan)
+	}
+	if !pair.Rollback.IsExactInverseOf(pair.Plan) {
+		t.Fatal("the rollback of a restore is not read as undoing it")
+	}
+	if pair.Plan.IsExactInverseOf(pair.Rollback) {
+		t.Fatal("a restore of a named slot was read as undoing the return itself")
+	}
+
+	// The reserved slot is refused as a forward direction whichever way it is
+	// asked for, and the pair a builder cannot freeze is a pair that does not
+	// exist rather than one whose two documents are the same bytes.
+	if _, err := BuildRestorePair(vectorInfrastructure, vectorMachine,
+		vectorPrivateProfile, ReservedSnapshotSlot); err == nil {
+		t.Fatal("a restore of the reserved slot was built as a forward plan")
+	}
+	if _, err := buildV2Pair(rollback); err == nil {
+		t.Fatal("a document that undoes itself was frozen as a pair")
+	}
+
+	// The archive operations may not name it at all, in either direction: the
+	// slot belongs to the mechanism, and a plan that wrote over it or destroyed it
+	// would remove the possibility of returning.
+	for _, operation := range []string{OperationSnapshotService, OperationDiscardSnapshot} {
+		if _, err := BuildSnapshotPair(operation, vectorInfrastructure, vectorMachine,
+			vectorPrivateProfile, ReservedSnapshotSlot); err == nil {
+			t.Fatalf("%s named the reserved slot", operation)
+		}
+	}
+}
+
 func TestSchemaTwoBuildersRefuseEveryInstanceOutsideTheContract(t *testing.T) {
 	t.Parallel()
 	for _, port := range []int{MinLocalPort, MaxLocalPort} {
@@ -996,6 +1917,73 @@ func TestSchemaTwoBuildersRefuseEveryInstanceOutsideTheContract(t *testing.T) {
 			return BuildRoutePair(OperationPublishRoute, vectorInfrastructure,
 				vectorMachine, vectorRouteHost, MaxBackendPort+1)
 		},
+		"a private pair on the stateless profile": func() (V2Pair, error) {
+			return BuildPrivateServicePair(OperationDeployPrivateService, vectorInfrastructure,
+				vectorMachine, ServiceProfileBentoPDF, vectorPrivateLocalPort, vectorOriginHost)
+		},
+		"a stateless pair on the private profile": func() (V2Pair, error) {
+			return BuildWebServicePair(OperationDeployWebService, vectorInfrastructure,
+				vectorMachine, ServiceProfileVaultwarden, vectorLocalPort)
+		},
+		"a private pair on a stateless operation": func() (V2Pair, error) {
+			return BuildPrivateServicePair(OperationDeployWebService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, vectorPrivateLocalPort, vectorOriginHost)
+		},
+		"a private pair without an origin": func() (V2Pair, error) {
+			return BuildPrivateServicePair(OperationDeployPrivateService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, vectorPrivateLocalPort, "")
+		},
+		"a private pair on a wildcard origin": func() (V2Pair, error) {
+			return BuildPrivateServicePair(OperationDeployPrivateService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, vectorPrivateLocalPort, "*.lab.your-cloud.test")
+		},
+		"a private pair on a privileged port": func() (V2Pair, error) {
+			return BuildPrivateServicePair(OperationDeployPrivateService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, 443, vectorOriginHost)
+		},
+		"a link route pair on a public route operation": func() (V2Pair, error) {
+			return BuildLinkRoutePair(OperationPublishRoute, vectorInfrastructure,
+				vectorMachine, vectorLinkRouteHost, vectorLinkBackendPort)
+		},
+		"a link route pair on a wildcard host": func() (V2Pair, error) {
+			return BuildLinkRoutePair(OperationPublishLinkRoute, vectorInfrastructure,
+				vectorMachine, "*.lab.your-cloud.test", vectorLinkBackendPort)
+		},
+		"a link route pair on a privileged backend": func() (V2Pair, error) {
+			return BuildLinkRoutePair(OperationPublishLinkRoute, vectorInfrastructure,
+				vectorMachine, vectorLinkRouteHost, 443)
+		},
+		"a snapshot pair on the stateless profile": func() (V2Pair, error) {
+			return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+				vectorMachine, ServiceProfileBentoPDF, vectorSnapshotSlot)
+		},
+		"a snapshot pair on a restore operation": func() (V2Pair, error) {
+			return BuildSnapshotPair(OperationRestoreService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, vectorSnapshotSlot)
+		},
+		"a snapshot pair without a slot": func() (V2Pair, error) {
+			return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, "")
+		},
+		"a snapshot pair on a traversal slot": func() (V2Pair, error) {
+			return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, "../../etc/shadow")
+		},
+		"a snapshot pair on an oversized slot": func() (V2Pair, error) {
+			return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+				vectorMachine, vectorPrivateProfile, strings.Repeat("a", MaxSnapshotSlotBytes+1))
+		},
+		"a restore pair on the stateless profile": func() (V2Pair, error) {
+			return BuildRestorePair(vectorInfrastructure, vectorMachine,
+				ServiceProfileBentoPDF, vectorSnapshotSlot)
+		},
+		"a restore pair on an upper-case slot": func() (V2Pair, error) {
+			return BuildRestorePair(vectorInfrastructure, vectorMachine,
+				vectorPrivateProfile, "Nightly")
+		},
+		"a restore pair on a malformed machine": func() (V2Pair, error) {
+			return BuildRestorePair(vectorInfrastructure, "LAB", vectorPrivateProfile, vectorSnapshotSlot)
+		},
 	} {
 		if _, err := build(); err == nil {
 			t.Fatalf("%s built a pair", name)
@@ -1021,6 +2009,7 @@ func TestTheImagesOfThisPalierArePinnedByDigestAlone(t *testing.T) {
 	for name, reference := range map[string]string{
 		"the service image":    BentoPDFImageReference,
 		"the entrypoint image": EntrypointImageReference,
+		"the private image":    VaultwardenImageReference,
 	} {
 		if strings.ContainsAny(reference, ":@") {
 			t.Fatalf("%s carries a tag or a digest: %s", name, reference)
@@ -1029,26 +2018,44 @@ func TestTheImagesOfThisPalierArePinnedByDigestAlone(t *testing.T) {
 			t.Fatalf("%s names no registry: %s", name, reference)
 		}
 	}
-	for name, digest := range map[string]string{
+	digests := map[string]string{
 		"the service digest":    BentoPDFImageDigest,
 		"the entrypoint digest": EntrypointImageDigest,
-	} {
+		"the private digest":    VaultwardenImageDigest,
+	}
+	seen := map[string]string{}
+	for name, digest := range digests {
 		if !canonicalOCIDigest.MatchString(digest) {
 			t.Fatalf("%s is not canonical: %s", name, digest)
 		}
-	}
-	if BentoPDFImageDigest == EntrypointImageDigest {
-		t.Fatal("the two pinned images share a digest")
+		if other, collision := seen[digest]; collision {
+			t.Fatalf("%s and %s pin the same image", name, other)
+		}
+		seen[digest] = name
 	}
 
-	if len(profileImage) != 1 {
-		t.Fatalf("this palier describes exactly one service profile, not %d", len(profileImage))
+	// The two doors hold one profile each, and neither list holds the other's.
+	// That is the whole of the cross-refusal: it is a lookup that fails rather
+	// than a comparison someone has to remember to write.
+	if len(profileImage) != 1 || len(privateProfileImage) != 1 {
+		t.Fatalf("this palier describes one profile per door, not %d and %d",
+			len(profileImage), len(privateProfileImage))
 	}
 	if _, known := profileImage[ServiceProfileBentoPDF]; !known {
-		t.Fatal("the one service profile of this palier is not the one it names")
+		t.Fatal("the stateless profile of this palier is not the one it names")
 	}
-	if len(inverseOperationV2) != 6 || len(operationGroups) != 6 {
-		t.Fatalf("schema 2 describes exactly six operations, not %d and %d",
+	if _, known := privateProfileImage[ServiceProfileVaultwarden]; !known {
+		t.Fatal("the private profile of this palier is not the one it names")
+	}
+	if _, crossed := profileImage[ServiceProfileVaultwarden]; crossed {
+		t.Fatal("the data-bearing profile is described by the stateless door")
+	}
+	if _, crossed := privateProfileImage[ServiceProfileBentoPDF]; crossed {
+		t.Fatal("the stateless profile is described by the private door")
+	}
+
+	if len(inverseOperationV2) != 13 || len(operationGroups) != 13 {
+		t.Fatalf("schema 2 describes exactly thirteen operations, not %d and %d",
 			len(inverseOperationV2), len(operationGroups))
 	}
 	for operation, inverse := range inverseOperationV2 {
@@ -1061,8 +2068,18 @@ func TestTheImagesOfThisPalierArePinnedByDigestAlone(t *testing.T) {
 		if operationGroups[inverse] != operationGroups[operation] {
 			t.Fatalf("operation %q and its undoing do not carry the same fields", operation)
 		}
+		// Exactly one operation of this schema is undone by itself, and it is the
+		// return: what changes between a restore and its undoing is the slot. Any
+		// second self-inverse entry would be an operation whose pair is one
+		// document, which buildV2Pair refuses to freeze.
+		if inverse == operation && operation != OperationRestoreService {
+			t.Fatalf("operation %q is its own undoing", operation)
+		}
 	}
 	if _, borrowed := operationGroups[OperationDeployOCIProbe]; borrowed {
 		t.Fatal("a schema 1 operation carries a schema 2 field list")
+	}
+	if _, borrowed := operationGroups[OperationPrepareLink]; borrowed {
+		t.Fatal("a schema 3 operation carries a schema 2 field list")
 	}
 }

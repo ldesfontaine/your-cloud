@@ -89,6 +89,24 @@ const (
 	OperationJoinLinkPeer   = "join_link_peer"
 	OperationLeaveLinkPeer  = "leave_link_peer"
 
+	// The seven operations of the private profile. Each of them is described by a
+	// plan document of schema 2 whose digest this envelope signs, and each of them
+	// mutates — the archive operations included: a snapshot stops the service,
+	// writes an archive and starts it again, which is three changes to the machine
+	// however read-only the word sounds.
+	//
+	// Naming them here does not make them applicable. The envelope decides that a
+	// human approved two digests for one operation; what acting on them means is
+	// the Auxiliary's, and until the issues that own it land, an approval of one
+	// of these seven is refused there by name before any effect.
+	OperationDeployPrivateService = "deploy_private_service"
+	OperationRemovePrivateService = "remove_private_service"
+	OperationPublishLinkRoute     = "publish_link_route"
+	OperationRetireLinkRoute      = "retire_link_route"
+	OperationSnapshotService      = "snapshot_service"
+	OperationDiscardSnapshot      = "discard_snapshot"
+	OperationRestoreService       = "restore_service"
+
 	// PrivilegeReadLocalState allows reading what the machine already holds.
 	PrivilegeReadLocalState = "read_local_state"
 	// PrivilegeMutateLocalState allows changing the machine. The read-only
@@ -122,6 +140,13 @@ var requiredPrivileges = map[string][]string{
 	OperationDetachLinkPeer:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	OperationJoinLinkPeer:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	OperationLeaveLinkPeer:            {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationDeployPrivateService:     {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRemovePrivateService:     {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationPublishLinkRoute:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRetireLinkRoute:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationSnapshotService:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationDiscardSnapshot:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRestoreService:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 }
 
 // mutatingOperations is the closed list of operations that are allowed to reach
@@ -143,6 +168,16 @@ var mutatingOperations = map[string]struct{}{
 	OperationDetachLinkPeer:   {},
 	OperationJoinLinkPeer:     {},
 	OperationLeaveLinkPeer:    {},
+	// The private profile's seven. A snapshot is here beside the deployments
+	// because it mutates: it stops the service, writes an archive and starts it
+	// again.
+	OperationDeployPrivateService: {},
+	OperationRemovePrivateService: {},
+	OperationPublishLinkRoute:     {},
+	OperationRetireLinkRoute:      {},
+	OperationSnapshotService:      {},
+	OperationDiscardSnapshot:      {},
+	OperationRestoreService:       {},
 }
 
 var (

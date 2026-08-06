@@ -6,11 +6,14 @@ package auxiliary
 //
 // Each schema widened what this Auxiliary performs in steps, and each step
 // closed a window a test named. `#90` added the two managed web service
-// operations and `#91` the four entrypoint and route ones; `#96` closes the last
-// window, the six operations of the private passage, which were refused by the
-// schema dispatch alone until it landed. What this file holds is therefore that
-// every document shape of every schema reaches the effects of its own kind and
-// no other, and that no decoder covers for another.
+// operations, `#91` the four entrypoint and route ones, and `#96` the six of the
+// private passage, which were refused by the schema dispatch alone until it
+// landed. One window is open again: the four document shapes of the private
+// profile are read but not performed, and `#102` and `#103` close it. What this
+// file holds is therefore that every document shape this Auxiliary performs
+// reaches the effects of its own kind and no other, that the shapes it does not
+// perform are refused by name before anything happens, and that no decoder covers
+// for another.
 
 import (
 	"strconv"
@@ -364,6 +367,110 @@ func TestOnlyThePreparationOfAPassageReportsAPublicKey(t *testing.T) {
 		if !subject.reports && application.LinkPublicKey != "" {
 			t.Fatalf("%s reported a key it had no business establishing: %+v", name, application)
 		}
+	}
+}
+
+// TestEveryPrivateProfileOperationIsRefusedByNameBeforeAnyEffect is the window
+// this issue opens, named here so that the issues that close it have one test to
+// replace rather than a silence to notice.
+//
+// The approval package now holds the seven operations of the private profile in
+// its closed list, so a human may sign one and this Auxiliary may be handed the
+// pair. Performing them is `#102` — the data-bearing service and its archives —
+// and `#103` — the route the passage publishes. Until then the pairs below are
+// real, valid, canonically frozen documents of that contract, and every one of
+// them is refused where the shapes of schema 2 become instances: by name, before
+// any effect, and before this machine is read at all.
+//
+// They are schema 2 documents, so unlike the passage's window they are decoded,
+// held against their signed digests, held against this machine's target and held
+// as exact inverses before the refusal. That is deliberate: the refusal is about
+// what this Auxiliary performs, not about what it can read, and everything that
+// could have refused earlier still does.
+func TestEveryPrivateProfileOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
+	t.Parallel()
+	for name, frozen := range map[string]func(*testing.T) (string, plan.Frozen){
+		"a private service deployment": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationDeployPrivateService,
+				frozenPrivateServicePair(t, plan.OperationDeployPrivateService, fixturePort)
+		},
+		"a private service removal": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationRemovePrivateService,
+				frozenPrivateServicePair(t, plan.OperationRemovePrivateService, fixturePort)
+		},
+		"a link route publication": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationPublishLinkRoute,
+				frozenLinkRoutePair(t, plan.OperationPublishLinkRoute, fixturePort)
+		},
+		"a link route retirement": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationRetireLinkRoute,
+				frozenLinkRoutePair(t, plan.OperationRetireLinkRoute, fixturePort)
+		},
+		"a snapshot": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationSnapshotService, frozenSnapshotPair(t, plan.OperationSnapshotService)
+		},
+		"a snapshot discard": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationDiscardSnapshot, frozenSnapshotPair(t, plan.OperationDiscardSnapshot)
+		},
+		"a restore": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationRestoreService, frozenRestorePair(t)
+		},
+	} {
+		operation, pair := frozen(t)
+		executor := deployedServiceMachine(t, fixturePort)
+		accepted, input := approvedFrozenPair(operation, pair)
+
+		application, err := Apply(executor, accepted, input)
+		if err == nil {
+			t.Fatalf("%s was applied by an Auxiliary that does not perform it", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), "which this Auxiliary does not yet perform") {
+			t.Fatalf("%s was refused for another reason than the window: %v", name, err)
+		}
+		if !strings.Contains(err.Error(), operation) {
+			t.Fatalf("%s was refused without being named: %v", name, err)
+		}
+		if len(executor.effects) != 0 || len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		}
+	}
+}
+
+// TestAPairWhoseTwoDigestsAreOneDigestIsRefusedBeforeAnythingIsDecoded is the
+// rule the private profile's return makes reachable.
+//
+// A restore of the reserved slot genuinely is its own exact inverse — applying it
+// twice returns the machine where it started — so it is the first document of the
+// product an approval could name as both halves of a pair. No Controller can
+// build such a pair, and this package does not trust the Controller: it refuses
+// on the two digests alone, before either document is decoded, before the target
+// is held and before this machine is read.
+func TestAPairWhoseTwoDigestsAreOneDigestIsRefusedBeforeAnythingIsDecoded(t *testing.T) {
+	t.Parallel()
+	pair := frozenRestorePair(t)
+	executor := deployedServiceMachine(t, fixturePort)
+	accepted, input := approvedFrozenPair(plan.OperationRestoreService, plan.Frozen{
+		PlanDocument:     pair.RollbackDocument,
+		PlanSHA256:       pair.RollbackSHA256,
+		RollbackDocument: pair.RollbackDocument,
+		RollbackSHA256:   pair.RollbackSHA256,
+	})
+
+	application, err := Apply(executor, accepted, input)
+	if err == nil {
+		t.Fatal("a document approved as its own undoing was applied")
+	}
+	if application != nil {
+		t.Fatalf("a document approved as its own undoing returned an application: %+v", application)
+	}
+	if !strings.Contains(err.Error(), "a document is not its own undoing") {
+		t.Fatalf("it was refused for another reason: %v", err)
+	}
+	if len(executor.effects) != 0 || len(executor.reads) != 0 {
+		t.Fatalf("it reached the machine: %q %q", executor.effects, executor.reads)
 	}
 }
 

@@ -4,18 +4,21 @@
 // The approval package decides whether a human authorised this machine to act.
 // This package decides what acting means, and it is the only place in the
 // product where a plan becomes a file, a service and a container. Its operations
-// are eight, in four inverse pairs: the pinned OCI probe of schema 1, deployed
-// and removed, and the managed web service, the public entrypoint and the
-// published route of schema 2, each in its own two directions — all described by
-// a plan document whose digest the approval signed.
+// are fourteen, in seven inverse pairs: the pinned OCI probe of schema 1,
+// deployed and removed; the managed web service, the public entrypoint and the
+// published route of schema 2; and the three pairs of the private passage of
+// schema 3 — each in its own two directions, all described by a plan document
+// whose digest the approval signed.
 //
-// The six operations of the private passage are written in schema 3. An approval
-// may already name one of them, because the approval package holds the closed
-// list of what a human may sign and that list is now complete. This package does
-// not read schema 3: a pair declaring it is refused by name at dispatch, before
-// any effect and before this machine is read at all, until the issues that own
-// the passage's application land. That window is deliberate and it is tested —
-// a schema this Auxiliary does not read must refuse, never guess.
+// The seven operations of the private profile are written in schema 2 as well:
+// the data-bearing service, the route the passage publishes, and the three
+// archive operations. An approval may already name one of them, because the
+// approval package holds the closed list of what a human may sign and that list
+// is now complete. This package does not perform them: a pair carrying one of
+// those four document shapes is refused by name where the shapes become
+// instances, before any effect and before this machine is read at all, until
+// `#102` and `#103` land. That window is deliberate and it is tested — an
+// operation this Auxiliary does not perform must refuse, never guess.
 //
 // Everything a profile means on a machine — its account, its home, its sheet,
 // its container and its pinned image — lives in one placement per profile rather

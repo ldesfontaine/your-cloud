@@ -894,6 +894,71 @@ func frozenRoutePair(t *testing.T, operation, host string, port int) plan.Frozen
 	return frozen
 }
 
+// The four schema 2 pairs of the private profile a Controller would have built
+// and transported.
+//
+// They exist so that the window this Auxiliary keeps open on those four document
+// shapes is proven against real documents rather than against an operation string
+// written into a shape this package already places: what must be refused is a
+// whole, valid, canonically frozen pair, exactly as a Console would hand it over.
+const (
+	fixtureOriginHost    = "vault.lab.your-cloud.test"
+	fixtureLinkRouteHost = "vault.lab.your-cloud.test"
+	fixtureSnapshotSlot  = "nightly"
+)
+
+func frozenPrivateServicePair(t *testing.T, operation string, port int) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildPrivateServicePair(operation, fixtureInfrastructure, fixtureMachine,
+		plan.ServiceProfileVaultwarden, port, fixtureOriginHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV2(t, pair)
+}
+
+func frozenLinkRoutePair(t *testing.T, operation string, port int) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildLinkRoutePair(operation, fixtureInfrastructure, fixtureMachine,
+		fixtureLinkRouteHost, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV2(t, pair)
+}
+
+func frozenSnapshotPair(t *testing.T, operation string) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildSnapshotPair(operation, fixtureInfrastructure, fixtureMachine,
+		plan.ServiceProfileVaultwarden, fixtureSnapshotSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV2(t, pair)
+}
+
+// frozenRestorePair carries the one pair whose rollback names the reserved slot,
+// so the window is proven against that document too rather than only against the
+// shapes whose two directions differ by an operation.
+func frozenRestorePair(t *testing.T) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildRestorePair(fixtureInfrastructure, fixtureMachine,
+		plan.ServiceProfileVaultwarden, fixtureSnapshotSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV2(t, pair)
+}
+
+func frozenV2(t *testing.T, pair plan.V2Pair) plan.Frozen {
+	t.Helper()
+	frozen, err := pair.Freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozen
+}
+
 // The three schema 3 pairs a Controller would have built and transported for the
 // private passage.
 //

@@ -274,19 +274,29 @@ func TestDeterministicSchemaThreeVectorsAreHeldWithTheRustSide(t *testing.T) {
 
 // TestNoTwoPlanDigestsCollideAcrossTheThreeSchemas is what makes the three
 // transcript layouts unambiguous without a group tag and without a schema tag:
-// the fourteen vectors of the product are fourteen distinct documents and
-// fourteen distinct digests.
+// the twenty-four vectors of the product are twenty-four distinct documents and
+// twenty-four distinct digests.
 func TestNoTwoPlanDigestsCollideAcrossTheThreeSchemas(t *testing.T) {
 	t.Parallel()
 	seen := map[string]string{
-		vectorPlanSHA256:               "schema 1 probe deployment",
-		vectorRollbackSHA256:           "schema 1 probe removal",
-		vectorWebServicePlanSHA256:     "schema 2 web service deployment",
-		vectorWebServiceRollbackSHA256: "schema 2 web service removal",
-		vectorEntrypointPlanSHA256:     "schema 2 entrypoint deployment",
-		vectorEntrypointRollbackSHA256: "schema 2 entrypoint removal",
-		vectorRoutePlanSHA256:          "schema 2 route publication",
-		vectorRouteRollbackSHA256:      "schema 2 route retirement",
+		vectorPlanSHA256:                   "schema 1 probe deployment",
+		vectorRollbackSHA256:               "schema 1 probe removal",
+		vectorWebServicePlanSHA256:         "schema 2 web service deployment",
+		vectorWebServiceRollbackSHA256:     "schema 2 web service removal",
+		vectorEntrypointPlanSHA256:         "schema 2 entrypoint deployment",
+		vectorEntrypointRollbackSHA256:     "schema 2 entrypoint removal",
+		vectorRoutePlanSHA256:              "schema 2 route publication",
+		vectorRouteRollbackSHA256:          "schema 2 route retirement",
+		vectorPrivateServicePlanSHA256:     "schema 2 private service deployment",
+		vectorPrivateServiceRollbackSHA256: "schema 2 private service removal",
+		vectorLinkRoutePlanSHA256:          "schema 2 link route publication",
+		vectorLinkRouteRollbackSHA256:      "schema 2 link route retirement",
+		vectorSnapshotPlanSHA256:           "schema 2 snapshot",
+		vectorSnapshotRollbackSHA256:       "schema 2 snapshot discard",
+		vectorRestorePlanSHA256:            "schema 2 restore",
+		vectorRestoreRollbackSHA256:        "schema 2 restore of the return slot",
+		vectorSameFieldsRouteSHA256:        "schema 2 route sharing the link route's fields",
+		vectorSameFieldsRetireRouteSHA256:  "schema 2 retirement sharing the link route's fields",
 	}
 	for name, digest := range map[string]string{
 		"link preparation":    vectorLinkPlanSHA256,
@@ -750,10 +760,14 @@ func TestTheThreeSchemasRefuseOneAnother(t *testing.T) {
 		}
 	}
 	for name, document := range map[string]string{
-		"a probe plan":       vectorPlanDocument,
-		"a service plan":     vectorWebServicePlanDocument,
-		"an entrypoint plan": vectorEntrypointPlanDocument,
-		"a route plan":       vectorRoutePlanDocument,
+		"a probe plan":           vectorPlanDocument,
+		"a service plan":         vectorWebServicePlanDocument,
+		"an entrypoint plan":     vectorEntrypointPlanDocument,
+		"a route plan":           vectorRoutePlanDocument,
+		"a private service plan": vectorPrivateServicePlanDocument,
+		"a link route plan":      vectorLinkRoutePlanDocument,
+		"a snapshot plan":        vectorSnapshotPlanDocument,
+		"a restore plan":         vectorRestorePlanDocument,
 	} {
 		if _, err := DecodeV3([]byte(document)); err == nil {
 			t.Fatalf("the schema 3 decoder accepted %s", name)

@@ -354,9 +354,15 @@ func TestDecodeSignedRefusesEveryDocumentOutsideTheSchema(t *testing.T) {
 //
 // The read-only operation keeps refusing the mutating privilege, and every
 // operation that changes the machine — the two probe operations, the six of the
-// public profile and the six of the private passage — requires it in the exact strictly
-// increasing spelling the Rust side pins: an envelope that permutes the two
-// privileges is a different document, not the same approval written differently.
+// public profile, the six of the private passage and the seven of the private
+// profile — requires it in the exact strictly increasing spelling the Rust side
+// pins: an envelope that permutes the two privileges is a different document, not
+// the same approval written differently.
+//
+// The three archive operations are in that list beside the deployments and not
+// beside the read-only diagnostic. A snapshot stops the service, writes a file
+// and starts it again; a discard destroys a file; a restore replaces the data the
+// service holds. None of them is a read, however much the words sound like one.
 //
 // The table below is written out rather than derived from the one under test, so
 // that adding an operation to the product is a change a reader of this test has
@@ -389,6 +395,13 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		OperationDetachLinkPeer:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 		OperationJoinLinkPeer:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 		OperationLeaveLinkPeer:            {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationDeployPrivateService:     {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRemovePrivateService:     {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationPublishLinkRoute:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRetireLinkRoute:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationSnapshotService:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationDiscardSnapshot:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRestoreService:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	}
 	if len(requiredPrivileges) != len(expected) {
 		t.Fatalf("this palier performs %d operations, not %d", len(expected), len(requiredPrivileges))
@@ -449,6 +462,14 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		OperationDetachLinkPeer:   plan.OperationDetachLinkPeer,
 		OperationJoinLinkPeer:     plan.OperationJoinLinkPeer,
 		OperationLeaveLinkPeer:    plan.OperationLeaveLinkPeer,
+
+		OperationDeployPrivateService: plan.OperationDeployPrivateService,
+		OperationRemovePrivateService: plan.OperationRemovePrivateService,
+		OperationPublishLinkRoute:     plan.OperationPublishLinkRoute,
+		OperationRetireLinkRoute:      plan.OperationRetireLinkRoute,
+		OperationSnapshotService:      plan.OperationSnapshotService,
+		OperationDiscardSnapshot:      plan.OperationDiscardSnapshot,
+		OperationRestoreService:       plan.OperationRestoreService,
 	} {
 		if operation != spelling {
 			t.Fatalf("the approval spells %q where the plan spells %q", operation, spelling)
