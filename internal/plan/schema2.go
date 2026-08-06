@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -286,20 +285,20 @@ func DecodeV2(document []byte) (V2Document, error) {
 	switch operationGroups[operation] {
 	case groupWebService:
 		var shape WebServiceDocument
-		if err := strictjson.Decode(document, &shape); err != nil {
-			return nil, fmt.Errorf("decode plan: %w", err)
+		if err := strictDecodePlan(document, &shape); err != nil {
+			return nil, err
 		}
 		parsed = shape
 	case groupEntrypoint:
 		var shape EntrypointDocument
-		if err := strictjson.Decode(document, &shape); err != nil {
-			return nil, fmt.Errorf("decode plan: %w", err)
+		if err := strictDecodePlan(document, &shape); err != nil {
+			return nil, err
 		}
 		parsed = shape
 	case groupRoute:
 		var shape RouteDocument
-		if err := strictjson.Decode(document, &shape); err != nil {
-			return nil, fmt.Errorf("decode plan: %w", err)
+		if err := strictDecodePlan(document, &shape); err != nil {
+			return nil, err
 		}
 		parsed = shape
 	default:
@@ -636,15 +635,21 @@ func validatePinnedImage(reference, digest string, pinned pinnedImage) error {
 // checks around it remove the empty label and the name that opens or closes on a
 // separator. A host outside these bounds never reaches a fragment of the
 // entrypoint, so the entrypoint never has to decide what such a name means.
-func validateRouteHost(host string) error {
+func validateRouteHost(host string) error { return validateHostBound("route_host", host) }
+
+// validateHostBound is that one bound, named by the field it is being applied
+// to. Schema 3's peer_endpoint_host reuses it rather than restating it: the two
+// fields name a host the same way, and a second expression that agreed with this
+// one today would be a second expression to keep agreeing with it.
+func validateHostBound(field, host string) error {
 	if !canonicalRouteHost.MatchString(host) {
 		return fmt.Errorf(
-			"plan route_host must be %d..%d lower-case letters, digits, hyphens and dots opening and closing on a letter or a digit",
-			MinRouteHostBytes, MaxRouteHostBytes,
+			"plan %s must be %d..%d lower-case letters, digits, hyphens and dots opening and closing on a letter or a digit",
+			field, MinRouteHostBytes, MaxRouteHostBytes,
 		)
 	}
 	if strings.Contains(host, "..") {
-		return errors.New("plan route_host must not carry an empty label")
+		return fmt.Errorf("plan %s must not carry an empty label", field)
 	}
 	return nil
 }
@@ -660,17 +665,7 @@ func encodeV2(document V2Document) ([]byte, error) {
 	if err := document.Validate(); err != nil {
 		return nil, err
 	}
-	buffer := &bytes.Buffer{}
-	encoder := json.NewEncoder(buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(document); err != nil {
-		return nil, fmt.Errorf("encode plan: %w", err)
-	}
-	encoded := bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
-	if len(encoded) == 0 || len(encoded) > MaxPlanBytes {
-		return nil, fmt.Errorf("plan document must contain 1..%d bytes", MaxPlanBytes)
-	}
-	return encoded, nil
+	return encodeCanonicalPlan(document)
 }
 
 func appendV2Head(schemaVersion int, infrastructureID, machineID, operation string) []byte {

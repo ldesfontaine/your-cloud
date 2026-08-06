@@ -72,6 +72,23 @@ const (
 	OperationPublishRoute     = "publish_route"
 	OperationRetireRoute      = "retire_route"
 
+	// The six operations of the private passage. Each of them mutates, each of
+	// them is described by a plan document of schema 3 whose digest this envelope
+	// signs, and each of them is named here in the same closed list as the others
+	// rather than derived from anything: an operation this Auxiliary may act on
+	// is a decision written once, in a list a reader can count.
+	//
+	// Naming them here does not make them applicable. The envelope decides that a
+	// human approved two digests for one operation; what acting on them means is
+	// the Auxiliary's, and until the issues that own it land, an approval of one
+	// of these six is refused there by name before any effect.
+	OperationPrepareLink    = "prepare_link"
+	OperationWithdrawLink   = "withdraw_link"
+	OperationAttachLinkPeer = "attach_link_peer"
+	OperationDetachLinkPeer = "detach_link_peer"
+	OperationJoinLinkPeer   = "join_link_peer"
+	OperationLeaveLinkPeer  = "leave_link_peer"
+
 	// PrivilegeReadLocalState allows reading what the machine already holds.
 	PrivilegeReadLocalState = "read_local_state"
 	// PrivilegeMutateLocalState allows changing the machine. The read-only
@@ -99,6 +116,12 @@ var requiredPrivileges = map[string][]string{
 	OperationRemoveEntrypoint:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	OperationPublishRoute:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	OperationRetireRoute:              {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationPrepareLink:              {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationWithdrawLink:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationAttachLinkPeer:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationDetachLinkPeer:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationJoinLinkPeer:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationLeaveLinkPeer:            {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 }
 
 // mutatingOperations is the closed list of operations that are allowed to reach
@@ -114,6 +137,12 @@ var mutatingOperations = map[string]struct{}{
 	OperationRemoveEntrypoint: {},
 	OperationPublishRoute:     {},
 	OperationRetireRoute:      {},
+	OperationPrepareLink:      {},
+	OperationWithdrawLink:     {},
+	OperationAttachLinkPeer:   {},
+	OperationDetachLinkPeer:   {},
+	OperationJoinLinkPeer:     {},
+	OperationLeaveLinkPeer:    {},
 }
 
 var (

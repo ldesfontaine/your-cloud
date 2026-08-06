@@ -353,8 +353,8 @@ func TestDecodeSignedRefusesEveryDocumentOutsideTheSchema(t *testing.T) {
 // machine, in both directions.
 //
 // The read-only operation keeps refusing the mutating privilege, and every
-// operation that changes the machine — the two probe operations of the previous
-// palier and the six of the public profile — requires it in the exact strictly
+// operation that changes the machine — the two probe operations, the six of the
+// public profile and the six of the private passage — requires it in the exact strictly
 // increasing spelling the Rust side pins: an envelope that permutes the two
 // privileges is a different document, not the same approval written differently.
 //
@@ -383,6 +383,12 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		OperationRemoveEntrypoint:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 		OperationPublishRoute:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 		OperationRetireRoute:              {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationPrepareLink:              {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationWithdrawLink:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationAttachLinkPeer:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationDetachLinkPeer:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationJoinLinkPeer:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationLeaveLinkPeer:            {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	}
 	if len(requiredPrivileges) != len(expected) {
 		t.Fatalf("this palier performs %d operations, not %d", len(expected), len(requiredPrivileges))
@@ -425,7 +431,9 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 	// The envelope names an operation and the plan describes it; the Auxiliary
 	// refuses the pair unless the two strings are equal. They are two closed
 	// lists in two packages, so they are held against one another here rather
-	// than assumed to have been written the same way twice.
+	// than assumed to have been written the same way twice. The three schemas of
+	// the plan package are all covered, because an approval names an operation
+	// without naming the schema its documents are written in.
 	for operation, spelling := range map[string]string{
 		OperationDeployOCIProbe:   plan.OperationDeployOCIProbe,
 		OperationRemoveOCIProbe:   plan.OperationRemoveOCIProbe,
@@ -435,6 +443,12 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		OperationRemoveEntrypoint: plan.OperationRemoveEntrypoint,
 		OperationPublishRoute:     plan.OperationPublishRoute,
 		OperationRetireRoute:      plan.OperationRetireRoute,
+		OperationPrepareLink:      plan.OperationPrepareLink,
+		OperationWithdrawLink:     plan.OperationWithdrawLink,
+		OperationAttachLinkPeer:   plan.OperationAttachLinkPeer,
+		OperationDetachLinkPeer:   plan.OperationDetachLinkPeer,
+		OperationJoinLinkPeer:     plan.OperationJoinLinkPeer,
+		OperationLeaveLinkPeer:    plan.OperationLeaveLinkPeer,
 	} {
 		if operation != spelling {
 			t.Fatalf("the approval spells %q where the plan spells %q", operation, spelling)

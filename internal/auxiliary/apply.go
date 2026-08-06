@@ -221,7 +221,10 @@ func (subject instance) reportedFragmentPath() string {
 //     its sequence and will never be replayed;
 //  2. the schema the two carried documents declare is read, and the two are
 //     required to declare the same one: a pair written in two schemas is not a
-//     pair, and neither decoder is allowed to cover for the other;
+//     pair, and neither decoder is allowed to cover for the other. A schema this
+//     package does not read is refused here by name, with nothing decoded —
+//     schema 3, the private passage, is exactly that until the issues that own
+//     its application land;
 //  3. the two received documents are held against the two digests that
 //     approval signed, through the transcript of their own schema, so a
 //     Controller that reindented them carries the same plan and a Controller
@@ -230,10 +233,10 @@ func (subject instance) reportedFragmentPath() string {
 //     own anchor names them and not as the document claims;
 //  5. the plan's content stays inside the contract — the plan package refuses a
 //     document that leaves it before its digest is even computed — and the
-//     operation is one this Auxiliary actually performs. Every operation of both
-//     schemas is now performed, so what this step still refuses, by name and with
-//     nothing read, is a document whose operation belongs to no shape this
-//     package places;
+//     operation is one this Auxiliary actually performs. Every operation of the
+//     two schemas this package reads is now performed, so what this step still
+//     refuses, by name and with nothing read, is a document whose operation
+//     belongs to no shape this package places;
 //  6. the machine is capable of the flow at all, and a machine that is not is
 //     refused here, with nothing written.
 //

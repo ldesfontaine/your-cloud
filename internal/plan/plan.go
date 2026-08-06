@@ -140,8 +140,8 @@ func Decode(document []byte) (*Document, error) {
 		return nil, fmt.Errorf("plan document must contain 1..%d bytes", MaxPlanBytes)
 	}
 	var parsed Document
-	if err := strictjson.Decode(document, &parsed); err != nil {
-		return nil, fmt.Errorf("decode plan: %w", err)
+	if err := strictDecodePlan(document, &parsed); err != nil {
+		return nil, err
 	}
 	if err := parsed.Validate(); err != nil {
 		return nil, err
@@ -220,6 +220,26 @@ func (document *Document) Encode() ([]byte, error) {
 	if err := document.Validate(); err != nil {
 		return nil, err
 	}
+	return encodeCanonicalPlan(document)
+}
+
+// strictDecodePlan is the one strict decoding every schema of this package goes
+// through, so that no schema can own a second way of reading its own bytes — a
+// looser one above all.
+func strictDecodePlan(document []byte, shape any) error {
+	if err := strictjson.Decode(document, shape); err != nil {
+		return fmt.Errorf("decode plan: %w", err)
+	}
+	return nil
+}
+
+// encodeCanonicalPlan renders one validated document as the one spelling the
+// Controller emits, and is the one place any schema does so.
+//
+// The bound is required again after the rendering rather than trusted from the
+// fields: a document that validates and still does not fit is refused rather
+// than transported, whatever its schema.
+func encodeCanonicalPlan(document any) ([]byte, error) {
 	buffer := &bytes.Buffer{}
 	encoder := json.NewEncoder(buffer)
 	encoder.SetEscapeHTML(false)

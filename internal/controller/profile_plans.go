@@ -52,9 +52,11 @@ type routePlanRequest struct {
 	BackendPort   int    `json:"backend_port"`
 }
 
-// PlanPairView is the frozen schema 2 pair the Console signs over, and it is the
-// same shape for the three routes: what differs between them is what a human
-// approves, not how the bytes travel.
+// PlanPairView is the frozen pair the Console signs over, and it is the same
+// shape for every plan route of schemas 2 and 3: what differs between them is
+// what a human approves, not how the bytes travel. Its schema_version says which
+// contract the two documents were written in, so a Console never has to guess it
+// from their content.
 //
 // The two documents travel as their exact canonical bytes rather than as nested
 // objects, so that the Console does not have to own a canonical encoder to obtain
@@ -99,7 +101,7 @@ func (handler *ControllerHandler) serveWebServicePlans(response http.ResponseWri
 		handler.writeProblem(response, http.StatusBadRequest, "invalid_request", 0)
 		return
 	}
-	handler.writeFrozenPair(response, context, inventory, body.MachineID, pair)
+	handler.writeFrozenPair(response, context, inventory, body.MachineID, plan.SchemaVersionV2, pair)
 }
 
 // serveEntrypointPlans builds the plan of the public entrypoint and its removal.
@@ -122,7 +124,7 @@ func (handler *ControllerHandler) serveEntrypointPlans(response http.ResponseWri
 		handler.writeProblem(response, http.StatusBadRequest, "invalid_request", 0)
 		return
 	}
-	handler.writeFrozenPair(response, context, inventory, body.MachineID, pair)
+	handler.writeFrozenPair(response, context, inventory, body.MachineID, plan.SchemaVersionV2, pair)
 }
 
 // serveRoutePlans builds the plan of one published name and its retirement.
@@ -146,11 +148,19 @@ func (handler *ControllerHandler) serveRoutePlans(response http.ResponseWriter, 
 		handler.writeProblem(response, http.StatusBadRequest, "invalid_request", 0)
 		return
 	}
-	handler.writeFrozenPair(response, context, inventory, body.MachineID, pair)
+	handler.writeFrozenPair(response, context, inventory, body.MachineID, plan.SchemaVersionV2, pair)
 }
 
-// writeFrozenPair is the one exit of the three routes, so that none of them can
-// answer under rules the others do not apply.
+// freezablePair is what a plan route hands to the one exit below: a pair that
+// renders itself once, documents and digests together. Both the schema 2 and the
+// schema 3 pairs answer it, so neither schema owns a second way out of this
+// Controller.
+type freezablePair interface {
+	Freeze() (plan.Frozen, error)
+}
+
+// writeFrozenPair is the one exit of every profile and passage plan route, so
+// that none of them can answer under rules the others do not apply.
 //
 // The inventory is the only place this Controller knows an enrolled machine by
 // name. A machine enters it only through an attachment that required a fresh
@@ -164,7 +174,8 @@ func (handler *ControllerHandler) writeFrozenPair(
 	context SessionContext,
 	inventory Inventory,
 	machineID string,
-	pair plan.V2Pair,
+	schemaVersion int,
+	pair freezablePair,
 ) {
 	if !attachedMachine(inventory, machineID) {
 		handler.writeProblem(response, http.StatusUnprocessableEntity, "machine_not_active", 0)
@@ -176,7 +187,7 @@ func (handler *ControllerHandler) writeFrozenPair(
 		return
 	}
 	handler.writeAccepted(response, context, http.StatusOK, PlanPairView{
-		SchemaVersion:    plan.SchemaVersionV2,
+		SchemaVersion:    schemaVersion,
 		PlanDocument:     string(frozen.PlanDocument),
 		PlanSHA256:       frozen.PlanSHA256,
 		RollbackDocument: string(frozen.RollbackDocument),

@@ -683,6 +683,59 @@ func frozenRoutePair(t *testing.T, operation, host string, port int) plan.Frozen
 	return frozen
 }
 
+// The three schema 3 pairs a Controller would have built and transported for the
+// private passage. They exist here so that the window this Auxiliary keeps open
+// on schema 3 is proven against real documents rather than against a schema
+// number written into a schema 2 shape: what must be refused is a whole, valid,
+// canonically frozen pair of the newer contract.
+//
+// fixturePeerPublicKey is the synthetic key the plan package pins as its own
+// vector — thirty-two bytes counting from one — for the same reason: a key
+// invented here would prove nothing about the one spelling the two
+// implementations agreed on.
+const (
+	fixturePeerPublicKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+	fixtureEndpointHost  = "vps.lab.your-cloud.test"
+)
+
+func frozenLinkPair(t *testing.T, operation, role string) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildLinkPair(operation, fixtureInfrastructure, fixtureMachine, role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV3(t, pair)
+}
+
+func frozenListenerPeerPair(t *testing.T, operation string, port int) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildListenerPeerPair(operation, fixtureInfrastructure,
+		fixtureMachine, fixturePeerPublicKey, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV3(t, pair)
+}
+
+func frozenInitiatorPeerPair(t *testing.T, operation string, port int) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildInitiatorPeerPair(operation, fixtureInfrastructure,
+		fixtureMachine, fixturePeerPublicKey, fixtureEndpointHost, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV3(t, pair)
+}
+
+func frozenV3(t *testing.T, pair plan.V3Pair) plan.Frozen {
+	t.Helper()
+	frozen, err := pair.Freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozen
+}
+
 // approvedFrozenPair is what the Auxiliary holds once an approval over any
 // frozen pair is accepted, whatever schema that pair was written in.
 //

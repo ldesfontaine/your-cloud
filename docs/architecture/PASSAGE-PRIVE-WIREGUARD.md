@@ -118,6 +118,57 @@ du plan approuvé :
   existe est refusé en la nommant — l'ordre du retrait est une affaire de
   séquence de plans, comme au palier `#15`.
 
+## Surface du Controller étendue de trois routes
+
+`PROFIL-PUBLIC-BENTOPDF.md` avait étendu la surface métier du Controller de
+trois routes. Le présent contrat l'étend de trois, et d'aucune autre :
+
+| Méthode et route | Effet autorisé |
+|---|---|
+| `POST /v0/link-plans` | construire et geler la paire plan/rollback du côté propre d'une machine de l'inventaire — son rôle et rien d'autre —, sans muter aucune machine |
+| `POST /v0/listener-peer-plans` | construire et geler la paire plan/rollback de la jonction de l'écouteur, sans muter aucune machine |
+| `POST /v0/initiator-peer-plans` | construire et geler la paire plan/rollback de la jonction de l'initiateur, sans muter aucune machine |
+
+Décisions attachées à ces routes :
+
+- **Trois routes sœurs plutôt qu'une route à discriminant**, pour la raison déjà
+  retenue au palier précédent : une route unique portant un rôle et une phase
+  aurait exigé un schéma de requête déclarant les champs des trois groupes, donc
+  une lecture avant refus. Séparées, chaque requête est une liste fermée, et un
+  champ d'un autre groupe est refusé par le décodage strict avant que sa valeur
+  soit lue.
+- **L'asymétrie est dans les routes comme elle est dans les opérations.**
+  L'écouteur n'a pas d'endpoint à joindre : la route qui construit sa jonction
+  n'a pas le champ — ni vide, ni conditionné par un rôle qu'il faudrait lire.
+- Elles empruntent la **même authentification de session** que les routes métier
+  existantes : aucun nouveau chemin d'autorité, aucun nouveau code d'erreur. Une
+  machine hors inventaire reçoit `422 machine_not_active`, dans la liste fermée
+  existante.
+- Les deux documents voyagent comme **chaînes JSON portant leurs octets
+  canoniques exacts**, accompagnés de leurs digests, dans la même vue que les
+  routes du profil public ; son `schema_version` vaut `3` et dit sous quel
+  contrat les deux documents ont été écrits.
+- La Console ne choisit **ni l'infrastructure, ni le sous-réseau, ni les adresses
+  du tunnel, ni le nom d'interface, ni le port d'écoute, ni le keepalive** :
+  l'infrastructure est celle dont ce Controller est l'autorité, et le reste est
+  une constante que le rôle décide. Aucune de ces valeurs n'est un champ, donc
+  aucune requête ne peut élargir le passage.
+- **La clé publique du pair est la seule valeur que personne n'a choisie** :
+  c'est une observation que la préparation de l'autre machine a rapportée. La
+  Console la porte dans la requête, et elle est tenue exactement par la
+  validation du document — 44 caractères de base64 standard canonique décodant 32
+  octets, ré-encodage identique. Une clé que la route accepterait et que le
+  paquet `plan` refuserait serait un refus arrivé une couche trop tard.
+- Aucune de ces routes ne **génère ni ne transporte de clé privée** : une clé
+  privée naît sur sa machine et n'en sort jamais, donc rien ici ne pourrait en
+  porter une.
+
+`peer_endpoint_host` se lit exactement comme `route_host` du palier précédent :
+minuscules, chiffres, tirets et points ; 3 à 253 caractères ; premier et dernier
+caractère lettre ou chiffre ; aucun label vide. Un littéral IPv4 s'y écrit
+naturellement ; un littéral IPv6 n'appartient pas au jeu de caractères et n'a
+donc pas de refus propre.
+
 ## Ce que la preuve devra constater
 
 Le service de référence joint par le tunnel est la **sonde du palier `#14`**,

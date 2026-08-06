@@ -194,8 +194,61 @@ func TestASchemaThisAuxiliaryDoesNotReadIsRefusedByName(t *testing.T) {
 	}
 }
 
+// TestEverySchemaThreeOperationIsRefusedByNameBeforeAnyEffect is the window this
+// issue opens, named here so that the issue that closes it has one test to
+// replace rather than a silence to notice.
+//
+// The approval package now holds the six operations of the private passage in its
+// closed list, so a human may sign one and this Auxiliary may be handed the pair.
+// Reading schema 3 is `#96` and `#97`; until then the six pairs below are real,
+// valid, canonically frozen documents of that contract, and every one of them is
+// refused by the schema dispatch — by name, before any effect, and before this
+// machine is read at all. A window that let one of them through unread would be
+// this Auxiliary acting on a contract it does not implement.
+func TestEverySchemaThreeOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
+	t.Parallel()
+	for name, frozen := range map[string]func(*testing.T) (string, plan.Frozen){
+		"a link preparation": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationPrepareLink, frozenLinkPair(t, plan.OperationPrepareLink, plan.LinkRoleListener)
+		},
+		"a link withdrawal": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationWithdrawLink, frozenLinkPair(t, plan.OperationWithdrawLink, plan.LinkRoleInitiator)
+		},
+		"a listener junction": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationAttachLinkPeer, frozenListenerPeerPair(t, plan.OperationAttachLinkPeer, fixturePort)
+		},
+		"a listener detachment": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationDetachLinkPeer, frozenListenerPeerPair(t, plan.OperationDetachLinkPeer, fixturePort)
+		},
+		"an initiator junction": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationJoinLinkPeer, frozenInitiatorPeerPair(t, plan.OperationJoinLinkPeer, fixturePort)
+		},
+		"an initiator departure": func(t *testing.T) (string, plan.Frozen) {
+			return plan.OperationLeaveLinkPeer, frozenInitiatorPeerPair(t, plan.OperationLeaveLinkPeer, fixturePort)
+		},
+	} {
+		operation, pair := frozen(t)
+		executor := deployedServiceMachine(t, fixturePort)
+		accepted, input := approvedFrozenPair(operation, pair)
+
+		application, err := Apply(executor, accepted, input)
+		if err == nil {
+			t.Fatalf("%s was applied by an Auxiliary that does not read its schema", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), "which this Auxiliary does not read") {
+			t.Fatalf("%s was refused for another reason than its schema: %v", name, err)
+		}
+		if len(executor.effects) != 0 || len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		}
+	}
+}
+
 // TestEverySchemaTwoOperationIsNowPerformedAndNamesItsOwnInstance is the window
-// this issue closes.
+// an earlier issue closed.
 //
 // Until `#91` the four entrypoint and route operations were refused at dispatch
 // by name, before any effect and before any read. They are performed now, so

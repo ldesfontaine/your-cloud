@@ -136,10 +136,11 @@ func vectorRoute() RouteDocument {
 	}
 }
 
-// hostileV2Document encodes a document without validating it, which is what a
-// hostile test needs: the refusal under test must come from DecodeV2 rather than
-// from the encoder refusing to produce the bytes in the first place.
-func hostileV2Document(t *testing.T, document any) []byte {
+// hostilePlanDocument encodes a document without validating it, which is what a
+// hostile test needs: the refusal under test must come from the decoder rather
+// than from the encoder refusing to produce the bytes in the first place. Both
+// the schema 2 and the schema 3 tables render their subjects through it.
+func hostilePlanDocument(t *testing.T, document any) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(document)
 	if err != nil {
@@ -461,7 +462,7 @@ func TestDecodeV2RefusesEveryWebServiceDocumentOutsideTheContract(t *testing.T) 
 	} {
 		document := vectorWebService()
 		mutate(&document)
-		if _, err := DecodeV2(hostileV2Document(t, document)); err == nil {
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
 			t.Fatalf("%s was accepted", name)
 		}
 	}
@@ -500,7 +501,7 @@ func TestDecodeV2RefusesEveryEntrypointDocumentOutsideTheContract(t *testing.T) 
 	} {
 		document := vectorEntrypoint()
 		mutate(&document)
-		if _, err := DecodeV2(hostileV2Document(t, document)); err == nil {
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
 			t.Fatalf("%s was accepted", name)
 		}
 	}
@@ -530,14 +531,14 @@ func TestDecodeV2RefusesEveryRouteDocumentOutsideTheContract(t *testing.T) {
 	} {
 		document := vectorRoute()
 		document.RouteHost = host
-		if _, err := DecodeV2(hostileV2Document(t, document)); err != nil {
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err != nil {
 			t.Fatalf("%s was refused: %v", name, err)
 		}
 	}
 	for _, port := range []int{MinBackendPort, MaxBackendPort} {
 		document := vectorRoute()
 		document.BackendPort = port
-		if _, err := DecodeV2(hostileV2Document(t, document)); err != nil {
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err != nil {
 			t.Fatalf("the bound %d of the backend range was refused: %v", port, err)
 		}
 	}
@@ -582,7 +583,7 @@ func TestDecodeV2RefusesEveryRouteDocumentOutsideTheContract(t *testing.T) {
 	} {
 		document := vectorRoute()
 		mutate(&document)
-		if _, err := DecodeV2(hostileV2Document(t, document)); err == nil {
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
 			t.Fatalf("%s was accepted", name)
 		}
 	}
