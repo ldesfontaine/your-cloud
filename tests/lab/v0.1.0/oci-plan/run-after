@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# The palier played on the machine after the power cycle: what a reboot must
+# have carried by itself, what a controlled failure must undo, what a cut must
+# leave behind, and what a removal must take away and what it must not.
+#
+# The three hardest facts of this palier live here. A probe that answers after a
+# reboot without anyone acting is the only proof that lingering carries an
+# approved state. A failure produced honestly — a port this machine really
+# cannot bind — is the only proof that the rollback attempted is the one a human
+# signed. And a process killed between its first effect and its conclusion is
+# the only proof that a spent sequence stays spent.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+# See run-before: the engine chdir()s into the directory it inherits.
+cd /
+
+pinned="docker.io/traefik/whoami@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab"
+occupier=
+
+release_port() {
+  [[ -n "$occupier" ]] || return 0
+  kill "$occupier" 2>/dev/null || true
+  wait "$occupier" 2>/dev/null || true
+  occupier=
+}
+trap release_port EXIT
+
+# ---------------------------------------------------------------------------
+step "7. the power cycle carried the approved state, and nobody acted"
+
+before_digest=$(cat "$state/unit-before-reboot.txt")
+before_invocation=$(cat "$state/invocation-before-reboot.txt")
+
+# The machine has just come back. The service is given a bounded wait because a
+# user manager started by lingering is started by the boot, not by this script;
+# what is being proven is that it happens at all, not that it is instantaneous.
+waited=0
+while [[ $waited -lt 90 && "$(service_state)" != active ]]; do
+  sleep 2
+  waited=$((waited + 2))
+done
+case "$(service_state)" in
+  active) report "the probe after the reboot" "active again after ${waited}s, unasked" ;;
+  *) red "the probe after the reboot" "$(service_state) after ${waited}s" ;;
+esac
+answer=$(probe_answers "$probe_port")
+case "$answer" in
+  *Hostname:*) report "a local GET after the reboot" "answered by whoami" ;;
+  *) red "a local GET after the reboot" "$(echo "$answer" | tr '\n' ' ')" ;;
+esac
+[[ "$(unit_digest)" == "$before_digest" ]] \
+  && report "the sheet across the reboot" "unchanged" \
+  || red "the sheet across the reboot" "$(unit_digest)"
+if [[ "$(service_property InvocationID)" != "$before_invocation" ]]; then
+  report "the invocation across the reboot" "new, as a real power cycle requires"
+else
+  red "the invocation across the reboot" "the service was never restarted; this was not a power cycle"
+fi
+report "lingering" "$(loginctl show-user "$account" --property=Linger --value 2>/dev/null || echo unreadable)"
+report "the consumed position across the reboot" "$(consumed_sequence)"
+
+# The envelope written before the power cycle, applied after it: the state was
+# already true, so this is still not an action.
+status=0
+output=$(your-cloud auxiliary approve --format=json <"$state/after-idempotent.json" 2>&1) || status=$?
+case "$output" in
+  *'"changed":false'*) report "an approval signed before the reboot" "accepted, changed=false" ;;
+  *) red "an approval signed before the reboot" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+
+# ---------------------------------------------------------------------------
+step "8. a failure after the first effect attempts exactly the approved rollback"
+
+# The failure is honest and produced on the machine: another process holds the
+# loopback port the plan names, so the engine cannot publish it and the service
+# never starts. Nothing of the product is patched, and the failure lands after
+# the sheet has been written — which is what makes it a controlled failure
+# rather than a refusal.
+python3 -c "
+import socket, time
+holder = socket.socket()
+holder.bind(('127.0.0.1', $failure_port))
+holder.listen(1)
+time.sleep(600)
+" &
+occupier=$!
+sleep 1
+case "$(port_listening "$failure_port")" in
+  open) report "the port the next plan names" "held by another process" ;;
+  *) red "the port the next plan names" "nothing is holding it; the failure would not be honest" ;;
+esac
+
+status=0
+output=$(lab-oci-fixture -operation deploy_oci_probe -port "$failure_port" \
+  -sequence "$(next_sequence)" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+case "$output" in
+  *'"outcome":"rolled_back_after_controlled_failure"'*)
+    report "the conclusion" "rolled_back_after_controlled_failure" ;;
+  *) red "the conclusion" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+case "$output" in
+  *'"rollback_attempted":true'*) report "the rollback" "attempted, once, through the ordinary path" ;;
+  *) red "the rollback" "not stated as attempted" ;;
+esac
+[[ $status -ne 0 ]] \
+  && report "the exit status" "a failure, as a controlled failure must be" \
+  || red "the exit status" "a controlled failure exited zero"
+[[ "$(unit_digest)" == absent ]] \
+  && report "the sheet after the rollback" "gone" \
+  || red "the sheet after the rollback" "$(unit_digest)"
+case "$(service_state)" in
+  active) red "the service after the rollback" "still active" ;;
+  *) report "the service after the rollback" "$(service_state)" ;;
+esac
+case "$(account_state)" in
+  present) report "the probe account after the rollback" "still present, as no plan describes it" ;;
+  *) red "the probe account after the rollback" "removed by something no human approved" ;;
+esac
+release_port
+report "the held port, released" "$(port_listening "$failure_port")"
+
+# ---------------------------------------------------------------------------
+step "9. a cut between the first effect and the conclusion"
+
+# The Auxiliary is killed the instant its first observable effect appears. The
+# mechanism is named rather than described as instrumentation: this script polls
+# for the Quadlet sheet and sends SIGKILL as soon as it exists, so the process
+# dies after it has written and before it could reload, start, verify or
+# conclude anything. Nothing of the product is modified to make this happen.
+lab-oci-fixture -operation deploy_oci_probe -port "$probe_port" \
+  -sequence "$(next_sequence)" >"$state/cut.json"
+cut_sequence=$(sed -n 's/.*"sequence":\([0-9]*\).*/\1/p' "$state/cut.json" | head -1)
+
+your-cloud auxiliary approve --format=json <"$state/cut.json" >"$state/cut-output.txt" 2>&1 &
+victim=$!
+killed=0
+for _ in $(seq 1 6000); do
+  if [[ -f "$unit" ]]; then
+    kill -9 "$victim" 2>/dev/null && killed=1
+    break
+  fi
+  kill -0 "$victim" 2>/dev/null || break
+  sleep 0.05
+done
+wait "$victim" 2>/dev/null || true
+if [[ $killed -eq 1 ]]; then
+  report "the Auxiliary, cut on its first written effect" "SIGKILL after the sheet appeared"
+else
+  red "the Auxiliary, cut on its first written effect" "the process ended before the sheet appeared: $(cat "$state/cut-output.txt" | tr '\n' ' ')"
+fi
+case "$(cat "$state/cut-output.txt")" in
+  "") report "what the cut concluded" "nothing, because the process that would have written it is gone" ;;
+  *) report "what the cut left on the output" "$(head -c 200 "$state/cut-output.txt" | tr '\n' ' ')" ;;
+esac
+if [[ "$(consumed_sequence)" == "$cut_sequence" ]]; then
+  report "the sequence the cut spent" "$cut_sequence, spent and recorded before the mutation"
+else
+  red "the sequence the cut spent" "the position is $(consumed_sequence), not $cut_sequence"
+fi
+report "the half-state the cut left" "sheet $(unit_digest), service $(service_state)"
+
+before=$(fingerprint)
+if output=$(your-cloud auxiliary approve <"$state/cut.json" 2>&1); then
+  red "the cut envelope replayed" "accepted: $(echo "$output" | tr '\n' ' ')"
+else
+  case "$output" in
+    *"is not the exact successor of"*) report "the cut envelope replayed" "refused: a spent sequence stays spent" ;;
+    *) red "the cut envelope replayed" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+fi
+unchanged "the replay after the cut, zero effect" "$before"
+
+status=0
+output=$(lab-oci-fixture -operation deploy_oci_probe -port "$probe_port" \
+  -sequence "$(next_sequence)" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+case "$output" in
+  *'"outcome":"applied"'*'"changed":true'*)
+    report "a fresh approval against the half-state" "applied, changed=true" ;;
+  *) red "a fresh approval against the half-state" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+case "$(probe_answers "$probe_port")" in
+  *Hostname:*) report "the probe, after the state was reached again" "answers" ;;
+  *) red "the probe, after the state was reached again" "silent" ;;
+esac
+
+# ---------------------------------------------------------------------------
+step "10. the removal takes the instance away, and only the instance"
+
+status=0
+output=$(lab-oci-fixture -operation remove_oci_probe -port "$probe_port" \
+  -sequence "$(next_sequence)" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+case "$output" in
+  *'"outcome":"applied"'*'"changed":true'*) report "the removal" "applied, changed=true" ;;
+  *) red "the removal" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+case "$output" in
+  *'"service_state":"absent"'*) report "the state it announces" "absent" ;;
+  *) red "the state it announces" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+[[ "$(unit_digest)" == absent ]] \
+  && report "the sheet" "gone" \
+  || red "the sheet" "$(unit_digest)"
+case "$(service_state)" in
+  active) red "the service" "still active" ;;
+  *) report "the service" "$(service_state)" ;;
+esac
+[[ "$(container_image)" == none ]] \
+  && report "the container" "gone" \
+  || red "the container" "$(container_image)"
+[[ "$(stored_images)" == 0 ]] \
+  && report "the pinned image" "gone from the account's storage" \
+  || red "the pinned image" "$(stored_images) image(s) remain"
+[[ "$(port_listening "$probe_port")" == closed ]] \
+  && report "the port" "closed" \
+  || red "the port" "still open"
+
+status=0
+output=$(lab-oci-fixture -operation remove_oci_probe -port "$probe_port" \
+  -sequence "$(next_sequence)" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+case "$output" in
+  *'"changed":false'*) report "the removal, asked for again" "changed=false" ;;
+  *) red "the removal, asked for again" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+
+# ---------------------------------------------------------------------------
+step "11. what a removal deliberately leaves behind"
+
+case "$(account_state)" in
+  present)
+    report "the probe account after the removal" "present"
+    report "why it stays" "no plan of this palier describes it, so no rollback and no removal may take it away"
+    ;;
+  *) red "the probe account after the removal" "absent: something removed what no plan describes" ;;
+esac
+report "the machine, as it now stands" "$(fingerprint)"
+report "the final consumed position" "$(consumed_sequence)"
+
+verdict "the reboot carried the state, the controlled failure rolled back exactly, the cut left a spent sequence and a half-state, and the removal took the instance and nothing else"

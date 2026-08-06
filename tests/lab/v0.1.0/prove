@@ -39,6 +39,11 @@ usage: prove [guard | run [passe...] | close | all [passe...]]
 
   `windows-helper` is not part of this sequence: its machine lives outside
   labctl and outside this topology. It is reported as not run, never as passed.
+
+  `oci-plan` is not part of it either, and for a different reason: it proves
+  the controlled OCI plan palier (#14, proof #86), not the bootstrap and
+  replacement palier this sequence renders. It mounts and removes its own
+  perimeter on lab-machine-1 and is run by its own entry point.
 EOF
   exit 2
 }
@@ -236,7 +241,8 @@ write_result() {
       "$close_status" "$assert_clean_status"
     json_array "${assert_clean_residue[@]}"; printf '},\n'
     printf '  "not_run": [\n'
-    printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"}\n'
+    printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"},\n'
+    printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"}\n'
     printf '  ],\n'
     printf '  "passes": [\n'
     for index in "${!pass_results[@]}"; do
@@ -472,6 +478,12 @@ do_run() {
   printf 'Its evaluation machine lives outside labctl and outside the %s\n' "$topology"
   printf 'topology. It is recorded as not run. A Windows half of this palier\n'
   printf 'remains unproven until that machine plays it.\n'
+
+  announce "oci-plan is not run here either"
+  printf 'It renders the controlled OCI plan palier (#14, proof #86) and not the\n'
+  printf 'bootstrap and replacement this sequence proves. It shares lab-machine-1\n'
+  printf 'with these passes and therefore never runs beside them, but a verdict of\n'
+  printf 'its own belongs to its own palier and is recorded as not run here.\n'
 }
 
 # ---------------------------------------------------------------------------

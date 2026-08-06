@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Remove the OCI plan perimeter from the target machine and prove its absence.
+#
+# This is the one script of the harness allowed to do what no plan may. The
+# probe account is described by no plan of this palier, so no approved document
+# can take it away and the product deliberately leaves it; a LAB that kept it
+# would carry a residue of every passage. It is therefore removed here, by the
+# harness, and named as the harness's own act rather than as a conclusion of the
+# product.
+#
+# It runs even when a step of the proof failed: a machine left holding an
+# anchor, a spent position, a lingering account and a running container is not a
+# clean LAB.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /
+remaining=0
+
+step "the perimeter is removed by the harness, not by a plan"
+
+if id -u "$account" >/dev/null 2>&1; then
+  as_probe systemctl --user stop "$service" >/dev/null 2>&1 || true
+  as_probe podman rm --force --ignore "$container" >/dev/null 2>&1 || true
+  as_probe podman rmi --all --force >/dev/null 2>&1 || true
+  loginctl disable-linger "$account" >/dev/null 2>&1 || true
+  as_probe systemctl --user exit >/dev/null 2>&1 || true
+  sleep 1
+  pkill -9 -u "$account" >/dev/null 2>&1 || true
+  sleep 1
+  userdel --remove "$account" >/dev/null 2>&1 || userdel "$account" >/dev/null 2>&1 || true
+fi
+rm -rf "$home"
+sed -i "/^$account:/d" /etc/subuid /etc/subgid
+rm -f "$anchor" "$replay" "${replay%.json}.lock"
+rm -rf "$state" /usr/local/bin/lab-oci-fixture /usr/local/bin/your-cloud
+rm -rf /root/lab-oci-plan-sources
+
+step "what the machine holds afterwards"
+
+check() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    report "$label" "FAILED: $observed"
+    remaining=$((remaining + 1))
+  fi
+}
+
+check "the probe account" "$(id -u "$account" >/dev/null 2>&1 && echo present || echo absent)" absent
+check "the probe home" "$([[ -e $home ]] && echo present || echo absent)" absent
+check "the Quadlet sheet" "$([[ -e $unit ]] && echo present || echo absent)" absent
+check "the subordinate ranges" "$({ grep -h "^$account:" /etc/subuid /etc/subgid || true; } | wc -l)" 0
+check "the approval anchor" "$([[ -e $anchor ]] && echo present || echo absent)" absent
+check "the anti-replay position" "$([[ -e $replay ]] && echo present || echo absent)" absent
+check "the product binary" "$([[ -e /usr/local/bin/your-cloud ]] && echo present || echo absent)" absent
+check "the fixture" "$([[ -e /usr/local/bin/lab-oci-fixture ]] && echo present || echo absent)" absent
+check "the port" "$(port_listening "$probe_port")" closed
+
+[[ $remaining -eq 0 ]] || {
+  echo "FAILED: $remaining things this harness mounted are still there" >&2
+  exit 1
+}
+echo "PASS: the machine holds nothing this harness mounted"

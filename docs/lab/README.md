@@ -263,6 +263,18 @@ documentée et reproductible dans le LAB approprié.
   l'action verrouillée jusqu'à la rotation de l'ancre par l'accès personnel.
   Trois épreuves par mutation font rougir la suite. Aucune mutation n'est
   exécutée : le rapport de l'Auxiliaire porte `changed: false`.
+- [`v0.1.0` — plan OCI contrôlé : ce que la machine a réellement fait](v0.1.0-oci-plan.md) :
+  passage `quick` du 6 août 2026 pour #86, palier #14, **rouge et rouge du
+  produit**. Le rejeu, neuf documents hostiles à effet nul et l'échec contrôlé
+  qui tente exactement le rollback approuvé sont prouvés contre une vraie
+  machine, et la suite du produit est enfin jouée **en root**, ce que #85 avait
+  laissé en dette. Le déploiement, lui, n'aboutit sur aucune Debian 13 neuve :
+  trois défauts indépendants de l'Auxiliaire sont nommés avec leur emplacement
+  et leur trace — le répertoire courant hérité par un moteur rootless, la course
+  entre `enable-linger` et `/run/user/<uid>`, et `DropCapability=ALL` face à une
+  sonde qui écoute sur `:80`. Un passage de diagnostic, sur une copie corrigée
+  dans la VM et jamais dans le dépôt, montre que le scénario entier passe une
+  fois ces trois-là levés. Le palier #14 n'est pas prouvé.
 - [`v0.1.0` — bornes KDF et politique `sudo` de l'accès personnel](v0.1.0-personal-access-bounds.md) :
   passage `quick` du 3 août 2026 pour #51. La calibration `bcrypt_pbkdf` sur
   `lab-console` rend environ 4,6 ms par round, identiques pour Ed25519 et RSA

@@ -1,0 +1,146 @@
+# Shared observations of the OCI plan perimeter, sourced by the scripts that run
+# on the target machine. It asserts nothing by itself: it is the vocabulary the
+# two judging scripts speak, so that a fact read before a refusal and the same
+# fact read after it are read by the same lines.
+#
+# Everything here is read-only. The one script allowed to change the machine
+# outside an approved plan is `remove`, and it says so.
+
+export LC_ALL=C.UTF-8
+
+state=/root/lab-oci-plan
+account=your-cloud-probe
+home=/var/lib/your-cloud-probe
+unit="$home/.config/containers/systemd/your-cloud-probe.container"
+service=your-cloud-probe.service
+container=your-cloud-probe
+anchor=/etc/your-cloud/approval-anchor.json
+replay=/var/lib/your-cloud-auxiliary/approval-state.json
+probe_port=18080
+failure_port=18081
+
+failures=0
+
+report() { printf '%-64s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+step() { printf '\n== %s ==\n' "$*"; }
+
+verdict() {
+  [[ $failures -eq 0 ]] || {
+    echo "FAILED: $failures assertions" >&2
+    exit 1
+  }
+  echo "PASS: $1"
+}
+
+# as_probe runs one read-only command under the probe account, with exactly the
+# environment the Auxiliary builds for its own calls. The working directory is
+# `/` because a rootless Podman re-executes itself into a user namespace and
+# chdir()s to the directory it inherited: a directory this account cannot enter
+# makes every engine call fail for a reason that has nothing to do with the
+# engine.
+as_probe() {
+  local uid
+  uid=$(id -u "$account" 2>/dev/null) || return 1
+  cd / && runuser -u "$account" -- env \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME="$home" \
+    USER="$account" \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    "$@"
+}
+
+account_state() { id -u "$account" >/dev/null 2>&1 && echo present || echo absent; }
+
+unit_digest() {
+  [[ -f "$unit" ]] || {
+    echo absent
+    return
+  }
+  sha256sum "$unit" | cut -d' ' -f1
+}
+
+unit_mtime() { stat -c %Y "$unit" 2>/dev/null || echo absent; }
+
+unit_owner() { stat -c '%U:%G %a' "$unit" 2>/dev/null || echo absent; }
+
+service_state() {
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_probe systemctl --user is-active "$service" 2>/dev/null || true
+}
+
+# service_property reads one property of the running service. The two that
+# matter here are the ones a restart cannot leave untouched: systemd mints a new
+# InvocationID for every start, and moves ActiveEnterTimestamp with it.
+service_property() {
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_probe systemctl --user show "$service" --property="$1" --value 2>/dev/null || echo unreadable
+}
+
+container_image() {
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_probe podman container inspect --format '{{.ImageName}}' "$container" 2>/dev/null || echo none
+}
+
+stored_images() {
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_probe podman images --quiet 2>/dev/null | wc -l
+}
+
+probe_answers() {
+  curl --silent --show-error --max-time 5 "http://127.0.0.1:$1/" 2>&1 || true
+}
+
+port_listening() {
+  ss -Hltn "sport = :$1" 2>/dev/null | grep -q . && echo open || echo closed
+}
+
+# fingerprint is everything an operation of this palier could have changed,
+# read in one place so that "zero effect" is a comparison and never a claim.
+fingerprint() {
+  printf 'account=%s unit=%s unit-mtime=%s service=%s invocation=%s image=%s port=%s\n' \
+    "$(account_state)" "$(unit_digest)" "$(unit_mtime)" "$(service_state)" \
+    "$(service_property InvocationID)" "$(container_image)" \
+    "$(port_listening "$probe_port")"
+}
+
+consumed_sequence() {
+  [[ -f "$replay" ]] || {
+    echo 0
+    return
+  }
+  sed -n 's/.*"consumed_sequence":\([0-9]*\).*/\1/p' "$replay"
+}
+
+# next_sequence is read from the machine rather than counted by the harness. A
+# document refused before the sequence is consumed leaves the position where it
+# was, and one refused after it has spent it: only the machine knows which.
+next_sequence() { echo $(($(consumed_sequence) + 1)); }
+
+# unchanged compares a fingerprint taken before an operation with the one taken
+# after it, and names the difference rather than the fact that there is one.
+unchanged() {
+  local label=$1 before=$2 after
+  after=$(fingerprint)
+  if [[ "$before" == "$after" ]]; then
+    report "$label" "zero effect"
+  else
+    red "$label" "the machine changed: before [$before] after [$after]"
+  fi
+}

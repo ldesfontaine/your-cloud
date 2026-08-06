@@ -51,6 +51,11 @@ L'ordre est celui des dépendances de #13 : `personal-access` (#51, #52),
   d'évaluation vit hors de `labctl` et hors de cette topologie. Elle est
   enregistrée `not_run`, jamais `passed`. La moitié Windows du palier reste non
   prouvée tant que cette machine ne la joue pas.
+- `oci-plan` **n'en fait pas partie non plus**, pour une autre raison : il rend
+  le palier du plan OCI contrôlé (#14, preuve #86) et non l'amorçage et le
+  remplacement que cette séquence prouve. Il partage `lab-machine-1` avec ces
+  passages et ne tourne donc jamais à côté d'eux, mais son verdict appartient à
+  son palier ; il est enregistré `not_run` ici et possède sa propre entrée.
 - **La fermeture relit la garde et nomme ce qui reste**, au lieu d'appeler le
   LAB propre. Si l'un des résidus appartenait à la topologie détruite, c'est un
   échec de nettoyage et la fermeture rougit ; s'il lui préexistait, il est
@@ -446,6 +451,88 @@ tests/lab/v0.1.0/controller-replacement/prove remove
   réactive au redémarrage, avant toute compilation.
 - La présence de ces sources ne constitue pas une preuve. Seule une exécution
   identifiée en est une.
+
+## [`oci-plan/`](oci-plan/) — le plan OCI contrôlé, son rollback et sa coupure
+
+Ce harnais rend le palier du **plan OCI contrôlé** (#14, preuve #86) et non
+celui que l'orchestrateur ci-dessus enchaîne. Il n'a qu'une machine,
+`lab-machine-1`, et c'est honnête plutôt que commode : le Controller et la
+Console y sont une fixture synthétique — la fenêtre de la Console n'est pas
+câblée à cette preuve — tandis que l'Auxiliaire est le vrai binaire du produit,
+construit depuis les sources synchronisées, exécuté en root contre un vrai
+systemd, un vrai Podman rootless et un vrai registre. Ce qui est prouvé est donc
+ce qu'une machine fait de documents qu'elle n'a pas écrits.
+
+- [`prove`](oci-plan/prove) est l'entrée unique, exécutée depuis le poste de
+  pilotage. Elle commence par la garde d'inventaire obligatoire, puis enchaîne
+  six sous-commandes : `setup`, `unit`, `run`, `reboot`, `verify` et `remove`.
+  Sans argument, elle fait les six dans l'ordre et démonte le périmètre même
+  lorsqu'une étape échoue, puis publie son rapport sous
+  `tests/artifacts/proofs/oci-plan/<run>/report.txt` en nommant la révision
+  exacte qu'elle a jugée.
+- `unit` exécute la suite du produit **sur la machine et en root**. C'est la
+  seule raison pour laquelle cette étape existe dans un harnais LAB : #85 s'est
+  fermée avec la dette que ses contrôles à porte root — séquence dépensée encore
+  refusée après une coupure, état à moitié écrit ni réparé ni repris — ne
+  comptent que si un vrai root les joue.
+- [`install`](oci-plan/install) monte l'ancre synthétique, la position
+  anti-rejeu vide, le binaire et la fixture. Il **refuse de commencer** si la
+  machine porte déjà le compte de sonde ou son domicile : une preuve qui
+  partirait d'un reste mesurerait le reste.
+- [`run-before`](oci-plan/run-before) joue la capacité de la machine, le
+  déploiement approuvé, l'idempotence, le rejeu et les documents hostiles.
+  Chaque refus est suivi d'une comparaison avec une empreinte prise avant lui,
+  parce que « refusé » et « refusé sans effet » sont deux affirmations
+  différentes.
+- [`run-after`](oci-plan/run-after) joue ce que le redémarrage a porté seul,
+  l'échec contrôlé, la coupure et le retrait. L'échec est produit honnêtement —
+  un autre processus tient le port que le plan nomme — et la coupure est un
+  `SIGKILL` envoyé dès que la fiche Quadlet apparaît. Rien du produit n'est
+  modifié pour que l'un ou l'autre se produise.
+- [`remove`](oci-plan/remove) est le seul script autorisé à faire ce qu'aucun
+  plan ne peut. Le compte `your-cloud-probe` n'est décrit par aucun plan, donc
+  aucun document approuvé ne le retire et le produit le laisse délibérément ; ce
+  retrait-là est l'acte du harnais et il est nommé comme tel.
+- [`_fixture/`](oci-plan/_fixture/) tient les deux autorités que ce palier
+  sépare et n'en détient aucune pour de vrai. Les documents de plan viennent du
+  constructeur `internal/plan` du produit, pour que les octets reçus soient bien
+  les octets canoniques qu'un Controller aurait figés ; le transcript de
+  l'enveloppe est réécrit à la main, comme celui de
+  [`signed-approval/_signer`](signed-approval/_signer/), pour qu'une signature
+  ne soit pas vérifiée par les lignes qui l'ont produite.
+
+### Usage
+
+```text
+tests/lab/v0.1.0/oci-plan/prove            # les six étapes, rapport publié
+tests/lab/v0.1.0/oci-plan/prove unit
+tests/lab/v0.1.0/oci-plan/prove run
+tests/lab/v0.1.0/oci-plan/prove verify
+tests/lab/v0.1.0/oci-plan/prove remove
+```
+
+### Limites et hygiène
+
+- Aucune adresse de LAB, aucune matière de clé et aucun secret ne vit dans ces
+  fichiers. L'ancre est frappée d'une graine synthétique au montage et détruite
+  au démontage ; les adresses viennent de `labctl`.
+- **La Console n'est pas câblée.** La confirmation native et la signature
+  humaine sont jouées par la fixture. Ce harnais ne dit donc rien de ce qu'une
+  fenêtre affiche ni de ce qu'un humain confirme.
+- **Une déviation de provisionnement est écrite dans `install` et nommée
+  ici** : les plages `subuid`/`subgid` du compte de sonde sont posées par le
+  harnais, parce que le produit crée ce compte avec `useradd --system` et que la
+  suite shadow de Debian n'alloue aucune plage à un compte système. Sans elles,
+  aucun déploiement ne peut aboutir sur une machine Debian neuve.
+- La matrice exhaustive des refus reste celle de
+  `internal/auxiliary/refusals_test.go`. Ce que ce harnais ajoute est qu'un
+  sous-ensemble représentatif refuse contre un vrai compte, un vrai moteur et
+  une vraie sonde en marche.
+- La VM reste démarrée : ce harnais ne crée ni ne détruit de topologie, et il
+  redémarre `lab-machine-1` une fois, réellement, par le contrôleur du LAB.
+- La présence de ces sources ne constitue pas une preuve. Seule une exécution
+  identifiée en est une, et le rapport de la première est
+  [`docs/lab/v0.1.0-oci-plan.md`](../../../docs/lab/v0.1.0-oci-plan.md).
 
 ## [`windows-helper/`](windows-helper/) — moitié Windows du helper natif
 

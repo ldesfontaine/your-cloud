@@ -21,7 +21,7 @@ usage() {
 usage: provision-lab [lab-console | lab-machine-1 | all]
 
   lab-console    swap, GTK build dependencies and the pinned Rust toolchain
-  lab-machine-1  the pinned Go toolchain
+  lab-machine-1  the pinned Go toolchain and the rootless container ground
   all            both, in that order (default)
 
 Both machines must already exist and be running:
@@ -131,7 +131,7 @@ provision_console() {
 }
 
 provision_machine() {
-  step "lab-machine-1 — Go $go_version"
+  step "lab-machine-1 — Go $go_version, rootless container ground"
   guard lab-machine-1
 
   if remote lab-machine-1 "/usr/local/go/bin/go version 2>/dev/null | grep -q 'go$go_version '"; then
@@ -145,6 +145,36 @@ provision_machine() {
     note "Go $go_version" "installed"
   fi
   note observed "$(remote lab-machine-1 '/usr/local/go/bin/go version')"
+
+  # The ground the managed OCI deployment stands on. Three packages, each one
+  # named by a capability the Auxiliary asks the machine for, and none of them a
+  # dependency of the others — `apt-get` pulled the engine's own runtime
+  # (crun, conmon, netavark, passt, catatonit, fuse-overlayfs) automatically,
+  # while these three had to be asked for:
+  #
+  #   podman             the engine `Capabilities` looks up and `PullImage` runs
+  #   uidmap             newuidmap/newgidmap, without which a rootless engine
+  #                      cannot map more than the account's own identifier
+  #   dbus-user-session  the per-account bus at $XDG_RUNTIME_DIR/bus, which is
+  #                      the address the Auxiliary hands `systemctl --user`
+  #
+  # The guard names the newest of the three rather than the first: a machine
+  # provisioned before the list grew answers the old guard and would silently
+  # keep its old surface.
+  if remote lab-machine-1 "test -f /usr/lib/systemd/user/dbus.socket"; then
+    note "rootless container ground" "already installed"
+  else
+    remote lab-machine-1 "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        podman uidmap dbus-user-session \
+        >/dev/null"
+    note "rootless container ground" "installed"
+  fi
+  remote lab-machine-1 "command -v podman >/dev/null" \
+    || fail "podman is absent after installation"
+  remote lab-machine-1 "command -v newuidmap >/dev/null" \
+    || fail "newuidmap is absent after installation"
+  note observed "$(remote lab-machine-1 'podman --version')"
 }
 
 case "$target" in

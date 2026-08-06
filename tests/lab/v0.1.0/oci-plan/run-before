@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# The palier played on the machine, up to the power cycle: what it can do, what
+# it must not do twice, and what it must refuse.
+#
+# Every verdict below is taken from what the machine holds — the sheet on disk,
+# the state systemd answers with, the image the running container was created
+# from, the bytes the loopback port returns — and never from what the plan asked
+# for. A refusal is followed by a comparison against a fingerprint taken before
+# it, because "refused" and "refused without effect" are two different claims.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+# The Auxiliary is deliberately started from root's home — the exact directory
+# a forced SSH command inherits and the probe account cannot enter. The first
+# run of this proof had to launch from `/` because the product passed its
+# inherited directory down to the engine, and a rootless Podman chdir()s into
+# it after entering its user namespace. The product now fixes the working
+# directory of every command it runs, and starting from the hostile directory
+# is what proves that fix rather than hiding the defect it corrects.
+cd /root
+
+# apply <label> <expectation> <fixture arguments...>
+#
+# It prints what the machine concluded, and holds it against exactly one
+# expected fragment of the JSON report. A run that fails is still printed whole,
+# because the conclusion of a controlled failure is part of the contract.
+apply() {
+  local label=$1 expected=$2 output status=0
+  shift 2
+  output=$(lab-oci-fixture "$@" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+  case "$output" in
+    *"$expected"*) report "$label" "$expected (status $status)" ;;
+    *) red "$label" "expected $expected, got: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+  printf '%s\n' "$output" >"$state/last-report.json"
+}
+
+# refuses <label> <expected reason> <fixture arguments...>
+#
+# The reason is asserted, not merely the non-zero status: a refusal that fired
+# for another cause has not proven the rule it is named after. The machine is
+# compared with itself before and after, so a refusal that changed something
+# would be a red even while its reason was right.
+refuses() {
+  local label=$1 expected=$2 output before
+  shift 2
+  before=$(fingerprint)
+  if output=$(lab-oci-fixture "$@" | your-cloud auxiliary approve 2>&1); then
+    red "$label" "accepted: $(echo "$output" | tr '\n' ' ')"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) red "$label" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+  unchanged "$label, zero effect" "$before"
+}
+
+json_field() { sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" "$state/last-report.json"; }
+
+# ---------------------------------------------------------------------------
+step "1. the machine is capable, and it is the machine that says so"
+
+if [[ -d /run/systemd/system ]]; then
+  report "systemd" "present (/run/systemd/system)"
+else
+  red "systemd" "absent"
+fi
+if [[ -e /sys/fs/cgroup/cgroup.controllers ]]; then
+  report "cgroup v2 unified hierarchy" "$(cat /sys/fs/cgroup/cgroup.controllers)"
+else
+  red "cgroup v2 unified hierarchy" "absent"
+fi
+if command -v podman >/dev/null; then
+  report "Podman" "$(podman --version)"
+else
+  red "Podman" "absent"
+fi
+report "the probe account, before anything" "$(account_state)"
+report "the sheet, before anything" "$(unit_digest)"
+report "the consumed position, before anything" "$(consumed_sequence)"
+
+# ---------------------------------------------------------------------------
+step "2. the approved deployment is applied"
+
+lab-oci-fixture -operation deploy_oci_probe -port "$probe_port" \
+  -sequence "$(next_sequence)" >"$state/deploy-first.json"
+first_sequence=$(sed -n 's/.*"sequence":\([0-9]*\).*/\1/p' "$state/deploy-first.json" | head -1)
+report "the first approved envelope" "sequence $first_sequence, port $probe_port"
+
+status=0
+output=$(your-cloud auxiliary approve --format=json <"$state/deploy-first.json" 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/last-report.json"
+case "$output" in
+  *'"outcome":"applied"'*'"changed":true'*) report "the deployment" "applied, changed=true" ;;
+  *) red "the deployment" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+
+case "$(unit_owner)" in
+  "root:root 644") report "the sheet's owner and mode" "root:root 644" ;;
+  *) red "the sheet's owner and mode" "$(unit_owner)" ;;
+esac
+case "$unit" in
+  "$home"/*) report "the sheet's place" "$unit, under the probe account's home" ;;
+  *) red "the sheet's place" "$unit is outside $home" ;;
+esac
+case "$(service_state)" in
+  active) report "the service" "active" ;;
+  *) red "the service" "$(service_state)" ;;
+esac
+answer=$(probe_answers "$probe_port")
+case "$answer" in
+  *Hostname:*) report "a local GET on 127.0.0.1:$probe_port" "answered by whoami" ;;
+  *) red "a local GET on 127.0.0.1:$probe_port" "$(echo "$answer" | tr '\n' ' ')" ;;
+esac
+pinned="docker.io/traefik/whoami@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab"
+if [[ "$(container_image)" == "$pinned" ]]; then
+  report "the running container's image" "the pinned digest"
+else
+  red "the running container's image" "$(container_image)"
+fi
+report "what the account holds" "uid $(id -u $account), home $home"
+report "its subordinate ranges" "$(grep "^$account:" /etc/subuid || echo none)"
+
+before_digest=$(unit_digest)
+before_mtime=$(unit_mtime)
+before_invocation=$(service_property InvocationID)
+before_entered=$(service_property ActiveEnterTimestampMonotonic)
+report "the sheet" "$before_digest"
+report "the invocation" "$before_invocation entered at $before_entered"
+
+# ---------------------------------------------------------------------------
+step "3. the same state, asked for again, is not an action"
+
+apply "the second identical plan" '"changed":false' \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)"
+case "$(cat "$state/last-report.json")" in
+  *'"outcome":"applied"'*) report "its conclusion" "applied" ;;
+  *) red "its conclusion" "$(cat "$state/last-report.json" | tr '\n' ' ')" ;;
+esac
+[[ "$(unit_digest)" == "$before_digest" ]] \
+  && report "the sheet was not rewritten" "same digest" \
+  || red "the sheet was not rewritten" "$(unit_digest)"
+[[ "$(unit_mtime)" == "$before_mtime" ]] \
+  && report "the sheet was not even touched" "same mtime" \
+  || red "the sheet was not even touched" "$(unit_mtime)"
+[[ "$(service_property InvocationID)" == "$before_invocation" ]] \
+  && report "the service was not restarted" "same InvocationID" \
+  || red "the service was not restarted" "$(service_property InvocationID)"
+[[ "$(service_property ActiveEnterTimestampMonotonic)" == "$before_entered" ]] \
+  && report "the service did not re-enter active" "same ActiveEnterTimestamp" \
+  || red "the service did not re-enter active" "$(service_property ActiveEnterTimestampMonotonic)"
+
+# ---------------------------------------------------------------------------
+step "4. the first envelope, presented a second time"
+
+before=$(fingerprint)
+if output=$(your-cloud auxiliary approve <"$state/deploy-first.json" 2>&1); then
+  red "the first envelope replayed" "accepted: $(echo "$output" | tr '\n' ' ')"
+else
+  case "$output" in
+    *"is not the exact successor of"*) report "the first envelope replayed" "refused by anti-replay" ;;
+    *) red "the first envelope replayed" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+fi
+unchanged "the replay, zero effect" "$before"
+
+# ---------------------------------------------------------------------------
+step "5. hostile documents, on the machine rather than in a table"
+
+# A representative subset only. The exhaustive matrix — twenty-seven document
+# cases and the machine incapacities beside them — lives in
+# internal/auxiliary/refusals_test.go and is run on this machine by the suite
+# this harness executes as root. What is added here is that each refusal fires
+# against a real account, a real engine and a real running probe.
+refuses "one byte of the transported plan changed" \
+  "is not the document the approval signed" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -hostile altered-plan
+refuses "a reference carrying a tag beside the digest" \
+  "image_reference is not the pinned probe" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -hostile tagged-reference
+refuses "a registry this palier never approved" \
+  "image_reference is not the pinned probe" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -hostile foreign-registry
+refuses "a port outside the approvable range" \
+  "local_port must be within" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -hostile port-out-of-range
+refuses "a volume smuggled into the plan" \
+  "does not exactly match destination schema" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -hostile smuggled-volume
+refuses "a signed rollback that undoes another instance" \
+  "does not undo exactly the approved plan" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -hostile mismatched-rollback
+refuses "an approval whose window has closed" \
+  "has expired" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -lifetime 300 -age 400
+refuses "an approval aimed at another machine" \
+  "names another machine than this one" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" \
+  -machine lab-machine-2
+refuses "a mutating approval arriving without its documents" \
+  "performs no mutation" \
+  -operation deploy_oci_probe -port "$probe_port" -sequence "$(next_sequence)" -bare
+
+# ---------------------------------------------------------------------------
+step "6. what the machine must still hold when the power comes back"
+
+# Written now, before the power cycle, so that nothing signed afterwards can
+# explain a refusal or an acceptance observed after it.
+lab-oci-fixture -operation deploy_oci_probe -port "$probe_port" \
+  -sequence "$(next_sequence)" >"$state/after-idempotent.json"
+printf '%s\n' "$before_digest" >"$state/unit-before-reboot.txt"
+printf '%s\n' "$before_invocation" >"$state/invocation-before-reboot.txt"
+report "the sheet before the power cycle" "$before_digest"
+report "the consumed position before the power cycle" "$(consumed_sequence)"
+sync
+
+verdict "the approved state was reached once, refused a second time, and every hostile document was refused without effect"
