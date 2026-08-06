@@ -8,6 +8,12 @@ mod approval;
 mod bootstrap;
 mod native_assistant;
 mod network;
+// The probe plan is verified, displayed and signed here for the same reason the
+// module above is not reachable from a command: the window that must render a
+// plan before it is approved belongs to the palier that adds the command, and
+// the source contract holds the command surface against that.
+#[allow(dead_code)]
+mod probe_plan;
 mod vault;
 #[cfg(windows)]
 mod windows_security;

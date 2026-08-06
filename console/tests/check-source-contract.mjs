@@ -364,7 +364,13 @@ const bootstrapProtocol = await readSourceText(
 const approvalProtocol = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "approval.rs"),
 );
+const planProtocol = await readSourceText(
+  join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "plan.rs"),
+);
 const approvalRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "approval.rs"));
+const probePlanRuntime = await readSourceText(
+  join(consoleRoot, "src-tauri", "src", "probe_plan.rs"),
+);
 const bootstrapProtocolManifest = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "Cargo.toml"),
 );
@@ -1873,6 +1879,70 @@ for (const forbidden of ["SigningKey", "signing_key", "private_key", "secret", "
 for (const forbidden of ["ed25519", "signature ="]) {
   if (bootstrapProtocolManifest.includes(forbidden)) {
     failures.push(`bootstrap-protocol: dépendance de signature interdite (${forbidden})`);
+  }
+}
+
+// Le plan est ce que les deux hachages de l’enveloppe recouvrent. Sa
+// transcription est écrite champ par champ, sous sa propre longueur, dans cet
+// ordre exact, et le côté Auxiliaire écrit la même table dans internal/plan.
+for (const bound of [
+  'pub const PLAN_TRANSCRIPT_DOMAIN: &[u8] = b"your-cloud/oci-plan.v1\\0";',
+  "transcript.extend_from_slice(&self.schema_version.to_be_bytes());",
+  "append_field(&mut transcript, self.infrastructure_id.as_bytes())?;",
+  "append_field(&mut transcript, self.machine_id.as_bytes())?;",
+  "append_field(&mut transcript, self.operation.as_str().as_bytes())?;",
+  "append_field(&mut transcript, self.image_reference.as_bytes())?;",
+  "append_field(&mut transcript, &image)?;",
+  "transcript.extend_from_slice(&self.local_port.to_be_bytes());",
+  // La liste des champs est fermée, et l’image est comparée à l’égalité : un
+  // plan qui nommerait un autre registre, un autre dépôt ou un autre digest
+  // n’est pas un plan plus étroit, c’est un plan que ce palier ne connaît pas.
+  "#[serde(deny_unknown_fields)]\npub struct PlanDocumentV1 {",
+  "self.image_reference != PROBE_IMAGE_REFERENCE",
+  "self.image_digest != PROBE_IMAGE_DIGEST",
+  'pub const PROBE_IMAGE_REFERENCE: &str = "docker.io/traefik/whoami";',
+  'pub const PROBE_LOCAL_ADDRESS: &str = "127.0.0.1";',
+]) {
+  if (!planProtocol.includes(bound)) {
+    failures.push(`plan.rs (protocole): lien haché absent (${bound})`);
+  }
+}
+// Le plan ne porte aucun champ exécutable : ni commande, ni chemin, ni volume,
+// ni réseau, ni privilège conteneur, ni variable. Un document qui en porterait
+// un est un champ inconnu, refusé avant lecture de sa valeur — encore faut-il
+// qu’aucun de ces champs n’existe dans le schéma.
+for (const forbidden of [
+  "pub tag:",
+  "pub volumes:",
+  "pub network:",
+  "pub privileged:",
+  "pub command:",
+  "pub environment:",
+]) {
+  if (planProtocol.includes(forbidden)) {
+    failures.push(`plan.rs (protocole): le schéma déclare un champ exécutable (${forbidden})`);
+  }
+}
+// La Console ne possède pas de ré-encodeur canonique faisant autorité : elle
+// vérifie les octets reçus. Ce qu’elle affiche est donc vérifié avant d’être
+// affiché, et signé sur les mêmes octets.
+for (const bound of [
+  "pub fn verify(view: &ProbePlanView) -> Result<Self, ProbePlanError>",
+  "verify_plan_document(view.plan_document.as_bytes(), &view.plan_sha256)",
+  "verify_plan_document(view.rollback_document.as_bytes(), &view.rollback_sha256)",
+  "if !plan.is_undone_by(&rollback) {",
+  "pub fn confirmation_lines(&self) -> Vec<String> {",
+  "if Self::verify(documents)? != *self {",
+  "if self.plan.infrastructure_id != association.summary.infrastructure_id {",
+  "operation: approval_operation(self.plan.operation),",
+]) {
+  if (!probePlanRuntime.includes(bound)) {
+    failures.push(`probe_plan.rs: garde du plan présenté absente (${bound})`);
+  }
+}
+for (const forbidden of ["SigningKey", "signing_key", "human_private_seed", "Signer"]) {
+  if (probePlanRuntime.replace(/#\[cfg\(test\)\][\s\S]*$/u, "").includes(forbidden)) {
+    failures.push(`probe_plan.rs: une notion de clé privée y apparaît (${forbidden})`);
   }
 }
 

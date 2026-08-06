@@ -64,23 +64,31 @@ pub const MAX_APPROVAL_LIFETIME_SECONDS: u64 = 900;
 /// is the size the fields below can actually reach, rounded up once.
 pub const MAX_SIGNED_APPROVAL_BYTES: usize = 1_024;
 
-/// What an approval authorises. This palier has exactly one member, and it
-/// reads.
+/// What an approval authorises. The list is closed, and every member names its
+/// own exact privileges below.
 ///
-/// The Auxiliary of this palier is a protocol diagnostic: it states what it
-/// verified and what it consumed, and it changes nothing. An operation name
-/// that is not this one has no variant, so an envelope naming an installation,
-/// a container or a service is refused while it is still being parsed.
+/// [`Self::DiagnoseProtocolReadOnly`] is the protocol diagnostic of the
+/// previous palier: it states what it verified and what it consumed, and it
+/// changes nothing. The two probe operations are the first ones that ask to
+/// change a machine, and they are the exact pair of a plan and its rollback —
+/// what each of them describes is the plan document whose digest the envelope
+/// names, never anything the envelope itself could spell. An operation name
+/// outside this list has no variant, so an envelope naming an installation, a
+/// service or an arbitrary container is refused while it is still being parsed.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalOperation {
     DiagnoseProtocolReadOnly,
+    DeployOciProbe,
+    RemoveOciProbe,
 }
 
 impl ApprovalOperation {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::DiagnoseProtocolReadOnly => "diagnose_protocol_read_only",
+            Self::DeployOciProbe => "deploy_oci_probe",
+            Self::RemoveOciProbe => "remove_oci_probe",
         }
     }
 
@@ -88,29 +96,36 @@ impl ApprovalOperation {
     ///
     /// It is an equality rather than a maximum: an envelope that asks for less
     /// than its operation needs, or for more, is not a narrower or a wider
-    /// approval, it is an envelope this palier does not recognise.
+    /// approval, it is an envelope this palier does not recognise. The two
+    /// probe operations ask for the same pair because a removal has to read the
+    /// machine to find the instance it names before it changes anything.
     pub fn required_privileges(self) -> &'static [ApprovalPrivilege] {
         match self {
             Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],
+            Self::DeployOciProbe | Self::RemoveOciProbe => &[
+                ApprovalPrivilege::MutateLocalState,
+                ApprovalPrivilege::ReadLocalState,
+            ],
         }
     }
 }
 
 /// What an operation is allowed to do to the machine it runs on.
 ///
-/// [`Self::MutateLocalState`] exists although no operation of this palier may
-/// carry it, and that is the point: "every mutation is still refused" has to be
-/// a refusal something can actually run into. Without a representable mutating
-/// privilege the claim would only be the absence of a feature, and nothing
-/// would fail the day an operation quietly started asking for one.
+/// The declaration order is the canonical order of the set, and it is the order
+/// of the wire names rather than a taste: the Auxiliary holds the list to being
+/// strictly increasing by comparing the names it parsed, so an order chosen
+/// here that did not match theirs would produce envelopes this side signs and
+/// the other side refuses. The test suite of this module holds the two against
+/// one another rather than trusting the reading.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPrivilege {
+    /// Changing the machine. Only the two probe operations require it, and
+    /// [`ApprovalOperation::DiagnoseProtocolReadOnly`] keeps refusing it.
+    MutateLocalState,
     /// Reading what the machine already holds, and nothing else.
     ReadLocalState,
-    /// Changing the machine. No operation of this palier requires it, and the
-    /// validation below refuses every envelope that names it.
-    MutateLocalState,
 }
 
 impl ApprovalPrivilege {
@@ -274,7 +289,10 @@ impl SignedApprovalV1 {
     }
 }
 
-fn append_field(buffer: &mut Vec<u8>, value: &[u8]) -> Result<(), ProtocolError> {
+/// Written under its own big-endian length, which is what keeps two adjacent
+/// fields from being read as one. The plan transcript beside this one is built
+/// out of the very same primitive rather than out of a copy of it.
+pub(crate) fn append_field(buffer: &mut Vec<u8>, value: &[u8]) -> Result<(), ProtocolError> {
     let length = u32::try_from(value.len()).map_err(|_| ProtocolError::InvalidInput)?;
     buffer.extend_from_slice(&length.to_be_bytes());
     buffer.extend_from_slice(value);
@@ -303,7 +321,11 @@ fn canonical_lifetime(issued_at: u64, expires_at: u64) -> bool {
 
 /// The canonical textual form of a version 4 UUID, lower-case, and nothing that
 /// merely parses as one.
-fn canonical_uuid_v4(value: &str) -> bool {
+///
+/// A plan names the same infrastructure as the envelope that will name its
+/// digest, so it reads that identifier through this very function: two spellings
+/// of "canonical" would eventually accept a plan the envelope refuses.
+pub(crate) fn canonical_uuid_v4(value: &str) -> bool {
     if value.len() != APPROVAL_INFRASTRUCTURE_BYTES || !value.is_ascii() {
         return false;
     }
@@ -325,8 +347,9 @@ fn canonical_uuid_v4(value: &str) -> bool {
 
 /// The identifier a machine is named by, spelled exactly as the product's own
 /// validator spells it: lower-case, three to sixty-three bytes, starting on an
-/// alphanumeric and carrying nothing that could ever mean a path.
-fn canonical_machine_id(value: &str) -> bool {
+/// alphanumeric and carrying nothing that could ever mean a path. A plan names
+/// its one machine through the same reader, for the same reason.
+pub(crate) fn canonical_machine_id(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.len() < 3 || bytes.len() > MAX_APPROVAL_MACHINE_BYTES || !value.is_ascii() {
         return false;
@@ -344,8 +367,9 @@ fn canonical_digest(value: &str) -> bool {
 }
 
 /// Lower-case hexadecimal of exactly the digest length, and no other spelling
-/// of the same number.
-fn decode_digest(value: &str) -> Option<[u8; APPROVAL_DIGEST_BYTES]> {
+/// of the same number. The plan side reads both the digest an envelope names
+/// and the digest an image is pinned by through this same reader.
+pub(crate) fn decode_digest(value: &str) -> Option<[u8; APPROVAL_DIGEST_BYTES]> {
     if value.len() != APPROVAL_DIGEST_ENCODED_BYTES || !value.is_ascii() {
         return None;
     }
@@ -542,17 +566,14 @@ mod tests {
                     ..envelope()
                 },
             ),
+            (
+                "operation",
+                ApprovalEnvelopeV1 {
+                    operation: ApprovalOperation::DeployOciProbe,
+                    ..envelope()
+                },
+            ),
         ];
-
-        // The operation has one variant, so it cannot be moved by assignment.
-        // It is covered instead by the assertion below that its name is inside
-        // the transcript under its own length.
-        assert!(reference
-            .windows(ApprovalOperation::DiagnoseProtocolReadOnly.as_str().len())
-            .any(|window| window
-                == ApprovalOperation::DiagnoseProtocolReadOnly
-                    .as_str()
-                    .as_bytes()));
 
         let mut covered: Vec<&str> = Vec::new();
         for (field, mutated) in mutations {
@@ -564,14 +585,13 @@ mod tests {
             covered.push(field);
         }
 
-        // Every field the wire document carries is one of the ones just moved,
-        // plus the operation covered above. A field added to the structure and
-        // forgotten in the transcript fails here rather than in production.
+        // Every field the wire document carries is one of the ones just moved.
+        // A field added to the structure and forgotten in the transcript fails
+        // here rather than in production.
         let document = serde_json::to_value(envelope()).unwrap();
         let mut wire_fields: Vec<String> = document.as_object().unwrap().keys().cloned().collect();
         wire_fields.sort();
         let mut expected: Vec<String> = covered.iter().map(|name| (*name).to_owned()).collect();
-        expected.push("operation".to_owned());
         expected.sort();
         assert_eq!(wire_fields, expected);
     }
@@ -607,10 +627,20 @@ mod tests {
 
     #[test]
     fn wire_variants_are_fixed() {
-        assert_eq!(
-            serde_json::to_value(ApprovalOperation::DiagnoseProtocolReadOnly).unwrap(),
-            serde_json::json!("diagnose_protocol_read_only")
-        );
+        for (operation, wire_name) in [
+            (
+                ApprovalOperation::DiagnoseProtocolReadOnly,
+                "diagnose_protocol_read_only",
+            ),
+            (ApprovalOperation::DeployOciProbe, "deploy_oci_probe"),
+            (ApprovalOperation::RemoveOciProbe, "remove_oci_probe"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(operation).unwrap(),
+                serde_json::json!(wire_name)
+            );
+            assert_eq!(operation.as_str(), wire_name);
+        }
         for (privilege, wire_name) in [
             (ApprovalPrivilege::ReadLocalState, "read_local_state"),
             (ApprovalPrivilege::MutateLocalState, "mutate_local_state"),
@@ -625,19 +655,77 @@ mod tests {
         assert!(ApprovalPrivilege::MutateLocalState.is_mutating());
     }
 
-    /// The one operation of this palier reads, and an envelope that asks to
-    /// mutate is refused whatever else it carries.
+    /// The canonical order of the privilege set is the order of the wire names.
+    ///
+    /// The Auxiliary holds a privilege list to being strictly increasing by
+    /// comparing the strings it parsed. This side compares the variants. The
+    /// two agree only while the declaration order below is the alphabetical
+    /// order of the names, so that agreement is asserted rather than assumed:
+    /// an order that drifted here would produce envelopes this side signs and
+    /// the other side refuses, on the one operation that finally mutates.
     #[test]
-    fn no_envelope_of_this_palier_may_carry_a_mutating_privilege() {
+    fn the_canonical_privilege_order_is_the_order_of_the_wire_names() {
+        const DECLARED: [ApprovalPrivilege; MAX_APPROVAL_PRIVILEGES] = [
+            ApprovalPrivilege::MutateLocalState,
+            ApprovalPrivilege::ReadLocalState,
+        ];
+        for pair in DECLARED.windows(2) {
+            assert!(pair[0] < pair[1]);
+            assert!(pair[0].as_str() < pair[1].as_str());
+        }
+        assert!(canonical_privileges(&DECLARED));
+
+        for operation in [
+            ApprovalOperation::DiagnoseProtocolReadOnly,
+            ApprovalOperation::DeployOciProbe,
+            ApprovalOperation::RemoveOciProbe,
+        ] {
+            let required = operation.required_privileges();
+            assert!(
+                canonical_privileges(required),
+                "{operation:?} requires a list the Auxiliary would refuse to read"
+            );
+        }
+    }
+
+    /// Each operation carries exactly its own privileges, and the read-only one
+    /// still refuses to mutate whatever else its envelope carries.
+    ///
+    /// The equality runs both ways: the diagnostic cannot be given the mutating
+    /// pair, and a probe operation cannot be given the reading privilege alone.
+    /// Naming an operation is therefore the whole of asking for a power here —
+    /// there is no second field through which more could be requested.
+    #[test]
+    fn each_operation_carries_exactly_its_own_privileges() {
         assert_eq!(
             ApprovalOperation::DiagnoseProtocolReadOnly.required_privileges(),
             &[ApprovalPrivilege::ReadLocalState]
         );
+        for probe in [
+            ApprovalOperation::DeployOciProbe,
+            ApprovalOperation::RemoveOciProbe,
+        ] {
+            assert_eq!(
+                probe.required_privileges(),
+                &[
+                    ApprovalPrivilege::MutateLocalState,
+                    ApprovalPrivilege::ReadLocalState,
+                ]
+            );
+            let mutating = ApprovalEnvelopeV1 {
+                operation: probe,
+                privileges: probe.required_privileges().to_vec(),
+                ..envelope()
+            };
+            assert!(mutating.is_mutating());
+            assert!(mutating.validate().is_ok());
+        }
+
         for privileges in [
             vec![ApprovalPrivilege::MutateLocalState],
             vec![
-                ApprovalPrivilege::ReadLocalState,
                 ApprovalPrivilege::MutateLocalState,
+                ApprovalPrivilege::ReadLocalState,
             ],
         ] {
             let mutating = ApprovalEnvelopeV1 {
@@ -647,6 +735,18 @@ mod tests {
             assert!(mutating.is_mutating());
             assert_eq!(mutating.validate(), Err(ProtocolError::InvalidInput));
         }
+
+        // A probe operation asking for less than it needs is not a narrower
+        // approval either.
+        assert_eq!(
+            ApprovalEnvelopeV1 {
+                operation: ApprovalOperation::DeployOciProbe,
+                privileges: vec![ApprovalPrivilege::ReadLocalState],
+                ..envelope()
+            }
+            .validate(),
+            Err(ProtocolError::InvalidInput)
+        );
     }
 
     #[test]
@@ -658,8 +758,8 @@ mod tests {
                 ApprovalPrivilege::ReadLocalState,
             ],
             vec![
-                ApprovalPrivilege::MutateLocalState,
                 ApprovalPrivilege::ReadLocalState,
+                ApprovalPrivilege::MutateLocalState,
             ],
         ] {
             assert_eq!(

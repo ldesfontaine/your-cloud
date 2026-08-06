@@ -1,5 +1,6 @@
 mod approval;
 mod monotonic;
+mod plan;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,12 @@ pub use approval::{
     MAX_APPROVAL_PRIVILEGES, MAX_SIGNED_APPROVAL_BYTES,
 };
 pub use monotonic::{monotonic_nanos, MonotonicClockError};
+pub use plan::{
+    decode_plan_document, verify_plan_document, PlanDocumentV1, PlanOperation,
+    MAX_PLAN_DOCUMENT_BYTES, MAX_PLAN_LOCAL_PORT, MIN_PLAN_LOCAL_PORT, PLAN_DIGEST_BYTES,
+    PLAN_SCHEMA_VERSION, PLAN_TRANSCRIPT_DOMAIN, PROBE_IMAGE_DIGEST, PROBE_IMAGE_REFERENCE,
+    PROBE_LOCAL_ADDRESS,
+};
 
 pub const REQUEST_ID_BYTES: usize = 16;
 pub const MAX_HOST_BYTES: usize = 253;

@@ -25,9 +25,10 @@
 //! at an infrastructure the Console is not associated to.
 //!
 //! **The plan is hashed here, not received hashed.** The request carries the
-//! plan and rollback documents themselves and this module digests them. A
-//! caller therefore cannot bind the approval to a digest whose preimage nobody
-//! displayed.
+//! bytes the two digests are defined over — for a probe plan, the ones
+//! [`crate::probe_plan`] rebuilt from the fields it verified and displayed —
+//! and this module digests them. A caller therefore cannot bind the approval to
+//! a digest whose preimage nobody displayed.
 //!
 //! No Tauri command reaches this module in this palier: the approval path is
 //! signed and verified end to end, but the confirmation window that must
@@ -77,9 +78,13 @@ pub struct ApprovalRequest<'a> {
     /// one, which is the whole point of not trusting the transport.
     pub sequence: u64,
     pub operation: ApprovalOperation,
-    /// The plan document exactly as it was displayed.
+    /// The exact bytes the plan digest is defined over, for the plan that was
+    /// displayed. A caller that owns a plan document hands in the
+    /// domain-separated bytes its own module rebuilt from the fields it parsed,
+    /// so what is named below is the digest that was on screen rather than a
+    /// second digest of the same idea.
     pub plan: &'a [u8],
-    /// The rollback of that same plan, exactly as it was displayed.
+    /// The same, for the rollback of that same plan.
     pub rollback: &'a [u8],
     pub issued_at_unix_seconds: u64,
     pub lifetime_seconds: u64,
