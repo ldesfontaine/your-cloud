@@ -4,9 +4,10 @@
 > Il étend le schéma 2 au premier service à données du produit, fixe ses
 > sauvegardes, son confinement et la route qui le publie par le seul passage
 > privé. Les implémentations le suivent depuis `#100` (plans et surface du
-> Controller) et `#102` (l'Auxiliaire pose le service, son volume, son
-> environnement fermé, sa table de sortie et ses trois opérations d'archive) ;
-> la route de lien reste `#103` et la preuve LAB du palier reste `#104`.
+> Controller), `#102` (l'Auxiliaire pose le service, son volume, son
+> environnement fermé, sa table de sortie et ses trois opérations d'archive) et
+> `#103` (l'Auxiliaire publie et retire la route de lien, et tient la panne du
+> passage) ; la preuve LAB du palier reste `#104`.
 
 ## Ce que ce profil est, et n'est pas
 
@@ -264,6 +265,84 @@ seulement dans le code.
   média n'est réclamé de la réponse : ce qu'un coffre répond à une requête en
   clair sur son loopback n'est décrit par aucun plan de ce palier, et `#104` est
   l'endroit où la réponse d'une instance réelle est constatée.
+
+## Addendum `#103` : ce que publier la route de lien a exigé de décider
+
+Le contrat ci-dessus dit quoi. Poser les deux opérations de la route sur une
+vraie machine a demandé six décisions qu'il ne nommait pas, et elles sont ici
+plutôt que seulement dans le code.
+
+La phrase « l'Auxiliaire lit ces quatre formes de document et n'en exécute
+aucune » décrivait l'état du `#100` et la fenêtre que ce palier tenait ouverte
+volontairement. Elle est close : `#102` a fermé cinq opérations et `#103` les
+deux dernières, et le test qui tenait la fenêtre a été remplacé par celui qui
+tient la propriété qu'elle gardait — chaque forme atteint les effets de son
+propre genre et d'aucun autre.
+
+- **Le fragment ne déclare aucun en-tête, ni d'isolation ni de proxy.** Les deux
+  en-têtes d'isolation appartiennent au profil public, dont l'édition épinglée
+  en a besoin ; les poser sur un coffre serait un contrôle qui n'accorde rien,
+  et un contrôle qui n'accorde rien se lit comme un contrôle qui était
+  nécessaire. Les en-têtes de proxy que Vaultwarden attend — `X-Real-IP` pour
+  l'adresse réelle du client, la famille `X-Forwarded-*` pour le schéma et
+  l'hôte — sont **transmis par défaut par Traefik sur chaque requête relayée** :
+  un middleware qui les redéclarerait ne changerait rien à ce que le service
+  reçoit et ferait croire, au lecteur suivant, à une exigence que le point
+  d'entrée ne satisfaisait pas. Le fragment porte donc le routeur sur le nom
+  déclaré, TLS résolu depuis le certificat et la clé de ce nom sous le
+  répertoire du point d'entrée, et un seul backend : `10.66.66.2` sur le port
+  approuvé, jamais une adresse de plan et jamais le loopback de cette machine.
+- **Un nom est une seule revendication, et les deux genres partagent un espace
+  de noms.** Une route de lien et une route publique du même hôte écrivent le
+  même fichier `<route_host>.yaml`, sous la même borne de nom et le même refus
+  au-delà. Publier un nom que la machine sert déjà de l'autre genre n'est donc
+  **pas une dérive réappliquée mais un refus** : ce serait changer ce qui répond
+  à un nom public — d'un service local vers un tunnel, ou l'inverse — sans
+  qu'aucun document ne le dise. L'ordre reste à l'humain : retirer le nom, puis
+  le publier de l'autre genre, deux plans lus. Le genre d'un fragment se lit
+  dans ses propres octets, à l'adresse de backend qu'il nomme : les deux
+  constantes sont disjointes et chaque fragment en nomme exactement une.
+- **Le `service_port` approuvé se lit dans le fichier de règles, pas ailleurs.**
+  La règle de présence exige que le port du fragment soit celui qu'une jonction
+  d'écouteur borne. Ce fait n'existe qu'à un endroit sur la machine : le fichier
+  root de `#97` (`/etc/your-cloud/link/rules.nft`), que la jonction a écrit et
+  chargé dans le noyau d'un même effet. La description de l'interface ne peut
+  pas répondre — elle porte le pair et son unique `/32`, et aucun port — et le
+  document en cours n'est pas une source. La règle complète est donc en trois
+  temps, tous lus sur la machine : cette machine tient le passage **en écouteur**
+  (l'autre côté est celui où vit le service), une jonction y est **attachée**, et
+  la table qu'elle a posée **nomme exactement ce port**.
+- **La vérification traverse le tunnel, et c'est délibéré.** La publication se
+  vérifie par une requête au point d'entrée sur le nom déclaré, qui emprunte donc
+  le passage et atteint le service de l'autre machine. Vérifier plus faiblement —
+  que le fichier est là, que le point d'entrée l'a lu — rapporterait une
+  publication comme prouvée alors que ce qu'elle publie est injoignable, ce que
+  le contrat interdit expressément. Un backend injoignable au moment de publier
+  est donc un échec contrôlé avec rollback, symétrique de la route publique.
+  L'ordre d'approbation rend l'exigence juste : le service et la jonction
+  existent avant la route qui les nomme. Ce qui est exigé de la réponse est le
+  **statut seul** : les en-têtes d'isolation sont ceux d'un autre profil, et ce
+  qu'un coffre répond à une requête nue n'est décrit par aucun plan de ce palier.
+- **Une route publique refuse le port d'un service privé.** La lecture « un
+  service géré de cette machine publie ce port » connaît les deux portes depuis
+  `#102`, parce que le passage borne légitimement un service privé. Une *route*
+  du point d'entrée lisant cela sans filtre laisserait un nom déclaré atteindre
+  directement le port loopback d'un coffre — à côté du passage par lequel le
+  contrat le publie, et avec les en-têtes d'un autre profil sur la réponse. Le
+  refus est nommé : *un service privé est publié par le passage, pas par une
+  route locale*. Ce qui est refusé est la porte et non le numéro ; la jonction,
+  elle, continue de lire les deux portes.
+- **La panne du passage est un état rapporté, jamais réparé.** Une machine qui
+  tient un fragment de lien sans jonction est exactement l'état que le contrat
+  veut visible : le nom rend l'erreur de passerelle du point d'entrée, et
+  l'Auxiliaire n'a rien le droit d'en faire. Republier y est **refusé** avant
+  tout effet ; retirer y est licite — c'est ainsi qu'un nom cesse de répondre au
+  lieu de répondre une erreur — et **le rapport nomme ce qu'il a trouvé**
+  (`passage: absent`), pour qu'un humain l'apprenne de la réponse plutôt que
+  d'un nom qui avait cessé de marcher. Après un rollback qui a échoué à son
+  tour, l'observation gagne un mot pour cet état, `unbacked` : un fragment
+  publié que rien ne porte. La reprise est une nouvelle jonction approuvée, et
+  rien d'autre.
 
 ## Ce que la preuve devra constater
 

@@ -56,6 +56,16 @@ const (
 	observedPinned   = "pinned"
 	observedOther    = "other"
 	observedNone     = "none"
+	// observedUnbacked is the one word this vocabulary gained for the failure of
+	// the passage: a fragment this machine still publishes and a junction that is
+	// no longer there to carry it.
+	//
+	// It is a single word rather than two facts a reader has to combine, because it
+	// is the state the contract asks to be observable: the name answers the entry's
+	// gateway error, nothing falls back, and what is missing is a junction a human
+	// approves again. Saying "present" of that fragment would be true and would hide
+	// exactly what has to be read.
+	observedUnbacked = "unbacked"
 )
 
 // Application is what one applied plan leaves behind on the machine.
@@ -112,7 +122,17 @@ type Application struct {
 	// operation is done, by the names a human gave them. The reserved slot is never
 	// among them: it belongs to the return mechanism, not to a human's list.
 	SnapshotSlots []string
-	Changed       bool
+	// PassageState is filled by the two operations of a route the private passage
+	// carries, and by nothing else. It says whether the junction that carries the
+	// published name was there when this machine acted.
+	//
+	// A publication reports it active because it refuses otherwise; a retirement
+	// reports what it found, which is how the failure of the passage reaches a human
+	// as a fact rather than as a name that stopped answering. It is not a second
+	// service state: what the operation itself reached is ServiceState above, and
+	// this says what the name it publishes was resting on.
+	PassageState string
+	Changed      bool
 }
 
 // Observation is what read-only calls could still establish about this machine
@@ -136,7 +156,10 @@ type Observation struct {
 	Service   string `json:"service,omitempty"`
 	Container string `json:"container,omitempty"`
 	// Fragment is filled only while the instance that was being applied is a
-	// route, because it is the only instance whose state is a fragment file.
+	// route of either kind, because it is the only instance whose state is a
+	// fragment file. For a route the passage carries it may also read `unbacked`,
+	// which is the fragment being there and the junction not — the one state this
+	// palier's contract asks to be observable rather than inferred.
 	Fragment string `json:"fragment,omitempty"`
 	// LinkKey, LinkInterface, LinkPeer and LinkBounds are filled only for a
 	// passage. The key is reported present or absent and never by its value: the
@@ -281,6 +304,12 @@ const (
 	kindEntrypoint
 	kindRoute
 	kindLink
+	// kindLinkRoute is one declared name served by the entry and carried by the
+	// private passage. It is a kind of its own beside kindRoute and not a flag on
+	// it, because the two answer to different presence rules and write different
+	// fragments: what a local route requires of this machine is a managed service
+	// publishing the port, and what this one requires is a junction bounding it.
+	kindLinkRoute
 	// kindPrivateService is a managed service whose data outlives its container,
 	// and kindArchive is an operation on the archives of such a service. They are
 	// two kinds and not one because they leave different things behind: a service
@@ -345,7 +374,7 @@ type instance struct {
 // a conclusion, each answering only for the kind that has such a thing.
 func (subject instance) reportedUnitPath() string {
 	switch subject.kind {
-	case kindRoute:
+	case kindRoute, kindLinkRoute:
 		return ""
 	case kindArchive:
 		// An archive operation writes no sheet and describes none: what it acts on
@@ -362,7 +391,10 @@ func (subject instance) reportedUnitPath() string {
 }
 
 func (subject instance) reportedFragmentPath() string {
-	if subject.kind != kindRoute {
+	// The two kinds of route name their file through one function, because they
+	// share one namespace: a declared name owns one fragment on this machine,
+	// whichever backend serves it.
+	if subject.kind != kindRoute && subject.kind != kindLinkRoute {
 		return ""
 	}
 	return routeFragmentPath(subject.routeHost)
@@ -390,10 +422,9 @@ func (subject instance) reportedFragmentPath() string {
 //  5. the plan's content stays inside the contract — the plan package refuses a
 //     document that leaves it before its digest is even computed — and the
 //     operation is one this Auxiliary actually performs. Every operation of the
-//     three schemas this package reads is performed here except the two of the
-//     link route, which `#103` will add and which are refused by name, before any
-//     effect and before this machine is read; beside them, what this step refuses
-//     is a document whose operation belongs to no shape this package places;
+//     three schemas this package reads is performed here, so what this step
+//     refuses is a document whose operation belongs to no shape this package
+//     places;
 //  6. the machine is capable of the flow at all, and a machine that is not is
 //     refused here, with nothing written.
 //
@@ -440,6 +471,15 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 		return concluded(executor, requested, rollback, application, touched, err)
 	case plan.OperationRetireRoute:
 		application, touched, err := retireRoute(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	// The two routes of the passage are their own flows and never the local ones:
+	// they write another fragment and they hold another presence rule against this
+	// machine, which is exactly why dispatch resolved them to another kind.
+	case plan.OperationPublishLinkRoute:
+		application, touched, err := publishLinkRoute(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationRetireLinkRoute:
+		application, touched, err := retireLinkRoute(executor, requested)
 		return concluded(executor, requested, rollback, application, touched, err)
 	case plan.OperationDeployPrivateService:
 		application, touched, err := deployPrivateService(executor, capabilities, requested)
@@ -591,12 +631,11 @@ func probeInstances(accepted *approval.Acceptance, input *Input) (instance, inst
 //
 // The document shapes of schema 2 become the instance kinds here, and this is the
 // only place that mapping exists. Until `#91` landed, the four entrypoint and
-// route operations were refused at this exact point by name; they are performed
-// now. The four shapes of the private profile are refused at this exact point
-// today, also by name, until `#102` and `#103` land — and after them what remains
-// is the one refusal that outlives every window: a document shape this package
-// has no placement for is refused before any effect, because there is nowhere for
-// it to be placed.
+// route operations were refused at this exact point by name; the four shapes of
+// the private profile were refused here too, until `#102` and `#103`. Every shape
+// of this schema is placed now, and what remains is the one refusal that outlived
+// every window: a document shape this package has no placement for is refused
+// before any effect, because there is nowhere for it to be placed.
 func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, instance, error) {
 	envelope := accepted.Envelope
 	requested, err := v2DocumentMatching(input.PlanDocument, envelope.PlanSHA256, "plan")
@@ -739,21 +778,31 @@ func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, in
 			},
 			nil
 	case plan.LinkRouteDocument:
-		// What is left of the window this Auxiliary kept on the private profile.
-		//
-		// The approval package holds the seven operations of that contract in its
-		// closed list, so a human may sign one and this Auxiliary may be handed a
-		// real, valid, canonically frozen pair. `#102` closed five of them — the
-		// data-bearing service, its volume, its closed environment, its confinement
-		// and its three archive operations. The two that remain are the route the
-		// passage publishes, and they are `#103`: until it lands they are refused
-		// right here, by name, before any effect and before this machine is read at
-		// all. A window that let one through unread would be this Auxiliary acting
-		// on a contract it does not implement.
-		return instance{}, instance{}, fmt.Errorf(
-			"the approved plan describes %q, which this Auxiliary does not yet perform",
-			requested.OperationName(),
-		)
+		undoing, paired := rollback.(plan.LinkRouteDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		// The name is held against what this machine can carry as one file exactly
+		// where a local route's is, and for the same reason: the two kinds share one
+		// namespace, so they share one bound and one refusal, taken before any effect
+		// and before the machine is read at all.
+		if err := requireHoldableFragmentName(subject.RouteHost); err != nil {
+			return instance{}, instance{}, err
+		}
+		// The placement is the entry's, as a local route's is: this instance has no
+		// account, no sheet and no container either, and what serves it is the entry.
+		// What differs is everything below dispatch, which is why it is another kind.
+		return instance{
+				kind: kindLinkRoute, operation: subject.Operation,
+				placement: entrypointPlacement,
+				routeHost: subject.RouteHost, backendPort: subject.BackendPort,
+			},
+			instance{
+				kind: kindLinkRoute, operation: undoing.Operation,
+				placement: entrypointPlacement,
+				routeHost: undoing.RouteHost, backendPort: undoing.BackendPort,
+			},
+			nil
 	default:
 		// Unreachable while the plan package's closed interface holds exactly the
 		// shapes above, and kept as a refusal rather than a panic so that a further
@@ -1158,6 +1207,17 @@ func attemptRollback(executor Executor, rollback instance) error {
 	case plan.OperationPublishRoute:
 		_, _, err := publishRoute(executor, rollback)
 		return err
+	case plan.OperationRetireLinkRoute:
+		_, _, err := retireLinkRoute(executor, rollback)
+		return err
+	// A publication that runs as a rollback holds the presence rule of a
+	// publication, and that is deliberate: a machine whose junction has gone in the
+	// meantime cannot be brought back to a name it can serve, so the rollback
+	// refuses and the conclusion is a partial state a human reads — never a
+	// fragment written over a passage that is not there.
+	case plan.OperationPublishLinkRoute:
+		_, _, err := publishLinkRoute(executor, rollback)
+		return err
 	case plan.OperationRemovePrivateService:
 		_, _, err := removePrivateService(executor, rollback)
 		return err
@@ -1219,7 +1279,7 @@ func observe(executor Executor, subject instance) Observation {
 		Service:   observedUnknown,
 		Container: observedUnknown,
 	}
-	if subject.kind == kindRoute {
+	if subject.kind == kindRoute || subject.kind == kindLinkRoute {
 		// A route is one file, so the one thing worth establishing about it is
 		// whether that file is still there. The four words above still answer for
 		// the entry the route was served by, because that is what a partial route
@@ -1230,6 +1290,26 @@ func observe(executor Executor, subject instance) Observation {
 			if present {
 				observed.Fragment = observedPresent
 			}
+		}
+	}
+	if subject.kind == kindLinkRoute {
+		// A name the passage carries rests on something the four words above cannot
+		// say anything about, and after a rollback that failed in its turn it is the
+		// thing a human has to read: is the junction still there. The peer is asked
+		// separately and reported in its own word, and where the fragment is there
+		// without it, the fragment's own word becomes the state rather than a
+		// half-truth — this machine publishes a name nothing carries, which is the
+		// failure of the passage exactly as the contract describes it. Nothing here
+		// repairs it: the reprise is a junction a human approves.
+		observed.LinkPeer = observedUnknown
+		if content, present, err := executor.ReadUnitFile(linkNetdevPath); err == nil {
+			observed.LinkPeer = observedAbsent
+			if len(sectionAfter(content, present, linkPeerSectionMarker)) != 0 {
+				observed.LinkPeer = observedPresent
+			}
+		}
+		if observed.Fragment == observedPresent && observed.LinkPeer == observedAbsent {
+			observed.Fragment = observedUnbacked
 		}
 	}
 	if where.bearsData() {

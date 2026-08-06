@@ -71,6 +71,17 @@ type auxiliaryReport struct {
 	// a key is not a conclusion.
 	RouteHost    string `json:"route_host,omitempty"`
 	FragmentPath string `json:"fragment_path,omitempty"`
+	// PassageState is filled by the two operations of a route the private passage
+	// carries, and says whether the junction that carries the published name was
+	// there when this machine acted.
+	//
+	// It exists because the failure of the passage must never be silent: a
+	// publication reports it active, since it refuses otherwise, and a retirement
+	// reports what it found — so a human retiring a name on a machine whose tunnel
+	// has fallen reads that fact here instead of inferring it from a name that had
+	// stopped answering. Nothing repairs it: the reprise is a junction a human
+	// approves.
+	PassageState string `json:"passage_state,omitempty"`
 	// LinkPublicKey is the public half of the passage key the machine that
 	// prepared its own side of the private passage holds. It is the one value of
 	// that palier that is meant to travel: the Controller reads it here as an
@@ -282,6 +293,7 @@ func buildAppliedAuxiliaryReport(accepted *approval.Acceptance, application *aux
 	report.UnitPath = application.UnitPath
 	report.RouteHost = application.RouteHost
 	report.FragmentPath = application.FragmentPath
+	report.PassageState = application.PassageState
 	report.LinkPublicKey = application.LinkPublicKey
 	report.DataPath = application.DataPath
 	report.SnapshotSlot = application.SnapshotSlot
@@ -363,6 +375,15 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 		if _, err := fmt.Fprintf(writer,
 			"route: %s\nfragment: %s\n", report.RouteHost, report.FragmentPath,
 		); err != nil {
+			return err
+		}
+	}
+	// A name the private passage carries adds one line to the two above, and the
+	// two operations of a local route add none: what a passage was holding is not a
+	// fact about a route the entry serves from this very machine, and a word about
+	// something that was never looked at would be neither a fact nor an admission.
+	if report.PassageState != "" {
+		if _, err := fmt.Fprintf(writer, "passage: %s\n", report.PassageState); err != nil {
 			return err
 		}
 	}

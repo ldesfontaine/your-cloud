@@ -155,13 +155,43 @@ func managedProfiles() []string {
 	return profiles
 }
 
-// publishesLoopbackPort answers whether a managed service of this machine
-// publishes one loopback port, reading only.
+// publishingProfile names the managed service of this machine that publishes one
+// loopback port, reading only, or says that none does.
 //
 // The question is answered from the sheets this Auxiliary itself wrote and not
 // from a socket that happens to be listening: what may be named is a managed
 // service of this machine, described by a plan a human approved, and not
 // whatever process got to the port first.
+//
+// It answers with the profile rather than with a yes, because the two callers of
+// it ask two different questions of one reading. The passage asks whether some
+// managed service publishes the port, both doors together; the public route asks
+// which service does, because a port behind the private door is not one a local
+// route may name. The doors are walked in the one fixed order managedProfiles
+// gives them, so a machine that somehow held two sheets naming one port reads the
+// same answer on every run.
+func publishingProfile(executor Executor, port int) (string, bool, error) {
+	published := "PublishPort=" + loopbackAddress + ":" + strconv.Itoa(port) + ":"
+	for _, profile := range managedProfiles() {
+		where, _ := placementOf(profile)
+		sheet, present, err := executor.ReadUnitFile(where.unitPath())
+		if err != nil {
+			return "", false, fmt.Errorf("read the sheet of the %s profile: %w", profile, err)
+		}
+		if !present {
+			continue
+		}
+		for _, line := range strings.Split(string(sheet), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), published) {
+				return profile, true, nil
+			}
+		}
+	}
+	return "", false, nil
+}
+
+// publishesLoopbackPort answers whether a managed service of this machine
+// publishes one loopback port, whichever door approved it.
 //
 // It is the presence rule of the palier `#15` as a fact rather than as a
 // refusal, because two contracts now hold that same sentence against a machine
@@ -169,42 +199,40 @@ func managedProfiles() []string {
 // of them refuses in its own words. The reading is here, once; the sentence a
 // human is given belongs to the caller.
 func publishesLoopbackPort(executor Executor, port int) (bool, error) {
-	published := "PublishPort=" + loopbackAddress + ":" + strconv.Itoa(port) + ":"
-	for _, profile := range managedProfiles() {
-		where, _ := placementOf(profile)
-		sheet, present, err := executor.ReadUnitFile(where.unitPath())
-		if err != nil {
-			return false, fmt.Errorf("read the sheet of the %s profile: %w", profile, err)
-		}
-		if !present {
-			continue
-		}
-		for _, line := range strings.Split(string(sheet), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), published) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+	_, published, err := publishingProfile(executor, port)
+	return published, err
 }
 
 // requireManagedBackend holds the contract's own sentence — a backend port
 // "doit nommer le port loopback d'un service géré présent" — against this
 // machine, before anything is written.
 //
-// A port nothing manages is refused here, with nothing touched.
+// A port nothing manages is refused here, with nothing touched. So is a port a
+// service of the private door publishes, and that second refusal is the one
+// `#102` left owing: the reading above knows both doors, because the passage
+// legitimately bounds a private service, and a public route reading it unfiltered
+// would have let a name of the entry reach a vault's own loopback port directly —
+// beside the passage the contract publishes it by, and with the isolation headers
+// of another profile on it. What a private service is published by is the
+// passage, and the route that does so lives on the other machine.
 func requireManagedBackend(executor Executor, backendPort int) error {
-	published, err := publishesLoopbackPort(executor, backendPort)
+	profile, published, err := publishingProfile(executor, backendPort)
 	if err != nil {
 		return err
 	}
-	if published {
-		return nil
+	if !published {
+		return fmt.Errorf(
+			"no managed service of this machine publishes %s:%d: a route towards a port nothing manages is refused before any effect",
+			loopbackAddress, backendPort,
+		)
 	}
-	return fmt.Errorf(
-		"no managed service of this machine publishes %s:%d: a route towards a port nothing manages is refused before any effect",
-		loopbackAddress, backendPort,
-	)
+	if _, stateless := profilePlacements[profile]; !stateless {
+		return fmt.Errorf(
+			"%s:%d is published by the %s profile, which lives behind the private door: a private service is published by the passage, not by a local route, so this route is refused before any effect",
+			loopbackAddress, backendPort, profile,
+		)
+	}
+	return nil
 }
 
 // requireEntrypointPresent refuses a route on a machine that holds no entry.
@@ -249,6 +277,15 @@ func publishRoute(executor Executor, subject instance) (*Application, bool, erro
 	current, present, err := executor.ReadUnitFile(path)
 	if err != nil {
 		return nil, false, fmt.Errorf("read the current route fragment: %w", err)
+	}
+	// The two kinds of route share one namespace, so a name already published as
+	// the other kind is refused here rather than replaced. The whole of why is
+	// written where the refusal is.
+	if err := requireUncontestedName(
+		current, present, subject.routeHost,
+		linkInitiatorAddress, fragmentKindPassage, fragmentKindLocal,
+	); err != nil {
+		return nil, false, err
 	}
 	if present && bytes.Equal(current, desired) {
 		return &Application{

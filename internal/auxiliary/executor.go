@@ -176,6 +176,26 @@ type Executor interface {
 	// authority, and that one is `#92`.
 	RouteAnswers(routeHost string) error
 
+	// LinkRouteAnswers is the local verification of one name published through
+	// the private passage, and it is a second method rather than a flag on the one
+	// above because the two prove different things.
+	//
+	// What it requires of the answer is the status and nothing else. The isolation
+	// headers belong to the public profile's middleware and a link route declares
+	// none, so asking for them here would fail every correct publication; and what
+	// a vault answers a plain request with is described by no plan of this palier.
+	//
+	// The request leaves this machine's loopback and comes back through the
+	// tunnel, because that is what the published name actually does: the entry
+	// reaches the peer's own address, the junction's table lets exactly the
+	// approved port through, and the service answers on the other machine. That
+	// couples this verification to a backend that is genuinely reachable, and it is
+	// the honest reading of the contract's own rule — a publication that could not
+	// be served must never be reported as a success. The order the plans are
+	// approved in is what makes it a fair requirement: the service and the junction
+	// exist before the route that names them.
+	LinkRouteAnswers(routeHost string) error
+
 	// The six methods below are the whole of what a private passage needs, and
 	// they are separate from everything above for a reason that is not
 	// convenience: a passage has no account, no container and no image, so none

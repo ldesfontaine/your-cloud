@@ -805,6 +805,119 @@ func TestNothingIsTouchedWhileTheApprovedRouteDocumentsAreStillInDoubt(t *testin
 	}
 }
 
+// TestNothingIsTouchedWhileTheApprovedLinkRouteDocumentsAreStillInDoubt is the
+// same matrix over the closed field list of a name the passage carries.
+//
+// The declared name is bounded exactly as a local route's is and is not walked
+// again here — one bound, one refusal, held where it lives. What this matrix adds
+// is what belongs to this shape alone: the two documents are a pair of *this*
+// group and not of the group that carries the same two fields, and the address
+// the fragment reaches has no field to be smuggled into, because it is the
+// constant of the passage.
+func TestNothingIsTouchedWhileTheApprovedLinkRouteDocumentsAreStillInDoubt(t *testing.T) {
+	t.Parallel()
+	for name, subject := range map[string]refusal{
+		"a link route plan that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.PlanSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"a link route plan aimed at another machine": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.MachineID = "lab-machine-2"
+			},
+			named: "targets another machine than this one",
+		},
+		"a link route rollback that retires another name": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				other := frozenLinkRoutePair(t, plan.OperationPublishLinkRoute, "other.example.test", fixturePort)
+				subject.input.RollbackDocument = other.RollbackDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.RollbackSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+		// The two groups carry the same two fields and describe different states,
+		// which is exactly why they are two shapes. A pair mixing them is refused as
+		// a pair rather than applied as whichever of the two the plan happens to be.
+		"a link route plan undone by the retirement of a local route": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				local := frozenRoutePair(t, plan.OperationPublishRoute, fixtureLinkRouteHost, fixturePort)
+				subject.input.RollbackDocument = local.RollbackDocument
+				subject.accepted.Envelope.RollbackSHA256 = local.RollbackSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+		"a link route towards a privileged port": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkRoutePlan(t,
+					plan.OperationPublishLinkRoute, fixtureLinkRouteHost, 80, nil)
+			},
+			named: "plan backend_port must be within",
+		},
+		"a link route declaring a wildcard": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkRoutePlan(t,
+					plan.OperationPublishLinkRoute, "*.example.test", fixturePort, nil)
+			},
+			named: "plan route_host must be",
+		},
+		"a link route smuggling the address of the peer": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkRoutePlan(t,
+					plan.OperationPublishLinkRoute, fixtureLinkRouteHost, fixturePort, map[string]string{
+						"backend_host": quotedJSON(t, "10.66.66.9"),
+					})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a link route smuggling a middleware": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkRoutePlan(t,
+					plan.OperationPublishLinkRoute, fixtureLinkRouteHost, fixturePort, map[string]string{
+						"middleware": quotedJSON(t, "stripPrefix"),
+					})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a link route smuggling a certificate": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkRoutePlan(t,
+					plan.OperationPublishLinkRoute, fixtureLinkRouteHost, fixturePort, map[string]string{
+						"cert_file": quotedJSON(t, "/tmp/forged.crt"),
+					})
+			},
+			named: "does not exactly match destination schema",
+		},
+	} {
+		executor := publishedLinkRouteMachine(fixtureLinkRouteHost, fixturePort)
+		accepted, input := approvedLinkRoute(t, plan.OperationPublishLinkRoute, fixtureLinkRouteHost, fixturePort)
+		forged := &approvedInput{accepted: accepted, input: input}
+		subject.forge(t, forged)
+
+		application, err := Apply(executor, forged.accepted, forged.input)
+		if err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), subject.named) {
+			t.Fatalf("%s was refused for another reason than its own: %v", name, err)
+		}
+		var controlled *ControlledFailure
+		if errors.As(err, &controlled) {
+			t.Fatalf("%s was reported as a controlled failure: %v", name, err)
+		}
+		if len(executor.effects) != 0 {
+			t.Fatalf("%s changed the machine before being refused: %q", name, executor.effects)
+		}
+		if len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine before being refused: %q", name, executor.reads)
+		}
+	}
+}
+
 // TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite is the other half of
 // the matrix: what no document can decide and only the machine can answer.
 //
@@ -828,12 +941,14 @@ func TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite(t *testing.T) {
 			AccountPresent: true, RootlessPodman: false,
 		},
 	} {
-		// The eight operations that run a container, across the two plan schemas
+		// The ten operations that run a container, across the two plan schemas
 		// that describe one: a machine that cannot run the flow is refused for
 		// the entry and for a route exactly as it is for the probe, and the
 		// account each refusal names is the one that operation's own placement
-		// carries. A route is in this list because it is served by a container: a
-		// machine that cannot run one cannot publish a name through it either.
+		// carries. Both kinds of route are in this list because both are served by
+		// a container: a machine that cannot run one cannot publish a name through
+		// it, whether what answers behind that name is here or at the other end of
+		// the passage.
 		//
 		// The six operations of the private passage are deliberately absent. A
 		// passage owns no account, no container and no image, so a machine
@@ -845,6 +960,7 @@ func TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite(t *testing.T) {
 			plan.OperationDeployWebService, plan.OperationRemoveWebService,
 			plan.OperationDeployEntrypoint, plan.OperationRemoveEntrypoint,
 			plan.OperationPublishRoute, plan.OperationRetireRoute,
+			plan.OperationPublishLinkRoute, plan.OperationRetireLinkRoute,
 		} {
 			executor := newFakeExecutor()
 			executor.capabilities = capabilities

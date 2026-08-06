@@ -242,6 +242,69 @@ func TestARouteTowardsAPortNothingManagesIsRefusedBeforeAnyEffect(t *testing.T) 
 	}
 }
 
+// TestAPublicRouteTowardsAPrivateServicesPortIsRefusedBeforeAnyEffect is the
+// tension `#102` left and `#103` resolves.
+//
+// The reading behind the presence rule knows both doors, and it has to: the
+// passage of `#97` legitimately bounds a private service, so a reading that only
+// knew the stateless door would refuse every correct junction. But a *route* of
+// the entry reading it unfiltered would let a declared name reach a vault's own
+// loopback port directly — beside the passage the contract publishes it by, and
+// with the isolation headers of another profile on the answer. A private service
+// is published by the passage, and the route that does so lives on the machine at
+// the other end of it.
+func TestAPublicRouteTowardsAPrivateServicesPortIsRefusedBeforeAnyEffect(t *testing.T) {
+	t.Parallel()
+	executor := entrypointMachine()
+	executor.hold(entrypointPlacement.unitPath(), renderEntrypointSheet())
+	executor.hold(vaultwardenPlacement.unitPath(),
+		renderSheet(vaultwardenPlacement, fixturePort, fixtureOriginHost))
+	accepted, input := approvedRoute(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort)
+
+	application, err := Apply(executor, accepted, input)
+	if err == nil {
+		t.Fatal("a public route was published towards the loopback port of a private service")
+	}
+	if application != nil {
+		t.Fatalf("the refusal returned an application: %+v", application)
+	}
+	for _, said := range []string{
+		"published by the " + plan.ServiceProfileVaultwarden + " profile",
+		"a private service is published by the passage, not by a local route",
+	} {
+		if !strings.Contains(err.Error(), said) {
+			t.Fatalf("the refusal does not state %q: %v", said, err)
+		}
+	}
+	var controlled *ControlledFailure
+	if errors.As(err, &controlled) {
+		t.Fatalf("the refusal was reported as a controlled failure: %v", err)
+	}
+	if len(executor.effects) != 0 {
+		t.Fatalf("the refusal changed the machine: %q", executor.effects)
+	}
+
+	// The very same port, published by a service of the stateless door, is a
+	// backend a route may name: what is refused is the door, not the number.
+	stateless := routableMachine(fixturePort)
+	accepted, input = approvedRoute(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort)
+	if _, err := Apply(stateless, accepted, input); err != nil {
+		t.Fatalf("a route towards a stateless service's port was refused: %v", err)
+	}
+
+	// And the passage still reads both doors: a junction on the machine the
+	// private service lives on is bounded to exactly that port, and refusing it
+	// here would refuse every correct junction of the reference scenario.
+	initiator := preparedLinkMachine(plan.LinkRoleInitiator)
+	initiator.drop(bentoPDFPlacement.unitPath())
+	initiator.hold(vaultwardenPlacement.unitPath(),
+		renderSheet(vaultwardenPlacement, fixturePort, fixtureOriginHost))
+	accepted, input = approvedInitiatorPeer(t, plan.OperationJoinLinkPeer, fixturePort)
+	if _, err := Apply(initiator, accepted, input); err != nil {
+		t.Fatalf("a junction bounded to a private service's port was refused: %v", err)
+	}
+}
+
 // TestARouteOnAMachineHoldingNoEntrypointIsRefusedBeforeAnyEffect is the mirror
 // of the refusal removeEntrypoint takes, and it is one decision read twice: the
 // entry and the routes it serves have one order, and both ends of it are

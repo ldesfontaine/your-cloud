@@ -3,6 +3,7 @@ package auxiliary
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -507,6 +508,48 @@ func removeLinkBounds(executor Executor, state linkBoundsState) error {
 		}
 	}
 	return nil
+}
+
+// linkListenerServiceRulePrefix is the exact opening of the one line of a
+// listener's table that names the approved service port, built from the very
+// constants that line is rendered from.
+//
+// It exists because another contract asks this table a question: the route of
+// `#103` publishes a name whose backend is the peer of the tunnel, and the port
+// it names has to be the port an approved junction already bounds. That fact
+// lives here and nowhere else — the description of the interface carries the
+// peer and its single /32 and no port at all — so this is where it is read back
+// from. A test holds the prefix and the renderer together: it appears exactly
+// once in a rendered listener table, and the port read through it is the port
+// that table was rendered for.
+func linkListenerServiceRulePrefix() string {
+	return fmt.Sprintf("%s ip daddr %s tcp dport ", linkOutputScope, linkInitiatorAddress)
+}
+
+// approvedServicePort reads back the single port a listener's bounding table
+// lets through the passage, or says that no such line is there.
+//
+// It reads the root-owned file the junction of `#97` wrote and this machine
+// loaded into its kernel in the same effect, which is the honest source: it is
+// the machine's own state rather than a claim of the document being applied, and
+// nothing but this Auxiliary may write it.
+func approvedServicePort(rules []byte) (int, bool) {
+	for _, line := range linkRuleLines(rules) {
+		rest, found := strings.CutPrefix(line, linkListenerServiceRulePrefix())
+		if !found {
+			continue
+		}
+		named, accepted := strings.CutSuffix(rest, " accept")
+		if !accepted {
+			return 0, false
+		}
+		port, err := strconv.Atoi(named)
+		if err != nil {
+			return 0, false
+		}
+		return port, true
+	}
+	return 0, false
 }
 
 // linkRuleLines is every rule one rendered table carries, with the chain

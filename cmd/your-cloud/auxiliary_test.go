@@ -650,6 +650,148 @@ func TestAPublishedRouteIsReportedByItsNameAndItsFragmentAndNothingElse(t *testi
 	}
 }
 
+// TestALinkRouteIsReportedByWhatCarriesItAndNeverAsAFalseSuccess is the answer a
+// reader receives for a name published through the private passage.
+//
+// It names itself exactly as a local route does — one declared name, one fragment
+// — and adds one line no other operation has: what the name was resting on. That
+// line exists because the failure of the passage must never be silent. A
+// retirement run on a machine whose tunnel has fallen says so, so a human learns
+// it from the answer rather than from a name that had stopped working, and the
+// partial state after a failed rollback carries the word this vocabulary gained
+// for it.
+func TestALinkRouteIsReportedByWhatCarriesItAndNeverAsAFalseSuccess(t *testing.T) {
+	t.Parallel()
+	const host = "vault.lab.your-cloud.test"
+	fragment := auxiliary.EntrypointFragmentDirectory() + "/" + host + ".yaml"
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationPublishLinkRoute,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 9,
+		},
+	}
+	report := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationPublishLinkRoute,
+		RouteHost:    host,
+		FragmentPath: fragment,
+		ServiceState: auxiliary.ServiceStateActive,
+		PassageState: auxiliary.ServiceStateActive,
+		Changed:      true,
+	})
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["route_host"] != host || decoded["fragment_path"] != fragment ||
+		decoded["passage_state"] != auxiliary.ServiceStateActive {
+		t.Fatalf("the report does not name the route it published or what carries it: %v", decoded)
+	}
+	// It has no sheet, no loopback port, no key and nothing of the peer: the
+	// address the fragment reaches is a constant of the contract and not a
+	// conclusion of this machine.
+	for _, field := range []string{
+		"unit_path", "local_port", "link_public_key", "peer_public_key",
+		"backend", "data_path", "plan", "rollback",
+	} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("the link route report carries %q", field)
+		}
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"plan operation: " + approval.OperationPublishLinkRoute,
+		"route: " + host,
+		"fragment: " + fragment,
+		"passage: active",
+		"service: active",
+		"changed: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+
+	// A retirement on a machine whose junction is gone says exactly that, and says
+	// it beside a retirement that succeeded: the name is silenced, the passage was
+	// not there, and nothing here reads as a repair.
+	panned := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationRetireLinkRoute,
+		RouteHost:    host,
+		FragmentPath: fragment,
+		ServiceState: auxiliary.ServiceStateAbsent,
+		PassageState: auxiliary.ServiceStateAbsent,
+		Changed:      true,
+	})
+	var silenced bytes.Buffer
+	if err := renderAuxiliaryReport(&silenced, "text", panned); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"service: absent", "passage: absent"} {
+		if !strings.Contains(silenced.String(), line) {
+			t.Fatalf("the retirement over a fallen passage does not state %q: %q", line, silenced.String())
+		}
+	}
+
+	// And the partial state after a rollback that failed in its turn carries the
+	// word for a name this machine publishes and nothing carries.
+	failed := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation:    approval.OperationRetireLinkRoute,
+		RouteHost:    host,
+		FragmentPath: fragment,
+		Outcome:      auxiliary.OutcomePartial,
+		Cause:        errors.New("the fragment could not be removed"),
+		Rollback:     errors.New("this machine holds no junction on yc-link0"),
+		Observed: &auxiliary.Observation{
+			Account:   "present",
+			UnitFile:  "present",
+			Service:   "active",
+			Container: "pinned",
+			Fragment:  "unbacked",
+			LinkPeer:  "absent",
+		},
+	})
+	var partial bytes.Buffer
+	if err := renderAuxiliaryReport(&partial, "text", failed); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"outcome: " + auxiliary.OutcomePartial,
+		"rollback attempted: true",
+		"observed fragment: unbacked",
+		"observed link peer: absent",
+	} {
+		if !strings.Contains(partial.String(), line) {
+			t.Fatalf("the partial link route state does not state %q: %q", line, partial.String())
+		}
+	}
+	// A failure reports no state of the passage: what was known stopped being
+	// known, and the observation replaces it without pretending to be it.
+	if strings.Contains(partial.String(), "passage: ") {
+		t.Fatalf("a failed link route operation still claimed a state of the passage: %q", partial.String())
+	}
+}
+
 // TestTheObservedFragmentIsAbsentFromEveryAnswerThatIsNotARoute keeps the fifth
 // observed word from becoming noise on the four operations that have no
 // fragment: an observation says what was seen, and a word about something the

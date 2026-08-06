@@ -6,14 +6,12 @@ package auxiliary
 //
 // Each schema widened what this Auxiliary performs in steps, and each step
 // closed a window a test named. `#90` added the two managed web service
-// operations, `#91` the four entrypoint and route ones, and `#96` the six of the
+// operations, `#91` the four entrypoint and route ones, `#96` the six of the
 // private passage, which were refused by the schema dispatch alone until it
-// landed. One window is open again: the four document shapes of the private
-// profile are read but not performed, and `#102` and `#103` close it. What this
-// file holds is therefore that every document shape this Auxiliary performs
-// reaches the effects of its own kind and no other, that the shapes it does not
-// perform are refused by name before anything happens, and that no decoder covers
-// for another.
+// landed, and `#102` and `#103` the seven of the private profile. No window is
+// open: every document shape of the three schemas this package reads is
+// performed. What this file holds is therefore that each of them reaches the
+// effects of its own kind and no other, and that no decoder covers for another.
 
 import (
 	"strconv"
@@ -370,54 +368,78 @@ func TestOnlyThePreparationOfAPassageReportsAPublicKey(t *testing.T) {
 	}
 }
 
-// TestEveryLinkRouteOperationIsRefusedByNameBeforeAnyEffect is what is left of
-// the window an earlier issue opened, named here so that `#103` has one test to
-// replace rather than a silence to notice.
+// TestEveryLinkRouteOperationIsNowPerformedAndNamesItsOwnInstance is the window
+// this issue closes, and it replaces the test that named that window.
 //
-// The approval package holds the seven operations of the private profile in its
-// closed list, so a human may sign one and this Auxiliary may be handed the pair.
-// `#102` closed five of them — the data-bearing service and its three archive
-// operations. The two that remain are the route the passage publishes, and until
-// `#103` lands the pairs below are real, valid, canonically frozen documents of
-// that contract, refused where the shapes of schema 2 become instances: by name,
-// before any effect, and before this machine is read at all.
+// Until `#103` the two operations of the route the passage publishes were refused
+// where the shapes of schema 2 become instances, by name and before this machine
+// was read: the approval package holds them in its closed list, so a human could
+// sign one and this Auxiliary could be handed a real, valid, canonically frozen
+// pair — and it acted on neither. They are performed now, so what this test holds
+// is the property that refusal used to guard: each reaches the effects of its own
+// kind, announces the state of its own kind, and names the one file a declared
+// name owns rather than a sheet it has none of.
 //
-// They are schema 2 documents, so unlike the passage's window they are decoded,
-// held against their signed digests, held against this machine's target and held
-// as exact inverses before the refusal. That is deliberate: the refusal is about
-// what this Auxiliary performs, not about what it can read, and everything that
-// could have refused earlier still does.
-func TestEveryLinkRouteOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
+// The kind matters and is checked through the verification each one made: a
+// publication that reached the local route's flow would have proven the isolation
+// headers of another profile, and one that reached this flow proves the status of
+// a name served through the tunnel. The two are recorded apart on purpose.
+func TestEveryLinkRouteOperationIsNowPerformedAndNamesItsOwnInstance(t *testing.T) {
 	t.Parallel()
-	for name, frozen := range map[string]func(*testing.T) (string, plan.Frozen){
-		"a link route publication": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationPublishLinkRoute,
-				frozenLinkRoutePair(t, plan.OperationPublishLinkRoute, fixturePort)
+	for name, subject := range map[string]struct {
+		operation string
+		machine   func() *fakeExecutor
+		state     string
+		verified  int
+	}{
+		"a link route publication": {
+			operation: plan.OperationPublishLinkRoute,
+			machine:   func() *fakeExecutor { return linkRoutableMachine(fixturePort) },
+			state:     ServiceStateActive,
+			verified:  1,
 		},
-		"a link route retirement": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationRetireLinkRoute,
-				frozenLinkRoutePair(t, plan.OperationRetireLinkRoute, fixturePort)
+		"a link route retirement": {
+			operation: plan.OperationRetireLinkRoute,
+			machine: func() *fakeExecutor {
+				return publishedLinkRouteMachine(fixtureLinkRouteHost, fixturePort)
+			},
+			state: ServiceStateAbsent,
 		},
 	} {
-		operation, pair := frozen(t)
-		executor := deployedServiceMachine(t, fixturePort)
-		accepted, input := approvedFrozenPair(operation, pair)
+		executor := subject.machine()
+		accepted, input := approvedLinkRoute(t, subject.operation, fixtureLinkRouteHost, fixturePort)
 
 		application, err := Apply(executor, accepted, input)
-		if err == nil {
-			t.Fatalf("%s was applied by an Auxiliary that does not perform it", name)
+		if err != nil {
+			t.Fatalf("%s was refused by an Auxiliary that performs it: %v", name, err)
 		}
-		if application != nil {
-			t.Fatalf("%s returned an application: %+v", name, application)
+		if application.Operation != subject.operation || application.ServiceState != subject.state {
+			t.Fatalf("%s announced another instance or another state: %+v", name, application)
 		}
-		if !strings.Contains(err.Error(), "which this Auxiliary does not yet perform") {
-			t.Fatalf("%s was refused for another reason than the window: %v", name, err)
+		if !application.Changed {
+			t.Fatalf("%s found nothing to do on a machine that needed it: %+v", name, application)
 		}
-		if !strings.Contains(err.Error(), operation) {
-			t.Fatalf("%s was refused without being named: %v", name, err)
+		if application.RouteHost != fixtureLinkRouteHost ||
+			application.FragmentPath != routeFragmentPath(fixtureLinkRouteHost) {
+			t.Fatalf("%s named another route: %+v", name, application)
 		}
-		if len(executor.effects) != 0 || len(executor.reads) != 0 {
-			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		// A route has no sheet, no loopback port and no key: those belong to the
+		// instances of other kinds, and a report naming one would claim something
+		// this operation never touched.
+		if application.UnitPath != "" || application.LocalPort != 0 || application.LinkPublicKey != "" {
+			t.Fatalf("%s named an instance of another kind: %+v", name, application)
+		}
+		// Both operations say what the name was resting on, and both found the
+		// junction there: that is what makes its absence readable when it happens.
+		if application.PassageState != ServiceStateActive {
+			t.Fatalf("%s did not name the state of the passage: %+v", name, application)
+		}
+		if len(executor.verifiedLinkRoutes) != subject.verified || len(executor.verifiedRoutes) != 0 {
+			t.Fatalf("%s verified the wrong kind of route: %v %v",
+				name, executor.verifiedLinkRoutes, executor.verifiedRoutes)
+		}
+		if len(executor.effects) == 0 {
+			t.Fatalf("%s reported a change without touching the machine", name)
 		}
 	}
 }

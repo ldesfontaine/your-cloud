@@ -634,6 +634,44 @@ func redirectsToTheSecurePort(client *http.Client, address string) error {
 // The retry window is what absorbs the entry's own file watch: the fragment is
 // on disk before this runs, and the entry picks it up shortly after.
 func (executor SystemExecutor) RouteAnswers(routeHost string) error {
+	return servesDeclaredName(routeHost, func(response *http.Response) error {
+		opener := response.Header.Get("Cross-Origin-Opener-Policy")
+		embedder := response.Header.Get("Cross-Origin-Embedder-Policy")
+		if opener != isolationOpenerPolicy || embedder != isolationEmbedderPolicy {
+			return fmt.Errorf(
+				"the answer carried the isolation headers %q and %q rather than %q and %q",
+				opener, embedder, isolationOpenerPolicy, isolationEmbedderPolicy)
+		}
+		return nil
+	})
+}
+
+// LinkRouteAnswers performs the local verification of one name the passage
+// carries, through the very request a client makes and therefore through the
+// tunnel itself.
+//
+// It asks of the answer the status alone. The two isolation headers are the
+// public profile's and a link route declares none, so requiring them here would
+// refuse every correct publication; and what a vault answers a plain request
+// with is described by no plan of this palier, so nothing beyond the status is
+// claimed. What the status proves is the whole chain the contract cares about:
+// the entry took the fragment, the junction let the approved port through, and
+// the service on the other machine answered.
+func (executor SystemExecutor) LinkRouteAnswers(routeHost string) error {
+	return servesDeclaredName(routeHost, func(*http.Response) error { return nil })
+}
+
+// servesDeclaredName is the one bounded request both verifications above make,
+// and the one place either of them reaches the network.
+//
+// The declared name travels twice — once as the TLS server name, so the entry
+// selects the router the way a real client makes it select one, and once as the
+// Host header — while the connection itself is made to this machine's loopback
+// and nowhere else. The status is required of every answer here, because a name
+// that is not served is not a published route whichever kind it is; what a kind
+// requires beyond it is the one argument this function takes. The body is read
+// only far enough to be discarded, because no plan describes it.
+func servesDeclaredName(routeHost string, required func(*http.Response) error) error {
 	client := &http.Client{
 		Timeout: probeTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -663,18 +701,16 @@ func (executor SystemExecutor) RouteAnswers(routeHost string) error {
 			last = err
 			continue
 		}
-		opener := response.Header.Get("Cross-Origin-Opener-Policy")
-		embedder := response.Header.Get("Cross-Origin-Embedder-Policy")
+		status := response.StatusCode
+		failed := required(response)
 		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			last = fmt.Errorf("the entrypoint answered %d for this name", response.StatusCode)
+		if status != http.StatusOK {
+			last = fmt.Errorf("the entrypoint answered %d for this name", status)
 			continue
 		}
-		if opener != isolationOpenerPolicy || embedder != isolationEmbedderPolicy {
-			last = fmt.Errorf(
-				"the answer carried the isolation headers %q and %q rather than %q and %q",
-				opener, embedder, isolationOpenerPolicy, isolationEmbedderPolicy)
+		if failed != nil {
+			last = failed
 			continue
 		}
 		return nil

@@ -374,6 +374,7 @@ type fakeExecutor struct {
 	probedPorts        []int
 	probedContentTypes []string
 	verifiedRoutes     []string
+	verifiedLinkRoutes []string
 	entrypointChecks   int
 	// The passage's own state. linkPrivateKey is what this fake machine "wrote"
 	// when it was asked for a key, and it is deliberately a value no seam of the
@@ -721,6 +722,16 @@ func (executor *fakeExecutor) RouteAnswers(routeHost string) error {
 	executor.reads = append(executor.reads, "RouteAnswers")
 	executor.verifiedRoutes = append(executor.verifiedRoutes, routeHost)
 	return executor.fail("RouteAnswers")
+}
+
+// LinkRouteAnswers is recorded apart from the verification of a local route, so
+// that a case can hold which of the two a publication actually made: the one that
+// requires the isolation headers, or the one that requires the status alone and
+// travels through the tunnel.
+func (executor *fakeExecutor) LinkRouteAnswers(routeHost string) error {
+	executor.reads = append(executor.reads, "LinkRouteAnswers")
+	executor.verifiedLinkRoutes = append(executor.verifiedLinkRoutes, routeHost)
+	return executor.fail("LinkRouteAnswers")
 }
 
 // LinkPublicKey answers with the public half alone, exactly as the real machine
@@ -1139,10 +1150,9 @@ func frozenPrivateServicePair(t *testing.T, operation string, port int) plan.Fro
 	return frozenV2(t, pair)
 }
 
-func frozenLinkRoutePair(t *testing.T, operation string, port int) plan.Frozen {
+func frozenLinkRoutePair(t *testing.T, operation, host string, port int) plan.Frozen {
 	t.Helper()
-	pair, err := plan.BuildLinkRoutePair(operation, fixtureInfrastructure, fixtureMachine,
-		fixtureLinkRouteHost, port)
+	pair, err := plan.BuildLinkRoutePair(operation, fixtureInfrastructure, fixtureMachine, host, port)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1299,6 +1309,8 @@ func approvedOperation(t *testing.T, operation string, port int) (*approval.Acce
 		return approvedEntrypoint(t, operation)
 	case plan.OperationPublishRoute, plan.OperationRetireRoute:
 		return approvedRoute(t, operation, fixtureRouteHost, port)
+	case plan.OperationPublishLinkRoute, plan.OperationRetireLinkRoute:
+		return approvedLinkRoute(t, operation, fixtureLinkRouteHost, port)
 	default:
 		return approvedApplication(t, operation, port)
 	}
@@ -1412,6 +1424,80 @@ func routableMachine(port int) *fakeExecutor {
 func publishedRouteMachine(host string, port int) *fakeExecutor {
 	executor := routableMachine(port)
 	executor.hold(routeFragmentPath(host), renderRouteFragment(host, port))
+	return executor
+}
+
+// approvedLinkRoute is the nominal schema 2 subject of a name published through
+// the private passage.
+func approvedLinkRoute(t *testing.T, operation, host string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenLinkRoutePair(t, operation, host, port))
+}
+
+// forgedLinkRoutePlan renders that document field by field, for the reason the
+// other forgers exist.
+func forgedLinkRoutePlan(t *testing.T, operation, host string, port int, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV2)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"route_host", quotedJSON(t, host)},
+		{"backend_port", strconv.Itoa(port)},
+	}, altered)
+}
+
+// linkRoutableMachine is what a link route plan needs to find, and it is the VPS
+// of the reference scenario: the entry that serves the declared name, and this
+// machine holding the listener's side of the passage with one approved junction
+// bounding exactly the port the route publishes.
+//
+// It holds no managed service at all, which is the whole point of the scenario:
+// the service lives at the other end of the tunnel, and nothing of it is on this
+// machine.
+func linkRoutableMachine(port int) *fakeExecutor {
+	where := linkPlacements[plan.LinkRoleListener]
+	executor := entrypointMachine()
+	executor.hold(entrypointPlacement.unitPath(), renderEntrypointSheet())
+	executor.linkKeyPresent = true
+	executor.linkPrivateKey = fixtureLinkPrivateKey
+	executor.linkPublicKey = fixtureLinkPublicKey
+	executor.hold(linkNetdevPath, append(renderLinkNetdev(where),
+		renderLinkPeerSection(where, fixturePeerPublicKey, fixtureEndpointHost)...))
+	executor.hold(linkNetworkPath, append(renderLinkNetwork(where),
+		renderLinkRouteSection(where)...))
+	executor.linkActive = true
+	executor.linkRules = renderLinkRules(where, port)
+	executor.linkRulesPresent = true
+	executor.nftTables[linkTableFamily+" "+linkTableName] = executor.linkRules
+	executor.hold(linkRulesUnitPath, renderLinkRulesUnit(where))
+	executor.linkRulesAtBoot = true
+	return executor
+}
+
+// publishedLinkRouteMachine is that same machine with the fragment of one
+// declared name already written exactly as the link route plan describes it.
+func publishedLinkRouteMachine(host string, port int) *fakeExecutor {
+	executor := linkRoutableMachine(port)
+	executor.hold(routeFragmentPath(host), renderLinkRouteFragment(host, port))
+	return executor
+}
+
+// pannedLinkRouteMachine is the failure of the passage, as a machine: the name is
+// still published and the junction that carried it is gone, exactly as the
+// departure of `#97` leaves this host — the interface and the key are still
+// there, the peer, the bounds and their unit are not.
+func pannedLinkRouteMachine(host string, port int) *fakeExecutor {
+	where := linkPlacements[plan.LinkRoleListener]
+	executor := publishedLinkRouteMachine(host, port)
+	executor.hold(linkNetdevPath, renderLinkNetdev(where))
+	executor.hold(linkNetworkPath, renderLinkNetwork(where))
+	executor.linkRules = nil
+	executor.linkRulesPresent = false
+	delete(executor.nftTables, linkTableFamily+" "+linkTableName)
+	executor.drop(linkRulesUnitPath)
+	executor.linkRulesAtBoot = false
 	return executor
 }
 
