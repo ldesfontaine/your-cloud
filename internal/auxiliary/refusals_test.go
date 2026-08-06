@@ -18,6 +18,7 @@ package auxiliary
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -289,6 +290,229 @@ func TestNothingIsTouchedWhileTheApprovedDocumentsAreStillInDoubt(t *testing.T) 
 	}
 }
 
+// TestNothingIsTouchedWhileTheApprovedServiceDocumentsAreStillInDoubt is the
+// same matrix over schema 2, written in the same place and in the same form.
+//
+// It is a second table rather than a widened first one because the two schemas
+// carry different closed field lists, and a case must forge the document of the
+// schema it is refusing. Everything else is identical, including what each case
+// asserts: refused, refused for its own reason, and with neither an effect nor a
+// read recorded — a refusal that reached the machine is not a refusal.
+func TestNothingIsTouchedWhileTheApprovedServiceDocumentsAreStillInDoubt(t *testing.T) {
+	t.Parallel()
+	other := frozenServicePair(t, plan.OperationDeployWebService, plan.ServiceProfileBentoPDF, fixturePort+1)
+
+	for name, subject := range map[string]refusal{
+		// The two documents against the two digests a human signed.
+		"a service plan that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.PlanSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"a service plan altered after it was signed": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort+1, nil)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"a service rollback that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.RollbackSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried rollback is not the document the approval signed",
+		},
+
+		// The plan against this machine and against the approval that carries it.
+		"a service plan aimed at another machine": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.MachineID = "lab-machine-2"
+			},
+			named: "targets another machine than this one",
+		},
+		"a service plan aimed at another infrastructure": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.InfrastructureID = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3"
+			},
+			named: "targets another infrastructure than this machine's anchor",
+		},
+		"a service plan describing another operation than the approval": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.Operation = plan.OperationRemoveWebService
+			},
+			named: "the approved plan describes",
+		},
+
+		// The rollback against the plan it claims to undo.
+		"a service rollback that undoes another instance": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.input.RollbackDocument = other.RollbackDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.RollbackSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+		"a service rollback that is a second deployment rather than an undoing": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.input.RollbackDocument = other.PlanDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.PlanSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+
+		// The content against the closed contract of the profile. The profile is
+		// what decides the account, the sheet and the image, so a profile this
+		// palier does not describe is refused before any of them is chosen, and
+		// an image couple that is not exactly the profile's pin is refused even
+		// though the plan carries it for a human to read.
+		"a plan naming a service profile this palier does not describe": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"service_profile": quotedJSON(t, "vaultwarden"),
+				})
+			},
+			named: "plan service_profile",
+		},
+		"a plan carrying no service profile at all": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"service_profile": "",
+				})
+			},
+			named: "plan service_profile",
+		},
+		"a plan pinning another digest than the profile's": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"image_digest": quotedJSON(t, "sha256:"+strings.Repeat("b", 64)),
+				})
+			},
+			named: "plan image_digest is not the pinned image of this palier",
+		},
+		"a plan naming its image by a tag rather than by a digest": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"image_reference": quotedJSON(t, plan.BentoPDFImageReference+":v1.9.0"),
+				})
+			},
+			named: "plan image_reference is not the pinned image of this palier",
+		},
+		"a plan naming a registry this profile does not accept": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"image_reference": quotedJSON(t, "docker.io/alam00000/bentopdf"),
+				})
+			},
+			named: "plan image_reference is not the pinned image of this palier",
+		},
+		"a plan borrowing the pinned image of another palier": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"image_reference": quotedJSON(t, plan.ProbeImageReference),
+					"image_digest":    quotedJSON(t, plan.ProbeImageDigest),
+				})
+			},
+			named: "plan image_reference is not the pinned image of this palier",
+		},
+		"a service plan asking for a privileged port": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, 80, nil)
+			},
+			named: "plan local_port must be within",
+		},
+
+		// The strongest form of the refusal, over the schema 2 field list: a
+		// field the schema does not have is refused without its content ever
+		// being read, whichever group it was borrowed from.
+		"a service plan smuggling a volume": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"volume": quotedJSON(t, "/etc:/etc:rw"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a service plan smuggling a container privilege": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"privileged": "true",
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a service plan smuggling the route host of another operation group": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"route_host": quotedJSON(t, "lab.example.test"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a service rollback smuggling a volume": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.RollbackDocument = forgedServicePlan(t, plan.OperationRemoveWebService, fixturePort, map[string]string{
+					"volume": quotedJSON(t, "/etc:/etc:rw"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+
+		// The schema itself, before any of the above: a document of one schema
+		// wearing the version of the other is refused by the decoder its version
+		// named, and never retried as the schema it actually is.
+		"a service plan claiming to be a probe plan": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"schema_version": strconv.Itoa(plan.SchemaVersion),
+				})
+				subject.input.RollbackDocument = forgedServicePlan(t, plan.OperationRemoveWebService, fixturePort, map[string]string{
+					"schema_version": strconv.Itoa(plan.SchemaVersion),
+				})
+			},
+			named: "carried plan",
+		},
+		"a service plan declaring no schema version at all": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
+					"schema_version": "",
+				})
+			},
+			named: "no plan schema version is declared",
+		},
+		"a service plan longer than a plan may be": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = []byte(strings.Repeat("a", plan.MaxPlanBytes+1))
+			},
+			named: "plan document must contain",
+		},
+	} {
+		executor := deployedServiceMachine(t, fixturePort)
+		accepted, input := approvedService(t, plan.OperationDeployWebService, fixturePort)
+		forged := &approvedInput{accepted: accepted, input: input}
+		subject.forge(t, forged)
+
+		application, err := Apply(executor, forged.accepted, forged.input)
+		if err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), subject.named) {
+			t.Fatalf("%s was refused for another reason than its own: %v", name, err)
+		}
+		var controlled *ControlledFailure
+		if errors.As(err, &controlled) {
+			t.Fatalf("%s was reported as a controlled failure: %v", name, err)
+		}
+		if len(executor.effects) != 0 {
+			t.Fatalf("%s changed the machine before being refused: %q", name, executor.effects)
+		}
+		if len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine before being refused: %q", name, executor.reads)
+		}
+	}
+}
+
 // TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite is the other half of
 // the matrix: what no document can decide and only the machine can answer.
 //
@@ -312,10 +536,17 @@ func TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite(t *testing.T) {
 			AccountPresent: true, RootlessPodman: false,
 		},
 	} {
-		for _, operation := range []string{plan.OperationDeployOCIProbe, plan.OperationRemoveOCIProbe} {
+		// The four operations this Auxiliary performs, across both plan schemas:
+		// a machine that cannot run the flow is refused for the managed service
+		// exactly as it is for the probe, and the account the refusal names is
+		// the one the profile places.
+		for _, operation := range []string{
+			plan.OperationDeployOCIProbe, plan.OperationRemoveOCIProbe,
+			plan.OperationDeployWebService, plan.OperationRemoveWebService,
+		} {
 			executor := newFakeExecutor()
 			executor.capabilities = capabilities
-			accepted, input := approvedApplication(t, operation, fixturePort)
+			accepted, input := approvedOperation(t, operation, fixturePort)
 
 			if _, err := Apply(executor, accepted, input); err == nil {
 				t.Fatalf("%s applied %s", name, operation)

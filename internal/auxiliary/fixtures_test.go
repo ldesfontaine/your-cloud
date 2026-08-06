@@ -296,25 +296,27 @@ func capableMachine() Capabilities {
 // have happened before anything was touched rather than after something was
 // tidied away.
 type fakeExecutor struct {
-	capabilities      Capabilities
-	afterAccount      *Capabilities
-	unit              []byte
-	unitPresent       bool
-	active            bool
-	image             string
-	failures          map[string]error
-	tolerated         map[string]int
-	calls             map[string]int
-	reads             []string
-	effects           []string
-	writtenUnit       []byte
-	pulled            []string
-	removedImages     []string
-	startedServices   []string
-	stoppedServices   []string
-	accountsCreated   []string
-	lingeringAccounts []string
-	probedPorts       []int
+	capabilities       Capabilities
+	afterAccount       *Capabilities
+	unit               []byte
+	unitPresent        bool
+	active             bool
+	image              string
+	failures           map[string]error
+	tolerated          map[string]int
+	calls              map[string]int
+	reads              []string
+	effects            []string
+	writtenUnit        []byte
+	pulled             []string
+	removedImages      []string
+	startedServices    []string
+	stoppedServices    []string
+	accountsCreated    []string
+	accountComments    []string
+	lingeringAccounts  []string
+	probedPorts        []int
+	probedContentTypes []string
 }
 
 func newFakeExecutor() *fakeExecutor {
@@ -355,12 +357,13 @@ func (executor *fakeExecutor) Capabilities(account string) (Capabilities, error)
 	return executor.capabilities, nil
 }
 
-func (executor *fakeExecutor) CreateProbeAccount(account, home string) error {
+func (executor *fakeExecutor) CreateProbeAccount(account, home, comment string) error {
 	executor.effects = append(executor.effects, "CreateProbeAccount")
 	if err := executor.fail("CreateProbeAccount"); err != nil {
 		return err
 	}
 	executor.accountsCreated = append(executor.accountsCreated, account+" "+home)
+	executor.accountComments = append(executor.accountComments, comment)
 	executor.capabilities.AccountPresent = true
 	return nil
 }
@@ -470,9 +473,10 @@ func (executor *fakeExecutor) ContainerImage(account, container string) (string,
 	return executor.image, nil
 }
 
-func (executor *fakeExecutor) ProbeAnswers(port int) error {
+func (executor *fakeExecutor) ProbeAnswers(port int, expectedContentType string) error {
 	executor.reads = append(executor.reads, "ProbeAnswers")
 	executor.probedPorts = append(executor.probedPorts, port)
+	executor.probedContentTypes = append(executor.probedContentTypes, expectedContentType)
 	return executor.fail("ProbeAnswers")
 }
 
@@ -490,6 +494,170 @@ func halfWrittenMachine(t *testing.T, port int) *fakeExecutor {
 	executor.capabilities.RootlessPodman = true
 	executor.unit = renderUnit(document)
 	executor.unitPresent = true
+	return executor
+}
+
+// frozenServicePair is the schema 2 pair a Controller would have built and
+// transported for one managed web service.
+func frozenServicePair(t *testing.T, operation, serviceProfile string, port int) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildWebServicePair(operation, fixtureInfrastructure, fixtureMachine, serviceProfile, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := pair.Freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozen
+}
+
+// frozenEntrypointPair and frozenRoutePair are the two schema 2 pairs this
+// Auxiliary must refuse by name until the issue that owns them lands. They are
+// built through the plan package precisely because they are valid plans: what is
+// being proven is a refusal to perform, not a refusal to parse.
+func frozenEntrypointPair(t *testing.T, operation string) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildEntrypointPair(operation, fixtureInfrastructure, fixtureMachine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := pair.Freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozen
+}
+
+func frozenRoutePair(t *testing.T, operation string, port int) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildRoutePair(operation, fixtureInfrastructure, fixtureMachine, "lab.example.test", port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := pair.Freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozen
+}
+
+// approvedFrozenPair is what the Auxiliary holds once an approval over any
+// frozen pair is accepted, whatever schema that pair was written in.
+//
+// It is the same acceptance approvedApplication builds, with the operation and
+// the two digests of the pair it is given, so that a schema 2 case differs from
+// a schema 1 case by the documents alone and never by the gate that let them in.
+func approvedFrozenPair(operation string, frozen plan.Frozen) (*approval.Acceptance, *Input) {
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: fixtureInfrastructure,
+			MachineID:        fixtureMachine,
+			ApprovalEpoch:    1,
+			Sequence:         1,
+			Operation:        operation,
+			PlanSHA256:       frozen.PlanSHA256,
+			RollbackSHA256:   frozen.RollbackSHA256,
+			Privileges:       []string{approval.PrivilegeMutateLocalState, approval.PrivilegeReadLocalState},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: fixtureInfrastructure,
+			MachineID:        fixtureMachine,
+			ApprovalEpoch:    1,
+			ConsumedSequence: 1,
+		},
+	}
+	return accepted, &Input{
+		Kind:             KindApply,
+		PlanDocument:     frozen.PlanDocument,
+		RollbackDocument: frozen.RollbackDocument,
+	}
+}
+
+// approvedService is the nominal schema 2 subject of the bentopdf profile.
+func approvedService(t *testing.T, operation string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenServicePair(t, operation, plan.ServiceProfileBentoPDF, port))
+}
+
+// approvedOperation is the nominal subject of any operation this Auxiliary
+// performs, built in the schema that operation belongs to.
+//
+// It exists so that a check about the machine rather than about a document — the
+// capabilities preflight above all — walks the four operations without repeating
+// which schema each of them is written in.
+func approvedOperation(t *testing.T, operation string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	switch operation {
+	case plan.OperationDeployWebService, plan.OperationRemoveWebService:
+		return approvedService(t, operation, port)
+	default:
+		return approvedApplication(t, operation, port)
+	}
+}
+
+// forgedServicePlan renders one schema 2 web service document field by field,
+// with exactly the alterations a case asks for, for the same reason forgedPlan
+// exists: half the documents a refusal matrix presents are documents the plan
+// package refuses to build.
+func forgedServicePlan(t *testing.T, operation string, port int, altered map[string]string) []byte {
+	t.Helper()
+	nominal := [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV2)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"service_profile", quotedJSON(t, plan.ServiceProfileBentoPDF)},
+		{"image_reference", quotedJSON(t, plan.BentoPDFImageReference)},
+		{"image_digest", quotedJSON(t, plan.BentoPDFImageDigest)},
+		{"local_port", strconv.Itoa(port)},
+	}
+	fields := make([]string, 0, len(nominal)+len(altered))
+	canonical := map[string]bool{}
+	for _, field := range nominal {
+		canonical[field[0]] = true
+		value, replaced := altered[field[0]]
+		if !replaced {
+			fields = append(fields, quotedJSON(t, field[0])+":"+field[1])
+			continue
+		}
+		if value != "" {
+			fields = append(fields, quotedJSON(t, field[0])+":"+value)
+		}
+	}
+	smuggled := make([]string, 0, len(altered))
+	for name := range altered {
+		if !canonical[name] {
+			smuggled = append(smuggled, name)
+		}
+	}
+	sort.Strings(smuggled)
+	for _, name := range smuggled {
+		fields = append(fields, quotedJSON(t, name)+":"+altered[name])
+	}
+	return []byte("{" + strings.Join(fields, ",") + "}")
+}
+
+// serviceMachine is a machine that can run the flow with the bentopdf account
+// already created, and nothing of the service on it yet.
+func serviceMachine() *fakeExecutor {
+	executor := newFakeExecutor()
+	executor.capabilities.AccountPresent = true
+	executor.capabilities.RootlessPodman = true
+	return executor
+}
+
+// deployedServiceMachine is a machine already holding exactly the approved
+// managed service, sheet bytes included.
+func deployedServiceMachine(t *testing.T, port int) *fakeExecutor {
+	t.Helper()
+	executor := serviceMachine()
+	executor.unit = renderSheet(bentoPDFPlacement, port)
+	executor.unitPresent = true
+	executor.active = true
+	executor.image = bentoPDFPlacement.image
 	return executor
 }
 

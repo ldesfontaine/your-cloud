@@ -2,7 +2,6 @@ package auxiliary
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
@@ -24,24 +23,19 @@ const (
 	// it out of the directories a human account manager treats as people.
 	ProbeHome = "/var/lib/your-cloud-probe"
 
-	// unitDirectory is where a rootless Quadlet sheet is read from for that
-	// account. The sheet is a user unit rather than a system one because the
-	// probe runs rootless: a system Quadlet would run it under root's Podman,
-	// which is the arrangement this palier exists to avoid.
-	unitDirectory = ProbeHome + "/.config/containers/systemd"
-
-	// unitFileName is the sheet, and serviceName is the service Quadlet
-	// generates from it. The two names are held together here so that no caller
-	// can stop one thing and describe another.
+	// unitFileName is the probe's sheet, and serviceName is the service Quadlet
+	// generates from it. The two names are held together in the probe's own
+	// placement so that no caller can stop one thing and describe another.
 	unitFileName = "your-cloud-probe.container"
 	serviceName  = "your-cloud-probe.service"
 
-	// containerName is the container the sheet declares, and the one whose
-	// running image is read back to decide whether the announced state holds.
+	// containerName is the container the probe's sheet declares, and the one
+	// whose running image is read back to decide whether the announced state
+	// holds.
 	containerName = "your-cloud-probe"
 
 	// loopbackAddress is a constant of the contract and never a field of a plan.
-	// No approvable value can expose the probe beyond its own machine.
+	// No approvable value can expose a managed service beyond its own machine.
 	loopbackAddress = "127.0.0.1"
 
 	// containerPort is the port the pinned probe listens on inside its own
@@ -49,46 +43,61 @@ const (
 	containerPort = 80
 )
 
-// UnitPath is the one file this package writes.
-func UnitPath() string { return filepath.Join(unitDirectory, unitFileName) }
+// UnitPath is the file this package writes for the probe.
+func UnitPath() string { return probePlacement.unitPath() }
 
 // PinnedImage is the exact reference the probe is deployed from: the pinned
 // repository and the pinned digest, joined so the engine can never resolve a tag
 // and never choose an image.
-func PinnedImage() string {
-	return plan.ProbeImageReference + "@" + plan.ProbeImageDigest
+func PinnedImage() string { return probePlacement.image }
+
+// renderUnit builds the Quadlet sheet for one validated schema 1 plan.
+//
+// It is the probe's own spelling of renderSheet below, kept so that the one
+// value a probe plan may put in a file goes on travelling exactly as `#14`
+// proved it: the port, an integer the plan validation already bound.
+func renderUnit(document *plan.Document) []byte {
+	return renderSheet(probePlacement, document.LocalPort)
 }
 
-// renderUnit builds the Quadlet sheet for one validated plan.
+// renderSheet builds the Quadlet sheet of one managed service.
 //
-// Only one value of the plan reaches this file: the local port, an integer the
-// plan validation already bound to 1024..65535. The image and its digest are
-// written from the pinned constants rather than from the document, even though
-// the validation has just proven the two equal — a value that cannot travel
-// cannot be smuggled, and this palier accepts exactly one probe.
+// Only one approved value reaches this file: the loopback port, an integer the
+// plan validation already bound to 1024..65535. Everything else comes from the
+// placement — the image and its digest above all, written from the profile's
+// pinned constants rather than from the document, even though the validation has
+// just proven the two equal. A value that cannot travel cannot be smuggled.
 //
-// Every field below is a control this product owes an explanation for:
+// Every field below is a control this product owes an explanation for, and the
+// list is the same for every profile:
 //
 //   - the sheet is a rootless user unit, so no container runs under root;
 //   - PublishPort binds the loopback address only, so nothing is exposed;
 //   - DropCapability=ALL and NoNewPrivileges leave the process with neither the
 //     capabilities of its user namespace nor a way to regain any;
 //   - Sysctl opens the low ports inside the container's own network namespace,
-//     because whoami listens on 80 there and a capability-stripped process may
-//     not bind it otherwise; the sysctl is scoped to that namespace and grants
-//     nothing on the host — proven blocking in the LAB before it was added;
-//   - ReadOnly makes the container's own filesystem unwritable, which the probe
-//     can afford because it keeps no data at all;
+//     and appears only where the image actually listens below 1024 — whoami does
+//     and BentoPDF does not. The sysctl is scoped to that namespace and grants
+//     nothing on the host; it was proven blocking in the LAB for the probe before
+//     it was added, and a profile that does not need it must not carry it,
+//     because a control that grants nothing still reads as a control that was
+//     needed;
+//   - ReadOnly makes the container's own filesystem unwritable, which every
+//     profile of this palier can afford because none of them keeps data;
 //   - Pull=never keeps starting the service off the network: the one fetch this
 //     operation performs is explicit, and happens before the sheet is written;
 //   - no Volume, no Device, no Environment and no extra Network exist here,
-//     because the plan has no field that could describe one.
-func renderUnit(document *plan.Document) []byte {
+//     because no plan has a field that could describe one.
+func renderSheet(where placement, localPort int) []byte {
+	lowPorts := ""
+	if where.containerPort < firstUnprivilegedPort {
+		lowPorts = "Sysctl=net.ipv4.ip_unprivileged_port_start=0\n"
+	}
 	return []byte(fmt.Sprintf(`# Written by your-cloud auxiliary from one approved plan. Do not edit: this
 # machine compares this file byte for byte against the plan it is given, and an
 # edit here is a drift that requires a new approved plan rather than a repair.
 [Unit]
-Description=Your Cloud disposable OCI validation probe
+Description=%s
 
 [Container]
 Image=%s
@@ -98,18 +107,19 @@ Pull=never
 ReadOnly=true
 NoNewPrivileges=true
 DropCapability=ALL
-Sysctl=net.ipv4.ip_unprivileged_port_start=0
-
+%s
 [Service]
 Restart=on-failure
 
 [Install]
 WantedBy=default.target
 `,
-		PinnedImage(),
-		containerName,
+		where.description,
+		where.image,
+		where.containerName,
 		loopbackAddress,
-		document.LocalPort,
-		containerPort,
+		localPort,
+		where.containerPort,
+		lowPorts,
 	))
 }

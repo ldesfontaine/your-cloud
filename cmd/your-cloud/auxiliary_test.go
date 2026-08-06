@@ -9,6 +9,7 @@ import (
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/auxiliary"
+	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
 func TestAuxiliaryAcceptsOnlyItsOwnBoundedSubject(t *testing.T) {
@@ -329,5 +330,117 @@ func TestAControlledFailureIsReportedAsOneAndNeverAsASuccess(t *testing.T) {
 	}
 	if strings.Contains(text.String(), "service: ") && !strings.Contains(text.String(), "observed service: ") {
 		t.Fatalf("a partial state rendered a service line: %q", text.String())
+	}
+}
+
+// TestAManagedWebServiceIsReportedInTheSameClosedVocabulary holds the answer a
+// reader receives when the operation is one of the managed web service pair
+// rather than one of the probe pair.
+//
+// The vocabulary does not widen with the operations: the same closed outcome
+// words, the same closed fields, and still no field of any plan echoed back. The
+// only things that differ are the ones the machine itself decided — which
+// operation ran and where its sheet was written.
+func TestAManagedWebServiceIsReportedInTheSameClosedVocabulary(t *testing.T) {
+	t.Parallel()
+	unitPath, known := auxiliary.ServiceUnitPath(plan.ServiceProfileBentoPDF)
+	if !known {
+		t.Fatal("the one service profile of this palier names no sheet")
+	}
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationDeployWebService,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 4,
+		},
+	}
+
+	report := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationDeployWebService,
+		LocalPort:    8080,
+		UnitPath:     unitPath,
+		ServiceState: auxiliary.ServiceStateActive,
+		Changed:      true,
+	})
+	if report.Outcome != auxiliary.OutcomeApplied || !report.Changed {
+		t.Fatalf("an applied service operation did not say so: %+v", report)
+	}
+	if report.PlanOperation != approval.OperationDeployWebService || report.UnitPath != unitPath {
+		t.Fatalf("the report does not name the service instance it applied: %+v", report)
+	}
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["plan_operation"] != approval.OperationDeployWebService || decoded["unit_path"] != unitPath {
+		t.Fatalf("the report does not name the instance it applied: %v", decoded)
+	}
+	// The profile, the image and the digest a service plan carries for a human
+	// to read do not travel back: the report is what the machine concluded.
+	for _, field := range []string{"plan", "rollback", "service_profile", "image_reference", "image_digest"} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("the applied report echoes %q", field)
+		}
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"plan operation: " + approval.OperationDeployWebService,
+		"unit: " + unitPath,
+		"outcome: " + auxiliary.OutcomeApplied,
+		"service: active",
+		"changed: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+
+	// A removal that found the state already held reads the same way, with the
+	// one word that separates an operation which acted from one which did not.
+	unchanged := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationRemoveWebService,
+		LocalPort:    8080,
+		UnitPath:     unitPath,
+		ServiceState: auxiliary.ServiceStateAbsent,
+		Changed:      false,
+	})
+	if unchanged.Changed || unchanged.Outcome != auxiliary.OutcomeApplied {
+		t.Fatalf("a service operation that changed nothing reported otherwise: %+v", unchanged)
+	}
+
+	// And a controlled failure of a service operation carries the very same
+	// outcome words as a controlled failure of the probe.
+	failed := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation: approval.OperationDeployWebService,
+		LocalPort: 8080,
+		UnitPath:  unitPath,
+		Outcome:   auxiliary.OutcomeRolledBack,
+		Cause:     errors.New("the service never answered"),
+	})
+	if failed.Outcome != auxiliary.OutcomeRolledBack || !failed.RollbackAttempted || !failed.Changed {
+		t.Fatalf("a controlled service failure was not reported as one: %+v", failed)
+	}
+	if failed.ServiceState != "" || failed.Observed != nil {
+		t.Fatalf("a rollback that succeeded claimed more than it reached: %+v", failed)
 	}
 }

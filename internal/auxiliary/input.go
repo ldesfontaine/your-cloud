@@ -3,18 +3,27 @@
 //
 // The approval package decides whether a human authorised this machine to act.
 // This package decides what acting means, and it is the only place in the
-// product where a plan becomes a file, a service and a container. Its two
-// operations are the pinned OCI probe of this palier: deploying it and removing
-// it, both described by a plan document whose digest the approval signed.
+// product where a plan becomes a file, a service and a container. Its operations
+// are four, in two inverse pairs: the pinned OCI probe of schema 1, deployed and
+// removed, and the managed web service of schema 2, deployed and removed — each
+// described by a plan document whose digest the approval signed. The entrypoint
+// and the route operations of schema 2 are refused here by name, before any
+// effect, until the issue that owns them lands.
+//
+// Everything a profile means on a machine — its account, its home, its sheet,
+// its container and its pinned image — lives in one placement per profile rather
+// than in the flow, so the two profiles share one machinery and share nothing on
+// a machine.
 //
 // Two rules shape everything below. The first is that no plan-derived string
 // ever reaches a shell: every effect goes through the Executor interface as
 // typed arguments, and the values that end up in the unit file are the pinned
-// constants of internal/plan plus one integer the plan validation already bound.
+// constants of the profile plus one integer the plan validation already bound.
 // The second is that nothing is written before everything is verified — the
-// approval, then the two documents against their signed digests, then the
-// target, then the content, then the capabilities of the machine. A machine
-// that cannot run the flow is refused while it is still untouched.
+// approval, then the schema the two documents declare, then the documents
+// against their signed digests, then the target, then the content, then the
+// capabilities of the machine. A machine that cannot run the flow is refused
+// while it is still untouched.
 package auxiliary
 
 import (

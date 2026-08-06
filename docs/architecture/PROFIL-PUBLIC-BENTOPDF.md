@@ -4,8 +4,8 @@
 > Il étend le contrat du plan (`PLAN-OCI-CONTROLE.md`) aux opérations de
 > service et de publication, fixe l'édition, la licence et les images
 > épinglées du profil, et décrit ce que la preuve devra constater. Les
-> implémentations le suivent depuis `#88` (plans et surface du Controller) ;
-> la preuve LAB du palier reste `#92`.
+> implémentations le suivent depuis `#88` (plans et surface du Controller) et
+> `#90` (service géré côté Auxiliaire) ; la preuve LAB du palier reste `#92`.
 
 ## Ce que ce profil est, et n'est pas
 
@@ -133,8 +133,24 @@ your-cloud-entrypoint      Traefik, seul autorisé à écouter publiquement
 ```
 
 La fiche de BentoPDF reprend tous les contrôles de la sonde (`Pull=never`,
-`ReadOnly=true`, `NoNewPrivileges=true`, `DropCapability=ALL`, sysctl des
-ports bas borné à l'espace de noms, publication sur le loopback uniquement).
+`ReadOnly=true`, `NoNewPrivileges=true`, `DropCapability=ALL`, publication sur
+le loopback uniquement, et le sysctl des ports bas borné à l'espace de noms
+quand — et seulement quand — l'image en a besoin).
+
+### Le port du conteneur est une constante du profil
+
+Le plan d'un service géré choisit le port de loopback que la machine publie ;
+l'image décide de ce qui écoute derrière. Pour l'édition épinglée cette valeur
+est **`8080`** : la configuration de l'image ne déclare que `8080/tcp`, et le
+NGINX non privilégié dont elle hérite y écoute sous un compte ordinaire. C'est
+donc une constante du profil, au même titre que le compte et la fiche, et
+jamais un champ approuvable — comme le `80` de la sonde en est une.
+
+Une conséquence borne la phrase ci-dessus sur les contrôles repris : le sysctl
+des ports bas n'a de sens que pour une image qui écoute **sous 1024**. C'est le
+cas de la sonde, ce ne l'est pas de BentoPDF. La fiche du profil reprend donc
+tous les autres contrôles à l'identique et **ne porte pas** cette ligne : un
+contrôle qui n'ouvre rien se lirait comme un contrôle dont on a eu besoin.
 
 ## Le point d'entrée : Traefik sans socket de moteur
 

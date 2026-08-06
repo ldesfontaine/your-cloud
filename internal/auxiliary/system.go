@@ -88,14 +88,18 @@ func (executor SystemExecutor) Capabilities(account string) (Capabilities, error
 // system accounts: shadow reserves automatic allocation for ordinary users, and
 // an account without ranges runs an engine that can map nothing beyond its own
 // identifier — proven blocking in the LAB before this allocation was written.
-func (executor SystemExecutor) CreateProbeAccount(account, home string) error {
+//
+// Every value below the fixed flags comes from the profile's placement, and none
+// of them from a plan: one managed service, one account, one home, and one
+// comment that says which service owns the identity.
+func (executor SystemExecutor) CreateProbeAccount(account, home, comment string) error {
 	if _, err := executor.run(commandTimeout, "useradd",
 		"--system",
 		"--user-group",
 		"--home-dir", home,
 		"--create-home",
 		"--shell", "/usr/sbin/nologin",
-		"--comment", "Your Cloud OCI validation probe",
+		"--comment", comment,
 		account,
 	); err != nil {
 		return err
@@ -344,7 +348,13 @@ func (executor SystemExecutor) ContainerImage(account, container string) (string
 // The address is the loopback constant of the contract and never a value from a
 // plan, and the request is refused any redirect: what is being proven is that
 // this machine answers on this port, not that something somewhere does.
-func (executor SystemExecutor) ProbeAnswers(port int) error {
+//
+// What is asserted about the answer is deliberately the least that still
+// distinguishes the approved service from anything else listening: the status,
+// always, and the media type where the profile asks for one. The body is read
+// only far enough to be discarded — no profile of these paliers describes its
+// content, so no verification here may claim anything about it.
+func (executor SystemExecutor) ProbeAnswers(port int, expectedContentType string) error {
 	client := &http.Client{
 		Timeout: probeTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -362,15 +372,22 @@ func (executor SystemExecutor) ProbeAnswers(port int) error {
 			last = err
 			continue
 		}
+		contentType := response.Header.Get("Content-Type")
 		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		response.Body.Close()
-		if response.StatusCode == http.StatusOK {
-			return nil
+		if response.StatusCode != http.StatusOK {
+			last = fmt.Errorf("the service answered %d", response.StatusCode)
+			continue
 		}
-		last = fmt.Errorf("the probe answered %d", response.StatusCode)
+		if expectedContentType != "" && !strings.HasPrefix(contentType, expectedContentType) {
+			last = fmt.Errorf("the service answered 200 with content type %q rather than %q",
+				contentType, expectedContentType)
+			continue
+		}
+		return nil
 	}
 	if last == nil {
-		last = errors.New("the probe never answered")
+		last = errors.New("the service never answered")
 	}
 	return last
 }
