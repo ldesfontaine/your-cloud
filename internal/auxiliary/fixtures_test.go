@@ -1256,7 +1256,7 @@ func joinedLinkMachine(role string) *fakeExecutor {
 	executor.linkRules = renderLinkRules(where, fixturePort)
 	executor.linkRulesPresent = true
 	executor.nftTables[linkTableFamily+" "+linkTableName] = executor.linkRules
-	executor.hold(linkRulesUnitPath, renderLinkRulesUnit())
+	executor.hold(linkRulesUnitPath, renderLinkRulesUnit(where))
 	executor.linkRulesAtBoot = true
 	if where.goesOut {
 		executor.linkPolicy = renderLinkLoopbackPolicy()

@@ -283,23 +283,29 @@ func renderLinkLoopbackPolicy() []byte {
 
 // renderLinkRulesUnit builds the oneshot unit that puts the bounds back at boot.
 //
-// It takes no argument, because there is nothing to pass: the two files it
-// applies are constants of this package, and what varies between two machines is
-// inside those files rather than in the unit that loads them. Three decisions
-// are carried here:
+// It takes the role, because the unit may only name what its own machine
+// holds: the host relaxation exists on the initiator alone, and a listener
+// unit that loaded a policy file no junction ever wrote would fail its first
+// command and never reach the table — the first machine proof came back from
+// a reboot with a tunnel established and no bounds at all, exactly that way.
+// Three more decisions are carried here:
 //
 //   - it is ordered after the network manager, because both things it applies
 //     name an interface that manager creates. Applied earlier, the sysctl would
 //     silently apply to nothing and the table would bound an interface that does
 //     not exist;
-//   - it applies the sysctl before the table, in the order the junction applied
-//     them, so a machine coming back from a reboot passes through the same
-//     states in the same sequence as a machine being joined;
+//   - the initiator applies the sysctl before the table, in the order the
+//     junction applied them, so a machine coming back from a reboot passes
+//     through the same states in the same sequence as a machine being joined;
 //   - it stays a declared effect of the junction plan rather than a step of a
 //     bootstrap, exactly as the entrypoint's host policy is: the human who
-//     approves a junction approves this machine putting these two files back at
+//     approves a junction approves this machine putting these files back at
 //     every boot, and undoing the junction takes the unit away with them.
-func renderLinkRulesUnit() []byte {
+func renderLinkRulesUnit(where linkPlacement) []byte {
+	policy := ""
+	if where.goesOut {
+		policy = fmt.Sprintf("ExecStart=%s --quiet --load %s\n", sysctlProgram, linkLoopbackPolicyPath)
+	}
 	return []byte(fmt.Sprintf(`# Written by your-cloud auxiliary from one approved plan. Do not edit: this
 # machine compares this file byte for byte against the plan it is given, and an
 # edit here is a drift that requires a new approved plan rather than a repair.
@@ -312,14 +318,13 @@ ConditionPathExists=%s
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=%s --quiet --load %s
-ExecStart=%s --file %s
+%sExecStart=%s --file %s
 
 [Install]
 WantedBy=multi-user.target
 `,
 		linkRulesPath,
-		sysctlProgram, linkLoopbackPolicyPath,
+		policy,
 		nftProgram, linkRulesPath,
 	))
 }
@@ -392,7 +397,7 @@ func readLinkBounds(executor Executor, where linkPlacement, servicePort int) (li
 	state.rulesPresent = rulesPresent
 	state.unitPresent = unitPresent
 	state.held = rulesPresent && bytes.Equal(currentRules, renderLinkRules(where, servicePort)) &&
-		unitPresent && bytes.Equal(currentUnit, renderLinkRulesUnit())
+		unitPresent && bytes.Equal(currentUnit, renderLinkRulesUnit(where))
 
 	if !where.goesOut {
 		return state, nil
@@ -465,7 +470,7 @@ func poseLinkBounds(executor Executor, where linkPlacement, servicePort int) err
 	if err := executor.WriteLinkRules(renderLinkRules(where, servicePort)); err != nil {
 		return fmt.Errorf("bound the passage to the approved service: %w", err)
 	}
-	if err := executor.WriteUnitFile(linkRulesUnitPath, renderLinkRulesUnit()); err != nil {
+	if err := executor.WriteUnitFile(linkRulesUnitPath, renderLinkRulesUnit(where)); err != nil {
 		return fmt.Errorf("write the unit that puts the bounds back at boot: %w", err)
 	}
 	if err := executor.EnableLinkRulesAtBoot(); err != nil {

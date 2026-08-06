@@ -1338,3 +1338,27 @@ func TestNoOperationOfThePrivatePassageEverCarriesPrivateMaterial(t *testing.T) 
 		}
 	}
 }
+
+// TestTheBootUnitOnlyNamesWhatItsOwnMachineHolds holds the lesson of the first
+// machine proof of the palier: the listener came back from a reboot with an
+// established tunnel and no bounds at all, because its oneshot unit loaded a
+// policy file only a junction of the other role ever writes, failed there, and
+// never reached the table. A unit may only name what its own machine holds.
+func TestTheBootUnitOnlyNamesWhatItsOwnMachineHolds(t *testing.T) {
+	t.Parallel()
+
+	listener := string(renderLinkRulesUnit(linkPlacements[plan.LinkRoleListener]))
+	initiator := string(renderLinkRulesUnit(linkPlacements[plan.LinkRoleInitiator]))
+
+	if strings.Contains(listener, linkLoopbackPolicyPath) {
+		t.Fatalf("the listener's boot unit loads a policy no junction of its role writes:\n%s", listener)
+	}
+	if !strings.Contains(initiator, linkLoopbackPolicyPath) {
+		t.Fatalf("the initiator's boot unit does not put its own relaxation back:\n%s", initiator)
+	}
+	for name, unit := range map[string]string{"listener": listener, "initiator": initiator} {
+		if !strings.Contains(unit, nftProgram+" --file "+linkRulesPath) {
+			t.Fatalf("the %s's boot unit does not put the table back:\n%s", name, unit)
+		}
+	}
+}

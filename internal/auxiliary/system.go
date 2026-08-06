@@ -736,6 +736,22 @@ func (executor SystemExecutor) GenerateLinkKey() (string, error) {
 	if err := os.MkdirAll(linkRoot, linkKeyDirectoryMode); err != nil {
 		return "", fmt.Errorf("create the passage's root-owned directory: %w", err)
 	}
+	// The directory carries the same group as the key it holds, because a file
+	// a reader may open inside a directory that reader cannot enter is a file
+	// nobody reads: the first machine proof failed exactly there, networkd
+	// refusing the key with search permission denied on this directory.
+	if group, err := user.LookupGroup(networkAccount); err == nil {
+		gid, atoiErr := strconv.Atoi(group.Gid)
+		if atoiErr != nil {
+			return "", fmt.Errorf("read the %s group: %w", networkAccount, atoiErr)
+		}
+		if err := os.Chown(linkRoot, 0, gid); err != nil {
+			return "", fmt.Errorf("give the passage's directory to root and %s: %w", networkAccount, err)
+		}
+		if err := os.Chmod(linkRoot, linkKeyDirectoryMode); err != nil {
+			return "", fmt.Errorf("hold the passage's directory at %#o: %w", linkKeyDirectoryMode, err)
+		}
+	}
 	private := make([]byte, plan.PeerPublicKeyBytes)
 	if _, err := rand.Read(private); err != nil {
 		return "", fmt.Errorf("draw this machine's own passage key: %w", err)

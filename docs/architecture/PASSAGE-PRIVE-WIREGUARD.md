@@ -177,10 +177,17 @@ donc pas de refus propre.
 
 ## Ce que la preuve devra constater
 
-Le service de référence joint par le tunnel est la **sonde du palier `#14`**,
-déployée sur la machine du LAN par le chemin déjà prouvé — le passage borne
-un service géré existant, il n'en invente pas. Chaque critère de `#16`
-correspond à un constat :
+Le service de référence joint par le tunnel est un **service géré d'un
+profil** — celui du palier `#15`, déployé sur la machine du LAN par le chemin
+déjà prouvé. La première rédaction de ce contrat nommait la sonde du palier
+`#14`, et la première preuve machine a montré que c'était la mauvaise
+lecture : la règle de présence lit les profils de service, et la sonde n'en
+est pas un — c'est un instrument de validation jetable, et un passage qui se
+bornerait à un instrument serait un passage bordé à rien de durable. La
+sonde sert au contraire de **cas négatif** : déployée à côté, elle prouve
+qu'un port qu'aucun profil ne publie est refusé. Le passage borne un service
+géré existant, il n'en invente pas. Chaque critère de `#16` correspond à un
+constat :
 
 1. rien n'existe avant l'approbation : ni pair, ni route, ni règle, ni clé ;
 2. après les quatre plans : le tunnel est établi, et depuis le VPS le
