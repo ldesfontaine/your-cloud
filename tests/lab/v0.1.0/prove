@@ -1,0 +1,544 @@
+#!/usr/bin/env bash
+# Orchestrate the complete v0.1.0 bootstrap-and-replacement proof (#41).
+#
+# This file proves nothing by itself. Every verdict of the palier is rendered by
+# one of the six passes under this directory, each of which mounts its own
+# perimeter, judges through the compiled product and removes what it mounted.
+# What this orchestrator adds is the three things the global proof needs and no
+# single pass can give:
+#
+#   a revision   every pass runs against the same tree, named once and recorded
+#   an order     the passes run one after another on shared VM, never together
+#   a closure    the topology this run owns is destroyed, and what remains is
+#                named rather than left for a human to notice
+#
+# The first red is kept: the pass that failed stops the sequence, its log is
+# retained whole, and the closure still runs. A pass killed on its bound is
+# forced through its own `remove` before the next thing happens, because a bound
+# that leaves a perimeter mounted is worse than no bound at all.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [guard | run [passe...] | close | all [passe...]]
+
+  guard  read the LAB, prove the topology is the approved one, name the revision
+  run    run the passes in dependency order, keeping the topology mounted
+  close  destroy the topology this run owns and read `labctl assert-clean`
+  all    the three above in order, closing even when a pass fails (default)
+
+  Passes, in the order they run:
+
+    personal-access         #51 #52   the access every later pass travels over
+    signed-approval         #37       the approval anchor and its anti-replay
+    controller-install      #38       a Controller installed from the bundle
+    machine-identity        #39       one SSH identity per machine, roles opened
+    controller-replacement  #40       a Controller replaced, authorities withdrawn
+
+  `windows-helper` is not part of this sequence: its machine lives outside
+  labctl and outside this topology. It is reported as not run, never as passed.
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -eq 0 ]] || shift
+case "$command" in
+  guard | close) [[ $# -eq 0 ]] || usage ;;
+  run | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+labctl="$root/tools/labctl"
+topology=quick
+expected_origin=your-cloud/labctl
+forbidden_addresses=(192.168.122.123 10.66.66.1)
+
+# Every pass of the palier, in dependency order, with the bound it may not
+# exceed. The bounds are wall-clock ceilings, not expectations: they exist so a
+# hung pass ends as a named failure instead of an unattended night.
+pass_names=(
+  personal-access
+  signed-approval
+  controller-install
+  machine-identity
+  controller-replacement
+)
+declare -A pass_bound=(
+  [personal-access]=5400
+  [signed-approval]=1800
+  [controller-install]=3600
+  [machine-identity]=2700
+  [controller-replacement]=3600
+)
+declare -A pass_issue=(
+  [personal-access]="#51 #52"
+  [signed-approval]="#37"
+  [controller-install]="#38"
+  [machine-identity]="#39"
+  [controller-replacement]="#40"
+)
+declare -A vm_template=(
+  [lab-console]=console
+  [lab-machine-1]=machine
+)
+vm_names=(lab-console lab-machine-1)
+
+selected=()
+if [[ $# -gt 0 ]]; then
+  for requested in "$@"; do
+    found=0
+    for name in "${pass_names[@]}"; do
+      [[ "$name" == "$requested" ]] && found=1 && break
+    done
+    [[ $found -eq 1 ]] || { echo "unknown pass: $requested" >&2; usage; }
+    selected+=("$requested")
+  done
+else
+  selected=("${pass_names[@]}")
+fi
+
+workdir=$(mktemp -d)
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+[[ "$run_id" =~ ^[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*$ ]] \
+  || { echo "invalid v0.1.0 proof run identifier" >&2; /bin/rm -rf "$workdir"; exit 1; }
+result_root="$root/tests/artifacts/proofs/v0.1.0"
+result_dir="$result_root/$run_id"
+result_file="$result_dir/result.json"
+mkdir -p "$result_root"
+[[ ! -e "$result_dir" && ! -L "$result_dir" ]] \
+  || { echo "v0.1.0 proof result path already exists" >&2; /bin/rm -rf "$workdir"; exit 1; }
+mkdir -m 0755 "$result_dir" \
+  || { echo "cannot create the v0.1.0 proof result path" >&2; /bin/rm -rf "$workdir"; exit 1; }
+
+revision=
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+finished_at=
+proof_outcome=failed
+failure_class=not_started
+first_red=
+guard_passed=0
+topology_owned=0
+close_status=not_run
+assert_clean_status=not_run
+declare -a assert_clean_residue=()
+declare -a pass_results=()
+current_pass=
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+json_escape() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/}
+  value=${value//$'\t'/\\t}
+  printf '%s' "$value"
+}
+
+json_value() {
+  if [[ -n "$1" ]]; then
+    printf '"%s"' "$(json_escape "$1")"
+  else
+    printf 'null'
+  fi
+}
+
+json_array() {
+  local index total=$#
+  printf '['
+  for ((index = 1; index <= total; index++)); do
+    printf '%s' "$(json_value "${!index}")"
+    [[ $index -eq $total ]] || printf ', '
+  done
+  printf ']'
+}
+
+announce() { printf '\n==> %s\n' "$*"; }
+
+# A bound around every LAB call, so a wedged transport is a named failure rather
+# than a hang. The status is returned untouched; only the wait is capped.
+bounded_labctl() {
+  [[ $# -ge 2 ]] || fail "internal bounded labctl invocation is invalid"
+  local seconds=$1 operation=$2 status=0
+  shift 2
+  timeout --signal=TERM --kill-after=10s "$seconds" "$labctl" "$operation" "$@" || status=$?
+  return "$status"
+}
+
+lab_list() { bounded_labctl 60s list "$@"; }
+lab_ip() { bounded_labctl 60s ip "$@"; }
+lab_start() { bounded_labctl 300s start "$@"; }
+lab_ssh() { bounded_labctl 300s ssh "$@"; }
+
+# The pilot's own paths never reach a published log. The LAB itself is entirely
+# synthetic — identities are minted at mount time and destroyed at removal — so
+# the only real-world strings that can appear are the ones naming this machine.
+redact() {
+  sed -e "s#$root#<repo>#g" -e "s#$HOME#<home>#g" -e "s#$(id -un)#<user>#g"
+}
+
+record_pass() {
+  [[ $# -eq 4 ]] || fail "internal pass record is invalid"
+  local name=$1 status=$2 seconds=$3 log=$4
+  pass_results+=("{\"pass\":\"$(json_escape "$name")\",\"issues\":\"$(json_escape "${pass_issue[$name]}")\",\"status\":\"$status\",\"duration_seconds\":$seconds,\"bound_seconds\":${pass_bound[$name]},\"log\":\"$(json_escape "$log")\"}")
+}
+
+write_result() {
+  local index temporary="$result_dir/.result-$run_id.tmp"
+  [[ ! -L "$temporary" ]] || return 1
+  {
+    printf '{\n'
+    printf '  "schema": 1,\n'
+    printf '  "proof": "your-cloud-v0.1.0-bootstrap-and-replacement",\n'
+    printf '  "issue": "#41",\n'
+    printf '  "run_id": "%s",\n' "$run_id"
+    printf '  "phase": "%s",\n' "$command"
+    printf '  "complete": %s,\n' \
+      "$([[ "$command" == all && ${#selected[@]} -eq ${#pass_names[@]} ]] && echo true || echo false)"
+    printf '  "passes_declared": %d,\n' "${#pass_names[@]}"
+    printf '  "passes_selected": %d,\n' "${#selected[@]}"
+    printf '  "outcome": "%s",\n' "$proof_outcome"
+    printf '  "failure_class": '; json_value "$failure_class"; printf ',\n'
+    printf '  "first_red": '; json_value "$first_red"; printf ',\n'
+    printf '  "revision": '; json_value "$revision"; printf ',\n'
+    printf '  "topology": "%s",\n' "$topology"
+    printf '  "started_at": '; json_value "$started_at"; printf ',\n'
+    printf '  "finished_at": '; json_value "$finished_at"; printf ',\n'
+    printf '  "redaction": {"policy": "pilot-paths-removed", "lab_material": "synthetic-only"},\n'
+    printf '  "closure": {"status": "%s", "assert_clean": "%s", "retained_outside_this_run": ' \
+      "$close_status" "$assert_clean_status"
+    json_array "${assert_clean_residue[@]}"; printf '},\n'
+    printf '  "not_run": [\n'
+    printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"}\n'
+    printf '  ],\n'
+    printf '  "passes": [\n'
+    for index in "${!pass_results[@]}"; do
+      printf '    %s' "${pass_results[$index]}"
+      [[ $index -eq $((${#pass_results[@]} - 1)) ]] || printf ','
+      printf '\n'
+    done
+    printf '  ]\n}\n'
+  } >"$temporary" || { /bin/rm -f "$temporary"; return 1; }
+  chmod 0644 "$temporary" || { /bin/rm -f "$temporary"; return 1; }
+  mv -f -- "$temporary" "$result_file" || { /bin/rm -f "$temporary"; return 1; }
+}
+
+finish() {
+  local status=$?
+  trap - EXIT
+  set +e
+  finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  if [[ $status -eq 0 && -z "$first_red" ]]; then
+    proof_outcome=passed
+    failure_class=
+  else
+    proof_outcome=failed
+    if [[ -z "$first_red" ]]; then
+      first_red=${current_pass:-orchestration}
+      [[ $guard_passed -eq 1 ]] || failure_class=infrastructure_failure
+    fi
+    [[ -n "$failure_class" && "$failure_class" != not_started ]] \
+      || failure_class=product_or_assertion_failure
+  fi
+  if ! write_result; then
+    echo "FAILED: the structured v0.1.0 result could not be published atomically" >&2
+    /bin/rm -rf "$workdir"
+    exit 1
+  fi
+  /bin/rm -rf "$workdir"
+  printf '\nstructured_result=%s\n' "$result_file"
+  if [[ "$proof_outcome" == passed ]]; then
+    # A phase is not the palier, and a subset is not the sequence. Only a run
+    # that guarded, played every pass and closed may say so; anything else says
+    # what it actually did. The palier forbids a false global success, and the
+    # cheapest way to produce one is a green word printed by a partial run.
+    if [[ "$command" != all ]]; then
+      printf 'PROVE_V0_1_0_PHASE_OK phase=%s revision=%s\n' "$command" "$revision"
+    elif [[ ${#selected[@]} -ne ${#pass_names[@]} ]]; then
+      printf 'PROVE_V0_1_0_PARTIAL_OK passes=%d/%d revision=%s\n' \
+        "${#selected[@]}" "${#pass_names[@]}" "$revision"
+    else
+      printf 'PROVE_V0_1_0_OK revision=%s passes=%d closure=%s assert-clean=%s\n' \
+        "$revision" "${#pass_results[@]}" "$close_status" "$assert_clean_status"
+    fi
+    exit 0
+  fi
+  printf 'PROVE_V0_1_0_FAILED first-red=%s class=%s\n' "$first_red" "$failure_class" >&2
+  [[ $status -ne 0 ]] && exit "$status"
+  exit 1
+}
+trap finish EXIT
+
+# ---------------------------------------------------------------------------
+# guard — read the LAB before mutating any of it, and name the revision once
+# ---------------------------------------------------------------------------
+
+do_guard() {
+  announce "Read-only LAB inventory guard"
+  local inventory row state ips template row_topology origin extra vm waited address
+
+  inventory=$(lab_list --format=tsv) || fail "labctl list guard failed"
+  printf '%s\n' "$inventory"
+
+  for vm in "${vm_names[@]}"; do
+    row=$(awk -F '\t' -v name="$vm" 'NR > 1 && $1 == name {print}' <<<"$inventory")
+    [[ -n "$row" && $(wc -l <<<"$row") -eq 1 ]] \
+      || fail "inventory row missing or duplicated for $vm"
+    IFS=$'\t' read -r _ state ips template row_topology origin extra <<<"$row"
+    [[ -z "$extra" ]] || fail "inventory row for $vm carries unexpected columns"
+    [[ "$origin" == "$expected_origin" ]] \
+      || fail "$vm is not managed by $expected_origin; refusing to touch it"
+    [[ "$template" == "${vm_template[$vm]}" ]] \
+      || fail "$vm carries template '$template' instead of ${vm_template[$vm]}"
+    [[ "$row_topology" == "$topology" ]] \
+      || fail "$vm belongs to topology '$row_topology' instead of $topology"
+  done
+
+  # The passes all require a running machine with exactly one address. Starting
+  # a stopped VM is this orchestrator's own mutation, and the only one it makes
+  # outside a pass; it is therefore what makes the topology this run's to close.
+  for vm in "${vm_names[@]}"; do
+    state=$(awk -F '\t' -v name="$vm" 'NR > 1 && $1 == name {print $2}' <<<"$inventory")
+    if [[ "$state" != running ]]; then
+      announce "Starting $vm, which the inventory reports as '$state'"
+      lab_start "$vm" || fail "cannot start $vm"
+    fi
+  done
+  topology_owned=1
+
+  for vm in "${vm_names[@]}"; do
+    waited=0
+    address=
+    while [[ $waited -lt 180 ]]; do
+      address=$(lab_ip "$vm" 2>/dev/null) || address=
+      [[ -n "$address" && "$address" != - ]] && break
+      sleep 5
+      waited=$((waited + 5))
+    done
+    [[ -n "$address" && "$address" != - ]] \
+      || fail "$vm carries no LAB address after $waited s"
+    [[ $(wc -l <<<"$address") -eq 1 ]] \
+      || fail "$vm carries several addresses; refusing an ambiguous target"
+    for forbidden in "${forbidden_addresses[@]}"; do
+      [[ "$address" != "$forbidden" ]] \
+        || fail "$vm resolves to the forbidden address $forbidden"
+    done
+    lab_ssh "$vm" true || fail "$vm does not answer on the managed channel"
+    printf '  %-16s %s\n' "$vm" "running, one address, answering"
+  done
+
+  revision=$(git -C "$root" rev-parse HEAD) || fail "cannot read the repository revision"
+  if ! git -C "$root" diff --quiet \
+    || ! git -C "$root" diff --cached --quiet \
+    || [[ -n $(git -C "$root" ls-files --others --exclude-standard) ]]; then
+    revision="$revision+worktree"
+  fi
+  printf '  %-16s %s\n' revision "$revision"
+  case "$revision" in
+    *+worktree)
+      printf '\nLIMIT: this run judges an unpublished tree. #41 asks for an exact\n'
+      printf 'SHA; a report built on "+worktree" names a state no one else can\n'
+      printf 'fetch, and closes no line of the palier.\n'
+      ;;
+  esac
+  guard_passed=1
+}
+
+# ---------------------------------------------------------------------------
+# run — the passes, in order, one at a time, first red kept
+# ---------------------------------------------------------------------------
+
+assert_vm_back() {
+  # Two passes really power off lab-console. Whatever a pass did to a machine,
+  # the next one starts from a machine that is up and answering, or not at all.
+  local vm state waited address back
+  local -a machines=()
+  read -r -a machines <<<"$1"
+  for vm in "${machines[@]}"; do
+    state=$(lab_list --format=tsv | awk -F '\t' -v name="$vm" 'NR > 1 && $1 == name {print $2}')
+    if [[ "$state" != running ]]; then
+      announce "Restarting $vm, left '$state' by the pass"
+      lab_start "$vm" || return 1
+    fi
+    waited=0
+    back=0
+    while [[ $waited -lt 180 ]]; do
+      address=$(lab_ip "$vm" 2>/dev/null) || address=
+      if [[ -n "$address" && "$address" != - ]] && lab_ssh "$vm" true; then
+        back=1
+        break
+      fi
+      sleep 5
+      waited=$((waited + 5))
+    done
+    [[ $back -eq 1 ]] || return 1
+  done
+  return 0
+}
+
+do_run() {
+  local name script log started ended seconds status
+
+  for name in "${selected[@]}"; do
+    if [[ -n "$first_red" ]]; then
+      announce "Not running $name: the sequence stopped at the first red"
+      record_pass "$name" not_run 0 ""
+      continue
+    fi
+    script="$here/$name/prove"
+    [[ -x "$script" ]] || fail "pass entry point is missing or not executable: $script"
+    current_pass=$name
+    log="$result_dir/pass-$name.log"
+    announce "$name (${pass_issue[$name]}) — bound ${pass_bound[$name]} s"
+
+    started=$(date -u +%s)
+    # The raw stream is kept live so a multi-hour pass can be watched, then
+    # redacted into the published log. Reading PIPESTATUS rather than trusting
+    # a process substitution is what makes the log whole when the pass dies.
+    set +e
+    timeout --signal=TERM --kill-after=60s "${pass_bound[$name]}" "$script" all 2>&1 \
+      | tee "$workdir/raw-$name.log"
+    status=${PIPESTATUS[0]}
+    set -e
+    redact <"$workdir/raw-$name.log" >"$log"
+    ended=$(date -u +%s)
+    seconds=$((ended - started))
+
+    if [[ $status -eq 0 ]]; then
+      printf 'PASS %s in %d s\n' "$name" "$seconds"
+      record_pass "$name" passed "$seconds" "pass-$name.log"
+    else
+      if [[ $status -eq 124 || $status -eq 137 ]]; then
+        printf 'TIMEOUT %s after %d s; forcing its own removal\n' "$name" "$seconds" >&2
+        failure_class=infrastructure_failure
+        # A bound that leaves a perimeter mounted is worse than no bound: the
+        # pass owns its cleanup, so it is the pass that must be made to run it.
+        set +e
+        timeout --signal=TERM --kill-after=60s 900 "$script" remove 2>&1 \
+          | tee -a "$workdir/raw-$name.log"
+        [[ ${PIPESTATUS[0]} -eq 0 ]] || echo "forced removal of $name did not complete" >&2
+        set -e
+        redact <"$workdir/raw-$name.log" >"$log"
+        record_pass "$name" timed_out "$seconds" "pass-$name.log"
+      else
+        printf 'RED %s after %d s (status %d)\n' "$name" "$seconds" "$status" >&2
+        failure_class=product_or_assertion_failure
+        record_pass "$name" failed "$seconds" "pass-$name.log"
+      fi
+      first_red=$name
+    fi
+    current_pass=
+
+    # Both machines, not only the ones this pass declares it touches: a pass
+    # that stopped something it never named would otherwise trap the next one.
+    assert_vm_back "${vm_names[*]}" || {
+      echo "a machine did not come back after $name" >&2
+      failure_class=infrastructure_failure
+      [[ -n "$first_red" ]] || first_red=$name
+      return 1
+    }
+  done
+
+  announce "windows-helper is not run here"
+  printf 'Its evaluation machine lives outside labctl and outside the %s\n' "$topology"
+  printf 'topology. It is recorded as not run. A Windows half of this palier\n'
+  printf 'remains unproven until that machine plays it.\n'
+}
+
+# ---------------------------------------------------------------------------
+# close — destroy what this run owns, then read the verdict honestly
+# ---------------------------------------------------------------------------
+
+do_close() {
+  announce "Closing the LAB"
+  local destroy_status=0 clean_output clean_status=0 line item
+
+  if [[ $topology_owned -eq 1 ]]; then
+    timeout --signal=TERM --kill-after=30s 600 "$labctl" topology destroy "$topology" \
+      || destroy_status=$?
+    if [[ $destroy_status -ne 0 ]]; then
+      close_status=failed
+      echo "topology destroy failed for $topology" >&2
+      return 1
+    fi
+  else
+    announce "No topology was started by this run; nothing of its own to destroy"
+  fi
+
+  clean_output=$("$labctl" assert-clean 2>&1) || clean_status=$?
+  printf '%s\n' "$clean_output"
+
+  if [[ $clean_status -eq 0 ]]; then
+    assert_clean_status=green
+    close_status=passed
+    return 0
+  fi
+
+  assert_clean_status=red
+  while IFS= read -r line; do
+    case "$line" in
+      "VM LAB persistante : "*)
+        item=${line#VM LAB persistante : }
+        assert_clean_residue+=("vm:${item%% *}")
+        ;;
+      "Réseau LAB persistant : "*)
+        item=${line#Réseau LAB persistant : }
+        assert_clean_residue+=("network:${item%% *}")
+        ;;
+    esac
+  done <<<"$clean_output"
+
+  # Whatever remains, this run either created it or it did not. Anything from
+  # the topology just destroyed would be a real cleanup failure; anything else
+  # is a retention that predates the run, and saying so is not the same as
+  # calling the LAB clean.
+  for item in "${assert_clean_residue[@]}"; do
+    case "${item#*:}" in
+      lab-console | lab-machine-1 | "lab-$topology")
+        close_status=failed
+        echo "the topology this run owns survived its own destruction: $item" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  close_status=passed_with_retention
+  cat >&2 <<EOF
+
+LIMIT: \`labctl assert-clean\` is red, and this run did not make it red. What
+remains is named above and was there before the proof started — the Windows
+evaluation machine is outside labctl by design, and \`assert-clean\` flags any
+domain named lab-*. The topology this run owns is gone; the acceptance
+criterion of #41 that asks for a green assert-clean cannot be met while that
+machine exists under that name.
+EOF
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+
+case "$command" in
+  guard)
+    do_guard
+    ;;
+  run)
+    do_guard
+    do_run
+    ;;
+  close)
+    topology_owned=1
+    do_close
+    ;;
+  all)
+    do_guard
+    run_status=0
+    do_run || run_status=$?
+    do_close || fail "the LAB could not be closed"
+    [[ $run_status -eq 0 && -z "$first_red" ]] || exit 1
+    ;;
+esac

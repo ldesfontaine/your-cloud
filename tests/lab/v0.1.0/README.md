@@ -3,6 +3,64 @@
 Ce dossier contient les harnais LAB du palier `v0.1.0`. Il ne prépare aucune
 capacité d'un autre palier et ne remplace aucun contrôle générique.
 
+## [`prove`](prove) — l'orchestrateur du palier
+
+[`prove`](prove) ne prouve rien par lui-même. Chaque verdict du palier sort de
+l'un des harnais ci-dessous, qui monte son propre périmètre, juge à travers le
+produit compilé et retire ce qu'il a monté. Ce que l'orchestrateur ajoute, ce
+sont les trois choses que la preuve globale de #41 exige et qu'aucun passage
+isolé ne peut donner : **une révision** nommée une fois et portée par tous les
+passages, **un ordre** — les passages partagent deux VM et ne peuvent donc
+jamais tourner ensemble — et **une fermeture** qui détruit la topologie que ce
+passage possède au lieu de la laisser à la vigilance d'un humain.
+
+```text
+tests/lab/v0.1.0/prove                    # garde, les cinq passages, fermeture
+tests/lab/v0.1.0/prove guard
+tests/lab/v0.1.0/prove run [passe...]
+tests/lab/v0.1.0/prove close
+```
+
+L'ordre est celui des dépendances de #13 : `personal-access` (#51, #52),
+`signed-approval` (#37), `controller-install` (#38), `machine-identity` (#39),
+puis `controller-replacement` (#40).
+
+- **Le premier rouge est conservé.** Le passage qui échoue arrête la séquence,
+  son journal est retenu entier, les passages suivants sont enregistrés
+  `not_run` — jamais `passed` — et la fermeture a quand même lieu.
+- **Les délais sont bornés.** Chaque passage porte un plafond d'horloge, et
+  chaque appel au LAB aussi. Un passage tué sur sa borne est ensuite forcé à
+  travers son propre `remove` : une borne qui laisse un périmètre monté est pire
+  que pas de borne du tout.
+- **Aucun faux succès global.** `PROVE_V0_1_0_OK` n'est écrit que par un
+  passage qui a gardé, joué **tous** les passages et fermé. Une phase seule rend
+  `PROVE_V0_1_0_PHASE_OK`, un sous-ensemble rend `PROVE_V0_1_0_PARTIAL_OK`, et
+  le résultat structuré porte `complete: false` dans les deux cas.
+- **Le résultat est structuré et expurgé.** Chaque passage écrit
+  `tests/artifacts/proofs/v0.1.0/<run>/result.json` et le journal de chaque
+  passe à côté, les chemins du poste de pilotage remplacés. La matière du LAB
+  est synthétique par construction : elle est frappée au montage et détruite au
+  démontage.
+- **La révision est nommée honnêtement.** Un arbre modifié rend
+  `<sha>+worktree`, et l'orchestrateur annonce alors que #41 demande un SHA
+  exact et qu'un tel passage ne ferme aucune ligne du palier.
+
+### Limites
+
+- `windows-helper` **ne fait pas partie de la séquence** : sa machine
+  d'évaluation vit hors de `labctl` et hors de cette topologie. Elle est
+  enregistrée `not_run`, jamais `passed`. La moitié Windows du palier reste non
+  prouvée tant que cette machine ne la joue pas.
+- **`labctl assert-clean` ne peut pas être vert** tant que `lab-windows` existe
+  sous ce nom : la garde retient tout domaine nommé `lab-*`, et cette VM est
+  manuelle par décision. La fermeture détruit la topologie que le passage
+  possède, relit la garde, et **nomme** ce qui reste au lieu de l'appeler
+  propre. Si l'un des résidus appartenait à la topologie détruite, c'est un
+  échec de nettoyage et la fermeture rougit. Le critère de #41 qui demande un
+  `assert-clean` vert ne peut donc pas être satisfait en l'état.
+- **Démarrer une VM arrêtée est la seule mutation** que l'orchestrateur fait
+  hors d'un passage, et c'est elle qui rend la topologie sienne à fermer.
+
 ## [`personal-access/`](personal-access/) — périmètre de l'accès personnel
 
 La suite `personal-access-contract` de l'assistant natif ne peut pas être
