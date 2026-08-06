@@ -2,6 +2,7 @@ package auxiliary
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -251,6 +253,99 @@ func (executor SystemExecutor) RemoveUnitFile(path string) error {
 	return syncDirectory(filepath.Dir(path))
 }
 
+// EnsureEntrypointDirectories creates the three root-owned directories the
+// entrypoint's sheet mounts read-only.
+//
+// The mode is the one the sheets already use: writable by root and readable by
+// everyone, which is what a rootless container needs in order to read a bind
+// mount as its own account while never being able to write it. The list is a
+// constant of this package and no caller supplies a path.
+func (executor SystemExecutor) EnsureEntrypointDirectories() error {
+	for _, directory := range []string{
+		entrypointRoot,
+		entrypointFragmentDirectory,
+		entrypointCertificateDirectory,
+	} {
+		if err := os.MkdirAll(directory, unitDirectoryMode); err != nil {
+			return fmt.Errorf("create %s: %w", directory, err)
+		}
+	}
+	return nil
+}
+
+// ListRouteFragments names the fragments the entrypoint currently serves.
+//
+// An absent directory is an answer and not a failure: a machine that never held
+// an entrypoint publishes no route. Only the file names travel back, sorted so
+// that a refusal names the same routes in the same order on every run, and no
+// content of a fragment ever leaves this function.
+func (executor SystemExecutor) ListRouteFragments() ([]string, error) {
+	entries, err := os.ReadDir(entrypointFragmentDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	fragments := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), routeFragmentSuffix) {
+			continue
+		}
+		fragments = append(fragments, entry.Name())
+	}
+	sort.Strings(fragments)
+	return fragments, nil
+}
+
+// HostPortsPolicy reads the policy file, and reports its absence as an answer.
+func (executor SystemExecutor) HostPortsPolicy() ([]byte, bool, error) {
+	return executor.ReadUnitFile(hostPortsPolicyPath)
+}
+
+// WriteHostPortsPolicy persists the policy and applies it immediately.
+//
+// The two halves are one effect on purpose. A file under /etc/sysctl.d alone
+// would only take effect at the next boot, so a machine that had just approved
+// an entrypoint would hold a policy it was not yet running under; applying alone
+// would not survive a reboot, and the palier's own proof requires that a restart
+// brings everything back without an action. The application is `sysctl --system`
+// with no argument derived from anything: it re-reads the machine's own files,
+// which is what makes the running kernel agree with what is on disk rather than
+// with what this process believed.
+func (executor SystemExecutor) WriteHostPortsPolicy(content []byte) error {
+	if err := executor.WriteUnitFile(hostPortsPolicyPath, content); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, "sysctl", "--system")
+	return err
+}
+
+// RemoveHostPortsPolicy removes the policy file and puts this machine back under
+// whatever remains, in three steps whose order is the whole of the argument.
+func (executor SystemExecutor) RemoveHostPortsPolicy() error {
+	if err := executor.RemoveUnitFile(hostPortsPolicyPath); err != nil {
+		return err
+	}
+	// `sysctl` has no "forget this setting", so removing the file alone would
+	// leave the relaxation running until the next reboot: the setting is put back
+	// to the kernel's own default by name.
+	if _, err := executor.run(commandTimeout, "sysctl", "--write",
+		"net.ipv4.ip_unprivileged_port_start="+strconv.Itoa(defaultUnprivilegedPortStart)); err != nil {
+		return err
+	}
+	// And the machine's remaining files are read last rather than first, so that
+	// another administrator's policy, if this machine carries one, re-asserts
+	// itself over that default instead of being overwritten by it. What this
+	// product takes away is exactly what this product put there.
+	_, err := executor.run(commandTimeout, "sysctl", "--system")
+	return err
+}
+
+// defaultUnprivilegedPortStart is the value a Linux kernel carries when nothing
+// has raised it, and the one a removed entrypoint puts back.
+const defaultUnprivilegedPortStart = 1024
+
 // ReloadUserUnits makes the account's own systemd read its sheets again.
 func (executor SystemExecutor) ReloadUserUnits(account string) error {
 	_, err := executor.runAs(account, commandTimeout, "systemctl", "--user", "daemon-reload")
@@ -388,6 +483,168 @@ func (executor SystemExecutor) ProbeAnswers(port int, expectedContentType string
 	}
 	if last == nil {
 		last = errors.New("the service never answered")
+	}
+	return last
+}
+
+// EntrypointAnswers performs the local verification of the public entrypoint,
+// bounded in attempts and in time, and proves the one invariant that depends on
+// no route at all.
+//
+// Two constats, both from this machine and both about a name nobody declared:
+//
+//  1. the secure port answers, and answers the entry's own generic refusal. The
+//     Host of the request is the loopback address, which no fragment can ever
+//     declare — the plan validation refuses a route host that is not a name — so
+//     an answer that was not a refusal would mean a default router exists, which
+//     is exactly what this contract forbids;
+//  2. the clear port answers a permanent redirection towards https, and nothing
+//     else. A redirect that is followed proves nothing, so it is read rather
+//     than followed.
+//
+// Certificate verification is skipped because there is nothing to verify: this
+// runs before any name is declared, so the certificate the entry presents is its
+// own, and what is being proven is what the entry does, not what it presents.
+func (executor SystemExecutor) EntrypointAnswers() error {
+	secure := &http.Client{
+		Timeout: probeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			// #nosec G402 -- the entry presents its own certificate here: this
+			// verification runs before any name is declared, and what it proves is
+			// the entry's conduct rather than a chain of trust. The palier's proof
+			// of TLS is taken from outside the machine against a pinned authority.
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	clear := &http.Client{
+		Timeout: probeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	secureAddress := "https://" + net.JoinHostPort(loopbackAddress, strconv.Itoa(entrypointSecurePort)) + "/"
+	clearAddress := "http://" + net.JoinHostPort(loopbackAddress, strconv.Itoa(entrypointClearPort)) + "/"
+
+	var last error
+	for attempt := 0; attempt < probeAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(probeInterval)
+		}
+		if err := refusesUndeclaredNames(secure, secureAddress); err != nil {
+			last = err
+			continue
+		}
+		if err := redirectsToTheSecurePort(clear, clearAddress); err != nil {
+			last = err
+			continue
+		}
+		return nil
+	}
+	if last == nil {
+		last = errors.New("the entrypoint never answered")
+	}
+	return last
+}
+
+// refusesUndeclaredNames is the first half of the entry's invariant.
+func refusesUndeclaredNames(client *http.Client, address string) error {
+	response, err := client.Get(address)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		return fmt.Errorf(
+			"the entrypoint answered %d to a name no route declares, rather than its generic refusal",
+			response.StatusCode,
+		)
+	}
+	return nil
+}
+
+// redirectsToTheSecurePort is the second half.
+func redirectsToTheSecurePort(client *http.Client, address string) error {
+	response, err := client.Get(address)
+	if err != nil {
+		return err
+	}
+	location := response.Header.Get("Location")
+	io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	response.Body.Close()
+	if response.StatusCode != http.StatusPermanentRedirect && response.StatusCode != http.StatusMovedPermanently {
+		return fmt.Errorf("the clear port answered %d rather than a permanent redirection", response.StatusCode)
+	}
+	if !strings.HasPrefix(location, "https://") {
+		return fmt.Errorf("the clear port redirected somewhere that is not https")
+	}
+	return nil
+}
+
+// RouteAnswers performs the local verification of one published route, bounded
+// in attempts and in time.
+//
+// The declared name travels twice — once as the TLS server name, so the entry
+// selects the router the way a real client makes it select one, and once as the
+// Host header — while the connection itself is made to this machine's loopback
+// and nowhere else. What is required of the answer is the status and the two
+// isolation headers of the profile, which are the two the palier's proof
+// constats from outside; the body is read only far enough to be discarded,
+// because no plan describes it.
+//
+// The retry window is what absorbs the entry's own file watch: the fragment is
+// on disk before this runs, and the entry picks it up shortly after.
+func (executor SystemExecutor) RouteAnswers(routeHost string) error {
+	client := &http.Client{
+		Timeout: probeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			// #nosec G402 -- see EntrypointAnswers: the certificate of a declared
+			// name is signed by an authority this palier's proof creates, not by
+			// anything this Auxiliary could hold. What is proven here is that the
+			// fragment took effect and that the backend is reached.
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: routeHost},
+		},
+	}
+	address := "https://" + net.JoinHostPort(loopbackAddress, strconv.Itoa(entrypointSecurePort)) + "/"
+	var last error
+	for attempt := 0; attempt < probeAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(probeInterval)
+		}
+		request, err := http.NewRequest(http.MethodGet, address, nil)
+		if err != nil {
+			return err
+		}
+		request.Host = routeHost
+		response, err := client.Do(request)
+		if err != nil {
+			last = err
+			continue
+		}
+		opener := response.Header.Get("Cross-Origin-Opener-Policy")
+		embedder := response.Header.Get("Cross-Origin-Embedder-Policy")
+		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			last = fmt.Errorf("the entrypoint answered %d for this name", response.StatusCode)
+			continue
+		}
+		if opener != isolationOpenerPolicy || embedder != isolationEmbedderPolicy {
+			last = fmt.Errorf(
+				"the answer carried the isolation headers %q and %q rather than %q and %q",
+				opener, embedder, isolationOpenerPolicy, isolationEmbedderPolicy)
+			continue
+		}
+		return nil
+	}
+	if last == nil {
+		last = errors.New("the entrypoint never served this name")
 	}
 	return last
 }

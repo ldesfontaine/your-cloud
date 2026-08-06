@@ -60,12 +60,47 @@ type Executor interface {
 	EnableLinger(account string) error
 
 	// ReadUnitFile returns the current Quadlet sheet, and whether there is one.
+	//
+	// The three methods below are the one file discipline of this package rather
+	// than three methods about units: one root-owned file that the Auxiliary
+	// writes and a service account only ever reads, replaced atomically and never
+	// in place. The entrypoint's static configuration and the fragment of a
+	// published route are exactly that, and they travel through these three
+	// methods rather than through copies of them under another name — the same
+	// decision, and for the same reason, as the two methods below that still
+	// spell "probe". The path is always a constant of this package or a constant
+	// joined with a value the plan validation has already bounded to a character
+	// set carrying no separator.
 	ReadUnitFile(path string) ([]byte, bool, error)
-	// WriteUnitFile replaces the sheet atomically, root-owned, so the account
-	// that runs the service cannot rewrite the description of what it runs.
+	// WriteUnitFile replaces the file atomically, root-owned, so the account that
+	// runs the service cannot rewrite the description of what it runs, and the
+	// account that runs the entrypoint cannot rewrite the routes it serves.
 	WriteUnitFile(path string, content []byte) error
-	// RemoveUnitFile removes the sheet, and is content with it being absent.
+	// RemoveUnitFile removes the file, and is content with it being absent.
 	RemoveUnitFile(path string) error
+
+	// EnsureEntrypointDirectories creates, root-owned, the three fixed
+	// directories the entrypoint's sheet mounts read-only: the one its static
+	// configuration lives in, the one its file provider watches, and the one the
+	// certificates of declared names are read from. It takes no argument at all,
+	// because all three are constants of the contract.
+	EnsureEntrypointDirectories() error
+	// ListRouteFragments names the route fragments this machine currently holds,
+	// so that removing the entrypoint can refuse while any of them would stop
+	// being served without a plan saying so. It reports names and never content.
+	ListRouteFragments() ([]string, error)
+
+	// HostPortsPolicy, WriteHostPortsPolicy and RemoveHostPortsPolicy are the one
+	// host relaxation this product allows itself, as a declared effect of the
+	// entrypoint plan rather than as a step of a bootstrap.
+	//
+	// Writing applies the policy immediately as well as persisting it, and
+	// removing deletes the file and re-applies what is left, so that the running
+	// kernel and the file on disk never disagree about what a human approved. The
+	// content is a constant of this package and never a value from a plan.
+	HostPortsPolicy() ([]byte, bool, error)
+	WriteHostPortsPolicy(content []byte) error
+	RemoveHostPortsPolicy() error
 
 	// ReloadUserUnits makes the account's systemd read the sheets again.
 	ReloadUserUnits(account string) error
@@ -98,4 +133,30 @@ type Executor interface {
 	// where the status is the whole of the proof; it is matched as the prefix of
 	// the media type, so a document served with a charset still answers.
 	ProbeAnswers(port int, expectedContentType string) error
+
+	// EntrypointAnswers is the local verification of the public entrypoint, and
+	// it takes no argument because the invariant it proves depends on no route.
+	//
+	// The invariant is named once, here: the entry holds both public ports, it
+	// gives no application route to a name nobody declared, and the clear port
+	// does nothing but redirect to the secure one. In practice that is one
+	// bounded HTTPS request to the loopback, whose Host is an address and
+	// therefore a name no fragment declares, requiring the entry's own generic
+	// refusal; and one bounded clear request requiring a permanent redirection
+	// towards https. Certificate verification is deliberately skipped: the
+	// certificate of a declared name is the proof's business, and this
+	// verification exists before any name is declared at all.
+	EntrypointAnswers() error
+
+	// RouteAnswers is the local verification of one published route: the entry
+	// serves the declared name from this machine, with both isolation headers,
+	// from the backend the plan named.
+	//
+	// The declared name travels in the SNI and in the Host header, and
+	// certificate verification is skipped for the same reason as above — what is
+	// being proven here is that the fragment took effect and that the backend is
+	// reached, not that a certificate chains to anything. The palier's own proof
+	// takes the same constat from outside the machine, against a pinned
+	// authority, and that one is `#92`.
+	RouteAnswers(routeHost string) error
 }

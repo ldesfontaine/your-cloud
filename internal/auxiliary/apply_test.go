@@ -86,8 +86,10 @@ func TestAPlanDemandingTheStateAlreadyHeldChangesNothing(t *testing.T) {
 func TestADriftedStateIsAChangeAndNotAnError(t *testing.T) {
 	t.Parallel()
 	for name, drift := range map[string]func(*fakeExecutor){
-		"the sheet was edited":             func(e *fakeExecutor) { e.unit = append(e.unit, "\n# edited\n"...) },
-		"the sheet disappeared":            func(e *fakeExecutor) { e.unit, e.unitPresent = nil, false },
+		"the sheet was edited": func(e *fakeExecutor) {
+			e.hold(probePlacement.unitPath(), append(e.held(probePlacement.unitPath()), "\n# edited\n"...))
+		},
+		"the sheet disappeared":            func(e *fakeExecutor) { e.drop(probePlacement.unitPath()) },
 		"the service was stopped":          func(e *fakeExecutor) { e.active = false },
 		"another image is running":         func(e *fakeExecutor) { e.image = "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64) },
 		"the probe was never on this port": func(e *fakeExecutor) {},
@@ -158,7 +160,7 @@ func TestRemovingAPresentProbeLeavesNothingBehind(t *testing.T) {
 	if strings.Join(executor.effects, ",") != strings.Join(expected, ",") {
 		t.Fatalf("unexpected effects: %q", executor.effects)
 	}
-	if executor.unitPresent || executor.active || executor.image != "" {
+	if executor.holds(UnitPath()) || executor.active || executor.image != "" {
 		t.Fatalf("the machine still holds part of the probe: %+v", executor)
 	}
 	if len(executor.removedImages) != 1 || executor.removedImages[0] != PinnedImage() {
@@ -196,7 +198,7 @@ func TestAFreshApprovalAfterACutAppliesAgainstTheStateItFinds(t *testing.T) {
 		},
 		"a service started from a sheet that was then lost": func(t *testing.T) *fakeExecutor {
 			executor := deployedMachine(t, fixturePort)
-			executor.unit, executor.unitPresent = nil, false
+			executor.drop(probePlacement.unitPath())
 			return executor
 		},
 	} {

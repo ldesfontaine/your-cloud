@@ -444,3 +444,267 @@ func TestAManagedWebServiceIsReportedInTheSameClosedVocabulary(t *testing.T) {
 		t.Fatalf("a rollback that succeeded claimed more than it reached: %+v", failed)
 	}
 }
+
+// TestTheEntrypointIsReportedWithoutInventingAValueItsPlanDoesNotCarry holds the
+// answer a reader receives for the public entrypoint.
+//
+// An entrypoint plan carries no port and no host, so its report names neither: a
+// local port line would be a value nobody approved, and a route line would be a
+// claim about something this operation never touched. What it does name is the
+// sheet it wrote and the state the machine now holds, in the very words a probe
+// and a managed service are already reported in.
+func TestTheEntrypointIsReportedWithoutInventingAValueItsPlanDoesNotCarry(t *testing.T) {
+	t.Parallel()
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationDeployEntrypoint,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 5,
+		},
+	}
+	report := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationDeployEntrypoint,
+		UnitPath:     auxiliary.EntrypointUnitPath(),
+		ServiceState: auxiliary.ServiceStateActive,
+		Changed:      true,
+	})
+	if report.Outcome != auxiliary.OutcomeApplied || !report.Changed {
+		t.Fatalf("an applied entrypoint operation did not say so: %+v", report)
+	}
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["unit_path"] != auxiliary.EntrypointUnitPath() {
+		t.Fatalf("the report does not name the entry it applied: %v", decoded)
+	}
+	for _, field := range []string{
+		"local_port", "route_host", "fragment_path",
+		"plan", "rollback", "image_reference", "image_digest",
+	} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("the entrypoint report carries %q", field)
+		}
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"plan operation: " + approval.OperationDeployEntrypoint,
+		"unit: " + auxiliary.EntrypointUnitPath(),
+		"service: active",
+		"changed: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "route: ") || strings.Contains(text.String(), "fragment: ") {
+		t.Fatalf("the entrypoint report named a route: %q", text.String())
+	}
+}
+
+// TestAPublishedRouteIsReportedByItsNameAndItsFragmentAndNothingElse holds the
+// answer a reader receives for a route.
+//
+// The two things it names are the declared host and the one file that host owns.
+// What it must never name is anything about the certificate of that host: the
+// key and the certificate are read from a directory this Auxiliary never writes,
+// and a report of this product carries the machine's conclusions rather than the
+// material it read.
+func TestAPublishedRouteIsReportedByItsNameAndItsFragmentAndNothingElse(t *testing.T) {
+	t.Parallel()
+	const host = "lab.example.test"
+	fragment := auxiliary.EntrypointFragmentDirectory() + "/" + host + ".yaml"
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationPublishRoute,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 6,
+		},
+	}
+	report := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationPublishRoute,
+		RouteHost:    host,
+		FragmentPath: fragment,
+		ServiceState: auxiliary.ServiceStateActive,
+		Changed:      true,
+	})
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["route_host"] != host || decoded["fragment_path"] != fragment {
+		t.Fatalf("the report does not name the route it published: %v", decoded)
+	}
+	// A route has no sheet and no loopback port of its own, and nothing of a
+	// certificate ever reaches this answer.
+	for _, field := range []string{
+		"unit_path", "local_port", "certificate", "cert_file", "key_file",
+		"private_key", "plan", "rollback",
+	} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("the route report carries %q", field)
+		}
+	}
+	for _, secret := range []string{"BEGIN CERTIFICATE", "BEGIN PRIVATE KEY", ".key", ".crt"} {
+		if strings.Contains(rendered.String(), secret) {
+			t.Fatalf("the route report carries certificate material: %q", rendered.String())
+		}
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"plan operation: " + approval.OperationPublishRoute,
+		"route: " + host,
+		"fragment: " + fragment,
+		"service: active",
+		"changed: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+
+	// A retirement that found the name already unserved reads the same way, with
+	// the one word that separates an operation which acted from one which did
+	// not.
+	unchanged := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationRetireRoute,
+		RouteHost:    host,
+		FragmentPath: fragment,
+		ServiceState: auxiliary.ServiceStateAbsent,
+		Changed:      false,
+	})
+	if unchanged.Changed || unchanged.Outcome != auxiliary.OutcomeApplied {
+		t.Fatalf("a route operation that changed nothing reported otherwise: %+v", unchanged)
+	}
+
+	// And a controlled failure of a route carries the same outcome words as every
+	// other, plus the fifth observed word only a route has.
+	failed := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation:    approval.OperationPublishRoute,
+		RouteHost:    host,
+		FragmentPath: fragment,
+		Outcome:      auxiliary.OutcomePartial,
+		Cause:        errors.New("the entrypoint never served this name"),
+		Rollback:     errors.New("the fragment could not be removed"),
+		Observed: &auxiliary.Observation{
+			Account:   "present",
+			UnitFile:  "present",
+			Service:   "active",
+			Container: "pinned",
+			Fragment:  "present",
+		},
+	})
+	var partial bytes.Buffer
+	if err := renderAuxiliaryReport(&partial, "text", failed); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"outcome: " + auxiliary.OutcomePartial,
+		"rollback attempted: true",
+		"observed fragment: present",
+		"route: " + host,
+	} {
+		if !strings.Contains(partial.String(), line) {
+			t.Fatalf("the partial route state does not state %q: %q", line, partial.String())
+		}
+	}
+}
+
+// TestTheObservedFragmentIsAbsentFromEveryAnswerThatIsNotARoute keeps the fifth
+// observed word from becoming noise on the four operations that have no
+// fragment: an observation says what was seen, and a word about something the
+// operation never touched would be neither a fact nor an admission.
+func TestTheObservedFragmentIsAbsentFromEveryAnswerThatIsNotARoute(t *testing.T) {
+	t.Parallel()
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationDeployOCIProbe,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges:     []string{approval.PrivilegeMutateLocalState, approval.PrivilegeReadLocalState},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 7,
+		},
+	}
+	report := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation: approval.OperationDeployOCIProbe,
+		LocalPort: 8080,
+		UnitPath:  auxiliary.UnitPath(),
+		Outcome:   auxiliary.OutcomePartial,
+		Cause:     errors.New("the probe never answered"),
+		Rollback:  errors.New("the sheet could not be removed"),
+		Observed: &auxiliary.Observation{
+			Account:   "present",
+			UnitFile:  "present",
+			Service:   "inactive",
+			Container: "none",
+		},
+	})
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	observed, ok := decoded["observed"].(map[string]any)
+	if !ok {
+		t.Fatalf("the report says nothing about what was observed: %v", decoded)
+	}
+	if _, present := observed["fragment"]; present {
+		t.Fatalf("a probe's observation claimed something about a fragment: %v", observed)
+	}
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text.String(), "observed fragment") {
+		t.Fatalf("a probe's text observation named a fragment: %q", text.String())
+	}
+}

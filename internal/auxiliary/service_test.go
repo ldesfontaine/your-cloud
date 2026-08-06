@@ -89,8 +89,10 @@ func TestAServicePlanDemandingTheStateAlreadyHeldChangesNothing(t *testing.T) {
 func TestADriftedServiceIsAChangeAndNotAnError(t *testing.T) {
 	t.Parallel()
 	for name, drift := range map[string]func(*fakeExecutor){
-		"the sheet was edited":  func(e *fakeExecutor) { e.unit = append(e.unit, "\n# edited\n"...) },
-		"the sheet disappeared": func(e *fakeExecutor) { e.unit, e.unitPresent = nil, false },
+		"the sheet was edited": func(e *fakeExecutor) {
+			e.hold(bentoPDFPlacement.unitPath(), append(e.held(bentoPDFPlacement.unitPath()), "\n# edited\n"...))
+		},
+		"the sheet disappeared": func(e *fakeExecutor) { e.drop(bentoPDFPlacement.unitPath()) },
 		"the service was stopped": func(e *fakeExecutor) {
 			e.active = false
 		},
@@ -207,7 +209,7 @@ func TestAControlledFailureOfTheServiceAttemptsTheApprovedRollbackAndNothingElse
 	if len(executor.pulled) != 1 || len(executor.startedServices) != 1 {
 		t.Fatalf("the failed deployment was retried: %v %v", executor.pulled, executor.startedServices)
 	}
-	if executor.unitPresent || executor.active || executor.image != "" {
+	if executor.holds(bentoPDFPlacement.unitPath()) || executor.active || executor.image != "" {
 		t.Fatalf("the machine still holds what the rollback undoes: %+v", executor)
 	}
 }
@@ -241,7 +243,7 @@ func TestEveryControlledFailureOfAServiceDeploymentReachesTheSameRollback(t *tes
 		if failure.Outcome != expected {
 			t.Fatalf("a failure at %s concluded %q: %+v", failing, failure.Outcome, failure)
 		}
-		if executor.unitPresent || executor.active {
+		if executor.holds(bentoPDFPlacement.unitPath()) || executor.active {
 			t.Fatalf("a failure at %s left the machine holding the service: %+v", failing, executor)
 		}
 		if count(executor.effects, "PullImage") > 1 || count(executor.effects, "StartService") > 1 {
@@ -281,7 +283,7 @@ func TestAServiceRemovalThatFailsMidwayRedeploysTheInstanceItWasTakingAway(t *te
 	if strings.Join(executor.effects, ",") != strings.Join(expected, ",") {
 		t.Fatalf("the rollback was not the approved redeployment and nothing else: %q", executor.effects)
 	}
-	if !executor.unitPresent || !executor.active || executor.image != bentoPDFPlacement.image {
+	if !executor.holds(bentoPDFPlacement.unitPath()) || !executor.active || executor.image != bentoPDFPlacement.image {
 		t.Fatalf("the instance the removal was taking away was not put back: %+v", executor)
 	}
 	// The redeployment is verified locally like any other, with the profile's

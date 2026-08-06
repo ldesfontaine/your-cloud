@@ -64,7 +64,7 @@ func TestAControlledFailureAttemptsTheApprovedRollbackAndNothingElse(t *testing.
 	if len(executor.pulled) != 1 || len(executor.startedServices) != 1 {
 		t.Fatalf("the failed deployment was retried: %v %v", executor.pulled, executor.startedServices)
 	}
-	if executor.unitPresent || executor.active || executor.image != "" {
+	if executor.holds(UnitPath()) || executor.active || executor.image != "" {
 		t.Fatalf("the machine still holds what the rollback undoes: %+v", executor)
 	}
 }
@@ -104,7 +104,7 @@ func TestEveryControlledFailureOfADeploymentReachesTheSameRollback(t *testing.T)
 		if failure.Outcome != expected {
 			t.Fatalf("a failure at %s concluded %q: %+v", failing, failure.Outcome, failure)
 		}
-		if executor.unitPresent || executor.active {
+		if executor.holds(UnitPath()) || executor.active {
 			t.Fatalf("a failure at %s left the machine holding the probe: %+v", failing, executor)
 		}
 		// The failed deployment is never retried: the two effects that belong to
@@ -245,7 +245,7 @@ func TestARemovalThatFailsMidwayRedeploysTheInstanceItWasTakingAway(t *testing.T
 	if strings.Join(executor.effects, ",") != strings.Join(expected, ",") {
 		t.Fatalf("the rollback was not the approved redeployment and nothing else: %q", executor.effects)
 	}
-	if !executor.unitPresent || !executor.active || executor.image != PinnedImage() {
+	if !executor.holds(UnitPath()) || !executor.active || executor.image != PinnedImage() {
 		t.Fatalf("the instance the removal was taking away was not put back: %+v", executor)
 	}
 	// The redeployment is verified locally like any other, which is what makes

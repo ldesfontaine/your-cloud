@@ -19,6 +19,11 @@ const (
 	fixtureMachine        = "lab-machine-1"
 	fixturePort           = 8080
 
+	// fixtureRouteHost is the one declared name these tests publish. It is a
+	// `.test` name on purpose: the palier proves HTTPS on a name declared in the
+	// LAB, not a public emission.
+	fixtureRouteHost = "lab.example.test"
+
 	// fixtureIssuedAt and fixtureExpiresAt frame the one window an approval of
 	// this palier is presentable in, and fixtureNow is one instant inside it.
 	fixtureIssuedAt  = 1_754_000_000
@@ -195,6 +200,19 @@ func forgedPlan(t *testing.T, operation string, port int, altered map[string]str
 		{"image_digest", quotedJSON(t, plan.ProbeImageDigest)},
 		{"local_port", strconv.Itoa(port)},
 	}
+	return forgeDocument(t, nominal, altered)
+}
+
+// forgeDocument renders one document from its nominal field list and exactly the
+// alterations a case asks for, and is the one place the three schemas' forgers
+// share.
+//
+// A named field whose value is empty is left out of the document entirely, a
+// named field with a value replaces the nominal one in place, and anything the
+// case names beyond the closed list is appended in one sorted order, so that a
+// forged document is the same bytes on every run.
+func forgeDocument(t *testing.T, nominal [][2]string, altered map[string]string) []byte {
+	t.Helper()
 	fields := make([]string, 0, len(nominal)+len(altered))
 	canonical := map[string]bool{}
 	for _, field := range nominal {
@@ -208,8 +226,6 @@ func forgedPlan(t *testing.T, operation string, port int, altered map[string]str
 			fields = append(fields, quotedJSON(t, field[0])+":"+value)
 		}
 	}
-	// Whatever the case named beyond the closed list is appended in one sorted
-	// order, so that a forged document is the same bytes on every run.
 	smuggled := make([]string, 0, len(altered))
 	for name := range altered {
 		if !canonical[name] {
@@ -221,6 +237,32 @@ func forgedPlan(t *testing.T, operation string, port int, altered map[string]str
 		fields = append(fields, quotedJSON(t, name)+":"+altered[name])
 	}
 	return []byte("{" + strings.Join(fields, ",") + "}")
+}
+
+// forgedEntrypointPlan and forgedRoutePlan are the same forger over the two
+// other closed field lists of schema 2.
+func forgedEntrypointPlan(t *testing.T, operation string, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV2)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"image_reference", quotedJSON(t, plan.EntrypointImageReference)},
+		{"image_digest", quotedJSON(t, plan.EntrypointImageDigest)},
+	}, altered)
+}
+
+func forgedRoutePlan(t *testing.T, operation, host string, port int, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV2)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"route_host", quotedJSON(t, host)},
+		{"backend_port", strconv.Itoa(port)},
+	}, altered)
 }
 
 // wrapperDocument is the mutating shape of the standard input.
@@ -296,10 +338,18 @@ func capableMachine() Capabilities {
 // have happened before anything was touched rather than after something was
 // tidied away.
 type fakeExecutor struct {
-	capabilities       Capabilities
-	afterAccount       *Capabilities
-	unit               []byte
-	unitPresent        bool
+	capabilities Capabilities
+	afterAccount *Capabilities
+	// files is every root-owned file this machine holds, by path. It is keyed by
+	// path rather than held as one sheet because a machine of this palier holds
+	// several at once: the sheet of a managed service, the sheet of the entry, the
+	// entry's static configuration and one fragment per published route. A test
+	// that could only describe one file could not describe a route at all.
+	files              map[string][]byte
+	policy             []byte
+	policyPresent      bool
+	policyApplications int
+	directoriesEnsured int
 	active             bool
 	image              string
 	failures           map[string]error
@@ -308,6 +358,8 @@ type fakeExecutor struct {
 	reads              []string
 	effects            []string
 	writtenUnit        []byte
+	writtenPaths       []string
+	removedPaths       []string
 	pulled             []string
 	removedImages      []string
 	startedServices    []string
@@ -317,16 +369,35 @@ type fakeExecutor struct {
 	lingeringAccounts  []string
 	probedPorts        []int
 	probedContentTypes []string
+	verifiedRoutes     []string
+	entrypointChecks   int
 }
 
 func newFakeExecutor() *fakeExecutor {
 	return &fakeExecutor{
 		capabilities: capableMachine(),
+		files:        map[string][]byte{},
 		failures:     map[string]error{},
 		tolerated:    map[string]int{},
 		calls:        map[string]int{},
 	}
 }
+
+// hold, held, holds and drop are how a test describes the files one machine
+// carries, so that no case has to reach into the map and none of them can
+// describe a file without saying where it is.
+func (executor *fakeExecutor) hold(path string, content []byte) {
+	executor.files[path] = content
+}
+
+func (executor *fakeExecutor) held(path string) []byte { return executor.files[path] }
+
+func (executor *fakeExecutor) holds(path string) bool {
+	_, present := executor.files[path]
+	return present
+}
+
+func (executor *fakeExecutor) drop(path string) { delete(executor.files, path) }
 
 // fail is how one seam call is made to refuse.
 //
@@ -382,10 +453,11 @@ func (executor *fakeExecutor) ReadUnitFile(path string) ([]byte, bool, error) {
 	if err := executor.fail("ReadUnitFile"); err != nil {
 		return nil, false, err
 	}
-	if !executor.unitPresent {
+	content, present := executor.files[path]
+	if !present {
 		return nil, false, nil
 	}
-	return executor.unit, true, nil
+	return content, true, nil
 }
 
 func (executor *fakeExecutor) WriteUnitFile(path string, content []byte) error {
@@ -394,8 +466,8 @@ func (executor *fakeExecutor) WriteUnitFile(path string, content []byte) error {
 		return err
 	}
 	executor.writtenUnit = content
-	executor.unit = content
-	executor.unitPresent = true
+	executor.writtenPaths = append(executor.writtenPaths, path)
+	executor.hold(path, content)
 	return nil
 }
 
@@ -404,8 +476,68 @@ func (executor *fakeExecutor) RemoveUnitFile(path string) error {
 	if err := executor.fail("RemoveUnitFile"); err != nil {
 		return err
 	}
-	executor.unit = nil
-	executor.unitPresent = false
+	executor.removedPaths = append(executor.removedPaths, path)
+	executor.drop(path)
+	return nil
+}
+
+func (executor *fakeExecutor) EnsureEntrypointDirectories() error {
+	executor.effects = append(executor.effects, "EnsureEntrypointDirectories")
+	if err := executor.fail("EnsureEntrypointDirectories"); err != nil {
+		return err
+	}
+	executor.directoriesEnsured++
+	return nil
+}
+
+// ListRouteFragments answers from the files this machine holds, so that a test
+// which published a route does not also have to declare that the route exists.
+func (executor *fakeExecutor) ListRouteFragments() ([]string, error) {
+	executor.reads = append(executor.reads, "ListRouteFragments")
+	if err := executor.fail("ListRouteFragments"); err != nil {
+		return nil, err
+	}
+	fragments := []string{}
+	for path := range executor.files {
+		if strings.HasPrefix(path, entrypointFragmentDirectory+"/") &&
+			strings.HasSuffix(path, routeFragmentSuffix) {
+			fragments = append(fragments, strings.TrimPrefix(path, entrypointFragmentDirectory+"/"))
+		}
+	}
+	sort.Strings(fragments)
+	return fragments, nil
+}
+
+func (executor *fakeExecutor) HostPortsPolicy() ([]byte, bool, error) {
+	executor.reads = append(executor.reads, "HostPortsPolicy")
+	if err := executor.fail("HostPortsPolicy"); err != nil {
+		return nil, false, err
+	}
+	if !executor.policyPresent {
+		return nil, false, nil
+	}
+	return executor.policy, true, nil
+}
+
+func (executor *fakeExecutor) WriteHostPortsPolicy(content []byte) error {
+	executor.effects = append(executor.effects, "WriteHostPortsPolicy")
+	if err := executor.fail("WriteHostPortsPolicy"); err != nil {
+		return err
+	}
+	executor.policy = content
+	executor.policyPresent = true
+	executor.policyApplications++
+	return nil
+}
+
+func (executor *fakeExecutor) RemoveHostPortsPolicy() error {
+	executor.effects = append(executor.effects, "RemoveHostPortsPolicy")
+	if err := executor.fail("RemoveHostPortsPolicy"); err != nil {
+		return err
+	}
+	executor.policy = nil
+	executor.policyPresent = false
+	executor.policyApplications++
 	return nil
 }
 
@@ -480,6 +612,18 @@ func (executor *fakeExecutor) ProbeAnswers(port int, expectedContentType string)
 	return executor.fail("ProbeAnswers")
 }
 
+func (executor *fakeExecutor) EntrypointAnswers() error {
+	executor.reads = append(executor.reads, "EntrypointAnswers")
+	executor.entrypointChecks++
+	return executor.fail("EntrypointAnswers")
+}
+
+func (executor *fakeExecutor) RouteAnswers(routeHost string) error {
+	executor.reads = append(executor.reads, "RouteAnswers")
+	executor.verifiedRoutes = append(executor.verifiedRoutes, routeHost)
+	return executor.fail("RouteAnswers")
+}
+
 // halfWrittenMachine is what a cut in the middle of a deployment leaves behind:
 // the sheet is on disk, the service was never started, and nothing on the
 // machine says whether the run that wrote it meant to stop there.
@@ -492,8 +636,7 @@ func halfWrittenMachine(t *testing.T, port int) *fakeExecutor {
 	executor := newFakeExecutor()
 	executor.capabilities.AccountPresent = true
 	executor.capabilities.RootlessPodman = true
-	executor.unit = renderUnit(document)
-	executor.unitPresent = true
+	executor.hold(probePlacement.unitPath(), renderUnit(document))
 	return executor
 }
 
@@ -512,10 +655,8 @@ func frozenServicePair(t *testing.T, operation, serviceProfile string, port int)
 	return frozen
 }
 
-// frozenEntrypointPair and frozenRoutePair are the two schema 2 pairs this
-// Auxiliary must refuse by name until the issue that owns them lands. They are
-// built through the plan package precisely because they are valid plans: what is
-// being proven is a refusal to perform, not a refusal to parse.
+// frozenEntrypointPair and frozenRoutePair are the two other schema 2 pairs a
+// Controller would have built and transported.
 func frozenEntrypointPair(t *testing.T, operation string) plan.Frozen {
 	t.Helper()
 	pair, err := plan.BuildEntrypointPair(operation, fixtureInfrastructure, fixtureMachine)
@@ -529,9 +670,9 @@ func frozenEntrypointPair(t *testing.T, operation string) plan.Frozen {
 	return frozen
 }
 
-func frozenRoutePair(t *testing.T, operation string, port int) plan.Frozen {
+func frozenRoutePair(t *testing.T, operation, host string, port int) plan.Frozen {
 	t.Helper()
-	pair, err := plan.BuildRoutePair(operation, fixtureInfrastructure, fixtureMachine, "lab.example.test", port)
+	pair, err := plan.BuildRoutePair(operation, fixtureInfrastructure, fixtureMachine, host, port)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,6 +734,10 @@ func approvedOperation(t *testing.T, operation string, port int) (*approval.Acce
 	switch operation {
 	case plan.OperationDeployWebService, plan.OperationRemoveWebService:
 		return approvedService(t, operation, port)
+	case plan.OperationDeployEntrypoint, plan.OperationRemoveEntrypoint:
+		return approvedEntrypoint(t, operation)
+	case plan.OperationPublishRoute, plan.OperationRetireRoute:
+		return approvedRoute(t, operation, fixtureRouteHost, port)
 	default:
 		return approvedApplication(t, operation, port)
 	}
@@ -614,30 +759,7 @@ func forgedServicePlan(t *testing.T, operation string, port int, altered map[str
 		{"image_digest", quotedJSON(t, plan.BentoPDFImageDigest)},
 		{"local_port", strconv.Itoa(port)},
 	}
-	fields := make([]string, 0, len(nominal)+len(altered))
-	canonical := map[string]bool{}
-	for _, field := range nominal {
-		canonical[field[0]] = true
-		value, replaced := altered[field[0]]
-		if !replaced {
-			fields = append(fields, quotedJSON(t, field[0])+":"+field[1])
-			continue
-		}
-		if value != "" {
-			fields = append(fields, quotedJSON(t, field[0])+":"+value)
-		}
-	}
-	smuggled := make([]string, 0, len(altered))
-	for name := range altered {
-		if !canonical[name] {
-			smuggled = append(smuggled, name)
-		}
-	}
-	sort.Strings(smuggled)
-	for _, name := range smuggled {
-		fields = append(fields, quotedJSON(t, name)+":"+altered[name])
-	}
-	return []byte("{" + strings.Join(fields, ",") + "}")
+	return forgeDocument(t, nominal, altered)
 }
 
 // serviceMachine is a machine that can run the flow with the bentopdf account
@@ -654,8 +776,7 @@ func serviceMachine() *fakeExecutor {
 func deployedServiceMachine(t *testing.T, port int) *fakeExecutor {
 	t.Helper()
 	executor := serviceMachine()
-	executor.unit = renderSheet(bentoPDFPlacement, port)
-	executor.unitPresent = true
+	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, port))
 	executor.active = true
 	executor.image = bentoPDFPlacement.image
 	return executor
@@ -671,9 +792,64 @@ func deployedMachine(t *testing.T, port int) *fakeExecutor {
 	executor := newFakeExecutor()
 	executor.capabilities.AccountPresent = true
 	executor.capabilities.RootlessPodman = true
-	executor.unit = renderUnit(document)
-	executor.unitPresent = true
+	executor.hold(probePlacement.unitPath(), renderUnit(document))
 	executor.active = true
 	executor.image = PinnedImage()
+	return executor
+}
+
+// approvedEntrypoint and approvedRoute are the nominal schema 2 subjects of the
+// two operation groups this issue performs.
+func approvedEntrypoint(t *testing.T, operation string) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenEntrypointPair(t, operation))
+}
+
+func approvedRoute(t *testing.T, operation, host string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenRoutePair(t, operation, host, port))
+}
+
+// entrypointMachine is a machine that can run the flow with the entrypoint
+// account already created, and nothing of the entry on it yet.
+func entrypointMachine() *fakeExecutor {
+	executor := newFakeExecutor()
+	executor.capabilities.AccountPresent = true
+	executor.capabilities.RootlessPodman = true
+	return executor
+}
+
+// deployedEntrypointMachine is a machine already holding exactly the approved
+// entrypoint: the sheet, the static configuration, the host policy the plan
+// declares, the running service and the pinned image.
+func deployedEntrypointMachine() *fakeExecutor {
+	executor := entrypointMachine()
+	executor.hold(entrypointPlacement.unitPath(), renderEntrypointSheet())
+	executor.hold(entrypointConfigurationPath, renderEntrypointConfiguration())
+	executor.policy = renderHostPortsPolicy()
+	executor.policyPresent = true
+	executor.active = true
+	executor.image = entrypointPlacement.image
+	return executor
+}
+
+// routableMachine is what a route plan needs to find: an entry that is there,
+// and one managed service publishing the loopback port the route names.
+//
+// It carries the sheets of both and nothing of the entry's running state,
+// because publishing a route reads neither the service nor the container: a
+// route is one file beside two sheets.
+func routableMachine(port int) *fakeExecutor {
+	executor := entrypointMachine()
+	executor.hold(entrypointPlacement.unitPath(), renderEntrypointSheet())
+	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, port))
+	return executor
+}
+
+// publishedRouteMachine is that same machine with the fragment of one declared
+// name already written exactly as the plan describes it.
+func publishedRouteMachine(host string, port int) *fakeExecutor {
+	executor := routableMachine(port)
+	executor.hold(routeFragmentPath(host), renderRouteFragment(host, port))
 	return executor
 }

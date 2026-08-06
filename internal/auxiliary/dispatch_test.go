@@ -4,18 +4,18 @@ package auxiliary
 // pair reaches, what happens when the two documents do not agree on one, and
 // which schema 2 operations this Auxiliary performs rather than merely reads.
 //
-// The rule it holds is narrow on purpose. Adding schema 2 to this Auxiliary
-// widens what it performs by exactly the two managed web service operations. The
-// four entrypoint and route operations stay refused by name, before any effect
-// and before this machine is even read, until the issue that owns them lands —
-// and that refusal is an ordinary refusal, never a controlled failure, because
-// nothing was touched and there is nothing to have undone.
+// Adding schema 2 to this Auxiliary widened what it performs in two steps.
+// `#90` added the two managed web service operations and left the four
+// entrypoint and route ones refused by name, before any effect and before this
+// machine was even read. `#91` performs all six, so what this file now holds is
+// that each of the three document shapes reaches the effects of its own kind and
+// no other, and that the two decoders still refuse to cover for one another.
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
+	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
@@ -120,7 +120,7 @@ func TestASchemaTwoServiceRemovalTakesTheProfileAwayAndNothingElse(t *testing.T)
 	if len(executor.removedImages) != 1 || executor.removedImages[0] != bentoPDFPlacement.image {
 		t.Fatalf("another image than the profile's pin was removed: %v", executor.removedImages)
 	}
-	if executor.unitPresent || executor.active || executor.image != "" {
+	if executor.holds(bentoPDFPlacement.unitPath()) || executor.active || executor.image != "" {
 		t.Fatalf("the machine still holds part of the service: %+v", executor)
 	}
 }
@@ -194,59 +194,110 @@ func TestASchemaThisAuxiliaryDoesNotReadIsRefusedByName(t *testing.T) {
 	}
 }
 
-// TestTheEntrypointAndRouteOperationsAreRefusedByNameAndNotPerformed is the
-// window this issue deliberately leaves closed.
+// TestEverySchemaTwoOperationIsNowPerformedAndNamesItsOwnInstance is the window
+// this issue closes.
 //
-// The four operations are valid schema 2 plans: they decode, they validate, they
-// hash to what the approval signed and they target this machine. What refuses
-// them is this Auxiliary saying it does not perform them yet — by name, before
-// any effect and before any read — and the refusal is an ordinary error rather
-// than a controlled failure, because a run that touched nothing has nothing to
-// have undone.
-func TestTheEntrypointAndRouteOperationsAreRefusedByNameAndNotPerformed(t *testing.T) {
+// Until `#91` the four entrypoint and route operations were refused at dispatch
+// by name, before any effect and before any read. They are performed now, so
+// what this test holds is the property that refusal used to guard: each of the
+// six schema 2 operations reaches the effects of its own kind, announces the
+// state of its own kind, and names the instance it acted on rather than any
+// other. A regression that routed one kind through another's path is caught
+// here.
+func TestEverySchemaTwoOperationIsNowPerformedAndNamesItsOwnInstance(t *testing.T) {
 	t.Parallel()
 	for _, subject := range []struct {
 		operation string
-		frozen    func(*testing.T) plan.Frozen
+		machine   func(*testing.T) *fakeExecutor
+		approved  func(*testing.T) (*approval.Acceptance, *Input)
+		state     string
+		unitPath  string
+		routeHost string
 	}{
-		{plan.OperationDeployEntrypoint, func(t *testing.T) plan.Frozen {
-			return frozenEntrypointPair(t, plan.OperationDeployEntrypoint)
-		}},
-		{plan.OperationRemoveEntrypoint, func(t *testing.T) plan.Frozen {
-			return frozenEntrypointPair(t, plan.OperationRemoveEntrypoint)
-		}},
-		{plan.OperationPublishRoute, func(t *testing.T) plan.Frozen {
-			return frozenRoutePair(t, plan.OperationPublishRoute, fixturePort)
-		}},
-		{plan.OperationRetireRoute, func(t *testing.T) plan.Frozen {
-			return frozenRoutePair(t, plan.OperationRetireRoute, fixturePort)
-		}},
+		{
+			operation: plan.OperationDeployWebService,
+			machine:   func(t *testing.T) *fakeExecutor { return serviceMachine() },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedService(t, plan.OperationDeployWebService, fixturePort)
+			},
+			state:    ServiceStateActive,
+			unitPath: bentoPDFPlacement.unitPath(),
+		},
+		{
+			operation: plan.OperationRemoveWebService,
+			machine:   func(t *testing.T) *fakeExecutor { return deployedServiceMachine(t, fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedService(t, plan.OperationRemoveWebService, fixturePort)
+			},
+			state:    ServiceStateAbsent,
+			unitPath: bentoPDFPlacement.unitPath(),
+		},
+		{
+			operation: plan.OperationDeployEntrypoint,
+			machine:   func(t *testing.T) *fakeExecutor { return entrypointMachine() },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedEntrypoint(t, plan.OperationDeployEntrypoint)
+			},
+			state:    ServiceStateActive,
+			unitPath: entrypointPlacement.unitPath(),
+		},
+		{
+			operation: plan.OperationRemoveEntrypoint,
+			machine:   func(t *testing.T) *fakeExecutor { return deployedEntrypointMachine() },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedEntrypoint(t, plan.OperationRemoveEntrypoint)
+			},
+			state:    ServiceStateAbsent,
+			unitPath: entrypointPlacement.unitPath(),
+		},
+		{
+			operation: plan.OperationPublishRoute,
+			machine:   func(t *testing.T) *fakeExecutor { return routableMachine(fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedRoute(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort)
+			},
+			state:     ServiceStateActive,
+			routeHost: fixtureRouteHost,
+		},
+		{
+			operation: plan.OperationRetireRoute,
+			machine:   func(t *testing.T) *fakeExecutor { return publishedRouteMachine(fixtureRouteHost, fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedRoute(t, plan.OperationRetireRoute, fixtureRouteHost, fixturePort)
+			},
+			state:     ServiceStateAbsent,
+			routeHost: fixtureRouteHost,
+		},
 	} {
-		executor := deployedServiceMachine(t, fixturePort)
-		accepted, input := approvedFrozenPair(subject.operation, subject.frozen(t))
+		executor := subject.machine(t)
+		accepted, input := subject.approved(t)
 
 		application, err := Apply(executor, accepted, input)
-		if err == nil {
-			t.Fatalf("%s was performed by an Auxiliary that does not perform it", subject.operation)
+		if err != nil {
+			t.Fatalf("%s was refused by an Auxiliary that performs it: %v", subject.operation, err)
 		}
-		if application != nil {
-			t.Fatalf("%s returned an application: %+v", subject.operation, application)
+		if application.Operation != subject.operation || application.ServiceState != subject.state {
+			t.Fatalf("%s announced another instance or another state: %+v", subject.operation, application)
 		}
-		// The refusal names the operation, so a reader learns which one is not
-		// performed rather than that "something" was refused.
-		if !strings.Contains(err.Error(), subject.operation) ||
-			!strings.Contains(err.Error(), "does not perform yet") {
-			t.Fatalf("%s was refused without being named: %v", subject.operation, err)
+		if !application.Changed {
+			t.Fatalf("%s found nothing to do on a machine that needed it: %+v", subject.operation, application)
 		}
-		var controlled *ControlledFailure
-		if errors.As(err, &controlled) {
-			t.Fatalf("%s was reported as a controlled failure: %v", subject.operation, err)
+		if application.UnitPath != subject.unitPath {
+			t.Fatalf("%s named the sheet %q rather than %q", subject.operation, application.UnitPath, subject.unitPath)
 		}
-		if len(executor.effects) != 0 {
-			t.Fatalf("%s changed the machine before being refused: %q", subject.operation, executor.effects)
+		if application.RouteHost != subject.routeHost {
+			t.Fatalf("%s named the route %q rather than %q", subject.operation, application.RouteHost, subject.routeHost)
 		}
-		if len(executor.reads) != 0 {
-			t.Fatalf("%s reached the machine before being refused: %q", subject.operation, executor.reads)
+		// A route names its fragment and never a sheet; everything else names a
+		// sheet and never a fragment.
+		if subject.routeHost == "" && application.FragmentPath != "" {
+			t.Fatalf("%s named a fragment: %+v", subject.operation, application)
+		}
+		if subject.routeHost != "" && application.FragmentPath != routeFragmentPath(subject.routeHost) {
+			t.Fatalf("%s named another fragment: %+v", subject.operation, application)
+		}
+		if len(executor.effects) == 0 {
+			t.Fatalf("%s reported a change without touching the machine", subject.operation)
 		}
 	}
 }

@@ -62,7 +62,16 @@ type auxiliaryReport struct {
 	PlanOperation string `json:"plan_operation,omitempty"`
 	LocalPort     int    `json:"local_port,omitempty"`
 	UnitPath      string `json:"unit_path,omitempty"`
-	ServiceState  string `json:"service_state,omitempty"`
+	// RouteHost and FragmentPath name a published route, and are the only two
+	// fields the entrypoint and route operations added to this answer. They name
+	// the declared host and the one file that host owns on this machine; the
+	// certificate and the key of that host are read from a directory this
+	// Auxiliary never writes, and neither their paths nor their contents travel
+	// back here. A report of this product carries what the machine concluded, and
+	// a key is not a conclusion.
+	RouteHost    string `json:"route_host,omitempty"`
+	FragmentPath string `json:"fragment_path,omitempty"`
+	ServiceState string `json:"service_state,omitempty"`
 	// Outcome names which conclusion this is, in the closed vocabulary of the
 	// auxiliary package, so that no reader has to tell a rollback from a refusal
 	// by reading a sentence. A read-only diagnostic carries none of these
@@ -233,6 +242,8 @@ func buildAppliedAuxiliaryReport(accepted *approval.Acceptance, application *aux
 	report.PlanOperation = application.Operation
 	report.LocalPort = application.LocalPort
 	report.UnitPath = application.UnitPath
+	report.RouteHost = application.RouteHost
+	report.FragmentPath = application.FragmentPath
 	report.ServiceState = application.ServiceState
 	report.Outcome = auxiliary.OutcomeApplied
 	report.Changed = application.Changed
@@ -257,6 +268,8 @@ func buildFailedAuxiliaryReport(
 	report.PlanOperation = failure.Operation
 	report.LocalPort = failure.LocalPort
 	report.UnitPath = failure.UnitPath
+	report.RouteHost = failure.RouteHost
+	report.FragmentPath = failure.FragmentPath
 	report.Outcome = failure.Outcome
 	report.RollbackAttempted = true
 	report.Observed = failure.Observed
@@ -297,6 +310,16 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 			return err
 		}
 	}
+	// A route names itself in two lines and in no other. They exist only for the
+	// two operations that have a declared name and a fragment, so the answer every
+	// previous operation renders stays exactly what it was, line for line.
+	if report.RouteHost != "" {
+		if _, err := fmt.Fprintf(writer,
+			"route: %s\nfragment: %s\n", report.RouteHost, report.FragmentPath,
+		); err != nil {
+			return err
+		}
+	}
 	// A service state is printed only while there is one to state. A rollback
 	// that failed took that certainty away, and the observation below replaces
 	// it without pretending to be it.
@@ -319,6 +342,14 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 			report.Observed.Container,
 		); err != nil {
 			return err
+		}
+		// The fifth word exists only for a route, because it is the only instance
+		// whose state is a fragment file. It is absent rather than empty
+		// everywhere else, for the same reason it is omitted from the JSON.
+		if report.Observed.Fragment != "" {
+			if _, err := fmt.Fprintf(writer, "observed fragment: %s\n", report.Observed.Fragment); err != nil {
+				return err
+			}
 		}
 	}
 	_, err := fmt.Fprintf(writer, "changed: %t\n", report.Changed)

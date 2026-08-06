@@ -64,10 +64,17 @@ const (
 // computed from what was observed before acting and never announced in advance:
 // it is the one field a reader uses to tell an operation that did something from
 // an operation that found the approved state already there.
+// The three fields below the operation name the instance that was applied, and
+// which of them are filled is decided by what kind of instance it was: a managed
+// service names its loopback port and its sheet, an entrypoint names its sheet
+// alone, and a route names the declared host and the one fragment file that host
+// owns. Nothing here carries a certificate, a key or any content of a file.
 type Application struct {
 	Operation    string
 	LocalPort    int
 	UnitPath     string
+	RouteHost    string
+	FragmentPath string
 	ServiceState string
 	Changed      bool
 }
@@ -84,6 +91,12 @@ type Observation struct {
 	UnitFile  string `json:"unit_file"`
 	Service   string `json:"service"`
 	Container string `json:"container"`
+	// Fragment is filled only while the instance that was being applied is a
+	// route, because it is the only instance whose state is a fragment file. It
+	// is omitted rather than reported empty everywhere else: an observation says
+	// what was seen, and a word about something the operation never touched would
+	// be neither a fact nor an admission.
+	Fragment string `json:"fragment,omitempty"`
 }
 
 // ControlledFailure is a failure that happened after this machine had already
@@ -102,11 +115,15 @@ type Observation struct {
 // rollback and no cleanup this Auxiliary invented for itself: what a human
 // approved is the whole of what may run here.
 type ControlledFailure struct {
-	// Operation, LocalPort and UnitPath name the instance that was being
-	// applied, so that a failure names an instance as exactly as a success does.
-	Operation string
-	LocalPort int
-	UnitPath  string
+	// Operation, LocalPort, UnitPath, RouteHost and FragmentPath name the
+	// instance that was being applied, so that a failure names an instance as
+	// exactly as a success does, and by the same rule: whichever of them the kind
+	// of instance actually has.
+	Operation    string
+	LocalPort    int
+	UnitPath     string
+	RouteHost    string
+	FragmentPath string
 
 	// Outcome is OutcomeRolledBack or OutcomePartial, and never anything else.
 	Outcome string
@@ -142,18 +159,55 @@ func (failure *ControlledFailure) Error() string {
 // read a sentence.
 func (failure *ControlledFailure) Unwrap() error { return failure.Cause }
 
-// instance is one managed service this Auxiliary has been approved to act on,
-// once the schema its two documents were written in has stopped mattering.
+// instanceKind is which of the three shapes an approved instance has, and it is
+// read from the operation rather than guessed from which fields happen to be
+// filled. It is what keeps a route from ever being applied through the sheet
+// path, and an entrypoint from ever being applied through the service one.
+type instanceKind int
+
+const (
+	kindWebService instanceKind = iota + 1
+	kindEntrypoint
+	kindRoute
+)
+
+// instance is one thing this Auxiliary has been approved to act on, once the
+// schema its two documents were written in has stopped mattering.
 //
-// It is what dispatch produces and what every effect below consumes: the state
-// asked for, where that state lives on this machine, and the one loopback port a
-// plan is allowed to choose. Nothing else of a document travels past dispatch.
-// The image in particular does not: it is the profile's pin, and the document's
-// own copy of it has already been required to be exactly that pin.
+// It is what dispatch produces and what every effect below consumes: which kind
+// of thing it is, the state asked for, where that state lives on this machine,
+// and the one, two or zero bounded values the plan of that kind is allowed to
+// choose. Nothing else of a document travels past dispatch. The image in
+// particular does not: it is the profile's or the entrypoint's pin, and the
+// document's own copy of it has already been required to be exactly that pin.
+//
+// A route carries the entrypoint's placement rather than one of its own. It has
+// no account, no sheet and no container: it is one file inside the directory the
+// entry reads, so the placement it names is the entry it is served by, and the
+// two fields below are what a route actually is.
 type instance struct {
-	operation string
-	placement placement
-	localPort int
+	kind        instanceKind
+	operation   string
+	placement   placement
+	localPort   int
+	routeHost   string
+	backendPort int
+}
+
+// reportedUnitPath and reportedFragmentPath are how one instance names itself in
+// a conclusion, each answering only for the kind that has such a thing.
+func (subject instance) reportedUnitPath() string {
+	if subject.kind == kindRoute {
+		return ""
+	}
+	return subject.placement.unitPath()
+}
+
+func (subject instance) reportedFragmentPath() string {
+	if subject.kind != kindRoute {
+		return ""
+	}
+	return routeFragmentPath(subject.routeHost)
 }
 
 // Apply performs one approved mutating operation, in the one order the contract
@@ -176,8 +230,10 @@ type instance struct {
 //     own anchor names them and not as the document claims;
 //  5. the plan's content stays inside the contract — the plan package refuses a
 //     document that leaves it before its digest is even computed — and the
-//     operation is one this Auxiliary actually performs, an operation it does not
-//     perform yet being refused here by name and with nothing read;
+//     operation is one this Auxiliary actually performs. Every operation of both
+//     schemas is now performed, so what this step still refuses, by name and with
+//     nothing read, is a document whose operation belongs to no shape this
+//     package places;
 //  6. the machine is capable of the flow at all, and a machine that is not is
 //     refused here, with nothing written.
 //
@@ -212,6 +268,18 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 		return concluded(executor, requested, rollback, application, touched, err)
 	case plan.OperationRemoveOCIProbe, plan.OperationRemoveWebService:
 		application, touched, err := remove(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationDeployEntrypoint:
+		application, touched, err := deployEntrypoint(executor, capabilities, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationRemoveEntrypoint:
+		application, touched, err := removeEntrypoint(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationPublishRoute:
+		application, touched, err := publishRoute(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationRetireRoute:
+		application, touched, err := retireRoute(executor, requested)
 		return concluded(executor, requested, rollback, application, touched, err)
 	default:
 		// Unreachable while dispatch and this switch agree on the same closed
@@ -299,19 +367,26 @@ func probeInstances(accepted *approval.Acceptance, input *Input) (instance, inst
 	if !rollback.IsExactInverseOf(requested) {
 		return instance{}, instance{}, errors.New("the approved rollback does not undo exactly the approved plan")
 	}
-	return instance{operation: requested.Operation, placement: probePlacement, localPort: requested.LocalPort},
-		instance{operation: rollback.Operation, placement: probePlacement, localPort: rollback.LocalPort},
+	return instance{
+			kind: kindWebService, operation: requested.Operation,
+			placement: probePlacement, localPort: requested.LocalPort,
+		},
+		instance{
+			kind: kindWebService, operation: rollback.Operation,
+			placement: probePlacement, localPort: rollback.LocalPort,
+		},
 		nil
 }
 
 // serviceInstances holds one schema 2 pair against the approval that carries it,
-// and refuses every schema 2 operation this Auxiliary does not perform.
+// and turns it into the two instances the effects act on.
 //
-// The refusal of the entrypoint and of the route is deliberate and named: those
-// four operations belong to another issue of this palier, and until it lands an
-// envelope naming one of them must be refused before any effect rather than
-// half-performed. It is a refusal and never a controlled failure — nothing was
-// touched, so there is nothing to have undone.
+// The three document shapes of schema 2 become the three instance kinds here,
+// and this is the only place that mapping exists. Until `#91` landed, the four
+// entrypoint and route operations were refused at this exact point by name; they
+// are performed now, so what remains is the one refusal that outlives them — a
+// document shape this package has no placement for is refused before any effect,
+// because there is nowhere for it to be placed.
 func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, instance, error) {
 	envelope := accepted.Envelope
 	requested, err := v2DocumentMatching(input.PlanDocument, envelope.PlanSHA256, "plan")
@@ -330,31 +405,98 @@ func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, in
 		return instance{}, instance{}, errors.New("the approved rollback does not undo exactly the approved plan")
 	}
 
-	subject, performed := requested.(plan.WebServiceDocument)
-	if !performed {
+	// The rollback is already known to be the exact inverse of the plan, which
+	// compares the two documents whole and therefore across their types. Reading
+	// each of them as its own shape again costs one assertion apiece and removes
+	// the need to trust that.
+	switch subject := requested.(type) {
+	case plan.WebServiceDocument:
+		undoing, paired := rollback.(plan.WebServiceDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		where, err := placementFor(subject)
+		if err != nil {
+			return instance{}, instance{}, err
+		}
+		return instance{
+				kind: kindWebService, operation: subject.Operation,
+				placement: where, localPort: subject.LocalPort,
+			},
+			instance{
+				kind: kindWebService, operation: undoing.Operation,
+				placement: where, localPort: undoing.LocalPort,
+			},
+			nil
+	case plan.EntrypointDocument:
+		undoing, paired := rollback.(plan.EntrypointDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		if err := requireEntrypointImage(subject); err != nil {
+			return instance{}, instance{}, err
+		}
+		return instance{
+				kind: kindEntrypoint, operation: subject.Operation,
+				placement: entrypointPlacement,
+			},
+			instance{
+				kind: kindEntrypoint, operation: undoing.Operation,
+				placement: entrypointPlacement,
+			},
+			nil
+	case plan.RouteDocument:
+		undoing, paired := rollback.(plan.RouteDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		// The name has to be one this machine can hold as a single file, and that
+		// is decided here rather than at the moment the fragment is written: a
+		// route this machine could not name is refused before any effect and
+		// before the machine is read at all.
+		if err := requireHoldableFragmentName(subject.RouteHost); err != nil {
+			return instance{}, instance{}, err
+		}
+		return instance{
+				kind: kindRoute, operation: subject.Operation,
+				placement: entrypointPlacement,
+				routeHost: subject.RouteHost, backendPort: subject.BackendPort,
+			},
+			instance{
+				kind: kindRoute, operation: undoing.Operation,
+				placement: entrypointPlacement,
+				routeHost: undoing.RouteHost, backendPort: undoing.BackendPort,
+			},
+			nil
+	default:
+		// Unreachable while the plan package's closed interface holds exactly the
+		// three shapes above, and kept as a refusal rather than a panic so that a
+		// fourth shape added there without a placement here is refused instead of
+		// placed by accident.
 		return instance{}, instance{}, fmt.Errorf(
-			"the approved plan describes %q, which this Auxiliary does not perform yet: it performs the managed web service operations of this palier, and the entrypoint and route operations are refused here before any effect",
+			"the approved plan describes %q, which this Auxiliary has no placement for",
 			requested.OperationName(),
 		)
 	}
-	// The rollback is already known to be the exact inverse of the plan, which
-	// compares the two documents whole and therefore across their types. Reading
-	// it as a web service document again costs one assertion and removes the
-	// need to trust that.
-	undoing, performed := rollback.(plan.WebServiceDocument)
-	if !performed {
-		return instance{}, instance{}, fmt.Errorf(
-			"the approved rollback describes %q, which this Auxiliary does not perform yet",
-			rollback.OperationName(),
-		)
+}
+
+// errMismatchedPair is unreachable while the exact-inverse check above compares
+// the two documents whole, and is kept so that a disagreement between that check
+// and these assertions refuses rather than acts on half a pair.
+var errMismatchedPair = errors.New("the approved rollback is not a document of the same shape as the plan it undoes")
+
+// requireEntrypointImage is the second place the entrypoint's image is required
+// to be exactly the pin of the contract.
+//
+// It is the entrypoint's spelling of what placementFor does for a profile, and
+// it exists for the same reason: the sheet is written from the constant and not
+// from the document, and a validation that ever stopped enforcing the equality
+// would be caught here, before any effect, rather than deployed.
+func requireEntrypointImage(document plan.EntrypointDocument) error {
+	if document.ImageReference+"@"+document.ImageDigest != entrypointPlacement.image {
+		return errors.New("the approved plan names another image than the entrypoint of this palier pins")
 	}
-	where, err := placementFor(subject)
-	if err != nil {
-		return instance{}, instance{}, err
-	}
-	return instance{operation: subject.Operation, placement: where, localPort: subject.LocalPort},
-		instance{operation: undoing.Operation, placement: where, localPort: undoing.LocalPort},
-		nil
+	return nil
 }
 
 // requireApprovedTarget holds one document against this machine's own anchor and
@@ -501,14 +643,16 @@ func concluded(
 		return nil, failure
 	}
 	controlled := &ControlledFailure{
-		Operation: requested.operation,
-		LocalPort: requested.localPort,
-		UnitPath:  requested.placement.unitPath(),
-		Outcome:   OutcomeRolledBack,
-		Cause:     failure,
+		Operation:    requested.operation,
+		LocalPort:    requested.localPort,
+		UnitPath:     requested.reportedUnitPath(),
+		RouteHost:    requested.routeHost,
+		FragmentPath: requested.reportedFragmentPath(),
+		Outcome:      OutcomeRolledBack,
+		Cause:        failure,
 	}
 	if err := attemptRollback(executor, rollback); err != nil {
-		observed := observe(executor, rollback.placement)
+		observed := observe(executor, rollback)
 		controlled.Outcome = OutcomePartial
 		controlled.Rollback = err
 		controlled.Observed = &observed
@@ -544,6 +688,18 @@ func attemptRollback(executor Executor, rollback instance) error {
 	case plan.OperationDeployOCIProbe, plan.OperationDeployWebService:
 		_, _, err := deploy(executor, capabilities, rollback)
 		return err
+	case plan.OperationRemoveEntrypoint:
+		_, _, err := removeEntrypoint(executor, rollback)
+		return err
+	case plan.OperationDeployEntrypoint:
+		_, _, err := deployEntrypoint(executor, capabilities, rollback)
+		return err
+	case plan.OperationRetireRoute:
+		_, _, err := retireRoute(executor, rollback)
+		return err
+	case plan.OperationPublishRoute:
+		_, _, err := publishRoute(executor, rollback)
+		return err
 	default:
 		// Unreachable while the rollback has been proven the exact inverse of an
 		// operation this package applies, and kept as a refusal so that a
@@ -560,12 +716,26 @@ func attemptRollback(executor Executor, rollback instance) error {
 // image reference the engine answers with never leaves this function, because a
 // report of this product carries the conclusions of the machine and never the
 // output of a command.
-func observe(executor Executor, where placement) Observation {
+func observe(executor Executor, subject instance) Observation {
+	where := subject.placement
 	observed := Observation{
 		Account:   observedUnknown,
 		UnitFile:  observedUnknown,
 		Service:   observedUnknown,
 		Container: observedUnknown,
+	}
+	if subject.kind == kindRoute {
+		// A route is one file, so the one thing worth establishing about it is
+		// whether that file is still there. The four words above still answer for
+		// the entry the route was served by, because that is what a partial route
+		// state is left holding.
+		observed.Fragment = observedUnknown
+		if _, present, err := executor.ReadUnitFile(subject.reportedFragmentPath()); err == nil {
+			observed.Fragment = observedAbsent
+			if present {
+				observed.Fragment = observedPresent
+			}
+		}
 	}
 	if capabilities, err := executor.Capabilities(where.account); err == nil {
 		observed.Account = observedAbsent

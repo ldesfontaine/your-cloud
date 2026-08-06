@@ -7,6 +7,24 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
+// This file holds the two kinds of file a plan turns into on this machine, and
+// it holds them under two different rules, because they are two different
+// claims.
+//
+// A managed service's sheet may carry exactly one approved value — the loopback
+// port — so its rule is that nothing else of a plan may reach it, and that the
+// fields which would widen a container are absent rather than set to a safe
+// value. Volume= is among them and stays among them: no plan of a managed
+// service has a field that could describe one.
+//
+// The entrypoint's sheet and configuration may carry no approved value at all,
+// because an entrypoint plan has none — not a port, not an address, not a
+// directory. Their rule is therefore stronger and simpler: they are byte
+// constants. That is what the two golden checks below assert, and it is also why
+// the entrypoint's sheet is allowed the three Volume= lines the service sheet
+// forbids: they come from constants of the contract, they are read-only, and
+// there is no value a document could put in one.
+
 // TestTheQuadletSheetDeclaresOnlyTheControlsThisPalierOwes reads the sheet the
 // way a report will have to explain it: every line is a control, and the fields
 // that would widen the container are absent rather than set to a safe value.
@@ -91,5 +109,166 @@ func TestTheOnlyPlanValueThatReachesTheSheetIsThePort(t *testing.T) {
 	}
 	if differences != 1 {
 		t.Fatalf("two plans differing by their port produced %d differences", differences)
+	}
+}
+
+// TestTheEntrypointSheetIsAByteConstant is the strongest form the transport rule
+// can take: an entrypoint plan has no free value, so the sheet it produces is
+// the same bytes on every machine and in every run, and the function that
+// renders it takes no argument in which one could arrive.
+//
+// The expected text below is the whole file rather than a list of lines it must
+// contain. A line added to the sheet by a future change — a capability, a device,
+// an environment file — fails this check by existing, which is exactly what a
+// list of forbidden strings cannot promise.
+func TestTheEntrypointSheetIsAByteConstant(t *testing.T) {
+	t.Parallel()
+	const expected = `# Written by your-cloud auxiliary from one approved plan. Do not edit: this
+# machine compares this file byte for byte against the plan it is given, and an
+# edit here is a drift that requires a new approved plan rather than a repair.
+[Unit]
+Description=Your Cloud public HTTPS entrypoint
+
+[Container]
+Image=docker.io/library/traefik@sha256:9c3b91d5fb7770853ca5c1124a23c34bf2d9b47ffaebeab2614cbaf410dcb2ac
+ContainerName=your-cloud-entrypoint
+Network=slirp4netns:allow_host_loopback=true
+PublishPort=443:443
+PublishPort=80:80
+Volume=/etc/your-cloud/entrypoint/traefik.yaml:/etc/traefik/traefik.yaml:ro
+Volume=/etc/your-cloud/entrypoint/dynamic:/etc/your-cloud/entrypoint/dynamic:ro
+Volume=/etc/your-cloud/entrypoint/certificates:/etc/your-cloud/entrypoint/certificates:ro
+Pull=never
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+Sysctl=net.ipv4.ip_unprivileged_port_start=0
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`
+	sheet := string(renderEntrypointSheet())
+	if sheet != expected {
+		t.Fatalf("the entrypoint sheet is not the constant this contract fixes:\n%s", sheet)
+	}
+	if sheet != string(renderEntrypointSheet()) {
+		t.Fatal("the entrypoint sheet is not the same bytes twice, so idempotence cannot be read from it")
+	}
+
+	// The three mounts are exactly the three constants of the contract, all
+	// read-only, and there is no fourth. A mount is the one thing this sheet has
+	// that a service sheet must never have, so it is counted rather than merely
+	// looked for.
+	mounts := []string{}
+	for _, line := range strings.Split(sheet, "\n") {
+		if strings.HasPrefix(line, "Volume=") {
+			mounts = append(mounts, line)
+		}
+	}
+	expectedMounts := []string{
+		"Volume=" + entrypointConfigurationPath + ":" + entrypointConfigurationMount + ":ro",
+		"Volume=" + entrypointFragmentDirectory + ":" + entrypointFragmentDirectory + ":ro",
+		"Volume=" + entrypointCertificateDirectory + ":" + entrypointCertificateDirectory + ":ro",
+	}
+	if strings.Join(mounts, ",") != strings.Join(expectedMounts, ",") {
+		t.Fatalf("the entrypoint mounts are not the three constants of the contract: %q", mounts)
+	}
+
+	// The controls a container of this product never regains, and the network it
+	// is never given: `host` would put the entry in this machine's own network
+	// namespace, which is what the chosen mechanism exists to avoid.
+	for _, forbidden := range []string{
+		"Device=", "Environment=", "EnvironmentFile=", "AddCapability=",
+		"Privileged=", "User=root", "PodmanArgs=", "Exec=", "AutoUpdate=",
+		"Network=host", "Volume=/var/run", "docker.sock", "podman.sock",
+	} {
+		if strings.Contains(sheet, forbidden) {
+			t.Fatalf("the entrypoint sheet declares %q:\n%s", forbidden, sheet)
+		}
+	}
+	if strings.Contains(sheet, plan.EntrypointImageReference+":") {
+		t.Fatalf("the entrypoint sheet names the image by a tag:\n%s", sheet)
+	}
+}
+
+// TestTheEntrypointConfigurationIsAByteConstant holds the static configuration
+// to the same rule, and what it is really holding is a list of absences.
+//
+// There is one provider and it reads files. There is no `api` block at all —
+// declaring one with the dashboard disabled would *enable* the API, so absence
+// is the control here and a check for a disabled dashboard would be the wrong
+// check. There is no certificate resolver and no default certificate, so a name
+// nobody declared gets no certificate of this product and no route.
+func TestTheEntrypointConfigurationIsAByteConstant(t *testing.T) {
+	t.Parallel()
+	const expected = `# Written by your-cloud auxiliary from one approved plan. Do not edit: this
+# machine compares this file byte for byte against the plan it is given, and an
+# edit here is a drift that requires a new approved plan rather than a repair.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    directory: /etc/your-cloud/entrypoint/dynamic
+    watch: true
+
+log:
+  level: INFO
+`
+	configuration := string(renderEntrypointConfiguration())
+	if configuration != expected {
+		t.Fatalf("the entrypoint configuration is not the constant this contract fixes:\n%s", configuration)
+	}
+	if configuration != string(renderEntrypointConfiguration()) {
+		t.Fatal("the entrypoint configuration is not the same bytes twice")
+	}
+	for _, forbidden := range []string{
+		"docker", "podman", "swarm", "kubernetes", "consul", "etcd", "redis",
+		"api:", "dashboard", "certificatesResolvers", "acme",
+		"insecureSkipVerify", "defaultCertificate", "ping:",
+	} {
+		if strings.Contains(configuration, forbidden) {
+			t.Fatalf("the entrypoint configuration declares %q:\n%s", forbidden, configuration)
+		}
+	}
+}
+
+// TestTheHostPortsPolicyIsAByteConstantNamingTheClearPort holds the one host
+// relaxation this product declares.
+//
+// The value is the clear port and not the secure one, because the kernel setting
+// is a floor rather than a list: naming 443 would leave 80 unbindable and the
+// redirection unreachable, which would be a policy that looks tighter and breaks
+// the contract.
+func TestTheHostPortsPolicyIsAByteConstantNamingTheClearPort(t *testing.T) {
+	t.Parallel()
+	policy := string(renderHostPortsPolicy())
+	if !strings.HasSuffix(policy, "net.ipv4.ip_unprivileged_port_start=80\n") {
+		t.Fatalf("the host policy does not open the machine from the clear port upwards:\n%s", policy)
+	}
+	if strings.Count(policy, "net.ipv4.ip_unprivileged_port_start") != 1 {
+		t.Fatalf("the host policy names more than one setting:\n%s", policy)
+	}
+	if policy != string(renderHostPortsPolicy()) {
+		t.Fatal("the host policy is not the same bytes twice")
+	}
+	if hostPortsPolicyPath != "/etc/sysctl.d/your-cloud-entrypoint.conf" {
+		t.Fatalf("the host policy is not persisted where a reboot reads it: %q", hostPortsPolicyPath)
 	}
 }

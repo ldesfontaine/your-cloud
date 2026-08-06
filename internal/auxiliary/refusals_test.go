@@ -513,6 +513,293 @@ func TestNothingIsTouchedWhileTheApprovedServiceDocumentsAreStillInDoubt(t *test
 	}
 }
 
+// TestNothingIsTouchedWhileTheApprovedEntrypointDocumentsAreStillInDoubt is the
+// same matrix over the entrypoint's own closed field list.
+//
+// An entrypoint plan is the narrowest document of the palier: four common fields
+// and one pinned image, and not a single value a human chooses. So the cases
+// below are exactly the ones that shape allows — the digests, the target, the
+// pin, and every field borrowed from another group, refused as an unknown field
+// before its content is ever read.
+func TestNothingIsTouchedWhileTheApprovedEntrypointDocumentsAreStillInDoubt(t *testing.T) {
+	t.Parallel()
+	for name, subject := range map[string]refusal{
+		"an entrypoint plan that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.PlanSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"an entrypoint rollback that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.RollbackSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried rollback is not the document the approval signed",
+		},
+		"an entrypoint plan aimed at another machine": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.MachineID = "lab-machine-2"
+			},
+			named: "targets another machine than this one",
+		},
+		"an entrypoint plan describing another operation than the approval": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.Operation = plan.OperationRemoveEntrypoint
+			},
+			named: "the approved plan describes",
+		},
+		"an entrypoint rollback that is a second deployment rather than an undoing": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				frozen := frozenEntrypointPair(t, plan.OperationDeployEntrypoint)
+				subject.input.RollbackDocument = frozen.PlanDocument
+				subject.accepted.Envelope.RollbackSHA256 = frozen.PlanSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+		"an entrypoint plan naming its image by a tag rather than by a digest": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"image_reference": quotedJSON(t, plan.EntrypointImageReference+":v3.7.10"),
+				})
+			},
+			named: "plan image_reference is not the pinned image of this palier",
+		},
+		"an entrypoint plan pinning another digest than the contract's": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"image_digest": quotedJSON(t, "sha256:"+strings.Repeat("b", 64)),
+				})
+			},
+			named: "plan image_digest is not the pinned image of this palier",
+		},
+		"an entrypoint plan borrowing the pinned image of the service profile": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"image_reference": quotedJSON(t, plan.BentoPDFImageReference),
+					"image_digest":    quotedJSON(t, plan.BentoPDFImageDigest),
+				})
+			},
+			named: "plan image_reference is not the pinned image of this palier",
+		},
+		"an entrypoint plan smuggling a public port": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"local_port": "8443",
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"an entrypoint plan smuggling a listening address": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"address": quotedJSON(t, "0.0.0.0"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"an entrypoint plan smuggling the file provider directory": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"provider_directory": quotedJSON(t, "/tmp/routes"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"an entrypoint plan smuggling a volume": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"volume": quotedJSON(t, "/etc:/etc:rw"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"an entrypoint plan smuggling an engine socket": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedEntrypointPlan(t, plan.OperationDeployEntrypoint, map[string]string{
+					"provider": quotedJSON(t, "docker"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+	} {
+		executor := deployedEntrypointMachine()
+		accepted, input := approvedEntrypoint(t, plan.OperationDeployEntrypoint)
+		forged := &approvedInput{accepted: accepted, input: input}
+		subject.forge(t, forged)
+
+		application, err := Apply(executor, forged.accepted, forged.input)
+		if err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), subject.named) {
+			t.Fatalf("%s was refused for another reason than its own: %v", name, err)
+		}
+		var controlled *ControlledFailure
+		if errors.As(err, &controlled) {
+			t.Fatalf("%s was reported as a controlled failure: %v", name, err)
+		}
+		if len(executor.effects) != 0 {
+			t.Fatalf("%s changed the machine before being refused: %q", name, executor.effects)
+		}
+		if len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine before being refused: %q", name, executor.reads)
+		}
+	}
+}
+
+// TestNothingIsTouchedWhileTheApprovedRouteDocumentsAreStillInDoubt is the same
+// matrix over the route's closed field list.
+//
+// The declared name is where most of it lives, because that is the one string of
+// this palier that reaches a file's name and a router's rule at once. Every case
+// below is refused before this machine is read, so no hostile name is ever
+// sanitised, escaped or truncated into something that would have been safe: it
+// is refused for not being a name.
+func TestNothingIsTouchedWhileTheApprovedRouteDocumentsAreStillInDoubt(t *testing.T) {
+	t.Parallel()
+	for name, subject := range map[string]refusal{
+		"a route plan that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.PlanSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"a route plan aimed at another machine": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.MachineID = "lab-machine-2"
+			},
+			named: "targets another machine than this one",
+		},
+		"a route rollback that retires another name": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				other := frozenRoutePair(t, plan.OperationPublishRoute, "other.example.test", fixturePort)
+				subject.input.RollbackDocument = other.RollbackDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.RollbackSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+		"a route rollback that is a second publication rather than an undoing": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				other := frozenRoutePair(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort+1)
+				subject.input.RollbackDocument = other.PlanDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.PlanSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+		"a route towards a privileged port": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, fixtureRouteHost, 80, nil)
+			},
+			named: "plan backend_port must be within",
+		},
+		"a route towards a port beyond the range": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, fixtureRouteHost, 70000, nil)
+			},
+			named: "plan backend_port must be within",
+		},
+		"a route declaring a wildcard": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, "*.example.test", fixturePort, nil)
+			},
+			named: "plan route_host must be",
+		},
+		"a route declaring an upper-case name": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, "LAB.example.test", fixturePort, nil)
+			},
+			named: "plan route_host must be",
+		},
+		"a route declaring a name with an empty label": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, "lab..test", fixturePort, nil)
+			},
+			named: "plan route_host must not carry an empty label",
+		},
+		"a route declaring a path rather than a name": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, "../../etc/passwd", fixturePort, nil)
+			},
+			named: "plan route_host must be",
+		},
+		"a route declaring a name that closes on a separator": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, "lab.example.test.", fixturePort, nil)
+			},
+			named: "plan route_host must be",
+		},
+		"a route declaring no name at all": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort, map[string]string{
+					"route_host": "",
+				})
+			},
+			named: "plan route_host must be",
+		},
+		"a route smuggling an image": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort, map[string]string{
+					"image_reference": quotedJSON(t, plan.BentoPDFImageReference),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a route smuggling a certificate": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort, map[string]string{
+					"cert_file": quotedJSON(t, "/tmp/forged.crt"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a route smuggling a middleware": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort, map[string]string{
+					"middleware": quotedJSON(t, "stripPrefix"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a route smuggling a backend host beside its port": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRoutePlan(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort, map[string]string{
+					"backend_host": quotedJSON(t, "10.0.0.5"),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+	} {
+		executor := publishedRouteMachine(fixtureRouteHost, fixturePort)
+		accepted, input := approvedRoute(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort)
+		forged := &approvedInput{accepted: accepted, input: input}
+		subject.forge(t, forged)
+
+		application, err := Apply(executor, forged.accepted, forged.input)
+		if err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), subject.named) {
+			t.Fatalf("%s was refused for another reason than its own: %v", name, err)
+		}
+		var controlled *ControlledFailure
+		if errors.As(err, &controlled) {
+			t.Fatalf("%s was reported as a controlled failure: %v", name, err)
+		}
+		if len(executor.effects) != 0 {
+			t.Fatalf("%s changed the machine before being refused: %q", name, executor.effects)
+		}
+		if len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine before being refused: %q", name, executor.reads)
+		}
+	}
+}
+
 // TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite is the other half of
 // the matrix: what no document can decide and only the machine can answer.
 //
@@ -536,13 +823,17 @@ func TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite(t *testing.T) {
 			AccountPresent: true, RootlessPodman: false,
 		},
 	} {
-		// The four operations this Auxiliary performs, across both plan schemas:
-		// a machine that cannot run the flow is refused for the managed service
-		// exactly as it is for the probe, and the account the refusal names is
-		// the one the profile places.
+		// The eight operations this Auxiliary performs, across both plan schemas:
+		// a machine that cannot run the flow is refused for the entry and for a
+		// route exactly as it is for the probe, and the account each refusal
+		// names is the one that operation's own placement carries. A route is in
+		// this list because it is served by a container: a machine that cannot
+		// run one cannot publish a name through it either.
 		for _, operation := range []string{
 			plan.OperationDeployOCIProbe, plan.OperationRemoveOCIProbe,
 			plan.OperationDeployWebService, plan.OperationRemoveWebService,
+			plan.OperationDeployEntrypoint, plan.OperationRemoveEntrypoint,
+			plan.OperationPublishRoute, plan.OperationRetireRoute,
 		} {
 			executor := newFakeExecutor()
 			executor.capabilities = capabilities
@@ -627,7 +918,7 @@ func TestASequenceAlreadySpentStaysRefusedAfterACut(t *testing.T) {
 	if len(half.reads) != 0 {
 		t.Fatalf("the replay read the machine before refusing: %q", half.reads)
 	}
-	if !half.unitPresent || half.active {
+	if !half.holds(UnitPath()) || half.active {
 		t.Fatalf("the replay repaired the state it found: %+v", half)
 	}
 }
