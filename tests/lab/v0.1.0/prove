@@ -175,6 +175,24 @@ lab_ip() { bounded_labctl 60s ip "$@"; }
 lab_start() { bounded_labctl 300s start "$@"; }
 lab_ssh() { bounded_labctl 300s ssh "$@"; }
 
+# A machine that was just started has no swap: the LAB's swapfile is deliberately
+# absent from `/etc/fstab`, so it survives `labctl stop` on disk but not in use.
+# Several passes compile the Console crate, and that compilation is killed by the
+# OOM reaper without it — a failure that would be read as a product red.
+#
+# This is a provisioning fact of the LAB, not a behaviour of the product. It is
+# repaired here rather than asserted, because a proof that dies of a missing
+# swapfile has measured the swapfile and nothing else.
+restore_swap() {
+  local vm=$1
+  lab_ssh "$vm" test -f /swapfile || return 0
+  if [[ -z "$(lab_ssh "$vm" swapon --noheadings --show 2>/dev/null || true)" ]]; then
+    announce "Re-enabling the swapfile on $vm, which a restart leaves unused"
+    lab_ssh "$vm" swapon /swapfile || return 1
+  fi
+  return 0
+}
+
 # The pilot's own paths never reach a published log. The LAB itself is entirely
 # synthetic — identities are minted at mount time and destroyed at removal — so
 # the only real-world strings that can appear are the ones naming this machine.
@@ -329,6 +347,7 @@ do_guard() {
         || fail "$vm resolves to the forbidden address $forbidden"
     done
     lab_ssh "$vm" true || fail "$vm does not answer on the managed channel"
+    restore_swap "$vm" || fail "$vm has a swapfile that could not be re-enabled"
     printf '  %-16s %s\n' "$vm" "running, one address, answering"
   done
 
@@ -370,6 +389,7 @@ assert_vm_back() {
     while [[ $waited -lt 180 ]]; do
       address=$(lab_ip "$vm" 2>/dev/null) || address=
       if [[ -n "$address" && "$address" != - ]] && lab_ssh "$vm" true; then
+        restore_swap "$vm" || return 1
         back=1
         break
       fi

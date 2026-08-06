@@ -59,7 +59,17 @@ puis `controller-replacement` (#40).
   échec de nettoyage et la fermeture rougit. Le critère de #41 qui demande un
   `assert-clean` vert ne peut donc pas être satisfait en l'état.
 - **Démarrer une VM arrêtée est la seule mutation** que l'orchestrateur fait
-  hors d'un passage, et c'est elle qui rend la topologie sienne à fermer.
+  hors d'un passage, et c'est elle qui rend la topologie sienne à fermer. Il
+  remonte alors le swapfile, que `labctl start` laisse présent mais inutilisé :
+  plusieurs passages compilent le crate de la Console, et cette compilation est
+  tuée par l'OOM sans lui. C'est un fait de provisionnement du LAB, pas un
+  comportement du produit — un passage qui meurt d'un swapfile absent n'a
+  mesuré que le swapfile.
+- **La fermeture coûte un reprovisionnement.** `topology destroy` emporte la
+  chaîne d'outils, les paquets et le cache de compilation de `lab-console` ;
+  seul `labctl stop` les conserve. Une passe complète est donc jouable une
+  fois, puis le LAB doit être reprovisionné avant la suivante. C'est le prix
+  du critère qui exige une fermeture, et il se paie en connaissance de cause.
 
 ## [`personal-access/`](personal-access/) — périmètre de l'accès personnel
 
