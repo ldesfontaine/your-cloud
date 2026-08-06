@@ -370,34 +370,26 @@ func TestOnlyThePreparationOfAPassageReportsAPublicKey(t *testing.T) {
 	}
 }
 
-// TestEveryPrivateProfileOperationIsRefusedByNameBeforeAnyEffect is the window
-// this issue opens, named here so that the issues that close it have one test to
+// TestEveryLinkRouteOperationIsRefusedByNameBeforeAnyEffect is what is left of
+// the window an earlier issue opened, named here so that `#103` has one test to
 // replace rather than a silence to notice.
 //
-// The approval package now holds the seven operations of the private profile in
-// its closed list, so a human may sign one and this Auxiliary may be handed the
-// pair. Performing them is `#102` — the data-bearing service and its archives —
-// and `#103` — the route the passage publishes. Until then the pairs below are
-// real, valid, canonically frozen documents of that contract, and every one of
-// them is refused where the shapes of schema 2 become instances: by name, before
-// any effect, and before this machine is read at all.
+// The approval package holds the seven operations of the private profile in its
+// closed list, so a human may sign one and this Auxiliary may be handed the pair.
+// `#102` closed five of them — the data-bearing service and its three archive
+// operations. The two that remain are the route the passage publishes, and until
+// `#103` lands the pairs below are real, valid, canonically frozen documents of
+// that contract, refused where the shapes of schema 2 become instances: by name,
+// before any effect, and before this machine is read at all.
 //
 // They are schema 2 documents, so unlike the passage's window they are decoded,
 // held against their signed digests, held against this machine's target and held
 // as exact inverses before the refusal. That is deliberate: the refusal is about
 // what this Auxiliary performs, not about what it can read, and everything that
 // could have refused earlier still does.
-func TestEveryPrivateProfileOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
+func TestEveryLinkRouteOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
 	t.Parallel()
 	for name, frozen := range map[string]func(*testing.T) (string, plan.Frozen){
-		"a private service deployment": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationDeployPrivateService,
-				frozenPrivateServicePair(t, plan.OperationDeployPrivateService, fixturePort)
-		},
-		"a private service removal": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationRemovePrivateService,
-				frozenPrivateServicePair(t, plan.OperationRemovePrivateService, fixturePort)
-		},
 		"a link route publication": func(t *testing.T) (string, plan.Frozen) {
 			return plan.OperationPublishLinkRoute,
 				frozenLinkRoutePair(t, plan.OperationPublishLinkRoute, fixturePort)
@@ -405,15 +397,6 @@ func TestEveryPrivateProfileOperationIsRefusedByNameBeforeAnyEffect(t *testing.T
 		"a link route retirement": func(t *testing.T) (string, plan.Frozen) {
 			return plan.OperationRetireLinkRoute,
 				frozenLinkRoutePair(t, plan.OperationRetireLinkRoute, fixturePort)
-		},
-		"a snapshot": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationSnapshotService, frozenSnapshotPair(t, plan.OperationSnapshotService)
-		},
-		"a snapshot discard": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationDiscardSnapshot, frozenSnapshotPair(t, plan.OperationDiscardSnapshot)
-		},
-		"a restore": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationRestoreService, frozenRestorePair(t)
 		},
 	} {
 		operation, pair := frozen(t)
@@ -435,6 +418,108 @@ func TestEveryPrivateProfileOperationIsRefusedByNameBeforeAnyEffect(t *testing.T
 		}
 		if len(executor.effects) != 0 || len(executor.reads) != 0 {
 			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		}
+	}
+}
+
+// TestEveryPrivateProfileOperationIsNowPerformedAndNamesItsOwnInstance is the
+// window `#102` closed, held by the property that refusal used to guard.
+//
+// Each of the five operations reaches the effects of its own kind, announces what
+// its own kind has to announce, and names the instance it acted on rather than
+// any other. A regression that routed a private deployment through the stateless
+// path — or an archive operation through either — is caught here.
+func TestEveryPrivateProfileOperationIsNowPerformedAndNamesItsOwnInstance(t *testing.T) {
+	t.Parallel()
+	for _, subject := range []struct {
+		operation string
+		machine   func() *fakeExecutor
+		approved  func(*testing.T) (*approval.Acceptance, *Input)
+		state     string
+		unitPath  string
+		slot      string
+		digestOf  string
+	}{
+		{
+			operation: plan.OperationDeployPrivateService,
+			machine:   privateMachine,
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedPrivateService(t, plan.OperationDeployPrivateService, fixturePort)
+			},
+			state:    ServiceStateActive,
+			unitPath: vaultwardenPlacement.unitPath(),
+		},
+		{
+			operation: plan.OperationRemovePrivateService,
+			machine:   func() *fakeExecutor { return deployedPrivateMachine(fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedPrivateService(t, plan.OperationRemovePrivateService, fixturePort)
+			},
+			state:    ServiceStateAbsent,
+			unitPath: vaultwardenPlacement.unitPath(),
+		},
+		{
+			operation: plan.OperationSnapshotService,
+			machine:   func() *fakeExecutor { return deployedPrivateMachine(fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedSnapshot(t, plan.OperationSnapshotService)
+			},
+			slot:     fixtureSnapshotSlot,
+			digestOf: fixtureSecrets,
+		},
+		{
+			operation: plan.OperationDiscardSnapshot,
+			machine:   func() *fakeExecutor { return archivedPrivateMachine(fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedSnapshot(t, plan.OperationDiscardSnapshot)
+			},
+			slot: fixtureSnapshotSlot,
+		},
+		{
+			operation: plan.OperationRestoreService,
+			machine:   func() *fakeExecutor { return archivedPrivateMachine(fixturePort) },
+			approved:  func(t *testing.T) (*approval.Acceptance, *Input) { return approvedRestore(t) },
+			slot:      fixtureSnapshotSlot,
+			// A return reports the digest of what it *wrote*, which is the archive of
+			// the state it replaced — the one the reserved slot now holds.
+			digestOf: fixtureSecrets,
+		},
+	} {
+		executor := subject.machine()
+		accepted, input := subject.approved(t)
+
+		application, err := Apply(executor, accepted, input)
+		if err != nil {
+			t.Fatalf("%s was refused by an Auxiliary that performs it: %v", subject.operation, err)
+		}
+		if application.Operation != subject.operation || application.ServiceState != subject.state {
+			t.Fatalf("%s announced another instance or another state: %+v", subject.operation, application)
+		}
+		if !application.Changed {
+			t.Fatalf("%s found nothing to do on a machine that needed it: %+v", subject.operation, application)
+		}
+		if application.UnitPath != subject.unitPath {
+			t.Fatalf("%s named the sheet %q rather than %q", subject.operation, application.UnitPath, subject.unitPath)
+		}
+		if application.SnapshotSlot != subject.slot {
+			t.Fatalf("%s named the slot %q rather than %q", subject.operation, application.SnapshotSlot, subject.slot)
+		}
+		if application.ArchiveSHA256 != "" && application.ArchiveSHA256 != archiveDigest(subject.digestOf) {
+			t.Fatalf("%s reported another archive than the one it wrote: %+v", subject.operation, application)
+		}
+		if subject.digestOf != "" && application.ArchiveSHA256 != archiveDigest(subject.digestOf) {
+			t.Fatalf("%s wrote an archive and reported no digest for it: %+v", subject.operation, application)
+		}
+		// Every one of the five names the durable directory, in both directions and
+		// in every shape: it is the one thing all five have in common on a machine.
+		if application.DataPath != vaultwardenPlacement.dataDirectory {
+			t.Fatalf("%s named the data %q", subject.operation, application.DataPath)
+		}
+		if application.RouteHost != "" || application.FragmentPath != "" || application.LinkPublicKey != "" {
+			t.Fatalf("%s named an instance of another kind: %+v", subject.operation, application)
+		}
+		if len(executor.effects) == 0 {
+			t.Fatalf("%s reported a change without touching the machine", subject.operation)
 		}
 	}
 }

@@ -90,6 +90,28 @@ type Application struct {
 	// package can obtain it, because the seam that writes it returns the public
 	// half alone.
 	LinkPublicKey string
+	// DataPath is the durable directory of a data-bearing profile, filled by every
+	// operation that has one. After a deployment it names where the data lives;
+	// after a removal it names what this machine still holds, which is the line
+	// that makes "removing keeps the data, redeploying finds it" something a reader
+	// is told rather than something they have to know.
+	DataPath string
+	// SnapshotSlot is the one archive an archive operation acted on, and
+	// PreviousSlot is filled by a return alone: it names the reserved slot the
+	// return wrote the replaced state into, so the document that undoes this one is
+	// readable in the report of the one it undoes.
+	SnapshotSlot string
+	PreviousSlot string
+	// ArchiveSHA256 and ArchivedAt are what the machine concluded about the archive
+	// it wrote: the digest of the bytes, and the instant, UTC and RFC 3339. They
+	// are the whole of what this product says about an archive — its content is the
+	// data of a vault, and nothing in this package can carry a byte of it.
+	ArchiveSHA256 string
+	ArchivedAt    string
+	// SnapshotSlots are the archives this machine holds for the profile once the
+	// operation is done, by the names a human gave them. The reserved slot is never
+	// among them: it belongs to the return mechanism, not to a human's list.
+	SnapshotSlots []string
 	Changed       bool
 }
 
@@ -128,6 +150,16 @@ type Observation struct {
 	LinkInterface string `json:"link_interface,omitempty"`
 	LinkPeer      string `json:"link_peer,omitempty"`
 	LinkBounds    string `json:"link_bounds,omitempty"`
+	// Data, Egress and Archive are filled only for the operations of a
+	// data-bearing profile, and they are three words rather than one because
+	// neither can be inferred from the others. After a rollback that failed in its
+	// turn, whether this machine still holds the data, whether the account is still
+	// confined, and whether the archive the operation was writing exists are
+	// exactly the three things a human has to read. Each is reported present or
+	// absent and never by its content: an archive is named, never opened.
+	Data    string `json:"data,omitempty"`
+	Egress  string `json:"egress,omitempty"`
+	Archive string `json:"archive,omitempty"`
 }
 
 // ControlledFailure is a failure that happened after this machine had already
@@ -155,6 +187,10 @@ type ControlledFailure struct {
 	UnitPath     string
 	RouteHost    string
 	FragmentPath string
+	// SnapshotSlot names the archive an archive operation was acting on, because
+	// that is what those three operations have instead of a sheet: a failure names
+	// an instance as exactly as a success does.
+	SnapshotSlot string
 
 	// Outcome is OutcomeRolledBack or OutcomePartial, and never anything else.
 	Outcome string
@@ -190,6 +226,24 @@ func (failure *ControlledFailure) Error() string {
 			failure.Observed.LinkBounds,
 		)
 	}
+	// A data-bearing profile is left holding three things a stateless one has none
+	// of, and after a rollback that failed they are the three a human reads first:
+	// is the data still there, is the account still confined, and does the slot the
+	// operation was writing hold a file. They are added to the sentence rather than
+	// replacing it, because the account, the sheet, the service and the container
+	// are still exactly what such a profile is left holding besides them. The
+	// archive is named present or absent and never opened.
+	if failure.Observed.Data != "" {
+		return fmt.Sprintf(
+			"%s failed after this machine was changed (%v): the approved rollback was attempted and failed in its turn (%v): "+
+				"this machine is left in a partial state, observed as account %s, unit file %s, service %s, container %s, data %s, egress %s%s",
+			failure.Operation, failure.Cause, failure.Rollback,
+			failure.Observed.Account, failure.Observed.UnitFile,
+			failure.Observed.Service, failure.Observed.Container,
+			failure.Observed.Data, failure.Observed.Egress,
+			observedArchiveClause(failure.Observed.Archive),
+		)
+	}
 	return fmt.Sprintf(
 		"%s failed after this machine was changed (%v): the approved rollback was attempted and failed in its turn (%v): "+
 			"this machine is left in a partial state, observed as account %s, unit file %s, service %s, container %s",
@@ -199,16 +253,27 @@ func (failure *ControlledFailure) Error() string {
 	)
 }
 
+// observedArchiveClause adds the archive to a sentence only where the operation
+// had one, and adds nothing where it did not: a word about something nobody
+// looked at would be neither a fact nor an admission.
+func observedArchiveClause(archive string) string {
+	if archive == "" {
+		return ""
+	}
+	return ", archive " + archive
+}
+
 // Unwrap keeps the failure that stopped the operation reachable, so a caller
 // that wants to know why this machine was being changed at all does not have to
 // read a sentence.
 func (failure *ControlledFailure) Unwrap() error { return failure.Cause }
 
-// instanceKind is which of the four shapes an approved instance has, and it is
-// read from the operation rather than guessed from which fields happen to be
-// filled. It is what keeps a route from ever being applied through the sheet
-// path, an entrypoint from ever being applied through the service one, and a
-// passage from ever being applied through any of them.
+// instanceKind is which of the shapes an approved instance has, and it is read
+// from the operation rather than guessed from which fields happen to be filled.
+// It is what keeps a route from ever being applied through the sheet path, an
+// entrypoint from ever being applied through the service one, an archive from
+// ever being applied through either, and a passage from ever being applied
+// through any of them.
 type instanceKind int
 
 const (
@@ -216,6 +281,13 @@ const (
 	kindEntrypoint
 	kindRoute
 	kindLink
+	// kindPrivateService is a managed service whose data outlives its container,
+	// and kindArchive is an operation on the archives of such a service. They are
+	// two kinds and not one because they leave different things behind: a service
+	// operation answers for a sheet, a container and a confinement, and an archive
+	// operation answers for one file in a directory beside them.
+	kindPrivateService
+	kindArchive
 )
 
 // instance is one thing this Auxiliary has been approved to act on, once the
@@ -259,6 +331,14 @@ type instance struct {
 	// poses those tables adds effects to the existing junction flows rather than
 	// reshaping them.
 	servicePort int
+	// originHost is the one origin a private service answers under, and the second
+	// and last value of a plan this package ever writes into a file. It is filled
+	// for a private service deployment or removal and for nothing else.
+	originHost string
+	// snapshotSlot is the one archive an archive operation names. It is filled for
+	// the three archive operations and for nothing else, and the reserved slot may
+	// appear in it only because a Controller wrote it into a signed rollback.
+	snapshotSlot string
 }
 
 // reportedUnitPath and reportedFragmentPath are how one instance names itself in
@@ -266,6 +346,10 @@ type instance struct {
 func (subject instance) reportedUnitPath() string {
 	switch subject.kind {
 	case kindRoute:
+		return ""
+	case kindArchive:
+		// An archive operation writes no sheet and describes none: what it acts on
+		// is one file in the directory beside the service, and the slot names it.
 		return ""
 	case kindLink:
 		// A passage names the file that describes its interface. It is a
@@ -306,9 +390,10 @@ func (subject instance) reportedFragmentPath() string {
 //  5. the plan's content stays inside the contract — the plan package refuses a
 //     document that leaves it before its digest is even computed — and the
 //     operation is one this Auxiliary actually performs. Every operation of the
-//     two schemas this package reads is now performed, so what this step still
-//     refuses, by name and with nothing read, is a document whose operation
-//     belongs to no shape this package places;
+//     three schemas this package reads is performed here except the two of the
+//     link route, which `#103` will add and which are refused by name, before any
+//     effect and before this machine is read; beside them, what this step refuses
+//     is a document whose operation belongs to no shape this package places;
 //  6. the machine is capable of the flow at all, and a machine that is not is
 //     refused here, with nothing written.
 //
@@ -355,6 +440,24 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 		return concluded(executor, requested, rollback, application, touched, err)
 	case plan.OperationRetireRoute:
 		application, touched, err := retireRoute(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationDeployPrivateService:
+		application, touched, err := deployPrivateService(executor, capabilities, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationRemovePrivateService:
+		application, touched, err := removePrivateService(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationSnapshotService:
+		application, touched, err := snapshotService(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationDiscardSnapshot:
+		application, touched, err := discardSnapshot(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	// A return is the one operation of this product whose undoing is itself, so it
+	// appears once here and once below: the rollback the Controller froze beside it
+	// is a return naming the reserved slot, and it runs through this very flow.
+	case plan.OperationRestoreService:
+		application, touched, err := restoreService(executor, requested)
 		return concluded(executor, requested, rollback, application, touched, err)
 	case plan.OperationPrepareLink:
 		application, touched, err := prepareLink(executor, requested)
@@ -575,18 +678,78 @@ func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, in
 				routeHost: undoing.RouteHost, backendPort: undoing.BackendPort,
 			},
 			nil
-	case plan.PrivateServiceDocument, plan.LinkRouteDocument, plan.SnapshotDocument, plan.RestoreDocument:
-		// The window of the private profile, named here so that the issues which
-		// close it have one refusal to replace rather than a silence to notice.
+	case plan.PrivateServiceDocument:
+		undoing, paired := rollback.(plan.PrivateServiceDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		where, err := privatePlacementFor(subject)
+		if err != nil {
+			return instance{}, instance{}, err
+		}
+		return instance{
+				kind: kindPrivateService, operation: subject.Operation,
+				placement: where, localPort: subject.LocalPort,
+				originHost: subject.OriginHost,
+			},
+			instance{
+				kind: kindPrivateService, operation: undoing.Operation,
+				placement: where, localPort: undoing.LocalPort,
+				originHost: undoing.OriginHost,
+			},
+			nil
+	case plan.SnapshotDocument:
+		undoing, paired := rollback.(plan.SnapshotDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		where, err := archivedPlacementFor(subject.ServiceProfile)
+		if err != nil {
+			return instance{}, instance{}, err
+		}
+		return instance{
+				kind: kindArchive, operation: subject.Operation,
+				placement: where, snapshotSlot: subject.SnapshotSlot,
+			},
+			instance{
+				kind: kindArchive, operation: undoing.Operation,
+				placement: where, snapshotSlot: undoing.SnapshotSlot,
+			},
+			nil
+	case plan.RestoreDocument:
+		undoing, paired := rollback.(plan.RestoreDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		where, err := archivedPlacementFor(subject.ServiceProfile)
+		if err != nil {
+			return instance{}, instance{}, err
+		}
+		// The two slots differ and the operation does not, which is the one pair of
+		// this schema shaped that way. Nothing here treats the rollback's slot as
+		// special: it is the value the Controller froze, held against the plan by
+		// the exact-inverse check above, and it reaches the same flow as any other.
+		return instance{
+				kind: kindArchive, operation: subject.Operation,
+				placement: where, snapshotSlot: subject.SnapshotSlot,
+			},
+			instance{
+				kind: kindArchive, operation: undoing.Operation,
+				placement: where, snapshotSlot: undoing.SnapshotSlot,
+			},
+			nil
+	case plan.LinkRouteDocument:
+		// What is left of the window this Auxiliary kept on the private profile.
 		//
-		// The approval package holds these seven operations in its closed list, so
-		// a human may sign one and this Auxiliary may be handed a real, valid,
-		// canonically frozen pair of that contract. Performing them is `#102` — the
-		// service, its volume, its closed environment and its egress table, and the
-		// archive flows — and `#103` — the route the passage publishes. Until then
-		// each of them is refused right here: by name, before any effect, and
-		// before this machine is read at all. A window that let one through unread
-		// would be this Auxiliary acting on a contract it does not implement.
+		// The approval package holds the seven operations of that contract in its
+		// closed list, so a human may sign one and this Auxiliary may be handed a
+		// real, valid, canonically frozen pair. `#102` closed five of them — the
+		// data-bearing service, its volume, its closed environment, its confinement
+		// and its three archive operations. The two that remain are the route the
+		// passage publishes, and they are `#103`: until it lands they are refused
+		// right here, by name, before any effect and before this machine is read at
+		// all. A window that let one through unread would be this Auxiliary acting
+		// on a contract it does not implement.
 		return instance{}, instance{}, fmt.Errorf(
 			"the approved plan describes %q, which this Auxiliary does not yet perform",
 			requested.OperationName(),
@@ -761,6 +924,48 @@ func placementFor(document plan.WebServiceDocument) (placement, error) {
 	return where, nil
 }
 
+// privatePlacementFor is placementFor over the other door, and it is a second
+// function rather than a parameter for the reason the plan package keeps two
+// lists: the refusal has to run in both directions, and a lookup that fails is a
+// stronger refusal than a comparison somebody has to remember to write.
+//
+// A stateless profile named at a private operation is refused here — as the plan
+// validation already refused it — and a private profile named at a stateless one
+// is refused by placementFor, because neither list holds the other's entry.
+func privatePlacementFor(document plan.PrivateServiceDocument) (placement, error) {
+	where, err := archivedPlacementFor(document.ServiceProfile)
+	if err != nil {
+		return placement{}, err
+	}
+	if document.ImageReference+"@"+document.ImageDigest != where.image {
+		return placement{}, fmt.Errorf(
+			"the approved plan names another image than the %s profile pins", document.ServiceProfile)
+	}
+	return where, nil
+}
+
+// archivedPlacementFor is where one profile of the private door lives on this
+// machine, and the refusal a profile with nothing to archive receives.
+//
+// It is the lookup the three archive operations use, and it carries no image
+// comparison because their documents carry no image: an archive names a profile
+// and a slot, and what it acts on is the data a deployment left behind. The
+// second check is the one the archive operations genuinely need — a profile
+// placed here but holding no durable path has nothing to archive, and saying so
+// before any effect is better than discovering it at a tar.
+func archivedPlacementFor(serviceProfile string) (placement, error) {
+	where, known := privateProfilePlacements[serviceProfile]
+	if !known {
+		return placement{}, fmt.Errorf(
+			"plan service_profile %q is not one this Auxiliary places behind the private door", serviceProfile)
+	}
+	if !where.bearsData() {
+		return placement{}, fmt.Errorf(
+			"the %s profile keeps no data on this machine: there is nothing for an archive to name", serviceProfile)
+	}
+	return where, nil
+}
+
 // documentMatching returns the schema 1 plan a digest names, or a refusal.
 //
 // The document is validated before it is hashed because the digest is rebuilt
@@ -900,6 +1105,7 @@ func concluded(
 		UnitPath:     requested.reportedUnitPath(),
 		RouteHost:    requested.routeHost,
 		FragmentPath: requested.reportedFragmentPath(),
+		SnapshotSlot: requested.snapshotSlot,
 		Outcome:      OutcomeRolledBack,
 		Cause:        failure,
 	}
@@ -951,6 +1157,25 @@ func attemptRollback(executor Executor, rollback instance) error {
 		return err
 	case plan.OperationPublishRoute:
 		_, _, err := publishRoute(executor, rollback)
+		return err
+	case plan.OperationRemovePrivateService:
+		_, _, err := removePrivateService(executor, rollback)
+		return err
+	case plan.OperationDeployPrivateService:
+		_, _, err := deployPrivateService(executor, capabilities, rollback)
+		return err
+	case plan.OperationDiscardSnapshot:
+		_, _, err := discardSnapshot(executor, rollback)
+		return err
+	case plan.OperationSnapshotService:
+		_, _, err := snapshotService(executor, rollback)
+		return err
+	// The return of a return goes through the ordinary flow, exactly as every
+	// other rollback does. It names the reserved slot, which the flow has just
+	// written the replaced state into, and nothing here is improvised from the
+	// failure that led to it.
+	case plan.OperationRestoreService:
+		_, _, err := restoreService(executor, rollback)
 		return err
 	case plan.OperationWithdrawLink:
 		_, _, err := withdrawLink(executor, rollback)
@@ -1007,6 +1232,38 @@ func observe(executor Executor, subject instance) Observation {
 			}
 		}
 	}
+	if where.bearsData() {
+		// A data-bearing profile is left holding three things the four words above
+		// cannot say: its data, its confinement, and — for an archive operation —
+		// the archive that was being written. Each is asked separately, because a
+		// human reading a partial state has to know which of the three survived, and
+		// none of them can be inferred from another.
+		observed.Data = observedUnknown
+		if present, err := executor.ServiceDataPresent(where.dataDirectory); err == nil {
+			observed.Data = observedAbsent
+			if present {
+				observed.Data = observedPresent
+			}
+		}
+		observed.Egress = observedUnknown
+		if _, present, err := executor.EgressRules(egressRulesPath); err == nil {
+			observed.Egress = observedAbsent
+			if present {
+				observed.Egress = observedPresent
+			}
+		}
+	}
+	if subject.kind == kindArchive {
+		// The archive is named and never opened: what is established is whether the
+		// slot holds a file, and nothing whatsoever about what is in it.
+		observed.Archive = observedUnknown
+		if present, err := executor.ServiceArchivePresent(where.archivePath(subject.snapshotSlot)); err == nil {
+			observed.Archive = observedAbsent
+			if present {
+				observed.Archive = observedPresent
+			}
+		}
+	}
 	if capabilities, err := executor.Capabilities(where.account); err == nil {
 		observed.Account = observedAbsent
 		if capabilities.AccountPresent {
@@ -1059,7 +1316,11 @@ func observe(executor Executor, subject instance) Observation {
 // what lets its caller tell a refusal from a controlled failure.
 func deploy(executor Executor, capabilities Capabilities, subject instance) (*Application, bool, error) {
 	where := subject.placement
-	desired := renderSheet(where, subject.localPort)
+	// The origin is empty here and it has to be: this flow places the stateless
+	// profiles, whose placements declare no environment at all, so the sheet they
+	// render carries none whatever is passed. The one profile whose sheet names an
+	// origin is placed by its own flow, with the value its own document carries.
+	desired := renderSheet(where, subject.localPort, "")
 	path := where.unitPath()
 
 	current, present, err := executor.ReadUnitFile(path)
@@ -1210,9 +1471,10 @@ func remove(executor Executor, subject instance) (*Application, bool, error) {
 			return nil, touched, fmt.Errorf("reload the service account's units: %w", err)
 		}
 	}
-	// No profile of these paliers keeps data, so what is left of a service after
-	// its container is gone is the image itself. Removing it is what makes the
-	// machine hold nothing of a service that was retired.
+	// No profile of the stateless door keeps data, so what is left of such a
+	// service after its container is gone is the image itself. Removing it is what
+	// makes the machine hold nothing of a service that was retired. The private
+	// door's removal is written separately and deliberately keeps one thing.
 	if err := executor.RemoveImage(where.account, where.image); err != nil {
 		return nil, touched, fmt.Errorf("remove the pinned image: %w", err)
 	}

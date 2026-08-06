@@ -7,23 +7,30 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
-// This file holds the two kinds of file a plan turns into on this machine, and
-// it holds them under two different rules, because they are two different
+// This file holds the three kinds of file a plan turns into on this machine, and
+// it holds them under three different rules, because they are three different
 // claims.
 //
-// A managed service's sheet may carry exactly one approved value — the loopback
+// A stateless service's sheet may carry exactly one approved value — the loopback
 // port — so its rule is that nothing else of a plan may reach it, and that the
 // fields which would widen a container are absent rather than set to a safe
-// value. Volume= is among them and stays among them: no plan of a managed
+// value. Volume= is among them and stays among them: no plan of a stateless
 // service has a field that could describe one.
 //
 // The entrypoint's sheet and configuration may carry no approved value at all,
 // because an entrypoint plan has none — not a port, not an address, not a
 // directory. Their rule is therefore stronger and simpler: they are byte
-// constants. That is what the two golden checks below assert, and it is also why
-// the entrypoint's sheet is allowed the three Volume= lines the service sheet
-// forbids: they come from constants of the contract, they are read-only, and
-// there is no value a document could put in one.
+// constants. That is what the golden checks below assert, and it is also why the
+// entrypoint's sheet is allowed the three Volume= lines the stateless service
+// sheet forbids: they come from constants of the contract, they are read-only,
+// and there is no value a document could put in one.
+//
+// The private profile's sheet is the third claim and it is its own, exactly as
+// the entrypoint's was: it carries the two approved values this product allows a
+// file — the port and the origin — and it carries the one Volume= and the four
+// Environment= lines of the contract. Its rule is a golden check with those two
+// values in it, so a fifth environment line, a second volume or an origin that
+// stopped being written under https fails by existing.
 
 // TestTheQuadletSheetDeclaresOnlyTheControlsThisPalierOwes reads the sheet the
 // way a report will have to explain it: every line is a control, and the fields
@@ -86,7 +93,7 @@ func TestTheQuadletSheetDeclaresOnlyTheControlsThisPalierOwes(t *testing.T) {
 func TestTheScratchPathsAreAPropertyOfTheImageAndNeverOfAPlan(t *testing.T) {
 	t.Parallel()
 
-	service := string(renderSheet(bentoPDFPlacement, fixturePort))
+	service := string(renderSheet(bentoPDFPlacement, fixturePort, ""))
 	expected := []string{
 		"Tmpfs=/var/cache/nginx:rw,mode=1777",
 		"Tmpfs=/etc/nginx/tmp:rw,mode=1777",
@@ -104,7 +111,7 @@ func TestTheScratchPathsAreAPropertyOfTheImageAndNeverOfAPlan(t *testing.T) {
 		t.Fatalf("the scratch replaced the read-only control instead of standing beside it:\n%s", service)
 	}
 
-	probe := string(renderSheet(probePlacement, fixturePort))
+	probe := string(renderSheet(probePlacement, fixturePort, ""))
 	if strings.Contains(probe, "Tmpfs=") {
 		t.Fatalf("the probe's sheet gained a scratch its image never asked for:\n%s", probe)
 	}
@@ -149,6 +156,123 @@ func TestTheOnlyPlanValueThatReachesTheSheetIsThePort(t *testing.T) {
 	}
 	if differences != 1 {
 		t.Fatalf("two plans differing by their port produced %d differences", differences)
+	}
+}
+
+// TestThePrivateSheetIsTheContractDownToItsFourEnvironmentLines is the claim of
+// the private profile's own sheet, held whole rather than line by line.
+//
+// The expected text below is the entire file. A line added to it by a future
+// change — a fifth environment line, a second volume, a device, a capability —
+// fails this check by existing, which is exactly what a list of forbidden strings
+// cannot promise. The two values inside it are the only two a plan is allowed to
+// put in a file anywhere in this product: the loopback port, and the origin,
+// under the scheme the profile fixes and never one a document chose.
+func TestThePrivateSheetIsTheContractDownToItsFourEnvironmentLines(t *testing.T) {
+	t.Parallel()
+	const expected = `# Written by your-cloud auxiliary from one approved plan. Do not edit: this
+# machine compares this file byte for byte against the plan it is given, and an
+# edit here is a drift that requires a new approved plan rather than a repair.
+[Unit]
+Description=Your Cloud managed Vaultwarden private service
+
+[Container]
+Image=docker.io/vaultwarden/server@sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8
+ContainerName=your-cloud-svc-vaultwarden
+PublishPort=127.0.0.1:8080:80
+Pull=never
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+Volume=/var/lib/your-cloud-svc-vaultwarden/data:/data:rw
+Environment=SIGNUPS_ALLOWED=false
+Environment=INVITATIONS_ALLOWED=false
+Environment=SHOW_PASSWORD_HINT=false
+Environment=DOMAIN=https://vault.lab.your-cloud.test
+Sysctl=net.ipv4.ip_unprivileged_port_start=0
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`
+	sheet := string(renderSheet(vaultwardenPlacement, fixturePort, fixtureOriginHost))
+	if sheet != expected {
+		t.Fatalf("the private sheet is not the one this contract fixes:\n%s", sheet)
+	}
+	if sheet != string(renderSheet(vaultwardenPlacement, fixturePort, fixtureOriginHost)) {
+		t.Fatal("the private sheet is not the same bytes twice, so idempotence cannot be read from it")
+	}
+
+	// Exactly four environment lines, counted rather than looked for, and exactly
+	// one volume beside them: those are the two things this sheet has that no
+	// stateless sheet may ever have, so both are counted.
+	environment := []string{}
+	volumes := []string{}
+	for _, line := range strings.Split(sheet, "\n") {
+		if strings.HasPrefix(line, "Environment=") {
+			environment = append(environment, line)
+		}
+		if strings.HasPrefix(line, "Volume=") {
+			volumes = append(volumes, line)
+		}
+	}
+	expectedEnvironment := []string{
+		"Environment=SIGNUPS_ALLOWED=false",
+		"Environment=INVITATIONS_ALLOWED=false",
+		"Environment=SHOW_PASSWORD_HINT=false",
+		"Environment=DOMAIN=https://" + fixtureOriginHost,
+	}
+	if strings.Join(environment, ",") != strings.Join(expectedEnvironment, ",") {
+		t.Fatalf("the private sheet's environment is not the four lines of the contract: %q", environment)
+	}
+	if strings.Join(volumes, ",") != "Volume="+VaultwardenDataDirectory+":"+VaultwardenContainerDataPath+":rw" {
+		t.Fatalf("the private sheet's volume is not the one constant of the profile: %q", volumes)
+	}
+
+	// The controls a container of this product never regains, and the mount the
+	// data is the single exception to: the read-only filesystem stands beside the
+	// volume rather than being replaced by it.
+	for _, forbidden := range []string{
+		"Device=", "EnvironmentFile=", "AddCapability=", "Privileged=",
+		"User=root", "PodmanArgs=", "Exec=", "AutoUpdate=", "Network=host",
+		"Volume=/var/run", "docker.sock", "podman.sock", "Tmpfs=",
+		"0.0.0.0", "::", "DOMAIN=http://",
+	} {
+		if strings.Contains(sheet, forbidden) {
+			t.Fatalf("the private sheet declares %q:\n%s", forbidden, sheet)
+		}
+	}
+	if strings.Contains(sheet, plan.VaultwardenImageReference+":") {
+		t.Fatalf("the private sheet names the image by a tag:\n%s", sheet)
+	}
+}
+
+// TestNoStatelessSheetGainedAVolumeOrAnEnvironmentLine is the other half of the
+// same claim, and the one a widened renderer would break.
+//
+// The two sheets of the stateless door declare no volume and no environment
+// whatever is passed to the renderer, because their placements declare none.
+// Passing an origin to them is deliberate here: a renderer that wrote the value
+// it was handed rather than the value its placement asked for would be caught by
+// this case and by nothing else.
+func TestNoStatelessSheetGainedAVolumeOrAnEnvironmentLine(t *testing.T) {
+	t.Parallel()
+	for name, where := range map[string]placement{
+		"the probe":    probePlacement,
+		"the bentopdf": bentoPDFPlacement,
+	} {
+		blank := string(renderSheet(where, fixturePort, ""))
+		offered := string(renderSheet(where, fixturePort, fixtureOriginHost))
+		if blank != offered {
+			t.Fatalf("%s profile's sheet changed because an origin was offered to it:\n%s", name, offered)
+		}
+		for _, forbidden := range []string{"Volume=", "Environment=", fixtureOriginHost} {
+			if strings.Contains(offered, forbidden) {
+				t.Fatalf("%s profile's sheet declares %q:\n%s", name, forbidden, offered)
+			}
+		}
 	}
 }
 

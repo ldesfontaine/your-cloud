@@ -874,3 +874,208 @@ func TestAPassageLeftPartialIsObservedInItsOwnWordsAndNeverByAKeysValue(t *testi
 		t.Fatalf("a passage was reported as if it had an account: %q", text.String())
 	}
 }
+
+// TestAPrivateServiceIsReportedByItsDataAndNeverByItsContents holds the answer
+// the data-bearing profile added, and the line it added for a reason.
+//
+// A removal of this product takes the service away and keeps the data. A report
+// that said only "absent" would leave a reader to guess which of the two happened
+// to their vault, so the durable directory is named in both directions — after a
+// deployment it is where the data lives, after a removal it is what this machine
+// still holds — and the archives that survived are named beside it.
+func TestAPrivateServiceIsReportedByItsDataAndNeverByItsContents(t *testing.T) {
+	t.Parallel()
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationRemovePrivateService,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 9,
+		},
+	}
+	unitPath, known := auxiliary.ServiceUnitPath(plan.ServiceProfileVaultwarden)
+	if !known {
+		t.Fatal("the private profile names no sheet")
+	}
+	report := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:     approval.OperationRemovePrivateService,
+		LocalPort:     8080,
+		UnitPath:      unitPath,
+		DataPath:      auxiliary.VaultwardenDataDirectory,
+		SnapshotSlots: []string{"nightly"},
+		ServiceState:  auxiliary.ServiceStateAbsent,
+		Changed:       true,
+	})
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["data_path"] != auxiliary.VaultwardenDataDirectory {
+		t.Fatalf("the removal report does not name the data it kept: %v", decoded)
+	}
+	// A removal writes no archive, so it reports no digest, no instant and no slot
+	// it acted on: a report says what happened.
+	for _, field := range []string{
+		"archive_sha256", "archived_at", "snapshot_slot", "previous_slot",
+		"route_host", "fragment_path", "link_public_key",
+	} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("the private service report carries %q", field)
+		}
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"plan operation: " + approval.OperationRemovePrivateService,
+		"data: " + auxiliary.VaultwardenDataDirectory,
+		"snapshots held: [nightly]",
+		"service: absent",
+		"changed: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+}
+
+// TestAnArchiveIsReportedByItsDigestAndTheReturnByBothItsSlots is the other half
+// of the same answer.
+//
+// A snapshot reports the slot it wrote, the digest of the bytes and the instant
+// — three facts the machine established, none of them a value a human could have
+// approved in advance, which is why the plan of a snapshot carries no digest at
+// all. A return reports one thing more: the reserved slot now holds the state it
+// replaced, which is the document that undoes it, readable in the report of the
+// operation it undoes.
+//
+// What is never reported is what an archive contains. The digest of a vault's
+// data is a conclusion; the data is not.
+func TestAnArchiveIsReportedByItsDigestAndTheReturnByBothItsSlots(t *testing.T) {
+	t.Parallel()
+	const digest = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationSnapshotService,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 10,
+		},
+	}
+	snapshot := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:     approval.OperationSnapshotService,
+		DataPath:      auxiliary.VaultwardenDataDirectory,
+		SnapshotSlot:  "nightly",
+		ArchiveSHA256: digest,
+		ArchivedAt:    "2026-08-06T12:00:00Z",
+		SnapshotSlots: []string{"nightly"},
+		Changed:       true,
+	})
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"snapshot slot: nightly",
+		"archive: " + digest,
+		"archived at: 2026-08-06T12:00:00Z",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the snapshot report does not state %q: %q", line, text.String())
+		}
+	}
+	// An archive operation announces no service state: the two words this product
+	// has for a service are running and gone, and an archive returns a machine to
+	// whichever it found.
+	if strings.Contains(text.String(), "service: ") {
+		t.Fatalf("the snapshot report announced a service state: %q", text.String())
+	}
+
+	accepted.Envelope.Operation = approval.OperationRestoreService
+	returned := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:     approval.OperationRestoreService,
+		DataPath:      auxiliary.VaultwardenDataDirectory,
+		SnapshotSlot:  "nightly",
+		PreviousSlot:  plan.ReservedSnapshotSlot,
+		ArchiveSHA256: digest,
+		ArchivedAt:    "2026-08-06T12:00:00Z",
+		SnapshotSlots: []string{"nightly"},
+		Changed:       true,
+	})
+	var back bytes.Buffer
+	if err := renderAuxiliaryReport(&back, "text", returned); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"snapshot slot: nightly",
+		"previous slot: " + plan.ReservedSnapshotSlot + " (it holds the state this return replaced)",
+		"archive: " + digest,
+	} {
+		if !strings.Contains(back.String(), line) {
+			t.Fatalf("the return report does not state %q: %q", line, back.String())
+		}
+	}
+
+	// And a controlled failure of an archive operation names the slot it was
+	// acting on, and is observed in the three words a data-bearing profile is left
+	// holding.
+	failed := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation:    approval.OperationRestoreService,
+		SnapshotSlot: "nightly",
+		Outcome:      auxiliary.OutcomePartial,
+		Cause:        errors.New("the service never answered again"),
+		Rollback:     errors.New("the archive could not be read"),
+		Observed: &auxiliary.Observation{
+			Account:   "present",
+			UnitFile:  "present",
+			Service:   "inactive",
+			Container: "none",
+			Data:      "present",
+			Egress:    "present",
+			Archive:   "present",
+		},
+	})
+	var partial bytes.Buffer
+	if err := renderAuxiliaryReport(&partial, "text", failed); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"outcome: " + auxiliary.OutcomePartial,
+		"snapshot slot: nightly",
+		"observed data: present",
+		"observed egress: present",
+		"observed archive: present",
+	} {
+		if !strings.Contains(partial.String(), line) {
+			t.Fatalf("the partial archive state does not state %q: %q", line, partial.String())
+		}
+	}
+}

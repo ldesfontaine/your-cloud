@@ -50,10 +50,24 @@ func TestTheProbeAndTheProfileShareNothingOnAMachine(t *testing.T) {
 	}
 	path, known := ServiceUnitPath(plan.ServiceProfileBentoPDF)
 	if !known || path != bentoPDFPlacement.unitPath() {
-		t.Fatalf("the one profile of this palier names no sheet: %q %t", path, known)
+		t.Fatalf("the one profile of the stateless door names no sheet: %q %t", path, known)
 	}
-	if _, known := ServiceUnitPath("vaultwarden"); known {
-		t.Fatal("a profile this palier does not describe was placed")
+	// The private door has a placement of its own since `#102`, so this reads it
+	// as a placement rather than as an absence: a profile that exists on both
+	// sides of the door would be the one failure the two closed lists exist to
+	// make impossible.
+	private, known := ServiceUnitPath(plan.ServiceProfileVaultwarden)
+	if !known || private != vaultwardenPlacement.unitPath() {
+		t.Fatalf("the one profile of the private door names no sheet: %q %t", private, known)
+	}
+	if _, known := ServiceUnitPath("a-profile-nobody-describes"); known {
+		t.Fatal("a profile no door of this product describes was placed")
+	}
+	if _, both := profilePlacements[plan.ServiceProfileVaultwarden]; both {
+		t.Fatal("the private profile is reachable through the stateless door")
+	}
+	if _, both := privateProfilePlacements[plan.ServiceProfileBentoPDF]; both {
+		t.Fatal("the stateless profile is reachable through the private door")
 	}
 }
 

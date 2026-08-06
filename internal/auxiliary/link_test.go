@@ -1063,7 +1063,7 @@ func TestAPassageIsRefusedBeforeAnyEffectWhenThisMachineCannotHoldIt(t *testing.
 		"an initiator junction whose managed service publishes another port": {
 			machine: func() *fakeExecutor {
 				executor := preparedLinkMachine(plan.LinkRoleInitiator)
-				executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort+1))
+				executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort+1, ""))
 				return executor
 			},
 			approved: func(t *testing.T) (*approval.Acceptance, *Input) {

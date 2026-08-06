@@ -31,6 +31,59 @@ const (
 	// profile carries none.
 	BentoPDFContainerPort = 8080
 
+	// VaultwardenAccount is the per-service system account the vaultwarden
+	// profile runs under, and VaultwardenHome is its own home.
+	//
+	// It is a third account beside the probe's and BentoPDF's, under the rule
+	// those two already state: two managed services never share the storage, the
+	// units or the subordinate ranges of a single identity. Here the rule earns
+	// something the stateless profiles never needed it for — this home holds the
+	// first data of the product that outlives a container, so the identity that
+	// owns that data owns exactly one service and nothing else.
+	VaultwardenAccount = "your-cloud-svc-vaultwarden"
+	VaultwardenHome    = "/var/lib/" + VaultwardenAccount
+
+	// VaultwardenDataDirectory is the one durable write path of this product, and
+	// VaultwardenContainerDataPath is where the pinned image declares it.
+	//
+	// It is a constant of the placement and never a field of a plan: the rule of
+	// the stateless sheets — no plan of this product describes a path a machine
+	// will write to — is unchanged, and what changes is that one profile now has
+	// such a path at all. It lives under the dedicated account's own home, so the
+	// data of a service and the identity that may read it are one fact.
+	VaultwardenDataDirectory     = VaultwardenHome + "/data"
+	VaultwardenContainerDataPath = "/data"
+
+	// VaultwardenSnapshotDirectory is where the named archives of that data live.
+	// It is a sibling of the data rather than a directory inside it, so that no
+	// archive is ever part of the tree the next archive walks.
+	VaultwardenSnapshotDirectory = VaultwardenHome + "/snapshots"
+
+	// VaultwardenContainerPort is the port the pinned Vaultwarden image listens
+	// on inside its own network namespace. It is a property of the image and
+	// never a field of a plan, read off the registry rather than believed: the
+	// manifest list of the contract declares `80/tcp` as its single exposed port.
+	//
+	// Being below 1024 it needs the namespace-scoped low-port sysctl, exactly as
+	// the probe does and exactly for the same reason — the setting is scoped to
+	// the container's own network namespace and grants nothing on the host.
+	VaultwardenContainerPort = 80
+
+	// The three hardening constants of the private profile and the prefix of its
+	// one approved value.
+	//
+	// They are the whole of the environment this profile's sheet may carry, and
+	// they are constants because none of them is a choice a human makes about an
+	// instance: an instance of this product never opens its own registrations,
+	// never invites and never hands back a password hint. The fourth line is the
+	// origin, and it is the single approved value that reaches a sheet beyond a
+	// port — the scheme is fixed here, so no plan can ask this service to
+	// announce itself over a clear origin.
+	vaultwardenSignupsAllowed     = "SIGNUPS_ALLOWED=false"
+	vaultwardenInvitationsAllowed = "INVITATIONS_ALLOWED=false"
+	vaultwardenShowPasswordHint   = "SHOW_PASSWORD_HINT=false"
+	vaultwardenDomainPrefix       = "DOMAIN=https://"
+
 	// firstUnprivilegedPort is where the kernel stops requiring a capability to
 	// bind. A profile whose container port is below it needs the low-port sysctl
 	// in its sheet; a profile above it must not carry the line at all, because a
@@ -91,7 +144,63 @@ type placement struct {
 	// none, because a mount that grants nothing still reads as a mount that
 	// was needed.
 	writablePaths []string
+	// dataDirectory, containerDataPath and snapshotDirectory are what a profile
+	// whose data outlives its container has, and what every profile before it has
+	// none of.
+	//
+	// They are three constants of the placement and not three fields of a plan:
+	// the rule of the stateless sheets is unchanged — no document of this product
+	// describes a path a machine writes to — and what a data-bearing profile adds
+	// is one such path decided here, mounted read-write on the volume the image
+	// declares, with its archives beside it. A profile that keeps no data names
+	// none of the three, and everything below reads that absence as the whole
+	// statement: there is nothing to mount, nothing to create and nothing to
+	// archive.
+	dataDirectory     string
+	containerDataPath string
+	snapshotDirectory string
+	// environment is the closed list of hardening lines the sheet carries, and
+	// originEnvironmentPrefix is the beginning of the one line that carries an
+	// approved value — the origin the instance answers under, appended verbatim.
+	//
+	// They are held apart because they are two different claims. The first is a
+	// constant nobody approves; the second is the second and last plan value this
+	// package ever writes into a file, and holding its scheme here is what keeps
+	// a plan from choosing one. A profile that declares neither carries no
+	// environment line at all, which is the rule the stateless sheets keep.
+	environment             []string
+	originEnvironmentPrefix string
+	// confined says whether deploying this profile also poses the egress table
+	// that refuses everything its account emits.
+	//
+	// It is a flag rather than an inference from dataDirectory because the two
+	// are separate decisions: a profile could hold data and legitimately need to
+	// reach a registry or a mail relay, and one that does would be deployed with
+	// the table absent by naming it here — never by an exception written into the
+	// table itself.
+	confined bool
 }
+
+// bearsData reports whether this profile has a durable write path at all, and it
+// is the one question that decides whether a volume, a data directory and an
+// archive exist for it.
+func (where placement) bearsData() bool { return where.dataDirectory != "" }
+
+// archivePath is the one file a named slot owns for this profile.
+//
+// The slot is verbatim: the plan validation has already bound it to lower-case
+// letters, digits and hyphens opening on a letter or a digit, so it carries no
+// separator, cannot be `.` or `..` and cannot leave the directory the profile
+// owns. That is the same argument a route fragment's name rests on, over a
+// narrower character set.
+func (where placement) archivePath(slot string) string {
+	return where.snapshotDirectory + "/" + slot + archiveSuffix
+}
+
+// archiveSuffix is what an archive file is called beyond the slot that names it.
+// It is the format the contract fixes, and it is here rather than in the seam so
+// that nothing below can write an archive under another name.
+const archiveSuffix = ".tar.gz"
 
 // quadletDirectory is where a rootless Quadlet sheet is read from, relative to
 // the home of the account that runs it. The sheet is a user unit rather than a
@@ -128,7 +237,7 @@ var probePlacement = placement{
 	expectedContentType: "",
 }
 
-// bentoPDFPlacement is where the one service profile of this palier lives.
+// bentoPDFPlacement is where the one service profile of the stateless door lives.
 //
 // Every value below is the profile's decision and none of them is approvable:
 // the plan names the profile and the loopback port, and this is what naming the
@@ -151,8 +260,48 @@ var bentoPDFPlacement = placement{
 	writablePaths: []string{"/var/cache/nginx", "/etc/nginx/tmp"},
 }
 
+// vaultwardenPlacement is where the one profile of the private door lives.
+//
+// Every value below is the profile's decision and none of them is approvable:
+// the plan names the profile, the loopback port and the origin, and this is what
+// naming the profile means on a machine. What it adds to a stateless placement is
+// exactly three things — a durable write path, a closed environment and the
+// egress table — and each of them is a field above rather than a branch below.
+var vaultwardenPlacement = placement{
+	account:       VaultwardenAccount,
+	home:          VaultwardenHome,
+	comment:       "Your Cloud managed Vaultwarden private service",
+	description:   "Your Cloud managed Vaultwarden private service",
+	unitFileName:  VaultwardenAccount + ".container",
+	serviceName:   VaultwardenAccount + ".service",
+	containerName: VaultwardenAccount,
+	image:         plan.VaultwardenImageReference + "@" + plan.VaultwardenImageDigest,
+	containerPort: VaultwardenContainerPort,
+	// The verification of this profile is the status alone, and that is the
+	// weakest claim rather than an oversight. What the loopback request proves is
+	// that this machine serves the approved application on this port; the media
+	// type of what a vault answers a plain request with is not something any plan
+	// of this palier describes, and the machine proof `#104` is where the answer
+	// of a real instance is constated.
+	expectedContentType: "",
+	// The image writes its own data and nothing else: there is no in-memory
+	// scratch to give it, and a mount that grants nothing still reads as a mount
+	// that was needed.
+	writablePaths:     nil,
+	dataDirectory:     VaultwardenDataDirectory,
+	containerDataPath: VaultwardenContainerDataPath,
+	snapshotDirectory: VaultwardenSnapshotDirectory,
+	environment: []string{
+		vaultwardenSignupsAllowed,
+		vaultwardenInvitationsAllowed,
+		vaultwardenShowPasswordHint,
+	},
+	originEnvironmentPrefix: vaultwardenDomainPrefix,
+	confined:                true,
+}
+
 // profilePlacements is the closed list of service profiles this Auxiliary
-// places, and the one placement each of them means.
+// places behind the stateless door, and the one placement each of them means.
 //
 // It is held here rather than derived from the plan package's own closed list so
 // that a profile added to a plan does not silently become a profile this machine
@@ -162,12 +311,43 @@ var profilePlacements = map[string]placement{
 	plan.ServiceProfileBentoPDF: bentoPDFPlacement,
 }
 
+// privateProfilePlacements is the same closed list behind the private door, and
+// it is a second map for the reason the plan package keeps two: the refusal has
+// to run in both directions. A stateless profile named at a private operation
+// and a data-bearing profile named at a stateless one are both a lookup that
+// fails, rather than a comparison somebody has to remember to write.
+var privateProfilePlacements = map[string]placement{
+	plan.ServiceProfileVaultwarden: vaultwardenPlacement,
+}
+
 // ServiceUnitPath is the one file this package writes for one service profile,
 // and reports whether that profile is one this Auxiliary places at all.
+//
+// It answers for both doors, because the question is where a managed service's
+// sheet lives and not which door approved it. What stays closed against itself is
+// the pair of maps below it: a caller that has a private document looks up the
+// private list and a caller that has a stateless one looks up the stateless list,
+// and neither can reach the other's placement.
 func ServiceUnitPath(serviceProfile string) (string, bool) {
-	where, known := profilePlacements[serviceProfile]
+	where, known := placementOf(serviceProfile)
 	if !known {
 		return "", false
 	}
 	return where.unitPath(), true
+}
+
+// placementOf finds one profile in either door's closed list.
+//
+// It is the one place the two lists are read together, and it exists for the two
+// questions that are genuinely about "a managed service of this machine" rather
+// than about a door: where a profile's sheet is, and whether some profile of this
+// machine publishes a given loopback port. Every other caller of a placement
+// comes from a document and looks up the list of that document's own door, which
+// is what keeps the refusal running in both directions.
+func placementOf(serviceProfile string) (placement, bool) {
+	if where, known := profilePlacements[serviceProfile]; known {
+		return where, true
+	}
+	where, known := privateProfilePlacements[serviceProfile]
+	return where, known
 }

@@ -1143,3 +1143,243 @@ func TestAJunctionCarryingAFieldOfTheOtherRoleIsRefusedBeforeItIsRead(t *testing
 		}
 	}
 }
+
+// TestNothingIsTouchedWhileTheApprovedPrivateDocumentsAreStillInDoubt is the same
+// matrix over the three closed field lists of the private profile.
+//
+// It is a fourth table rather than a widened third one, for the reason the others
+// are separate: a case must forge the document of the shape it is refusing.
+// Everything else is identical, including what each case asserts — refused,
+// refused for its own reason, and with neither an effect nor a read recorded,
+// because a refusal that reached the machine is not a refusal.
+//
+// The two doors are held against each other here in both directions. A stateless
+// profile named at a private operation is refused by the private door's own list;
+// the mirror — a data-bearing profile named at a stateless one — is a case of the
+// third table above, and it is there rather than here because it is that table's
+// document that has to be forged.
+func TestNothingIsTouchedWhileTheApprovedPrivateDocumentsAreStillInDoubt(t *testing.T) {
+	t.Parallel()
+	other := frozenPrivateServicePair(t, plan.OperationDeployPrivateService, fixturePort+1)
+
+	for name, subject := range map[string]struct {
+		base  func(*testing.T) (*approval.Acceptance, *Input)
+		forge func(*testing.T, *approvedInput)
+		named string
+	}{
+		// The two documents against the two digests a human signed.
+		"a private plan that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.PlanSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"a private plan altered after it was signed": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort+1, nil)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+
+		// The plan against this machine and against the approval that carries it.
+		"a private plan aimed at another machine": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.MachineID = "lab-machine-2"
+			},
+			named: "targets another machine than this one",
+		},
+		"a private rollback that undoes another instance": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.input.RollbackDocument = other.RollbackDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.RollbackSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+
+		// The content against the closed contract of the private door.
+		"a private plan naming the profile of the stateless door": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort, map[string]string{
+						"service_profile": quotedJSON(t, plan.ServiceProfileBentoPDF),
+						"image_reference": quotedJSON(t, plan.BentoPDFImageReference),
+						"image_digest":    quotedJSON(t, plan.BentoPDFImageDigest),
+					})
+			},
+			named: "behind the private door",
+		},
+		"a private plan pinning another digest than the profile's": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort, map[string]string{
+						"image_digest": quotedJSON(t, "sha256:"+strings.Repeat("b", 64)),
+					})
+			},
+			named: "plan image_digest is not the pinned image of this palier",
+		},
+		"a private plan naming its image by a tag rather than by a digest": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort, map[string]string{
+						"image_reference": quotedJSON(t, plan.VaultwardenImageReference+":1.37.1"),
+					})
+			},
+			named: "plan image_reference is not the pinned image of this palier",
+		},
+		"a private plan asking for a privileged port": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, 80, nil)
+			},
+			named: "plan local_port must be within",
+		},
+		"a private plan carrying no origin at all": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort, map[string]string{
+						"origin_host": quotedJSON(t, ""),
+					})
+			},
+			named: "origin_host",
+		},
+
+		// The strongest form of the refusal: the private sheet is the one file of
+		// this product carrying a volume and an environment, and neither is a field
+		// a document may name. A plan trying to say either is an unknown field,
+		// refused before its content is ever read.
+		"a private plan smuggling a volume": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort, map[string]string{
+						"volume": quotedJSON(t, "/etc:/data:rw"),
+					})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a private plan smuggling an environment line": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort, map[string]string{
+						"environment": quotedJSON(t, "SIGNUPS_ALLOWED=true"),
+					})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a private plan smuggling a snapshot slot": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedPrivateServicePlan(
+					t, plan.OperationDeployPrivateService, fixturePort, map[string]string{
+						"snapshot_slot": quotedJSON(t, fixtureSnapshotSlot),
+					})
+			},
+			named: "does not exactly match destination schema",
+		},
+
+		// The archive documents, over their own two shapes.
+		"a snapshot naming the profile of the stateless door": {
+			base: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedSnapshot(t, plan.OperationSnapshotService)
+			},
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedSnapshotPlan(
+					t, plan.OperationSnapshotService, fixtureSnapshotSlot, map[string]string{
+						"service_profile": quotedJSON(t, plan.ServiceProfileBentoPDF),
+					})
+			},
+			named: "service_profile",
+		},
+		"a snapshot naming the slot the return mechanism owns": {
+			base: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedSnapshot(t, plan.OperationSnapshotService)
+			},
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedSnapshotPlan(
+					t, plan.OperationSnapshotService, plan.ReservedSnapshotSlot, nil)
+			},
+			named: "belongs to the return mechanism",
+		},
+		"a discard naming the slot the return mechanism owns": {
+			base: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedSnapshot(t, plan.OperationDiscardSnapshot)
+			},
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedSnapshotPlan(
+					t, plan.OperationDiscardSnapshot, plan.ReservedSnapshotSlot, nil)
+			},
+			named: "belongs to the return mechanism",
+		},
+		"a snapshot naming a slot that is a path rather than a name": {
+			base: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedSnapshot(t, plan.OperationSnapshotService)
+			},
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedSnapshotPlan(
+					t, plan.OperationSnapshotService, "../../etc/nightly", nil)
+			},
+			named: "snapshot_slot",
+		},
+		"a snapshot smuggling the port of another group": {
+			base: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedSnapshot(t, plan.OperationSnapshotService)
+			},
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedSnapshotPlan(
+					t, plan.OperationSnapshotService, fixtureSnapshotSlot, map[string]string{
+						"local_port": strconv.Itoa(fixturePort),
+					})
+			},
+			named: "does not exactly match destination schema",
+		},
+		"a return naming the profile of the stateless door": {
+			base: func(t *testing.T) (*approval.Acceptance, *Input) { return approvedRestore(t) },
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRestorePlan(t, fixtureSnapshotSlot, map[string]string{
+					"service_profile": quotedJSON(t, plan.ServiceProfileBentoPDF),
+				})
+			},
+			named: "service_profile",
+		},
+		"a return smuggling an image the profile pins": {
+			base: func(t *testing.T) (*approval.Acceptance, *Input) { return approvedRestore(t) },
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedRestorePlan(t, fixtureSnapshotSlot, map[string]string{
+					"image_digest": quotedJSON(t, plan.VaultwardenImageDigest),
+				})
+			},
+			named: "does not exactly match destination schema",
+		},
+	} {
+		executor := archivedPrivateMachine(fixturePort)
+		base := subject.base
+		if base == nil {
+			base = func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedPrivateService(t, plan.OperationDeployPrivateService, fixturePort)
+			}
+		}
+		accepted, input := base(t)
+		forged := &approvedInput{accepted: accepted, input: input}
+		subject.forge(t, forged)
+
+		application, err := Apply(executor, forged.accepted, forged.input)
+		if err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), subject.named) {
+			t.Fatalf("%s was refused for another reason than its own: %v", name, err)
+		}
+		var controlled *ControlledFailure
+		if errors.As(err, &controlled) {
+			t.Fatalf("%s was reported as a controlled failure: %v", name, err)
+		}
+		if len(executor.effects) != 0 {
+			t.Fatalf("%s changed the machine before being refused: %q", name, executor.effects)
+		}
+		if len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine before being refused: %q", name, executor.reads)
+		}
+	}
+}

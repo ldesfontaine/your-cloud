@@ -2,7 +2,9 @@ package auxiliary
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
@@ -408,17 +411,75 @@ type fakeExecutor struct {
 	linkRulesAtBoot    bool
 	linkBootEnablings  int
 	linkBootDisablings int
+	// accountIdentifier is what this fake machine allocated to the service account
+	// it holds. It is a machine value in the tests exactly as it is on a real host:
+	// no document carries it, and the confinement table is rendered from whatever
+	// this field says.
+	accountIdentifier int
+	// dataPresent and dataContent are the durable directory of a data-bearing
+	// profile and what is inside it.
+	//
+	// The content is one opaque string rather than a tree, because every property
+	// this palier holds about the data is about its *identity*: that a removal
+	// keeps it, that a redeployment finds the same one, that a return brings a
+	// named one back. A tree would make those the same assertions with more
+	// machinery between them.
+	dataPresent  bool
+	dataContent  string
+	dataEnsured  int
+	dataRestores int
+	// archives is every archive this fake machine holds, by path, each holding the
+	// data content that was archived into it. Keying by path is what lets a case
+	// assert that the reserved slot was written without the seam that lists
+	// ordinary slots ever reporting it.
+	archives map[string]string
+	// The confinement table, held exactly as the passage's bounds are: a file, a
+	// kernel that read it, and a unit that would put it back at the next boot.
+	egressRules            []byte
+	egressRulesPresent     bool
+	egressRuleApplications int
+	egressAtBoot           bool
+	egressBootEnablings    int
+	egressBootDisablings   int
 }
 
 func newFakeExecutor() *fakeExecutor {
 	return &fakeExecutor{
-		capabilities: capableMachine(),
-		files:        map[string][]byte{},
-		failures:     map[string]error{},
-		tolerated:    map[string]int{},
-		calls:        map[string]int{},
-		nftTables:    map[string][]byte{},
+		capabilities:      capableMachine(),
+		files:             map[string][]byte{},
+		failures:          map[string]error{},
+		tolerated:         map[string]int{},
+		calls:             map[string]int{},
+		nftTables:         map[string][]byte{},
+		archives:          map[string]string{},
+		accountIdentifier: fixtureAccountIdentifier,
 	}
+}
+
+const (
+	// fixtureAccountIdentifier is what these machines allocated to the service
+	// account. It is deliberately not a round number, so that a table rendered
+	// from a forgotten default rather than from this machine is visible.
+	fixtureAccountIdentifier = 993
+
+	// fixtureSecrets is what the data of a private service holds in these tests,
+	// and fixtureRestoredSecrets is another state of it. They are two distinct
+	// strings so that "the same data" and "the data of that slot" are assertions
+	// about identity rather than about a directory existing.
+	fixtureSecrets         = "synthetic-secrets-of-the-deployed-instance"
+	fixtureRestoredSecrets = "synthetic-secrets-as-the-named-slot-holds-them"
+)
+
+// fixtureArchiveInstant is when this fake machine writes every archive. A fixed
+// instant is what lets a report be compared whole rather than around a hole.
+var fixtureArchiveInstant = time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC)
+
+// archiveDigest is the digest this fake machine reports for one archived state.
+// It is a real digest of real bytes, so a case comparing two reports is comparing
+// two facts rather than two labels.
+func archiveDigest(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 // hold, held, holds and drop are how a test describes the files one machine
@@ -835,6 +896,167 @@ func (executor *fakeExecutor) ReloadNetworkConfiguration() error {
 	return nil
 }
 
+func (executor *fakeExecutor) AccountIdentifier(account string) (int, error) {
+	executor.reads = append(executor.reads, "AccountIdentifier")
+	if err := executor.fail("AccountIdentifier"); err != nil {
+		return 0, err
+	}
+	return executor.accountIdentifier, nil
+}
+
+func (executor *fakeExecutor) ServiceDataPresent(path string) (bool, error) {
+	executor.reads = append(executor.reads, "ServiceDataPresent")
+	if err := executor.fail("ServiceDataPresent"); err != nil {
+		return false, err
+	}
+	return executor.dataPresent, nil
+}
+
+// EnsureServiceData creates the durable directory and leaves what is already in
+// it exactly as it was, which is the property "a redeployment finds the data" is
+// asserted against.
+func (executor *fakeExecutor) EnsureServiceData(account, dataDirectory, snapshotDirectory string) error {
+	executor.effects = append(executor.effects, "EnsureServiceData")
+	if err := executor.fail("EnsureServiceData"); err != nil {
+		return err
+	}
+	executor.dataEnsured++
+	executor.dataPresent = true
+	return nil
+}
+
+func (executor *fakeExecutor) ServiceArchives(directory string) ([]string, error) {
+	executor.reads = append(executor.reads, "ServiceArchives")
+	if err := executor.fail("ServiceArchives"); err != nil {
+		return nil, err
+	}
+	slots := []string{}
+	for path := range executor.archives {
+		if !strings.HasPrefix(path, directory+"/") || !strings.HasSuffix(path, archiveSuffix) {
+			continue
+		}
+		slot := strings.TrimSuffix(strings.TrimPrefix(path, directory+"/"), archiveSuffix)
+		// The reserved slot is left out here and not by the caller, exactly as the
+		// real seam leaves it out: a list of archives is a list of names a human
+		// gave, and that one is the mechanism's.
+		if slot == plan.ReservedSnapshotSlot {
+			continue
+		}
+		slots = append(slots, slot)
+	}
+	sort.Strings(slots)
+	return slots, nil
+}
+
+func (executor *fakeExecutor) ServiceArchivePresent(path string) (bool, error) {
+	executor.reads = append(executor.reads, "ServiceArchivePresent")
+	if err := executor.fail("ServiceArchivePresent"); err != nil {
+		return false, err
+	}
+	_, present := executor.archives[path]
+	return present, nil
+}
+
+// ArchiveServiceData refuses to replace an archive, exactly as the real seam
+// does: the immutability of the ordinary slots is structural here too, so a case
+// proving it is proving the seam and not a check above the seam.
+func (executor *fakeExecutor) ArchiveServiceData(dataDirectory, archivePath string) (Archive, error) {
+	executor.effects = append(executor.effects, "ArchiveServiceData")
+	if err := executor.fail("ArchiveServiceData"); err != nil {
+		return Archive{}, err
+	}
+	if _, present := executor.archives[archivePath]; present {
+		return Archive{}, errors.New("an archive already exists in this slot")
+	}
+	executor.archives[archivePath] = executor.dataContent
+	return Archive{SHA256: archiveDigest(executor.dataContent), TakenAt: fixtureArchiveInstant}, nil
+}
+
+// ExchangeServiceData reads the named archive before it writes the reserved one,
+// exactly as the real seam does. That order is the whole reason this is one call:
+// a return naming the reserved slot passes both paths as the same file, and the
+// swap it performs is what makes such a return an honest undoing of itself.
+func (executor *fakeExecutor) ExchangeServiceData(archivePath, dataDirectory, reservedPath string) (Archive, error) {
+	executor.effects = append(executor.effects, "ExchangeServiceData")
+	if err := executor.fail("ExchangeServiceData"); err != nil {
+		return Archive{}, err
+	}
+	returning := executor.archives[archivePath]
+	replaced := executor.dataContent
+	executor.archives[reservedPath] = replaced
+	executor.dataContent = returning
+	executor.dataPresent = true
+	executor.dataRestores++
+	return Archive{SHA256: archiveDigest(replaced), TakenAt: fixtureArchiveInstant}, nil
+}
+
+func (executor *fakeExecutor) RemoveServiceArchive(path string) error {
+	executor.effects = append(executor.effects, "RemoveServiceArchive")
+	if err := executor.fail("RemoveServiceArchive"); err != nil {
+		return err
+	}
+	delete(executor.archives, path)
+	return nil
+}
+
+func (executor *fakeExecutor) EgressRules(path string) ([]byte, bool, error) {
+	executor.reads = append(executor.reads, "EgressRules")
+	if err := executor.fail("EgressRules"); err != nil {
+		return nil, false, err
+	}
+	if !executor.egressRulesPresent {
+		return nil, false, nil
+	}
+	return executor.egressRules, true, nil
+}
+
+// WriteEgressRules persists the table and loads it into this fake machine's
+// kernel in the same call, so a run that wrote the file without applying it would
+// leave the two disagreeing — which is exactly what the seam exists to prevent.
+func (executor *fakeExecutor) WriteEgressRules(path string, content []byte) error {
+	executor.effects = append(executor.effects, "WriteEgressRules")
+	if err := executor.fail("WriteEgressRules"); err != nil {
+		return err
+	}
+	executor.egressRules = content
+	executor.egressRulesPresent = true
+	executor.egressRuleApplications++
+	executor.nftTables[egressTableFamily+" "+egressTableName] = content
+	return nil
+}
+
+func (executor *fakeExecutor) RemoveEgressRules(path string) error {
+	executor.effects = append(executor.effects, "RemoveEgressRules")
+	if err := executor.fail("RemoveEgressRules"); err != nil {
+		return err
+	}
+	executor.egressRules = nil
+	executor.egressRulesPresent = false
+	executor.egressRuleApplications++
+	delete(executor.nftTables, egressTableFamily+" "+egressTableName)
+	return nil
+}
+
+func (executor *fakeExecutor) EnableEgressRulesAtBoot() error {
+	executor.effects = append(executor.effects, "EnableEgressRulesAtBoot")
+	if err := executor.fail("EnableEgressRulesAtBoot"); err != nil {
+		return err
+	}
+	executor.egressAtBoot = true
+	executor.egressBootEnablings++
+	return nil
+}
+
+func (executor *fakeExecutor) DisableEgressRulesAtBoot() error {
+	executor.effects = append(executor.effects, "DisableEgressRulesAtBoot")
+	if err := executor.fail("DisableEgressRulesAtBoot"); err != nil {
+		return err
+	}
+	executor.egressAtBoot = false
+	executor.egressBootDisablings++
+	return nil
+}
+
 // halfWrittenMachine is what a cut in the middle of a deployment leaves behind:
 // the sheet is on disk, the service was never started, and nothing on the
 // machine says whether the run that wrote it meant to stop there.
@@ -1115,7 +1337,7 @@ func serviceMachine() *fakeExecutor {
 func deployedServiceMachine(t *testing.T, port int) *fakeExecutor {
 	t.Helper()
 	executor := serviceMachine()
-	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, port))
+	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, port, ""))
 	executor.active = true
 	executor.image = bentoPDFPlacement.image
 	return executor
@@ -1181,7 +1403,7 @@ func deployedEntrypointMachine() *fakeExecutor {
 func routableMachine(port int) *fakeExecutor {
 	executor := entrypointMachine()
 	executor.hold(entrypointPlacement.unitPath(), renderEntrypointSheet())
-	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, port))
+	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, port, ""))
 	return executor
 }
 
@@ -1190,6 +1412,115 @@ func routableMachine(port int) *fakeExecutor {
 func publishedRouteMachine(host string, port int) *fakeExecutor {
 	executor := routableMachine(port)
 	executor.hold(routeFragmentPath(host), renderRouteFragment(host, port))
+	return executor
+}
+
+// approvedPrivateService, approvedSnapshot and approvedRestore are the nominal
+// schema 2 subjects of the three operation groups of the private profile.
+func approvedPrivateService(t *testing.T, operation string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenPrivateServicePair(t, operation, port))
+}
+
+func approvedSnapshot(t *testing.T, operation string) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenSnapshotPair(t, operation))
+}
+
+func approvedRestore(t *testing.T) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(plan.OperationRestoreService, frozenRestorePair(t))
+}
+
+// forgedPrivateServicePlan, forgedSnapshotPlan and forgedRestorePlan render the
+// three closed field lists of the private profile document by document, for the
+// reason the other forgers exist: half the documents a refusal matrix presents
+// are documents the plan package refuses to build at all.
+func forgedPrivateServicePlan(t *testing.T, operation string, port int, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV2)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"service_profile", quotedJSON(t, plan.ServiceProfileVaultwarden)},
+		{"image_reference", quotedJSON(t, plan.VaultwardenImageReference)},
+		{"image_digest", quotedJSON(t, plan.VaultwardenImageDigest)},
+		{"local_port", strconv.Itoa(port)},
+		{"origin_host", quotedJSON(t, fixtureOriginHost)},
+	}, altered)
+}
+
+func forgedSnapshotPlan(t *testing.T, operation, slot string, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV2)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"service_profile", quotedJSON(t, plan.ServiceProfileVaultwarden)},
+		{"snapshot_slot", quotedJSON(t, slot)},
+	}, altered)
+}
+
+func forgedRestorePlan(t *testing.T, slot string, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV2)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, plan.OperationRestoreService)},
+		{"service_profile", quotedJSON(t, plan.ServiceProfileVaultwarden)},
+		{"snapshot_slot", quotedJSON(t, slot)},
+	}, altered)
+}
+
+// privateMachine is a machine that can run the flow with the vaultwarden account
+// already created, and nothing of the service on it yet: no sheet, no data, no
+// confinement.
+func privateMachine() *fakeExecutor {
+	executor := newFakeExecutor()
+	executor.capabilities.AccountPresent = true
+	executor.capabilities.RootlessPodman = true
+	return executor
+}
+
+// deployedPrivateMachine is a machine already holding exactly the approved
+// private service: the sheet bytes the origin is embedded in, the running
+// container on the pinned image, the durable data with its synthetic secrets in
+// it, and the confinement table this machine's own account identifier renders,
+// with the unit that poses it again at boot.
+func deployedPrivateMachine(port int) *fakeExecutor {
+	executor := privateMachine()
+	executor.hold(vaultwardenPlacement.unitPath(), renderSheet(vaultwardenPlacement, port, fixtureOriginHost))
+	executor.active = true
+	executor.image = vaultwardenPlacement.image
+	executor.dataPresent = true
+	executor.dataContent = fixtureSecrets
+	confinePrivateMachine(executor)
+	return executor
+}
+
+// confinePrivateMachine puts the confinement this machine's identifier renders
+// on it, in the kernel and on disk at once, beside a table of somebody else's —
+// so that every case asserting what a removal takes away is asserting it against
+// a machine that has a ruleset to damage.
+func confinePrivateMachine(executor *fakeExecutor) {
+	executor.egressRules = renderEgressRules(vaultwardenPlacement, executor.accountIdentifier)
+	executor.egressRulesPresent = true
+	executor.nftTables[egressTableFamily+" "+egressTableName] = executor.egressRules
+	executor.nftTables[foreignTable] = []byte("table " + foreignTable + " { }")
+	executor.hold(egressRulesUnitPath, renderEgressRulesUnit())
+	executor.egressAtBoot = true
+}
+
+// archivedPrivateMachine is that same machine holding one ordinary archive, whose
+// content is a state of the data other than the one currently deployed. The two
+// differing states are what makes "the secrets of that slot came back" an
+// assertion about identity rather than about a file existing.
+func archivedPrivateMachine(port int) *fakeExecutor {
+	executor := deployedPrivateMachine(port)
+	executor.archives[vaultwardenPlacement.archivePath(fixtureSnapshotSlot)] = fixtureRestoredSecrets
 	return executor
 }
 
@@ -1298,7 +1629,7 @@ func preparedLinkMachine(role string) *fakeExecutor {
 	executor.hold(linkNetworkPath, renderLinkNetwork(where))
 	executor.linkActive = true
 	if where.goesOut {
-		executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort))
+		executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort, ""))
 	}
 	return executor
 }

@@ -57,7 +57,7 @@ func TestPublishingARouteWritesExactlyOneFragmentAndVerifiesIt(t *testing.T) {
 	}
 	// The entry's own sheet and the service's sheet are exactly as they were.
 	if string(executor.held(entrypointPlacement.unitPath())) != string(renderEntrypointSheet()) ||
-		string(executor.held(bentoPDFPlacement.unitPath())) != string(renderSheet(bentoPDFPlacement, fixturePort)) {
+		string(executor.held(bentoPDFPlacement.unitPath())) != string(renderSheet(bentoPDFPlacement, fixturePort, "")) {
 		t.Fatal("publishing a route rewrote something a route does not own")
 	}
 	// And the announced state was proven rather than assumed, for this name and
@@ -249,7 +249,7 @@ func TestARouteTowardsAPortNothingManagesIsRefusedBeforeAnyEffect(t *testing.T) 
 func TestARouteOnAMachineHoldingNoEntrypointIsRefusedBeforeAnyEffect(t *testing.T) {
 	t.Parallel()
 	executor := entrypointMachine()
-	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort))
+	executor.hold(bentoPDFPlacement.unitPath(), renderSheet(bentoPDFPlacement, fixturePort, ""))
 	accepted, input := approvedRoute(t, plan.OperationPublishRoute, fixtureRouteHost, fixturePort)
 
 	application, err := Apply(executor, accepted, input)

@@ -1,5 +1,21 @@
 package auxiliary
 
+import "time"
+
+// Archive is what one archiving effect left behind: the digest of the bytes it
+// wrote and the instant it wrote them.
+//
+// Both are facts the machine established and neither is a value a human could
+// have approved in advance — which is why the plan of a snapshot carries no
+// digest, and why the report of one carries both. The digest is the whole of what
+// this product ever says about an archive: what is inside it is the data of a
+// vault, and no field of any report, error or observation of this package can
+// hold a byte of it.
+type Archive struct {
+	SHA256  string
+	TakenAt time.Time
+}
+
 // Capabilities is what the machine can be observed to offer, read before
 // anything is written to it.
 //
@@ -238,6 +254,113 @@ type Executor interface {
 	// itself, and disabling takes that away before the file is removed.
 	EnableLinkRulesAtBoot() error
 	DisableLinkRulesAtBoot() error
+
+	// The nine methods below are the whole of what a data-bearing profile needs
+	// beyond what a stateless one already asked for, and they are separate from
+	// everything above for one reason: nothing above can create a directory a
+	// container writes to, hold an account's numeric identity, or move a tree of
+	// bytes. Every one of them takes paths that are constants of this package or a
+	// constant joined with a slot the plan validation has already bounded to a
+	// character set carrying no separator.
+
+	// AccountIdentifier reports the numeric identifier one account was given on
+	// this machine.
+	//
+	// It is a fact about the machine and never a value of a plan: identifiers are
+	// allocated when an account is created, so a document naming one would be a
+	// document describing a machine it has never seen. It is read at the moment
+	// the confinement table is rendered, which is why it is a seam and not a field
+	// of a placement.
+	AccountIdentifier(account string) (int, error)
+
+	// ServiceDataPresent reports whether the durable data directory of a profile
+	// exists. A directory that is absent is not an error here: it is an answer,
+	// and the one that tells a deployment which has never run from a deployment
+	// whose data has gone.
+	ServiceDataPresent(path string) (bool, error)
+	// EnsureServiceData creates, in one effect, the two directories a data-bearing
+	// profile owns, and is content with them already existing.
+	//
+	// They are created with two different owners and the difference is the whole
+	// point. The data belongs to the service's own account, because a rootless
+	// container's root is that account outside its user namespace and the image
+	// must be able to write its volume; a directory left to root would be a
+	// service that starts and cannot write, or — worse — one the engine creates
+	// itself, root-owned, the first time it is missing. The archives belong to
+	// root alone, because nothing but this Auxiliary ever writes one and a
+	// container escape that reached the account must not be able to read, alter or
+	// destroy the backups of the very data it just escaped from. Both are closed
+	// to every other identity of the machine.
+	EnsureServiceData(account, dataDirectory, snapshotDirectory string) error
+
+	// ServiceArchives names the ordinary slots this machine holds for one profile,
+	// sorted, and never the reserved slot: the slot the return mechanism owns is
+	// not one a human named, so it is not one this seam reports. It answers with
+	// names and never with content.
+	ServiceArchives(directory string) ([]string, error)
+	// ServiceArchivePresent reports whether one named archive exists. It is the
+	// one question the reserved slot is ever asked, and it is asked by path.
+	ServiceArchivePresent(path string) (bool, error)
+	// ArchiveServiceData writes the data directory into one named archive and
+	// reports what it wrote: the digest of the bytes, and the instant it wrote
+	// them.
+	//
+	// It refuses to replace an archive that already exists. That refusal is the
+	// immutability of the backups made structural rather than checked: a caller
+	// holding this seam cannot overwrite a slot even by mistake, and the only way
+	// to reuse a name is the explicit discard a human approves separately.
+	ArchiveServiceData(dataDirectory, archivePath string) (Archive, error)
+	// ExchangeServiceData is the whole of a return, as one effect: the data
+	// becomes what the named archive holds, and the state it replaced is left in
+	// the reserved archive, whose digest and instant come back.
+	//
+	// It is one method rather than "write the reserved slot, then replace the
+	// data" for a reason that is not tidiness. The one archive a return may name
+	// besides an ordinary slot is the reserved slot itself — that is the signed
+	// rollback of every return — and written as two effects those two would be the
+	// same file: the first would overwrite what the second was about to read, and
+	// the return of a return would restore the state it had just replaced. Here
+	// the archive is read before the reserved one is written, so the two paths
+	// being one file is a swap and not a loss.
+	//
+	// It is also the only seam of this package that may write over an archive that
+	// exists, and the only path it ever writes is the reserved one, built by its
+	// caller from the plan package's own constant. That is what keeps the
+	// immutability of the ordinary slots structural: no seam here can replace one.
+	//
+	// What it leaves behind is the named archive's tree and nothing of the tree
+	// that was there, so a return is a replacement and never a merge.
+	ExchangeServiceData(archivePath, dataDirectory, reservedPath string) (Archive, error)
+	// RemoveServiceArchive removes one named archive, and is content with it being
+	// absent.
+	RemoveServiceArchive(path string) error
+
+	// EgressRules, WriteEgressRules and RemoveEgressRules are the confinement
+	// table of a private service, and they are three methods for the reason the
+	// passage's own bounds are: what is on disk and what the kernel holds are one
+	// fact, so persisting and applying are one effect and removing is its exact
+	// inverse.
+	//
+	// Writing replaces the root-owned file and loads it into the kernel in the
+	// same call, so a machine that has deployed a confined service is never
+	// running it without the confinement it just wrote. Removing deletes the table
+	// from the kernel by its own name and then removes the file: it names one
+	// table, so every other table this machine carries — the passage's own and an
+	// administrator's firewall above all — is untouched.
+	EgressRules(path string) ([]byte, bool, error)
+	WriteEgressRules(path string, content []byte) error
+	RemoveEgressRules(path string) error
+
+	// EnableEgressRulesAtBoot and DisableEgressRulesAtBoot decide whether the
+	// oneshot unit that poses the confinement again runs at the next boot.
+	//
+	// The unit file itself travels through the three file methods above, because
+	// it is exactly what they describe. What these two add is the one thing a file
+	// cannot say about itself: enabling makes the manager run it at the next boot
+	// without running it now, since the deployment has already applied the table
+	// itself, and disabling takes that away before the file is removed.
+	EnableEgressRulesAtBoot() error
+	DisableEgressRulesAtBoot() error
 
 	// EnableNetworkManagement makes this machine's network manager run now and
 	// after a reboot, and ReloadNetworkConfiguration makes it read the passage's

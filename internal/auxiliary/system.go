@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -1019,6 +1021,392 @@ func (executor SystemExecutor) ReloadNetworkConfiguration() error {
 		return nil
 	}
 	_, err := executor.run(commandTimeout, "networkctl", "reconfigure", LinkInterfaceName)
+	return err
+}
+
+const (
+	// serviceDataMode is how the one durable write path of this product is held:
+	// the service's own account, and nobody else at all. It is narrower than the
+	// sheets deliberately — a sheet describes a service and may be read, the data
+	// of a vault may not.
+	serviceDataMode = 0o700
+	// serviceArchiveDirectoryMode and serviceArchiveFileMode hold the backups
+	// under root alone. The account whose data they archive is not among the
+	// identities that may read them: a container escape reaching that account must
+	// not reach the history of the data it escaped from.
+	serviceArchiveDirectoryMode = 0o700
+	serviceArchiveFileMode      = 0o600
+
+	// archiveTimeout bounds the two effects that walk a whole tree. They are
+	// longer than an ordinary command because they are proportional to the data,
+	// and bounded all the same because an Auxiliary may not hang holding the
+	// anti-replay lock of its machine.
+	archiveTimeout = 900 * time.Second
+
+	// restoringSuffix and replacedSuffix are the two temporary names a restore
+	// passes through, so that the data directory is replaced by a rename rather
+	// than emptied in place: a machine cut in the middle comes back holding either
+	// the previous tree or the restored one, and never half of each.
+	restoringSuffix = ".restoring"
+	replacedSuffix  = ".replaced"
+)
+
+// AccountIdentifier reports the numeric identifier one account holds here.
+func (executor SystemExecutor) AccountIdentifier(account string) (int, error) {
+	entry, err := user.Lookup(account)
+	if err != nil {
+		return 0, fmt.Errorf("the account %s does not exist on this machine", account)
+	}
+	identifier, err := strconv.Atoi(entry.Uid)
+	if err != nil {
+		return 0, fmt.Errorf("the account %s carries an identifier this machine cannot read: %w", account, err)
+	}
+	return identifier, nil
+}
+
+// ServiceDataPresent reports whether the durable data directory is there, and
+// reports its absence as an answer.
+//
+// A path that exists and is not a directory is not an answer but a machine this
+// operation does not run on: it is named rather than replaced, because replacing
+// it would destroy something no plan describes.
+func (executor SystemExecutor) ServiceDataPresent(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("%s exists and is not a directory: this machine is not touched", path)
+	}
+	return true, nil
+}
+
+// EnsureServiceData creates the two directories a data-bearing profile owns,
+// with the two owners the seam's contract fixes.
+func (executor SystemExecutor) EnsureServiceData(account, dataDirectory, snapshotDirectory string) error {
+	entry, err := user.Lookup(account)
+	if err != nil {
+		return fmt.Errorf("the account %s does not exist on this machine", account)
+	}
+	identifier, err := strconv.Atoi(entry.Uid)
+	if err != nil {
+		return fmt.Errorf("the account %s carries an identifier this machine cannot read: %w", account, err)
+	}
+	group, err := strconv.Atoi(entry.Gid)
+	if err != nil {
+		return fmt.Errorf("the account %s carries a group this machine cannot read: %w", account, err)
+	}
+	if err := os.MkdirAll(dataDirectory, serviceDataMode); err != nil {
+		return fmt.Errorf("create the service data directory: %w", err)
+	}
+	// The mode and the owner are set rather than assumed, because MkdirAll leaves
+	// an existing directory exactly as it found it: a data directory the engine
+	// had created root-owned before this seam existed is put back under its
+	// account here rather than left as a service that cannot write.
+	if err := os.Chmod(dataDirectory, serviceDataMode); err != nil {
+		return fmt.Errorf("hold the service data directory closed: %w", err)
+	}
+	if err := os.Chown(dataDirectory, identifier, group); err != nil {
+		return fmt.Errorf("give the service data directory to its own account: %w", err)
+	}
+	if err := os.MkdirAll(snapshotDirectory, serviceArchiveDirectoryMode); err != nil {
+		return fmt.Errorf("create the service archive directory: %w", err)
+	}
+	if err := os.Chmod(snapshotDirectory, serviceArchiveDirectoryMode); err != nil {
+		return fmt.Errorf("hold the service archive directory closed: %w", err)
+	}
+	return nil
+}
+
+// ServiceArchives names the ordinary slots this machine holds, sorted, and never
+// the reserved one.
+//
+// An absent directory is an answer and not a failure: a machine that never held
+// this profile holds no archive. Only the slots travel back — never a path, never
+// a size and never a byte of content.
+func (executor SystemExecutor) ServiceArchives(directory string) ([]string, error) {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	slots := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), archiveSuffix) {
+			continue
+		}
+		slot := strings.TrimSuffix(entry.Name(), archiveSuffix)
+		if slot == plan.ReservedSnapshotSlot {
+			continue
+		}
+		slots = append(slots, slot)
+	}
+	sort.Strings(slots)
+	return slots, nil
+}
+
+// ServiceArchivePresent reports whether one named archive is there.
+//
+// It asks the filesystem for the entry rather than reading the file, unlike every
+// other presence question of this package: the files those ask about are sheets a
+// human could read on one screen, and an archive is proportional to the data of a
+// service. Nothing here opens it, which is also the narrowest way to answer a
+// question about a vault's backups.
+func (executor SystemExecutor) ServiceArchivePresent(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info.IsDir() {
+		return false, fmt.Errorf("%s is a directory rather than an archive: this machine is not touched", path)
+	}
+	return true, nil
+}
+
+// ArchiveServiceData writes one named archive and refuses to replace one.
+func (executor SystemExecutor) ArchiveServiceData(dataDirectory, archivePath string) (Archive, error) {
+	if _, err := os.Stat(archivePath); err == nil {
+		return Archive{}, fmt.Errorf(
+			"an archive already exists at %s: backups of this product are immutable, so nothing was written", archivePath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Archive{}, err
+	}
+	return executor.writeArchive(dataDirectory, archivePath)
+}
+
+// writeArchive is what an archiving effect does once the question of replacement
+// is settled: one fixed argument vector, into a temporary file beside the target,
+// hashed and only then renamed into place.
+//
+// The temporary file is why an interrupted archiving never leaves a slot holding
+// half a tree: what a machine comes back with is either the previous archive or
+// the complete new one. The digest is taken over the bytes that were written and
+// not over the tree they came from, because what a report names is the archive a
+// human can be handed.
+func (executor SystemExecutor) writeArchive(dataDirectory, archivePath string) (Archive, error) {
+	temporaryPath, archive, err := executor.stageArchive(dataDirectory, archivePath)
+	if err != nil {
+		return Archive{}, err
+	}
+	if err := os.Rename(temporaryPath, archivePath); err != nil {
+		os.Remove(temporaryPath)
+		return Archive{}, fmt.Errorf("place the archive in its slot: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(archivePath)); err != nil {
+		return Archive{}, err
+	}
+	return archive, nil
+}
+
+// stageArchive writes the data into a temporary file beside the slot it is meant
+// for, and hashes it there.
+//
+// The temporary file is why an interrupted archiving never leaves a slot holding
+// half a tree: what a machine comes back with is either the previous archive or
+// the complete new one. The digest is taken over the bytes that were written and
+// not over the tree they came from, because what a report names is the archive a
+// human can be handed.
+func (executor SystemExecutor) stageArchive(dataDirectory, archivePath string) (string, Archive, error) {
+	if err := os.MkdirAll(filepath.Dir(archivePath), serviceArchiveDirectoryMode); err != nil {
+		return "", Archive{}, fmt.Errorf("create the service archive directory: %w", err)
+	}
+	temporaryPath := archivePath + ".tmp"
+	if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", Archive{}, fmt.Errorf("clear the previous temporary archive: %w", err)
+	}
+	if _, err := executor.run(archiveTimeout, "tar",
+		"--create",
+		"--gzip",
+		"--file", temporaryPath,
+		"--directory", dataDirectory,
+		".",
+	); err != nil {
+		os.Remove(temporaryPath)
+		return "", Archive{}, err
+	}
+	if err := os.Chmod(temporaryPath, serviceArchiveFileMode); err != nil {
+		os.Remove(temporaryPath)
+		return "", Archive{}, fmt.Errorf("hold the archive closed: %w", err)
+	}
+	digest, err := digestOfFile(temporaryPath)
+	if err != nil {
+		os.Remove(temporaryPath)
+		return "", Archive{}, err
+	}
+	return temporaryPath, Archive{SHA256: digest, TakenAt: time.Now().UTC()}, nil
+}
+
+// digestOfFile is the one digest this package ever takes over a file it wrote.
+//
+// The bytes are streamed rather than read whole: an archive is proportional to
+// the data of a service, and a report may not depend on it fitting in memory.
+func digestOfFile(path string) (string, error) {
+	handle, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("read the archive back to hash it: %w", err)
+	}
+	defer handle.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, handle); err != nil {
+		return "", fmt.Errorf("hash the archive: %w", err)
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+// ExchangeServiceData performs a return as one effect, in the one order that
+// makes the reserved slot both the state a return preserves and a slot a return
+// may name.
+//
+// The order is the whole of the correctness argument, so it is written once,
+// here:
+//
+//  1. the named archive is *unpacked first*, into a fresh directory beside the
+//     data. It is read before anything is written, which is what makes a return
+//     naming the reserved slot a swap rather than a loss: written the other way
+//     round, the reserved archive would be overwritten by the current state and
+//     then unpacked back over it, and the return of a return would restore
+//     exactly what it had just replaced;
+//  2. the state being replaced is archived, into a temporary file beside the
+//     reserved slot, and hashed there;
+//  3. the two are put in place by rename — the data first, the reserved archive
+//     second — so a machine cut at any instant comes back holding one complete
+//     tree and either the previous reserved archive or the new one;
+//  4. what was replaced is removed last.
+//
+// The replacement is a replacement and never a merge: unpacking over the tree
+// that is there would leave a service holding rows from two different states with
+// nothing saying which.
+func (executor SystemExecutor) ExchangeServiceData(archivePath, dataDirectory, reservedPath string) (Archive, error) {
+	restoring := dataDirectory + restoringSuffix
+	replaced := dataDirectory + replacedSuffix
+	for _, leftover := range []string{restoring, replaced} {
+		if err := os.RemoveAll(leftover); err != nil {
+			return Archive{}, fmt.Errorf("clear what a previous return left at %s: %w", leftover, err)
+		}
+	}
+	if err := os.Mkdir(restoring, serviceDataMode); err != nil {
+		return Archive{}, fmt.Errorf("create the directory the archive is unpacked into: %w", err)
+	}
+	if _, err := executor.run(archiveTimeout, "tar",
+		"--extract",
+		"--gzip",
+		"--same-owner",
+		"--preserve-permissions",
+		"--file", archivePath,
+		"--directory", restoring,
+	); err != nil {
+		os.RemoveAll(restoring)
+		return Archive{}, err
+	}
+	// The unpacked tree carries the owners the archive recorded, which are the
+	// service account's own: the archive was written by root from a tree that
+	// account owns, and it is unpacked by root. What is set here is the one thing
+	// the archive cannot carry — the directory the mount point itself is.
+	if err := os.Chmod(restoring, serviceDataMode); err != nil {
+		os.RemoveAll(restoring)
+		return Archive{}, fmt.Errorf("hold the restored data closed: %w", err)
+	}
+
+	stagedPath, archive, err := executor.stageArchive(dataDirectory, reservedPath)
+	if err != nil {
+		os.RemoveAll(restoring)
+		return Archive{}, err
+	}
+
+	if err := os.Rename(dataDirectory, replaced); err != nil && !errors.Is(err, os.ErrNotExist) {
+		os.RemoveAll(restoring)
+		os.Remove(stagedPath)
+		return Archive{}, fmt.Errorf("set the replaced data aside: %w", err)
+	}
+	if err := os.Rename(restoring, dataDirectory); err != nil {
+		os.Remove(stagedPath)
+		return Archive{}, fmt.Errorf("put the returned data in place: %w", err)
+	}
+	if err := os.Rename(stagedPath, reservedPath); err != nil {
+		os.Remove(stagedPath)
+		return Archive{}, fmt.Errorf("place the archive of the replaced state in its slot: %w", err)
+	}
+	if err := os.RemoveAll(replaced); err != nil {
+		return Archive{}, fmt.Errorf("remove the data the return replaced: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(reservedPath)); err != nil {
+		return Archive{}, err
+	}
+	return archive, syncDirectory(filepath.Dir(dataDirectory))
+}
+
+// RemoveServiceArchive removes one named archive and is content with it being
+// absent.
+func (executor SystemExecutor) RemoveServiceArchive(path string) error {
+	return executor.RemoveUnitFile(path)
+}
+
+// EgressRules reads the confinement table this machine holds on disk, and
+// reports its absence as an answer.
+func (executor SystemExecutor) EgressRules(path string) ([]byte, bool, error) {
+	return executor.ReadUnitFile(path)
+}
+
+// WriteEgressRules persists the confinement table and loads it into the kernel,
+// for the reason the passage's own bounds are written that way: a file alone
+// would only confine the service at the next boot, and a table loaded alone would
+// be gone at that boot. What the file contains makes loading it twice mean the
+// same as loading it once.
+func (executor SystemExecutor) WriteEgressRules(path string, content []byte) error {
+	if err := executor.WriteUnitFile(path, content); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, nftProgram, "--file", path)
+	return err
+}
+
+// RemoveEgressRules takes the confinement table out of the kernel and then off
+// the disk, and names exactly one table while doing it.
+//
+// The table is added before it is deleted, which is the idiom the file itself
+// opens with: adding is what makes the deletion succeed whether or not this
+// machine was holding the table, and an added table with no chain in it filters
+// nothing at all. Every other table this machine carries — the passage's own and
+// an administrator's firewall above all — is never named and therefore never
+// touched.
+func (executor SystemExecutor) RemoveEgressRules(path string) error {
+	if _, err := executor.run(commandTimeout, nftProgram,
+		"add", "table", egressTableFamily, egressTableName); err != nil {
+		return err
+	}
+	if _, err := executor.run(commandTimeout, nftProgram,
+		"delete", "table", egressTableFamily, egressTableName); err != nil {
+		return err
+	}
+	return executor.RemoveUnitFile(path)
+}
+
+// EnableEgressRulesAtBoot makes the oneshot unit run at the next boot, and not
+// now: the deployment has already applied the table itself.
+func (executor SystemExecutor) EnableEgressRulesAtBoot() error {
+	if _, err := executor.run(commandTimeout, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, "systemctl", "enable", egressRulesUnitName)
+	return err
+}
+
+// DisableEgressRulesAtBoot takes that away, while the unit file is still there:
+// a manager asked to disable a unit whose file has already been removed cannot
+// read the [Install] section that says what to remove.
+func (executor SystemExecutor) DisableEgressRulesAtBoot() error {
+	if _, err := executor.run(commandTimeout, "systemctl", "disable", egressRulesUnitName); err != nil {
+		return err
+	}
+	_, err := executor.run(commandTimeout, "systemctl", "daemon-reload")
 	return err
 }
 

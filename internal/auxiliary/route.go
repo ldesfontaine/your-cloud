@@ -134,11 +134,21 @@ tls:
 }
 
 // managedProfiles is the closed list of service profiles this Auxiliary places,
-// in one fixed order, so that a check walking them reads the same sheets in the
-// same sequence on every run.
+// both doors together, in one fixed order, so that a check walking them reads the
+// same sheets in the same sequence on every run.
+//
+// It walks the private door as well as the stateless one because the sentence its
+// one caller implements is "a managed service of this machine is present", and a
+// data-bearing service is a managed service: the passage of `#97` is bounded to a
+// private service in the reference scenario, and a reading that only knew the
+// stateless door would refuse every correct junction of it. Which door approved a
+// profile is decided where a document is turned into an instance, and never here.
 func managedProfiles() []string {
-	profiles := make([]string, 0, len(profilePlacements))
+	profiles := make([]string, 0, len(profilePlacements)+len(privateProfilePlacements))
 	for profile := range profilePlacements {
+		profiles = append(profiles, profile)
+	}
+	for profile := range privateProfilePlacements {
 		profiles = append(profiles, profile)
 	}
 	sort.Strings(profiles)
@@ -161,7 +171,7 @@ func managedProfiles() []string {
 func publishesLoopbackPort(executor Executor, port int) (bool, error) {
 	published := "PublishPort=" + loopbackAddress + ":" + strconv.Itoa(port) + ":"
 	for _, profile := range managedProfiles() {
-		where := profilePlacements[profile]
+		where, _ := placementOf(profile)
 		sheet, present, err := executor.ReadUnitFile(where.unitPath())
 		if err != nil {
 			return false, fmt.Errorf("read the sheet of the %s profile: %w", profile, err)

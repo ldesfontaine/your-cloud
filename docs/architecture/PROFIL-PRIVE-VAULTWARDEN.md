@@ -4,7 +4,9 @@
 > Il étend le schéma 2 au premier service à données du produit, fixe ses
 > sauvegardes, son confinement et la route qui le publie par le seul passage
 > privé. Les implémentations le suivent depuis `#100` (plans et surface du
-> Controller) ; la preuve LAB du palier reste `#104`.
+> Controller) et `#102` (l'Auxiliaire pose le service, son volume, son
+> environnement fermé, sa table de sortie et ses trois opérations d'archive) ;
+> la route de lien reste `#103` et la preuve LAB du palier reste `#104`.
 
 ## Ce que ce profil est, et n'est pas
 
@@ -202,6 +204,66 @@ Ce que le schéma fixe autour de ces routes :
   chacune est refusée en la nommant, avant tout effet et avant toute lecture de
   la machine, jusqu'aux paliers qui les appliquent. La fenêtre est délibérée et
   un test la tient sur des paires réelles, gelées comme la Console les remettra.
+
+## Addendum `#102` : ce que poser ce profil sur une machine a exigé de décider
+
+Le contrat ci-dessus dit quoi. Poser les cinq opérations sur une vraie machine a
+demandé six décisions qu'il ne nommait pas, et elles sont ici plutôt que
+seulement dans le code.
+
+- **Propriété du répertoire de données.** `/var/lib/your-cloud-svc-vaultwarden/
+  data` appartient au **compte du service**, en `0700`. C'est une nécessité et
+  non un confort : le conteneur est rootless, son `root` est ce compte hors de
+  l'espace de noms, et un répertoire laissé à `root` donne un service qui démarre
+  et ne peut pas écrire — ou pire, un répertoire que le moteur crée lui-même,
+  root, la première fois qu'il manque. Les **archives** (`.../snapshots`)
+  appartiennent à `root` seul, en `0700` : rien d'autre que l'Auxiliaire n'en
+  écrit une, et une évasion de conteneur qui atteindrait le compte ne doit pas
+  atteindre l'historique des données dont elle vient de sortir.
+- **Un retrait garde les données.** `remove_private_service` retire ce qui
+  tourne — conteneur, fiche, image, table de sortie — et **garde le répertoire
+  de données et toutes les archives**. Aucun plan du produit ne décrit la
+  destruction de données, donc aucune opération n'en exécute une ; le rapport
+  nomme le répertoire conservé et les emplacements qui survivent, pour qu'un
+  lecteur l'apprenne au lieu de le supposer. La « recréation contrôlée » de la
+  preuve est exactement un retrait suivi d'un déploiement : mêmes données,
+  nouveau conteneur, deux plans lus.
+- **Des données disparues sont une dérive, jamais une continuité.** Un service
+  déployé dont le répertoire a disparu est réappliqué comme un changement : le
+  répertoire est recréé **vide** et le rapport dit que la machine a changé.
+  L'Auxiliaire ne sait pas ce qu'il y avait, et ne va pas chercher une archive
+  pour la remettre — revenir à un emplacement nommé est un `restore_service`
+  qu'un humain approuve.
+- **Le confinement revient au démarrage.** Une table chargée par `nft -f` vit
+  dans le noyau et pas sur le disque : sans rien de plus, le premier redémarrage
+  rendrait le service sans ce qui le confine, et rien ne le dirait. Un `oneshot`
+  (`your-cloud-egress-rules.service`, ordonné avant `network-pre.target`,
+  `WantedBy=sysinit.target`) repose le fichier que le déploiement a écrit, avant
+  tout ce qui pourrait démarrer le service. C'est la leçon que le passage a
+  apprise sur une machine réelle, appliquée à l'autre table ; il est un effet
+  déclaré du plan de déploiement et le retrait l'emporte avec le reste.
+- **Un retour est un échange, pas deux écritures.** Le flux écrit bien l'état
+  courant dans `previous` avant de remplacer `/data`, mais les deux forment
+  **un seul effet** qui lit l'archive nommée avant d'écrire la réservée. La
+  raison est le rollback lui-même : le retour d'un retour vise `previous`, donc
+  les deux chemins sont le même fichier, et écrit en deux temps le premier
+  écraserait ce que le second allait lire — le retour du retour restaurerait
+  précisément l'état qu'il devait annuler. Écrit en un échange, il **permute**,
+  et l'appliquer deux fois ramène la machine où elle était. Il suit que rien de
+  ce que cette machine détenait n'est jamais détruit par un retour.
+- **Une opération d'archive ne porte pas de port, donc elle le lit.** Une
+  sauvegarde nomme un profil et un emplacement ; le port de loopback sur lequel
+  vérifier que le service est revenu est un fait de la fiche que l'Auxiliaire a
+  lui-même écrite, lu sur la machine au moment utile. Une fiche dont aucun port
+  ne se lit est un refus avant tout effet, jamais une découverte après l'arrêt du
+  service. Dans le même mouvement, la lecture « un service géré de cette machine
+  publie ce port » connaît désormais **les deux portes** : le passage du `#97`
+  borne un service privé dans le scénario de référence, et une lecture qui
+  n'aurait connu que la porte sans état aurait refusé chaque jonction correcte.
+- **La vérification locale du profil privé n'exige que le statut.** Aucun type de
+  média n'est réclamé de la réponse : ce qu'un coffre répond à une requête en
+  clair sur son loopback n'est décrit par aucun plan de ce palier, et `#104` est
+  l'endroit où la réponse d'une instance réelle est constatée.
 
 ## Ce que la preuve devra constater
 

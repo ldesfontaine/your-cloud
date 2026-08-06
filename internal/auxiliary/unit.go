@@ -57,16 +57,24 @@ func PinnedImage() string { return probePlacement.image }
 // value a probe plan may put in a file goes on travelling exactly as `#14`
 // proved it: the port, an integer the plan validation already bound.
 func renderUnit(document *plan.Document) []byte {
-	return renderSheet(probePlacement, document.LocalPort)
+	return renderSheet(probePlacement, document.LocalPort, "")
 }
 
 // renderSheet builds the Quadlet sheet of one managed service.
 //
-// Only one approved value reaches this file: the loopback port, an integer the
-// plan validation already bound to 1024..65535. Everything else comes from the
-// placement — the image and its digest above all, written from the profile's
-// pinned constants rather than from the document, even though the validation has
-// just proven the two equal. A value that cannot travel cannot be smuggled.
+// Two approved values may reach this file and no third: the loopback port, an
+// integer the plan validation already bound to 1024..65535, and — for a profile
+// that declares an origin line — the origin host, a name that validation has
+// already bound to lower-case letters, digits, hyphens and dots. Everything else
+// comes from the placement: the image and its digest above all, written from the
+// profile's pinned constants rather than from the document, even though the
+// validation has just proven the two equal. A value that cannot travel cannot be
+// smuggled.
+//
+// The origin is written only where the placement declares a prefix for it. A
+// profile that declares none carries no environment line whatever a caller
+// passes here, which is how the stateless sheets keep their rule — no
+// Environment at all — while one sheet of the product carries exactly four.
 //
 // Every field below is a control this product owes an explanation for, and the
 // list is the same for every profile:
@@ -82,8 +90,11 @@ func renderUnit(document *plan.Document) []byte {
 //     it was added, and a profile that does not need it must not carry it,
 //     because a control that grants nothing still reads as a control that was
 //     needed;
-//   - ReadOnly makes the container's own filesystem unwritable, which every
-//     profile of this palier can afford because none of them keeps data;
+//   - ReadOnly makes the container's own filesystem unwritable. A stateless
+//     profile can afford it outright because it keeps nothing; a data-bearing one
+//     can afford it because the single place it writes is the volume below, which
+//     is named rather than implied — the filesystem stays unwritable everywhere
+//     else;
 //   - Tmpfs gives the image the in-memory scratch it requires before it can
 //     serve at all — a property of the image named by its placement, proven
 //     blocking on a machine before it was added. The scratch is memory inside
@@ -93,9 +104,31 @@ func renderUnit(document *plan.Document) []byte {
 //     none;
 //   - Pull=never keeps starting the service off the network: the one fetch this
 //     operation performs is explicit, and happens before the sheet is written;
-//   - no Volume, no Device, no Environment and no extra Network exist here,
-//     because no plan has a field that could describe one.
-func renderSheet(where placement, localPort int) []byte {
+//   - Volume mounts the profile's one durable write path, read-write, on the
+//     path the image declares as its volume. Both sides are constants of the
+//     placement, so no plan can move a write path and no plan can add a second
+//     one; ReadOnly still holds for everything else, so the container's own
+//     filesystem stays unwritable and the data is the single exception, named;
+//   - Environment carries the profile's closed hardening lines and, last, the
+//     one approved value: the origin this instance answers under, under the
+//     scheme the profile fixes. A profile that declares no environment carries
+//     none, because a line that decides nothing still reads as a line that was
+//     needed;
+//   - no Device, no EnvironmentFile and no extra Network exist here, and no
+//     Volume beyond the profile's own, because no plan has a field that could
+//     describe one.
+func renderSheet(where placement, localPort int, originHost string) []byte {
+	data := ""
+	if where.bearsData() {
+		data = "Volume=" + where.dataDirectory + ":" + where.containerDataPath + ":rw\n"
+	}
+	environment := ""
+	for _, line := range where.environment {
+		environment += "Environment=" + line + "\n"
+	}
+	if where.originEnvironmentPrefix != "" {
+		environment += "Environment=" + where.originEnvironmentPrefix + originHost + "\n"
+	}
 	scratch := ""
 	for _, path := range where.writablePaths {
 		scratch += "Tmpfs=" + path + ":rw,mode=1777\n"
@@ -118,7 +151,7 @@ Pull=never
 ReadOnly=true
 NoNewPrivileges=true
 DropCapability=ALL
-%s%s
+%s%s%s%s
 [Service]
 Restart=on-failure
 
@@ -131,6 +164,8 @@ WantedBy=default.target
 		loopbackAddress,
 		localPort,
 		where.containerPort,
+		data,
+		environment,
 		scratch,
 		lowPorts,
 	))

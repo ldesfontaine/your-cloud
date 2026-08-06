@@ -84,7 +84,32 @@ type auxiliaryReport struct {
 	// success, not in a controlled failure, and not in an observation, which
 	// reports a key present or absent and never by its value.
 	LinkPublicKey string `json:"link_public_key,omitempty"`
-	ServiceState  string `json:"service_state,omitempty"`
+	// DataPath, SnapshotSlot, PreviousSlot, ArchiveSHA256, ArchivedAt and
+	// SnapshotSlots are what the operations of a data-bearing profile added to this
+	// answer, and every one of them is a conclusion of the machine rather than a
+	// field of a plan echoed back.
+	//
+	// DataPath names the durable directory: after a deployment it is where the data
+	// lives, and after a removal it is what this machine still holds — a removal of
+	// this product takes the service away and keeps the data, so the report says so
+	// rather than leaving a reader to assume either way. SnapshotSlot names the
+	// archive that was acted on and PreviousSlot the reserved slot a return wrote
+	// the replaced state into, so the document that undoes a return is readable in
+	// the report of the return itself. ArchiveSHA256 and ArchivedAt are the digest
+	// of the archive and the instant it was written.
+	//
+	// SnapshotSlots are the archives this machine holds afterwards, by the names a
+	// human gave them; the reserved slot is never among them. What is *inside* an
+	// archive never appears here and cannot: the data of a vault is not a
+	// conclusion, and no field of this report, of an error or of an observation can
+	// hold a byte of it.
+	DataPath      string   `json:"data_path,omitempty"`
+	SnapshotSlot  string   `json:"snapshot_slot,omitempty"`
+	PreviousSlot  string   `json:"previous_slot,omitempty"`
+	ArchiveSHA256 string   `json:"archive_sha256,omitempty"`
+	ArchivedAt    string   `json:"archived_at,omitempty"`
+	SnapshotSlots []string `json:"snapshot_slots,omitempty"`
+	ServiceState  string   `json:"service_state,omitempty"`
 	// Outcome names which conclusion this is, in the closed vocabulary of the
 	// auxiliary package, so that no reader has to tell a rollback from a refusal
 	// by reading a sentence. A read-only diagnostic carries none of these
@@ -258,6 +283,12 @@ func buildAppliedAuxiliaryReport(accepted *approval.Acceptance, application *aux
 	report.RouteHost = application.RouteHost
 	report.FragmentPath = application.FragmentPath
 	report.LinkPublicKey = application.LinkPublicKey
+	report.DataPath = application.DataPath
+	report.SnapshotSlot = application.SnapshotSlot
+	report.PreviousSlot = application.PreviousSlot
+	report.ArchiveSHA256 = application.ArchiveSHA256
+	report.ArchivedAt = application.ArchivedAt
+	report.SnapshotSlots = application.SnapshotSlots
 	report.ServiceState = application.ServiceState
 	report.Outcome = auxiliary.OutcomeApplied
 	report.Changed = application.Changed
@@ -284,6 +315,7 @@ func buildFailedAuxiliaryReport(
 	report.UnitPath = failure.UnitPath
 	report.RouteHost = failure.RouteHost
 	report.FragmentPath = failure.FragmentPath
+	report.SnapshotSlot = failure.SnapshotSlot
 	report.Outcome = failure.Outcome
 	report.RollbackAttempted = true
 	report.Observed = failure.Observed
@@ -334,6 +366,43 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 			return err
 		}
 	}
+	// The durable data of a private profile is named in one line, by every
+	// operation that has one. It exists only for those operations, so every answer
+	// rendered before this palier stays exactly what it was, line for line.
+	if report.DataPath != "" {
+		if _, err := fmt.Fprintf(writer, "data: %s\n", report.DataPath); err != nil {
+			return err
+		}
+	}
+	// An archive names itself in as many lines as it has facts, and in no more. A
+	// discard writes no archive, so it prints a slot and no digest; a return prints
+	// the reserved slot it wrote the replaced state into, beside the digest of that
+	// very archive — which is what makes the document that undoes it readable here.
+	// What is inside an archive is never printed, because it is not a conclusion.
+	if report.SnapshotSlot != "" {
+		if _, err := fmt.Fprintf(writer, "snapshot slot: %s\n", report.SnapshotSlot); err != nil {
+			return err
+		}
+	}
+	if report.PreviousSlot != "" {
+		if _, err := fmt.Fprintf(writer,
+			"previous slot: %s (it holds the state this return replaced)\n", report.PreviousSlot,
+		); err != nil {
+			return err
+		}
+	}
+	if report.ArchiveSHA256 != "" {
+		if _, err := fmt.Fprintf(writer,
+			"archive: %s\narchived at: %s\n", report.ArchiveSHA256, report.ArchivedAt,
+		); err != nil {
+			return err
+		}
+	}
+	if len(report.SnapshotSlots) != 0 {
+		if _, err := fmt.Fprintf(writer, "snapshots held: %v\n", report.SnapshotSlots); err != nil {
+			return err
+		}
+	}
 	// The public key of a passage is printed only for the one operation that has
 	// one to report. It is the single value of the private passage a report ever
 	// carries; its private half exists on this machine alone and no line here,
@@ -373,6 +442,9 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 			{"link interface", report.Observed.LinkInterface},
 			{"link peer", report.Observed.LinkPeer},
 			{"link bounds", report.Observed.LinkBounds},
+			{"data", report.Observed.Data},
+			{"egress", report.Observed.Egress},
+			{"archive", report.Observed.Archive},
 		} {
 			if word[1] == "" {
 				continue
