@@ -63,9 +63,22 @@ type auxiliaryReport struct {
 	LocalPort     int    `json:"local_port,omitempty"`
 	UnitPath      string `json:"unit_path,omitempty"`
 	ServiceState  string `json:"service_state,omitempty"`
+	// Outcome names which conclusion this is, in the closed vocabulary of the
+	// auxiliary package, so that no reader has to tell a rollback from a refusal
+	// by reading a sentence. A read-only diagnostic carries none of these
+	// fields, and neither does a refusal: a refusal renders no report at all,
+	// which is what keeps it from ever reading as an operation that acted.
+	Outcome string `json:"outcome,omitempty"`
+	// RollbackAttempted is stated rather than inferred. It is true exactly when
+	// this machine was already changed and the approved rollback was run, and
+	// Observed is what could still be read after that rollback failed in turn.
+	RollbackAttempted bool                   `json:"rollback_attempted,omitempty"`
+	Observed          *auxiliary.Observation `json:"observed,omitempty"`
 	// Changed is computed by whatever acted, never announced in advance. A
 	// read-only diagnostic reports false because it changed nothing; an applied
-	// operation reports what it observed before acting and what it did after.
+	// operation reports what it observed before acting and what it did after;
+	// and a controlled failure reports true, because a failure that reached the
+	// rollback is a failure that had already changed this machine.
 	Changed bool `json:"changed"`
 }
 
@@ -111,7 +124,22 @@ func runAuxiliary(arguments []string) error {
 	}
 	application, err := auxiliary.Apply(auxiliary.SystemExecutor{}, accepted, input)
 	if err != nil {
-		return err
+		// A failure that had already changed this machine is answered like any
+		// other conclusion and then still fails: a reader learns what was
+		// attempted, what the approved rollback achieved and what this machine
+		// was last seen holding, while the exit status stays a failure. A
+		// refusal takes neither branch — it changed nothing, so it reports
+		// nothing and only says why.
+		var controlled *auxiliary.ControlledFailure
+		if !errors.As(err, &controlled) {
+			return err
+		}
+		rendered := renderAuxiliaryReport(
+			os.Stdout,
+			configuration.format,
+			buildFailedAuxiliaryReport(accepted, controlled),
+		)
+		return errors.Join(err, rendered)
 	}
 	return renderAuxiliaryReport(
 		os.Stdout,
@@ -206,7 +234,33 @@ func buildAppliedAuxiliaryReport(accepted *approval.Acceptance, application *aux
 	report.LocalPort = application.LocalPort
 	report.UnitPath = application.UnitPath
 	report.ServiceState = application.ServiceState
+	report.Outcome = auxiliary.OutcomeApplied
 	report.Changed = application.Changed
+	return report
+}
+
+// buildFailedAuxiliaryReport answers a controlled failure.
+//
+// It names the instance exactly as a success does, states that the approved
+// rollback was attempted and says what that attempt reached. It reports no
+// service state at all when the rollback failed, because the state of the
+// service is precisely what stopped being known: what replaces it is the list of
+// what could still be read, and nothing is added to that list to round it off.
+func buildFailedAuxiliaryReport(
+	accepted *approval.Acceptance,
+	failure *auxiliary.ControlledFailure,
+) auxiliaryReport {
+	report := buildAuxiliaryReport(accepted)
+	if failure == nil {
+		return report
+	}
+	report.PlanOperation = failure.Operation
+	report.LocalPort = failure.LocalPort
+	report.UnitPath = failure.UnitPath
+	report.Outcome = failure.Outcome
+	report.RollbackAttempted = true
+	report.Observed = failure.Observed
+	report.Changed = true
 	return report
 }
 
@@ -234,11 +288,35 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 	// proved, line for line.
 	if report.PlanOperation != "" {
 		if _, err := fmt.Fprintf(writer,
-			"plan operation: %s\nlocal port: %d\nunit: %s\nservice: %s\n",
+			"plan operation: %s\nlocal port: %d\nunit: %s\noutcome: %s\n",
 			report.PlanOperation,
 			report.LocalPort,
 			report.UnitPath,
-			report.ServiceState,
+			report.Outcome,
+		); err != nil {
+			return err
+		}
+	}
+	// A service state is printed only while there is one to state. A rollback
+	// that failed took that certainty away, and the observation below replaces
+	// it without pretending to be it.
+	if report.ServiceState != "" {
+		if _, err := fmt.Fprintf(writer, "service: %s\n", report.ServiceState); err != nil {
+			return err
+		}
+	}
+	if report.RollbackAttempted {
+		if _, err := fmt.Fprintf(writer, "rollback attempted: true\n"); err != nil {
+			return err
+		}
+	}
+	if report.Observed != nil {
+		if _, err := fmt.Fprintf(writer,
+			"observed account: %s\nobserved unit file: %s\nobserved service: %s\nobserved container: %s\n",
+			report.Observed.Account,
+			report.Observed.UnitFile,
+			report.Observed.Service,
+			report.Observed.Container,
 		); err != nil {
 			return err
 		}

@@ -1,11 +1,9 @@
 package auxiliary
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
-	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
@@ -168,162 +166,60 @@ func TestRemovingAPresentProbeLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// TestNothingIsTouchedWhileTheApprovedDocumentsAreStillInDoubt walks the
-// verification order one refusal at a time.
+// TestAFreshApprovalAfterACutAppliesAgainstTheStateItFinds is what a cut leaves
+// to the next approval, and it is nothing special.
 //
-// Each case proves the same thing twice: the operation is refused, and the fake
-// machine recorded neither an effect nor a read — a document that is not the one
-// a human signed is refused before this package even asks what the machine
-// currently holds.
-func TestNothingIsTouchedWhileTheApprovedDocumentsAreStillInDoubt(t *testing.T) {
+// The machine that comes back after an interrupted mutation holds a state no
+// plan describes: a sheet nobody started, an account with no unit, a service
+// running from an image the sheet no longer names. None of that is repaired in
+// silence and none of it is a failure. A new approval over the same target is
+// applied against what is observed, exactly as any drift is, and reaches the
+// approved state in one operation.
+func TestAFreshApprovalAfterACutAppliesAgainstTheStateItFinds(t *testing.T) {
 	t.Parallel()
-	other := frozenPair(t, plan.OperationDeployOCIProbe, fixturePort+1)
-
-	for name, forge := range map[string]func(*approvedInput){
-		"a plan that is not the one the approval signed": func(subject *approvedInput) {
-			subject.accepted.Envelope.PlanSHA256 = strings.Repeat("0", 64)
+	for name, interrupted := range map[string]func(*testing.T) *fakeExecutor{
+		"a sheet written and a service never started": func(t *testing.T) *fakeExecutor {
+			return halfWrittenMachine(t, fixturePort)
 		},
-		"a rollback that is not the one the approval signed": func(subject *approvedInput) {
-			subject.accepted.Envelope.RollbackSHA256 = strings.Repeat("0", 64)
-		},
-		"a plan document swapped for another signed plan": func(subject *approvedInput) {
-			subject.input.PlanDocument = other.PlanDocument
-		},
-		"a plan describing another operation than the approval": func(subject *approvedInput) {
-			subject.accepted.Envelope.Operation = plan.OperationRemoveOCIProbe
-		},
-		"a plan aimed at another machine": func(subject *approvedInput) {
-			subject.accepted.State.MachineID = "lab-machine-2"
-		},
-		"a plan aimed at another infrastructure": func(subject *approvedInput) {
-			subject.accepted.State.InfrastructureID = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3"
-		},
-		"a rollback that undoes another instance": func(subject *approvedInput) {
-			subject.input.RollbackDocument = other.RollbackDocument
-			subject.accepted.Envelope.RollbackSHA256 = other.RollbackSHA256
-		},
-		"a rollback that is a second deployment rather than an undoing": func(subject *approvedInput) {
-			subject.input.RollbackDocument = other.PlanDocument
-			subject.accepted.Envelope.RollbackSHA256 = other.PlanSHA256
-		},
-		"an approval presented without its documents": func(subject *approvedInput) {
-			subject.input.Kind = KindDiagnose
-		},
-		"a plan document that is not a plan at all": func(subject *approvedInput) {
-			subject.input.PlanDocument = []byte(`{"schema_version":1}`)
-		},
-	} {
-		executor := deployedMachine(t, fixturePort)
-		accepted, input := approvedApplication(t, plan.OperationDeployOCIProbe, fixturePort)
-		subject := &approvedInput{accepted: accepted, input: input}
-		forge(subject)
-
-		if _, err := Apply(executor, subject.accepted, subject.input); err == nil {
-			t.Fatalf("%s was accepted", name)
-		}
-		if len(executor.effects) != 0 {
-			t.Fatalf("%s changed the machine before being refused: %q", name, executor.effects)
-		}
-		if len(executor.reads) != 0 {
-			t.Fatalf("%s reached the machine before being refused: %q", name, executor.reads)
-		}
-	}
-}
-
-// TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite is the capability
-// preflight. Quadlet has no fallback and this product invents none: what is
-// missing is named, and the machine is left exactly as it was found.
-func TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite(t *testing.T) {
-	t.Parallel()
-	for name, capabilities := range map[string]Capabilities{
-		"a machine without systemd": {
-			UnifiedCgroupHierarchy: true, PodmanPresent: true,
-		},
-		"a machine without cgroup v2": {
-			Systemd: true, PodmanPresent: true,
-		},
-		"a machine without podman": {
-			Systemd: true, UnifiedCgroupHierarchy: true,
-		},
-		"an account that cannot run podman rootless": {
-			Systemd: true, UnifiedCgroupHierarchy: true, PodmanPresent: true,
-			AccountPresent: true, RootlessPodman: false,
-		},
-	} {
-		for _, operation := range []string{plan.OperationDeployOCIProbe, plan.OperationRemoveOCIProbe} {
+		"an account created and no unit at all": func(*testing.T) *fakeExecutor {
 			executor := newFakeExecutor()
-			executor.capabilities = capabilities
-			accepted, input := approvedApplication(t, operation, fixturePort)
+			executor.capabilities.AccountPresent = true
+			executor.capabilities.RootlessPodman = true
+			return executor
+		},
+		"an image fetched and nothing written": func(*testing.T) *fakeExecutor {
+			executor := newFakeExecutor()
+			executor.capabilities.AccountPresent = true
+			executor.capabilities.RootlessPodman = true
+			executor.image = PinnedImage()
+			return executor
+		},
+		"a service started from a sheet that was then lost": func(t *testing.T) *fakeExecutor {
+			executor := deployedMachine(t, fixturePort)
+			executor.unit, executor.unitPresent = nil, false
+			return executor
+		},
+	} {
+		executor := interrupted(t)
+		accepted, input := approvedApplication(t, plan.OperationDeployOCIProbe, fixturePort)
 
-			if _, err := Apply(executor, accepted, input); err == nil {
-				t.Fatalf("%s applied %s", name, operation)
-			}
-			if len(executor.effects) != 0 {
-				t.Fatalf("%s was written to before being refused: %q", name, executor.effects)
-			}
-			if strings.Join(executor.reads, ",") != "Capabilities" {
-				t.Fatalf("%s was read beyond its capabilities: %q", name, executor.reads)
+		application, err := Apply(executor, accepted, input)
+		if err != nil {
+			t.Fatalf("a fresh approval over %s was refused: %v", name, err)
+		}
+		if !application.Changed || application.ServiceState != ServiceStateActive {
+			t.Fatalf("a fresh approval over %s announced no change: %+v", name, application)
+		}
+		if len(executor.writtenUnit) == 0 || !executor.active {
+			t.Fatalf("%s was left as it was found: %+v", name, executor)
+		}
+		// The account is not recreated where a cut already left one, because the
+		// decision is taken against the machine and never against a memory of
+		// what the interrupted run had reached.
+		for _, effect := range executor.effects {
+			if effect == "CreateProbeAccount" {
+				t.Fatalf("%s had its existing account recreated", name)
 			}
 		}
 	}
-}
-
-// TestAFreshAccountThatCannotRunPodmanRootlessIsNamedRatherThanRepaired holds
-// the one capability that cannot be observed before it is created.
-//
-// The refusal names the state the machine is left in. Repairing that state is
-// the rollback behaviour #85 owns; this palier does not act further on its own.
-func TestAFreshAccountThatCannotRunPodmanRootlessIsNamedRatherThanRepaired(t *testing.T) {
-	t.Parallel()
-	executor := newFakeExecutor()
-	executor.afterAccount = &Capabilities{
-		Systemd:                true,
-		UnifiedCgroupHierarchy: true,
-		PodmanPresent:          true,
-		AccountPresent:         true,
-		RootlessPodman:         false,
-	}
-	accepted, input := approvedApplication(t, plan.OperationDeployOCIProbe, fixturePort)
-
-	_, err := Apply(executor, accepted, input)
-	if err == nil {
-		t.Fatal("an account that cannot run podman rootless was applied on")
-	}
-	if !strings.Contains(err.Error(), "holds that account and no unit") {
-		t.Fatalf("the refusal does not name the state it leaves: %v", err)
-	}
-	for _, effect := range executor.effects {
-		if effect == "WriteUnitFile" || effect == "StartService" || effect == "PullImage" {
-			t.Fatalf("the refusal happened after %s", effect)
-		}
-	}
-}
-
-// TestAProbeThatNeverAnswersIsAControlledFailure keeps a started service whose
-// announced state is unproven from being reported as a success.
-func TestAProbeThatNeverAnswersIsAControlledFailure(t *testing.T) {
-	t.Parallel()
-	executor := newFakeExecutor()
-	executor.capabilities.AccountPresent = true
-	executor.capabilities.RootlessPodman = true
-	executor.failures["ProbeAnswers"] = errors.New("connection refused")
-	accepted, input := approvedApplication(t, plan.OperationDeployOCIProbe, fixturePort)
-
-	application, err := Apply(executor, accepted, input)
-	if err == nil {
-		t.Fatal("a probe that never answered was reported as applied")
-	}
-	if application != nil {
-		t.Fatalf("a controlled failure returned an application: %+v", application)
-	}
-	if !strings.Contains(err.Error(), "unproven") {
-		t.Fatalf("the refusal does not name the state it leaves: %v", err)
-	}
-}
-
-// approvedInput is one acceptance and one input, forged together in the tests
-// above so that each case differs by exactly one thing.
-type approvedInput struct {
-	accepted *approval.Acceptance
-	input    *Input
 }

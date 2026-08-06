@@ -4,8 +4,8 @@
 > Il fixe ce que `plan_sha256` et `rollback_sha256` de l'enveloppe
 > d'approbation attestent, la liste fermée des champs qu'un plan de ce palier
 > peut porter, et l'image de la sonde épinglée. Les implémentations le suivent
-> depuis `#82` (Controller), `#83` (Console) et `#84` (Auxiliaire) ; la preuve
-> LAB du palier reste `#86`.
+> depuis `#82` (Controller), `#83` (Console), `#84` (Auxiliaire) et `#85` pour
+> le comportement après échec ; la preuve LAB du palier reste `#86`.
 
 ## Rôle du plan dans la chaîne existante
 
@@ -227,6 +227,48 @@ peut exécuter ce que la fiche décrit et ne peut jamais décrire ce qu'il exéc
 Une seule valeur du plan atteint la fiche, le port, déjà borné par la validation.
 L'image et son digest y sont écrits depuis les constantes épinglées. Aucun effet
 externe ne passe par un shell : chaque commande est un vecteur d'arguments fixe.
+
+## Ce que l'Auxiliaire fait quand une mutation échoue
+
+Une opération de ce palier se termine par exactement une conclusion, et le
+rapport la nomme :
+
+| Conclusion | Ce qui s'est produit | Ce que la machine porte |
+|---|---|---|
+| appliqué | l'état approuvé tient | cet état, atteint ou déjà présent |
+| refusé | rien n'a été tenté | l'état d'avant, intact |
+| rollback tenté | un effet a échoué après le premier effet mutant | l'état que décrit le rollback approuvé |
+| état partiel | le rollback a échoué à son tour | ce qu'une lecture a pu constater, et rien de plus |
+
+Décisions portées par cette liste :
+
+- **Un échec avant le premier effet mutant reste un refus.** Il n'y a rien à
+  défaire, et un rollback lancé là serait une action qu'aucun humain n'a
+  demandée. La frontière est l'effet *tenté* et non l'effet réussi : une commande
+  interrompue en cours de route laisse autant derrière elle qu'une commande
+  aboutie.
+- **Le rollback tenté est le document approuvé, et rien d'autre.** Il est
+  appliqué par le même chemin qu'une opération ordinaire, une seule fois, contre
+  l'état réellement constaté. Aucune reprise de l'opération échouée, aucun
+  nettoyage improvisé, aucune seconde tentative : réessayer d'atteindre un état
+  que la machine vient de manquer transforme un état partiel en état inconnu.
+- **Le compte dédié n'est décrit par aucun plan**, donc aucun rollback ne le
+  retire. Une machine qui garde ce compte sans unité est nommée telle quelle
+  plutôt que rangée en silence.
+- **Le rollback d'un retrait redéploie l'instance exacte**, par le même chemin
+  qu'un déploiement, vérification locale comprise. Il porte une asymétrie qu'il
+  vaut mieux dire que masquer : ce redéploiement récupère l'image épinglée, donc
+  un retrait qui échoue dépend d'un registre dont le retrait lui-même n'avait pas
+  besoin. C'est une dépendance du document approuvé, pas une liberté prise sur
+  place.
+- **Un état partiel énumère ce qui a été constaté** par des lectures seules —
+  compte, fiche, service, conteneur — et écrit `inconnu` pour ce que la machine
+  n'a pas répondu. Il ne complète jamais cette liste pour la rendre lisible.
+- **Une coupure ne produit aucune de ces conclusions**, puisque le processus qui
+  l'aurait écrite n'existe plus. L'absence de réponse est la réponse : la
+  séquence dépensée reste dépensée, aucun rejeu ne reprend la mutation, et une
+  nouvelle approbation s'applique contre l'état observé comme n'importe quelle
+  dérive.
 
 ## Bornes reprises des contrats existants
 

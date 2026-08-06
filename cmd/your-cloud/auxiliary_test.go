@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -132,8 +133,12 @@ func TestTheAuxiliaryReportAnnouncesNoChange(t *testing.T) {
 		t.Fatalf("the text report does not state that nothing changed: %q", text.String())
 	}
 	// The answer a read-only diagnostic renders is the one the previous palier
-	// proved: the fields an applied operation adds are simply not there.
-	for _, field := range []string{"plan_operation", "local_port", "unit_path", "service_state"} {
+	// proved: the fields an applied operation adds are simply not there, and
+	// neither is the vocabulary a conclusion that acted is written in.
+	for _, field := range []string{
+		"plan_operation", "local_port", "unit_path", "service_state",
+		"outcome", "rollback_attempted", "observed",
+	} {
 		if _, present := decoded[field]; present {
 			t.Fatalf("a read-only diagnostic reported %q", field)
 		}
@@ -217,5 +222,112 @@ func TestTheAppliedReportStatesWhatChangedWithoutEchoingThePlan(t *testing.T) {
 	})
 	if unchanged.Changed || unchanged.ServiceState != auxiliary.ServiceStateAbsent {
 		t.Fatalf("an operation that changed nothing reported otherwise: %+v", unchanged)
+	}
+	if report.Outcome != auxiliary.OutcomeApplied || unchanged.Outcome != auxiliary.OutcomeApplied {
+		t.Fatalf("an applied operation did not say so: %q %q", report.Outcome, unchanged.Outcome)
+	}
+	if report.RollbackAttempted || report.Observed != nil {
+		t.Fatalf("an operation that succeeded reported a rollback: %+v", report)
+	}
+}
+
+// TestAControlledFailureIsReportedAsOneAndNeverAsASuccess holds the vocabulary
+// of the three conclusions apart in the answer a reader actually receives.
+//
+// A controlled failure states the failure, states that the approved rollback was
+// attempted, and states what that attempt reached. When the rollback itself
+// failed, the service state disappears from the answer — that certainty is
+// exactly what was lost — and what replaces it is the list of what could still
+// be read, and nothing more.
+func TestAControlledFailureIsReportedAsOneAndNeverAsASuccess(t *testing.T) {
+	t.Parallel()
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationDeployOCIProbe,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 3,
+		},
+	}
+
+	rolledBack := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation: approval.OperationDeployOCIProbe,
+		LocalPort: 8080,
+		UnitPath:  auxiliary.UnitPath(),
+		Outcome:   auxiliary.OutcomeRolledBack,
+		Cause:     errors.New("the probe never answered"),
+	})
+	if rolledBack.Outcome != auxiliary.OutcomeRolledBack || !rolledBack.RollbackAttempted {
+		t.Fatalf("the rollback was not reported as attempted: %+v", rolledBack)
+	}
+	// A failure that reached the rollback is a failure that had already changed
+	// this machine, and it never reads as an operation that did nothing.
+	if !rolledBack.Changed {
+		t.Fatalf("a controlled failure reported that nothing changed: %+v", rolledBack)
+	}
+	if rolledBack.ServiceState != "" || rolledBack.Observed != nil {
+		t.Fatalf("a rollback that succeeded claimed more than it reached: %+v", rolledBack)
+	}
+
+	partial := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation: approval.OperationDeployOCIProbe,
+		LocalPort: 8080,
+		UnitPath:  auxiliary.UnitPath(),
+		Outcome:   auxiliary.OutcomePartial,
+		Cause:     errors.New("the probe never answered"),
+		Rollback:  errors.New("the sheet could not be removed"),
+		Observed: &auxiliary.Observation{
+			Account:   "present",
+			UnitFile:  "present",
+			Service:   "unknown",
+			Container: "none",
+		},
+	})
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", partial); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["outcome"] != auxiliary.OutcomePartial || decoded["rollback_attempted"] != true {
+		t.Fatalf("the partial state was not reported as one: %v", decoded)
+	}
+	if _, present := decoded["service_state"]; present {
+		t.Fatalf("a partial state claimed a service state: %v", decoded)
+	}
+	observed, ok := decoded["observed"].(map[string]any)
+	if !ok || observed["service"] != "unknown" || observed["unit_file"] != "present" {
+		t.Fatalf("the report does not say what was observed: %v", decoded)
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", partial); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"outcome: " + auxiliary.OutcomePartial,
+		"rollback attempted: true",
+		"observed service: unknown",
+		"changed: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "service: ") && !strings.Contains(text.String(), "observed service: ") {
+		t.Fatalf("a partial state rendered a service line: %q", text.String())
 	}
 }
