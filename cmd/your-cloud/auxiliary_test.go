@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
+	"github.com/ldesfontaine/your-cloud/internal/auxiliary"
 )
 
 func TestAuxiliaryAcceptsOnlyItsOwnBoundedSubject(t *testing.T) {
@@ -20,7 +21,11 @@ func TestAuxiliaryAcceptsOnlyItsOwnBoundedSubject(t *testing.T) {
 	if valid.anchorPath != approval.AnchorPath || valid.stateDir != approval.StateDirectory {
 		t.Fatalf("the auxiliary read its paths from its arguments: %+v", valid)
 	}
-	if valid.readerLimit != approval.MaxSignedApprovalBytes {
+	// The bound is the one the whole input may reach, which grew when the input
+	// started carrying the two plan documents beside the approval. It is still
+	// the package's own fixed constant rather than anything an argument said,
+	// and each carried document still answers to its own narrower bound.
+	if valid.readerLimit != auxiliary.MaxInputBytes {
 		t.Fatalf("the auxiliary did not bound its input: %+v", valid)
 	}
 	if _, err := parseAuxiliaryArguments([]string{"approve", "--format=json"}); err != nil {
@@ -59,7 +64,7 @@ func TestAuxiliaryRequiresLocalRootAuthority(t *testing.T) {
 func TestTheApprovalIsBoundedBeforeItIsParsed(t *testing.T) {
 	t.Parallel()
 	exact := strings.Repeat("a", approval.MaxSignedApprovalBytes)
-	document, err := readBoundedApproval(strings.NewReader(exact), approval.MaxSignedApprovalBytes)
+	document, err := readBoundedInput(strings.NewReader(exact), approval.MaxSignedApprovalBytes)
 	if err != nil || string(document) != exact {
 		t.Fatalf("a document of exactly the bound was refused: %v", err)
 	}
@@ -68,11 +73,11 @@ func TestTheApprovalIsBoundedBeforeItIsParsed(t *testing.T) {
 		"one over": strings.Repeat("a", approval.MaxSignedApprovalBytes+1),
 		"far over": strings.Repeat("a", approval.MaxSignedApprovalBytes*4),
 	} {
-		if _, err := readBoundedApproval(strings.NewReader(reader), approval.MaxSignedApprovalBytes); err == nil {
+		if _, err := readBoundedInput(strings.NewReader(reader), approval.MaxSignedApprovalBytes); err == nil {
 			t.Fatalf("%s document was accepted", name)
 		}
 	}
-	if _, err := readBoundedApproval(strings.NewReader("x"), 0); err == nil {
+	if _, err := readBoundedInput(strings.NewReader("x"), 0); err == nil {
 		t.Fatal("a non-positive bound was accepted")
 	}
 }
@@ -125,5 +130,92 @@ func TestTheAuxiliaryReportAnnouncesNoChange(t *testing.T) {
 	}
 	if !strings.Contains(text.String(), "changed: false") {
 		t.Fatalf("the text report does not state that nothing changed: %q", text.String())
+	}
+	// The answer a read-only diagnostic renders is the one the previous palier
+	// proved: the fields an applied operation adds are simply not there.
+	for _, field := range []string{"plan_operation", "local_port", "unit_path", "service_state"} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("a read-only diagnostic reported %q", field)
+		}
+	}
+}
+
+// TestTheAppliedReportStatesWhatChangedWithoutEchoingThePlan holds the report of
+// a mutating operation to the same rule as the diagnostic one: it repeats what
+// the machine concluded, and no field of the document it was given.
+func TestTheAppliedReportStatesWhatChangedWithoutEchoingThePlan(t *testing.T) {
+	t.Parallel()
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationDeployOCIProbe,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 2,
+		},
+	}
+	report := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationDeployOCIProbe,
+		LocalPort:    8080,
+		UnitPath:     auxiliary.UnitPath(),
+		ServiceState: auxiliary.ServiceStateActive,
+		Changed:      true,
+	})
+	if !report.Changed {
+		t.Fatal("an applied operation reported no change")
+	}
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["changed"] != true || decoded["service_state"] != auxiliary.ServiceStateActive {
+		t.Fatalf("the report does not state what the machine now holds: %v", decoded)
+	}
+	if decoded["unit_path"] != auxiliary.UnitPath() || decoded["local_port"] != float64(8080) {
+		t.Fatalf("the report does not name the instance it applied: %v", decoded)
+	}
+	// Neither document travels back, and neither does any field of them beyond
+	// the closed ones the machine itself decided.
+	for _, field := range []string{"plan", "rollback", "image_reference", "image_digest", "unit"} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("the applied report echoes %q", field)
+		}
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"changed: true", "service: active", "unit: " + auxiliary.UnitPath()} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+
+	// A computed value is a value that can also be false: the same machinery
+	// reports an operation that found the approved state already held.
+	unchanged := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:    approval.OperationRemoveOCIProbe,
+		LocalPort:    8080,
+		UnitPath:     auxiliary.UnitPath(),
+		ServiceState: auxiliary.ServiceStateAbsent,
+		Changed:      false,
+	})
+	if unchanged.Changed || unchanged.ServiceState != auxiliary.ServiceStateAbsent {
+		t.Fatalf("an operation that changed nothing reported otherwise: %+v", unchanged)
 	}
 }

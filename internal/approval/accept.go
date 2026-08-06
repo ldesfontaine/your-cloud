@@ -16,8 +16,8 @@ type Acceptance struct {
 	State    *State
 }
 
-// Accept verifies one approval against this machine's own anchor and spends its
-// sequence, in that order.
+// Accept verifies one read-only approval against this machine's own anchor and
+// spends its sequence, in that order.
 //
 // Nothing here consults the Controller, and nothing here trusts a field for
 // being present in the document. The order is the architecture's: the signature
@@ -28,6 +28,57 @@ type Acceptance struct {
 // A refusal is always a refusal to act. There is no partial acceptance, no
 // downgraded operation and no acceptance that consumed nothing.
 func Accept(directory string, anchor *Anchor, signed *SignedApproval, nowUnixSeconds uint64) (*Acceptance, error) {
+	return accept(directory, anchor, signed, nowUnixSeconds, requireReadOnlyDiagnostic)
+}
+
+// AcceptMutating verifies one approval for an operation that will change this
+// machine, under exactly the same anchor, epoch, expiry and anti-replay rules.
+//
+// It is a second subject rather than a relaxation of the first: the read-only
+// subject keeps refusing every mutation, and this one refuses every envelope
+// that is not one of the two probe operations, so neither can be reached by an
+// envelope meant for the other. What the mutation may actually do is not decided
+// here at all — this returns an acceptance, and the caller still has to hold the
+// plan documents against the digests this envelope signed before touching
+// anything.
+func AcceptMutating(directory string, anchor *Anchor, signed *SignedApproval, nowUnixSeconds uint64) (*Acceptance, error) {
+	return accept(directory, anchor, signed, nowUnixSeconds, requireProbeMutation)
+}
+
+// requireReadOnlyDiagnostic is the limit of the read-only subject, checked on
+// the operation that is about to run rather than only in the schema, so that no
+// future operation reaches the state by being added to the privilege table
+// without being thought about.
+func requireReadOnlyDiagnostic(envelope *Envelope) error {
+	if envelope.IsMutating() {
+		return errors.New("this Auxiliary performs no mutation: the approval asks for one")
+	}
+	if envelope.Operation != OperationDiagnoseProtocolReadOnly {
+		return fmt.Errorf("approval operation %q is not one this Auxiliary performs", envelope.Operation)
+	}
+	return nil
+}
+
+// requireProbeMutation is the symmetric limit of the mutating subject: exactly
+// the closed list of operations that may change the machine, and only while the
+// envelope actually asks for the privilege that changing it requires.
+func requireProbeMutation(envelope *Envelope) error {
+	if _, known := mutatingOperations[envelope.Operation]; !known {
+		return fmt.Errorf("approval operation %q is not one this Auxiliary applies", envelope.Operation)
+	}
+	if !envelope.IsMutating() {
+		return errors.New("an applied operation must carry the privilege to mutate this machine")
+	}
+	return nil
+}
+
+func accept(
+	directory string,
+	anchor *Anchor,
+	signed *SignedApproval,
+	nowUnixSeconds uint64,
+	requireSubject func(*Envelope) error,
+) (*Acceptance, error) {
 	if anchor == nil || signed == nil {
 		return nil, errors.New("an anchor and a signed approval are required")
 	}
@@ -42,15 +93,11 @@ func Accept(directory string, anchor *Anchor, signed *SignedApproval, nowUnixSec
 		return nil, err
 	}
 
-	// Every mutation is still refused in this palier. The check is here rather
-	// than only in the schema so that it is a refusal of the *operation about to
-	// run*, and so that no future operation can reach the state by being added
-	// to the table without being thought about.
-	if envelope.IsMutating() {
-		return nil, errors.New("this Auxiliary performs no mutation: the approval asks for one")
-	}
-	if envelope.Operation != OperationDiagnoseProtocolReadOnly {
-		return nil, fmt.Errorf("approval operation %q is not one this Auxiliary performs", envelope.Operation)
+	// The subject decides which operations may run at all, before the clock and
+	// before the state: an envelope presented to the wrong subject is refused
+	// for being the wrong kind of approval, not for being late or replayed.
+	if err := requireSubject(envelope); err != nil {
+		return nil, err
 	}
 
 	if nowUnixSeconds < envelope.IssuedAtUnix {

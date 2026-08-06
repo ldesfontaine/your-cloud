@@ -346,9 +346,15 @@ func TestDecodeSignedRefusesEveryDocumentOutsideTheSchema(t *testing.T) {
 	}
 }
 
-// TestMutatingPrivilegeIsRepresentableAndAlwaysRefused keeps "no mutation in
-// this palier" a refusal something can run into rather than a missing feature.
-func TestMutatingPrivilegeIsRepresentableAndAlwaysRefused(t *testing.T) {
+// TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate holds the
+// privilege table against the closed list of operations that may change the
+// machine, in both directions.
+//
+// The read-only operation keeps refusing the mutating privilege, and the two
+// probe operations require it in the exact strictly increasing spelling the Rust
+// side pins: an envelope that permutes the two privileges is a different
+// document, not the same approval written differently.
+func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testing.T) {
 	t.Parallel()
 	mutating := vectorEnvelope()
 	mutating.Privileges = []string{PrivilegeMutateLocalState}
@@ -359,15 +365,40 @@ func TestMutatingPrivilegeIsRepresentableAndAlwaysRefused(t *testing.T) {
 	if readOnly.IsMutating() {
 		t.Fatal("the read-only vector must not be read as mutating")
 	}
-	for operation, required := range requiredPrivileges {
-		for _, privilege := range required {
-			if privilege == PrivilegeMutateLocalState {
-				t.Fatalf("operation %q of this palier requires a mutating privilege", operation)
+
+	expected := map[string][]string{
+		OperationDiagnoseProtocolReadOnly: {PrivilegeReadLocalState},
+		OperationDeployOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRemoveOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	}
+	if len(requiredPrivileges) != len(expected) {
+		t.Fatalf("this palier performs %d operations, not %d", len(expected), len(requiredPrivileges))
+	}
+	for operation, required := range expected {
+		declared, known := requiredPrivileges[operation]
+		if !known || len(declared) != len(required) {
+			t.Fatalf("operation %q does not declare its own privileges: %q", operation, declared)
+		}
+		for index := range required {
+			if declared[index] != required[index] {
+				t.Fatalf("operation %q declares %q rather than %q", operation, declared, required)
 			}
 		}
-	}
-	if len(requiredPrivileges) != 1 {
-		t.Fatalf("this palier performs exactly one operation, not %d", len(requiredPrivileges))
+		for index := 1; index < len(declared); index++ {
+			if declared[index-1] >= declared[index] {
+				t.Fatalf("operation %q declares a set the validation would refuse: %q", operation, declared)
+			}
+		}
+
+		carriesMutation := false
+		for _, privilege := range declared {
+			if privilege == PrivilegeMutateLocalState {
+				carriesMutation = true
+			}
+		}
+		if _, applied := mutatingOperations[operation]; applied != carriesMutation {
+			t.Fatalf("operation %q is applied=%t while requiring mutation=%t", operation, applied, carriesMutation)
+		}
 	}
 }
 

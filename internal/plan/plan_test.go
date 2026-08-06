@@ -436,6 +436,43 @@ func TestTheRollbackOfAPairIsTheOtherPairItself(t *testing.T) {
 	}
 }
 
+// TestARollbackIsRecognisedOnlyWhenItUndoesExactlyThePlan is what a machine asks
+// before acting: the document it was handed as an undoing has to be one it could
+// apply to return to the state it is about to leave.
+func TestARollbackIsRecognisedOnlyWhenItUndoesExactlyThePlan(t *testing.T) {
+	t.Parallel()
+	pair, err := BuildPair(OperationDeployOCIProbe, vectorInfrastructure, vectorMachine, vectorPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pair.Rollback.IsExactInverseOf(&pair.Plan) {
+		t.Fatal("the rollback of a pair is not read as undoing its plan")
+	}
+	if !pair.Plan.IsExactInverseOf(&pair.Rollback) {
+		t.Fatal("undoing is not symmetric between the two documents of a pair")
+	}
+	if pair.Plan.IsExactInverseOf(&pair.Plan) {
+		t.Fatal("a plan was read as undoing itself")
+	}
+	if pair.Rollback.IsExactInverseOf(nil) {
+		t.Fatal("an absent plan was read as undone")
+	}
+
+	for name, forge := range map[string]func(*Document){
+		"another machine":        func(d *Document) { d.MachineID = "lab-machine-2" },
+		"another infrastructure": func(d *Document) { d.InfrastructureID = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3" },
+		"another port":           func(d *Document) { d.LocalPort = vectorPort + 1 },
+		"the same operation":     func(d *Document) { d.Operation = OperationDeployOCIProbe },
+		"an unknown operation":   func(d *Document) { d.Operation = "install_container" },
+	} {
+		forged := pair.Rollback
+		forge(&forged)
+		if forged.IsExactInverseOf(&pair.Plan) {
+			t.Fatalf("a rollback naming %s was read as undoing the plan", name)
+		}
+	}
+}
+
 func TestBuildPairRefusesEveryInstanceOutsideTheContract(t *testing.T) {
 	t.Parallel()
 	if _, err := BuildPair(OperationDeployOCIProbe, vectorInfrastructure, vectorMachine, MinLocalPort); err != nil {

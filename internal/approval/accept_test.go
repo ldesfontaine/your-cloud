@@ -167,6 +167,69 @@ func TestAcceptRefusesEveryMutation(t *testing.T) {
 	}
 }
 
+// TestTheTwoAcceptanceSubjectsRefuseOneAnothersApprovals keeps the arrival of
+// the first mutating operations from widening the read-only one.
+//
+// No state directory is needed here: a subject refuses an approval meant for the
+// other one before the clock, the signature and the anti-replay state are even
+// reached, so none of these refusals can spend anything.
+func TestTheTwoAcceptanceSubjectsRefuseOneAnothersApprovals(t *testing.T) {
+	t.Parallel()
+	anchor := vectorAnchor()
+	const unusable = "/nonexistent/your-cloud-subject"
+
+	for name, signed := range map[string]*SignedApproval{
+		"a mutating approval presented to the read-only subject": signedVector(t, func(e *Envelope) {
+			e.Operation = OperationDeployOCIProbe
+			e.Privileges = []string{PrivilegeMutateLocalState, PrivilegeReadLocalState}
+		}),
+	} {
+		if _, err := Accept(unusable, anchor, signed, nowInsideWindow); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+
+	for name, signed := range map[string]*SignedApproval{
+		"a read-only approval presented to the mutating subject": signedVector(t, nil),
+		"an applied operation without the privilege to mutate": signedVector(t, func(e *Envelope) {
+			e.Operation = OperationRemoveOCIProbe
+			e.Privileges = []string{PrivilegeReadLocalState}
+		}),
+		"an operation this Auxiliary does not apply": signedVector(t, func(e *Envelope) {
+			e.Operation = "install_container"
+			e.Privileges = []string{PrivilegeMutateLocalState, PrivilegeReadLocalState}
+		}),
+	} {
+		if _, err := AcceptMutating(unusable, anchor, signed, nowInsideWindow); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+// TestAcceptMutatingSpendsItsSequenceLikeEveryOtherApproval holds the new
+// subject to the anti-replay rule of the old one: the first application of a
+// plan is accepted exactly once, and presenting the same envelope again is
+// refused by the machine itself.
+func TestAcceptMutatingSpendsItsSequenceLikeEveryOtherApproval(t *testing.T) {
+	directory := requireRootLAB(t)
+	anchor := vectorAnchor()
+	signed := signedVector(t, func(e *Envelope) {
+		e.Operation = OperationDeployOCIProbe
+		e.Privileges = []string{PrivilegeMutateLocalState, PrivilegeReadLocalState}
+	})
+
+	accepted, err := AcceptMutating(directory, anchor, signed, nowInsideWindow)
+	if err != nil {
+		t.Fatalf("the nominal probe approval must be accepted: %v", err)
+	}
+	if accepted.State.ConsumedSequence != 1 || !accepted.Envelope.IsMutating() {
+		t.Fatalf("unexpected acceptance: %+v", accepted)
+	}
+	if _, err := AcceptMutating(directory, anchor, signed, nowInsideWindow); err == nil {
+		t.Fatal("the very same probe approval was accepted twice")
+	}
+}
+
 // TestANewHumanKeyLeavesTheActionLockedUntilTheAnchorIsRotated is the recovery
 // rule: replacing the Console's human key restores nothing on a machine until
 // the Assistant rotates that machine's anchor over the personal SSH access.

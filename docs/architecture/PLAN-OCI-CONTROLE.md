@@ -1,10 +1,11 @@
 # Plan OCI contrôlé et sonde de validation
 
-> Statut : proposition de contrat pour le palier `#14`, suivie par `#81`.
-> Elle fixe ce que `plan_sha256` et `rollback_sha256` de l'enveloppe
+> Statut : contrat d'architecture validé (`#81`) pour le palier `#14`.
+> Il fixe ce que `plan_sha256` et `rollback_sha256` de l'enveloppe
 > d'approbation attestent, la liste fermée des champs qu'un plan de ce palier
-> peut porter, et l'image de la sonde épinglée. Rien ici n'est implémenté tant
-> que ce contrat n'est pas validé.
+> peut porter, et l'image de la sonde épinglée. Les implémentations le suivent
+> depuis `#82` (Controller), `#83` (Console) et `#84` (Auxiliaire) ; la preuve
+> LAB du palier reste `#86`.
 
 ## Rôle du plan dans la chaîne existante
 
@@ -154,6 +155,39 @@ Tout autre registre, dépôt ou digest est refusé avant mutation. Élargir la
 liste des images acceptables sera une décision d'un palier ultérieur, pas une
 généralisation silencieuse de celle-ci.
 
+## Ce que l'Auxiliaire reçoit sur son entrée standard
+
+L'amorçage n'autorise qu'une invocation exacte, `your-cloud auxiliary approve`,
+sans argument libre. Une opération qui mute ne reçoit donc pas une seconde
+sous-commande : elle reçoit une **seconde forme fermée d'entrée**, sur la même
+entrée standard et sous le même sujet. Ajouter un sujet aurait élargi la seule
+règle d'élévation que ce produit s'accorde sur une machine gérée ; l'entrée,
+elle, est déjà ce qui est vérifié avant tout.
+
+| Forme | Contenu | Usage |
+|---|---|---|
+| enveloppe seule | le document signé, comme aujourd'hui | `diagnose_protocol_read_only` |
+| enveloppe enveloppée | `signed_approval`, `plan`, `rollback` | `deploy_oci_probe`, `remove_oci_probe` |
+
+Décisions attachées à cette forme :
+
+- Le champ `signed_approval` **distingue** les deux formes. Elles ne partagent
+  aucun nom de champ : la forme est lue dans le document, jamais devinée en
+  tentant les deux schémas l'un après l'autre.
+- Les deux documents voyagent comme **chaînes JSON portant leurs octets
+  canoniques exacts**, la même unique forme de transport que la route du
+  Controller. La machine hache ce qu'elle reçoit, jamais ce qu'elle a compris.
+- L'enveloppe portée est décodée par le même chemin strict que lorsqu'elle
+  arrive seule : l'emballage n'est pas une seconde manière, plus faible, de
+  présenter une approbation.
+- L'entrée entière est bornée à la somme des bornes qu'elle transporte —
+  l'enveloppe, deux plans, et la place que coûte l'emballage. Chaque document
+  garde en outre sa propre borne, plus étroite.
+- Une approbation en lecture seule continue de voyager seule et d'être vérifiée
+  par un sujet qui refuse toute mutation ; une approbation qui mute est vérifiée
+  par un sujet qui refuse toute opération hors des deux ci-dessus. Aucune des
+  deux ne peut atteindre l'autre.
+
 ## Ce que l'Auxiliaire vérifie avant de muter
 
 Dans l'ordre, et sans effet partiel :
@@ -173,6 +207,26 @@ L'idempotence se calcule contre l'état réel : premier déploiement
 `changed=true` ; nouveau plan demandant le même état `changed=false` sans
 réécriture ni redémarrage ; retrait d'une sonde absente `changed=false` ; toute
 dérive constatée exige un nouveau plan et n'est jamais corrigée en silence.
+
+## Compte, fiche Quadlet et unité
+
+La sonde tourne sous un **compte local dédié**, `your-cloud-probe`, distinct du
+compte technique de la commande forcée comme de ceux du Daemon et du Relay :
+une évasion depuis le conteneur atteint un compte qui ne possède que la sonde.
+Le nom porte le préfixe du produit parce que Debian livre déjà des groupes
+système génériques — `operator` en est un — qu'un nom décrivant le rôle
+adopterait en silence.
+
+La fiche est une **unité utilisateur** sous le domicile de ce compte, et non une
+unité système : une fiche système ferait tourner la sonde sous le Podman de
+`root`, ce que ce palier existe précisément pour éviter. Le `linger` est activé
+pour ce compte, afin que l'état approuvé tienne sans session ouverte et après un
+redémarrage. Le fichier est écrit atomiquement et appartient à `root` : le compte
+peut exécuter ce que la fiche décrit et ne peut jamais décrire ce qu'il exécute.
+
+Une seule valeur du plan atteint la fiche, le port, déjà borné par la validation.
+L'image et son digest y sont écrits depuis les constantes épinglées. Aucun effet
+externe ne passe par un shell : chaque commande est un vecteur d'arguments fixe.
 
 ## Bornes reprises des contrats existants
 

@@ -188,6 +188,27 @@ func (document *Document) Validate() error {
 	return nil
 }
 
+// IsExactInverseOf reports whether this document undoes the other one entirely:
+// the opposite operation on the same instance, differing in nothing else.
+//
+// A machine asks this before acting so that the rollback it received is a
+// document it could actually apply to return to the state it is leaving. A
+// rollback naming another machine, another port or another image would be a
+// second plan rather than an undoing, and a human who approved the pair would
+// have approved something the machine cannot honour.
+func (document *Document) IsExactInverseOf(other *Document) bool {
+	if document == nil || other == nil {
+		return false
+	}
+	inverse, known := inverseOperation[other.Operation]
+	if !known {
+		return false
+	}
+	expected := *other
+	expected.Operation = inverse
+	return *document == expected
+}
+
 // Encode renders the one canonical encoding of a plan for transport.
 //
 // A transport may reindent or reorder what it carries without changing the plan

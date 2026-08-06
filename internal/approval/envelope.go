@@ -48,24 +48,48 @@ const (
 	// MaxPrivileges is the size of the closed privilege set below.
 	MaxPrivileges = 2
 
-	// OperationDiagnoseProtocolReadOnly is the one operation this palier
-	// approves. It reads and reports; it changes nothing.
+	// OperationDiagnoseProtocolReadOnly reads and reports; it changes nothing,
+	// and it stays the only operation the read-only subject performs.
 	OperationDiagnoseProtocolReadOnly = "diagnose_protocol_read_only"
+
+	// OperationDeployOCIProbe asks for the pinned probe to be present on this
+	// machine, and OperationRemoveOCIProbe for that exact instance to be
+	// absent. They are the first two operations of the product that may change
+	// anything, and what they may change is described by a plan document whose
+	// digest this envelope signs — never by the envelope itself.
+	OperationDeployOCIProbe = "deploy_oci_probe"
+	OperationRemoveOCIProbe = "remove_oci_probe"
 
 	// PrivilegeReadLocalState allows reading what the machine already holds.
 	PrivilegeReadLocalState = "read_local_state"
-	// PrivilegeMutateLocalState allows changing the machine. No operation of
-	// this palier requires it, and every envelope naming it is refused. It is
-	// named here so that refusal is something a document can actually run into
-	// rather than the absence of a feature.
+	// PrivilegeMutateLocalState allows changing the machine. The read-only
+	// operation still refuses every envelope naming it; the two probe
+	// operations require it, and require it beside the read privilege, because
+	// deciding whether a state already holds is itself a local read.
 	PrivilegeMutateLocalState = "mutate_local_state"
 )
 
 // requiredPrivileges is the exact list each operation must carry. Equality is
 // required rather than inclusion: an envelope asking for less than its
 // operation needs is not a narrower approval, it is an unrecognised one.
+//
+// Each list is written in the strictly increasing order the envelope requires,
+// so that the table cannot describe a set the validation would refuse. The Rust
+// side pins the same two lists in the same order, and vectors on both sides hold
+// the two spellings against one another.
 var requiredPrivileges = map[string][]string{
 	OperationDiagnoseProtocolReadOnly: {PrivilegeReadLocalState},
+	OperationDeployOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRemoveOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+}
+
+// mutatingOperations is the closed list of operations that are allowed to reach
+// a mutating acceptance. Holding it beside requiredPrivileges rather than
+// deriving it from the privileges is deliberate: an operation added to the table
+// above does not silently become one this machine will act on.
+var mutatingOperations = map[string]struct{}{
+	OperationDeployOCIProbe: {},
+	OperationRemoveOCIProbe: {},
 }
 
 var (
@@ -186,8 +210,11 @@ func (envelope *Envelope) validatePrivileges() error {
 }
 
 // IsMutating reports whether the envelope asks for anything that could change
-// the machine. Nothing this palier performs may, so this is a refusal and not
-// a branch.
+// the machine.
+//
+// It is not a branch that selects what to do: each acceptance subject states
+// which answer it requires, the read-only one refusing every mutation and the
+// probe one refusing every envelope that would act without asking for it.
 func (envelope *Envelope) IsMutating() bool {
 	for _, privilege := range envelope.Privileges {
 		if privilege == PrivilegeMutateLocalState {

@@ -10,17 +10,26 @@ import (
 	"time"
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
+	"github.com/ldesfontaine/your-cloud/internal/auxiliary"
 )
 
 // The Auxiliary is a one-shot mode of this same binary, never a service, never
-// a listener and never a general shell. It reads one signed approval on its
+// a listener and never a general shell. It reads one bounded document on its
 // standard input, verifies it against this machine's own root-owned anchor,
 // spends its sequence, and reports what it verified.
 //
-// It performs a protocol diagnostic and nothing else. There is no path through
-// this file that installs, enables, configures, writes or removes anything on
-// the machine, and `changed` is a constant below rather than a computed value:
-// this palier has no mutation to report.
+// It reads exactly one subject, `approve`, and keeps it: the forced SSH command
+// and the elevation rule installed at bootstrap authorise that one invocation
+// and no free argument, so adding a second subject would mean widening the one
+// rule this product allows itself on a managed machine. What changed with the
+// first mutating operations is therefore the *input*, not the command line: the
+// standard input carries either one signed approval, exactly as before, or one
+// closed wrapper carrying that same approval beside the two plan documents its
+// digests name. Which of the two was sent is decided by the document itself, and
+// a read-only approval still travels alone.
+//
+// Nothing in this file decides what a mutation does. It verifies the approval,
+// hands the documents to internal/auxiliary, and reports what that returned.
 
 type auxiliaryArguments struct {
 	anchorPath  string
@@ -33,7 +42,9 @@ type auxiliaryArguments struct {
 //
 // It repeats what was verified rather than what was requested, so a reader
 // cannot mistake the Controller's claim for the machine's own conclusion. It
-// carries no plan, no secret and no output of any command.
+// carries no plan, no secret and no free text: the fields an applied operation
+// adds are the closed ones the machine itself decided — where the sheet was
+// written, which state the service holds, and whether anything changed.
 type auxiliaryReport struct {
 	SchemaVersion    int      `json:"schema_version"`
 	Operation        string   `json:"operation"`
@@ -44,9 +55,17 @@ type auxiliaryReport struct {
 	PlanSHA256       string   `json:"plan_sha256"`
 	RollbackSHA256   string   `json:"rollback_sha256"`
 	Privileges       []string `json:"privileges"`
-	// Changed is always false in this palier. It is reported rather than
-	// omitted so that a future first real mutation has to change this value
-	// explicitly, and so no success here can be read as an OCI action.
+	// PlanOperation is the operation the two verified documents describe. It is
+	// reported beside the envelope's own operation because the machine refuses
+	// to act unless the two say the same thing, and a reader is entitled to see
+	// both rather than to trust that they were compared.
+	PlanOperation string `json:"plan_operation,omitempty"`
+	LocalPort     int    `json:"local_port,omitempty"`
+	UnitPath      string `json:"unit_path,omitempty"`
+	ServiceState  string `json:"service_state,omitempty"`
+	// Changed is computed by whatever acted, never announced in advance. A
+	// read-only diagnostic reports false because it changed nothing; an applied
+	// operation reports what it observed before acting and what it did after.
 	Changed bool `json:"changed"`
 }
 
@@ -58,7 +77,7 @@ func runAuxiliary(arguments []string) error {
 	if err := requireAuxiliaryAdministrator(os.Geteuid()); err != nil {
 		return err
 	}
-	document, err := readBoundedApproval(os.Stdin, configuration.readerLimit)
+	document, err := readBoundedInput(os.Stdin, configuration.readerLimit)
 	if err != nil {
 		return err
 	}
@@ -66,20 +85,39 @@ func runAuxiliary(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	signed, err := approval.DecodeSigned(document)
+	input, err := auxiliary.DecodeInput(document)
 	if err != nil {
 		return err
 	}
-	accepted, err := approval.Accept(
-		configuration.stateDir,
-		anchor,
-		signed,
-		uint64(time.Now().UTC().Unix()),
+	now := uint64(time.Now().UTC().Unix())
+
+	// The two subjects of the acceptance are chosen by the shape that was sent,
+	// and neither can be reached by an approval meant for the other: an approval
+	// arriving alone is verified by the read-only subject, which still refuses
+	// every mutation, and an approval arriving with its documents is verified by
+	// the mutating one, which refuses every operation that is not one of the two
+	// this machine applies.
+	if input.Kind == auxiliary.KindDiagnose {
+		accepted, err := approval.Accept(configuration.stateDir, anchor, input.Signed, now)
+		if err != nil {
+			return err
+		}
+		return renderAuxiliaryReport(os.Stdout, configuration.format, buildAuxiliaryReport(accepted))
+	}
+
+	accepted, err := approval.AcceptMutating(configuration.stateDir, anchor, input.Signed, now)
+	if err != nil {
+		return err
+	}
+	application, err := auxiliary.Apply(auxiliary.SystemExecutor{}, accepted, input)
+	if err != nil {
+		return err
+	}
+	return renderAuxiliaryReport(
+		os.Stdout,
+		configuration.format,
+		buildAppliedAuxiliaryReport(accepted, application),
 	)
-	if err != nil {
-		return err
-	}
-	return renderAuxiliaryReport(os.Stdout, configuration.format, buildAuxiliaryReport(accepted))
 }
 
 // requireAuxiliaryAdministrator refuses before reading anything: the anchor and
@@ -100,7 +138,7 @@ func parseAuxiliaryArguments(arguments []string) (auxiliaryArguments, error) {
 	result := auxiliaryArguments{
 		anchorPath:  approval.AnchorPath,
 		stateDir:    approval.StateDirectory,
-		readerLimit: approval.MaxSignedApprovalBytes,
+		readerLimit: auxiliary.MaxInputBytes,
 		format:      "text",
 	}
 	flags := flag.NewFlagSet("auxiliary approve", flag.ContinueOnError)
@@ -117,22 +155,27 @@ func parseAuxiliaryArguments(arguments []string) (auxiliaryArguments, error) {
 	return result, nil
 }
 
-// readBoundedApproval reads at most one bounded document and refuses anything
+// readBoundedInput reads at most one bounded document and refuses anything
 // longer instead of truncating it into a shorter, differently signed one.
-func readBoundedApproval(reader io.Reader, limit int64) ([]byte, error) {
+//
+// The bound is the one the whole input may reach. Each document carried inside
+// it keeps its own, narrower bound, enforced by the package that owns it, so
+// widening this one widened nothing else.
+func readBoundedInput(reader io.Reader, limit int64) ([]byte, error) {
 	if limit <= 0 {
-		return nil, errors.New("approval read limit must be positive")
+		return nil, errors.New("auxiliary read limit must be positive")
 	}
 	document, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("read signed approval: %w", err)
+		return nil, fmt.Errorf("read auxiliary input: %w", err)
 	}
 	if len(document) == 0 || int64(len(document)) > limit {
-		return nil, fmt.Errorf("signed approval must contain 1..%d bytes", limit)
+		return nil, fmt.Errorf("auxiliary input must contain 1..%d bytes", limit)
 	}
 	return document, nil
 }
 
+// buildAuxiliaryReport answers a read-only diagnostic, which changed nothing.
 func buildAuxiliaryReport(accepted *approval.Acceptance) auxiliaryReport {
 	return auxiliaryReport{
 		SchemaVersion:    approval.SchemaVersion,
@@ -148,14 +191,33 @@ func buildAuxiliaryReport(accepted *approval.Acceptance) auxiliaryReport {
 	}
 }
 
+// buildAppliedAuxiliaryReport answers an applied operation with what the machine
+// concluded rather than with what the plan asked for.
+//
+// Everything it adds to the diagnostic report is a closed field decided by the
+// application itself: no field of the plan is echoed, and no output of any
+// command reaches a reader.
+func buildAppliedAuxiliaryReport(accepted *approval.Acceptance, application *auxiliary.Application) auxiliaryReport {
+	report := buildAuxiliaryReport(accepted)
+	if application == nil {
+		return report
+	}
+	report.PlanOperation = application.Operation
+	report.LocalPort = application.LocalPort
+	report.UnitPath = application.UnitPath
+	report.ServiceState = application.ServiceState
+	report.Changed = application.Changed
+	return report
+}
+
 func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryReport) error {
 	if format == "json" {
 		encoder := json.NewEncoder(writer)
 		encoder.SetEscapeHTML(true)
 		return encoder.Encode(report)
 	}
-	_, err := fmt.Fprintf(writer,
-		"operation: %s\ninfrastructure: %s\nmachine: %s\napproval epoch: %d\nconsumed sequence: %d\nplan: %s\nrollback: %s\nprivileges: %v\nchanged: %t\n",
+	if _, err := fmt.Fprintf(writer,
+		"operation: %s\ninfrastructure: %s\nmachine: %s\napproval epoch: %d\nconsumed sequence: %d\nplan: %s\nrollback: %s\nprivileges: %v\n",
 		report.Operation,
 		report.InfrastructureID,
 		report.MachineID,
@@ -164,7 +226,23 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 		report.PlanSHA256,
 		report.RollbackSHA256,
 		report.Privileges,
-		report.Changed,
-	)
+	); err != nil {
+		return err
+	}
+	// The applied lines exist only when something was applied, so the answer a
+	// read-only diagnostic renders stays exactly the one the previous palier
+	// proved, line for line.
+	if report.PlanOperation != "" {
+		if _, err := fmt.Fprintf(writer,
+			"plan operation: %s\nlocal port: %d\nunit: %s\nservice: %s\n",
+			report.PlanOperation,
+			report.LocalPort,
+			report.UnitPath,
+			report.ServiceState,
+		); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(writer, "changed: %t\n", report.Changed)
 	return err
 }
