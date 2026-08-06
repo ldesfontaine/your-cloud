@@ -46,8 +46,9 @@ use your_cloud_native_bootstrap_assistant::personal_access::placement::{
     self, Approval, ApprovedPlacement, Availability, DeclaredEndpoint, Exposure,
 };
 
-const USAGE: &str = "usage: steps | admits | enrol | verify | activate | entry | render-entry \
-                     | elevation | render-elevation | account | custody | unwind";
+const USAGE: &str = "usage: steps | estate | admits | enrol | verify | activate | entry \
+                     | render-entry | elevation | render-elevation | account | custody \
+                     | unwind";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -58,6 +59,7 @@ fn main() -> ExitCode {
     let rest = &arguments[1..];
     match command {
         "steps" => steps(),
+        "estate" => judge_estate(rest),
         "admits" => admits(rest),
         "enrol" => enrol(rest),
         "verify" => verify(rest),
@@ -234,6 +236,31 @@ fn verified(perimeter: &Perimeter) -> Result<PathVerified, String> {
         .ok_or_else(|| "MalformedInput report".to_owned())?;
     plan::verify(&estate(perimeter)?, &enrolment(perimeter)?, &report)
         .map_err(|refusal| format!("{refusal:?}"))
+}
+
+/// `estate PERIMETER` — the enrolment bound, rendered by the gate that holds it.
+///
+/// Both numbers come from the compiled product: a harness that counted the
+/// lines it had just written would stay green against a gate that had stopped
+/// bounding anything, which is precisely the regression this exists to catch.
+fn judge_estate(arguments: &[String]) -> ExitCode {
+    let [path] = arguments else {
+        eprintln!("usage: estate PERIMETER");
+        return ExitCode::from(2);
+    };
+    let outcome = read_perimeter(path).and_then(|perimeter| {
+        estate(&perimeter).map(|estate| {
+            let machines = estate.machines();
+            format!(
+                "MINTED count={} bound={} first={} last={}",
+                machines.len(),
+                identity::MAX_ENROLLED_MACHINES,
+                machines.first().copied().unwrap_or("-"),
+                machines.last().copied().unwrap_or("-"),
+            )
+        })
+    });
+    report(outcome)
 }
 
 /// `admits PERIMETER MACHINE FINGERPRINT` — the crown decision, on its own.

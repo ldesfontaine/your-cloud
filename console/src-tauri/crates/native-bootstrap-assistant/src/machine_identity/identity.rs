@@ -389,6 +389,50 @@ mod tests {
         );
     }
 
+    /// An estate of exactly the bound is minted whole, and the crown decision
+    /// still holds across all of it.
+    ///
+    /// The refusal above the bound only means something next to this one: a gate
+    /// that refused sixty-five machines by refusing every estate would satisfy
+    /// that test and no real infrastructure. Sixty-four is also the number the
+    /// Relay's schema 2 registry and the Controller's inventory bound
+    /// independently, so this is the size at which the three must agree.
+    #[test]
+    fn an_estate_of_exactly_the_bound_admits_each_machine_only_its_own_identity() {
+        let key = |index: usize| format!("SHA256:{:0>43}", format!("key{index}"));
+        let name = |index: usize| format!("lab-machine-{index}");
+        let full: Vec<Declared> = (0..MAX_ENROLLED_MACHINES)
+            .map(|index| Declared {
+                machine: name(index),
+                fingerprint: key(index),
+            })
+            .collect();
+
+        let minted = mint(&full).expect("an estate of exactly the bound must mint");
+        assert_eq!(minted.machines().len(), MAX_ENROLLED_MACHINES);
+
+        for index in 0..MAX_ENROLLED_MACHINES {
+            let machine = name(index);
+            assert_eq!(
+                minted
+                    .admits(&machine, &key(index))
+                    .map(|minted| minted.machine()),
+                Ok(machine.as_str()),
+                "{machine} must admit its own identity"
+            );
+            let other = (index + 1) % MAX_ENROLLED_MACHINES;
+            assert_eq!(
+                minted.admits(&machine, &key(other)),
+                Err(IdentityRefusal::ForeignIdentity {
+                    machine: machine.clone(),
+                    owner: name(other),
+                }),
+                "{machine} must refuse the identity of {} and name it",
+                name(other)
+            );
+        }
+    }
+
     /// A machine name this palier does not read is refused before it is minted.
     #[test]
     fn a_machine_name_this_palier_does_not_read_is_refused() {
