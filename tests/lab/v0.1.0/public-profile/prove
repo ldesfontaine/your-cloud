@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# Drive the public profile proof: mount the perimeter on the published machine,
+# play the palier plan by plan, and read every claim of `#15` from outside that
+# machine, in the order the claims are only true in.
+#
+# Two machines take part and they are not interchangeable. `lab-vps` is the
+# published one: it holds the managed service, the entrypoint and the route, and
+# it is the only thing the approved plans ever touch. The pilot's own host is
+# the client: it never runs a command on lab-vps for the constats that matter,
+# it speaks TCP and TLS to it like any other client would, and it pins the
+# synthetic authority this run created and nothing else. `lab-machine-1` is not
+# used by this proof at all and is left exactly as it was.
+#
+# One VM plays every authority this palier separates, and that is honest rather
+# than convenient: the Controller, the Console and the certificate authority of
+# the declared names are a synthetic fixture — the Console window is not wired
+# to this proof — while the Auxiliary is the real product binary, built from the
+# synchronised sources, running as root against a real systemd, a real rootless
+# Podman, a real registry and a real Traefik.
+#
+# The reboot is a real power cycle through the LAB controller, because the
+# property under proof is that two lingering accounts and a host sysctl carry an
+# approved state across one, and a process restart does not exercise that.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [setup | run | reboot | verify | remove | all]
+
+  setup   synchronise the sources, build the binary and the fixture, mount the
+          anchor, the empty anti-replay position and the synthetic authority
+  run     the palier up to the power cycle: the managed service, the entrypoint,
+          the certificates, the published route, the idempotence and the
+          refusals — each read from outside the machine where that is the claim
+  reboot  really stop and start the published machine through the LAB controller
+  verify  what the reboot carried, the controlled failure, the dismantling in
+          the contract's order, each stage read again from outside
+  remove  remove the perimeter and prove its absence
+  all     the six above in order, removing even when a step fails (default)
+
+This harness belongs to the palier of the public BentoPDF profile (#15, proof
+#92) and is deliberately not one of the passes of tests/lab/v0.1.0/prove, whose
+sequence is the bootstrap and replacement palier (#13, proof #41). It mounts and
+removes its own perimeter on lab-vps and creates no topology.
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  setup | run | reboot | verify | remove | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.0/public-profile"
+target_vm=lab-vps
+expected_origin=your-cloud/labctl
+remote_harness=/root/your-cloud-lab-public-profile
+remote_sources=/root/lab-public-profile-sources
+remote_authority=/root/lab-public-profile/authority/authority.crt
+result_root="$root/tests/artifacts/proofs/public-profile"
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+workdir=$(mktemp -d)
+# The authority the client pins lives outside the run's temporary directory on
+# purpose: the subcommands of this harness are meant to be usable one at a time
+# while the perimeter stays mounted, and a client that lost its pin between two
+# of them would have to stop verifying. It is a public certificate and nothing
+# else, and `remove` takes it away.
+authority="${TMPDIR:-/tmp}/your-cloud-lab-public-profile-authority.crt"
+trap 'rm -rf "$workdir"' EXIT
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+# The revision is named once and honestly. A modified tree is announced as such,
+# because a report built on a state nobody can fetch closes no line of a palier.
+revision() {
+  local sha
+  sha=$(git -C "$root" rev-parse HEAD)
+  if ! git -C "$root" diff --quiet \
+    || ! git -C "$root" diff --cached --quiet \
+    || [[ -n $(git -C "$root" ls-files --others --exclude-standard) ]]; then
+    sha="$sha+worktree"
+  fi
+  echo "$sha"
+}
+
+address=
+
+locate() {
+  address=$(inventory "$target_vm")
+}
+
+setup() {
+  locate
+  echo "perimeter: published machine $target_vm at $address, client this host, revision $(revision)"
+  # lab-machine-1 belongs to other paliers and is named here only to say that
+  # this proof never speaks to it.
+  echo "untouched by this proof: lab-machine-1 (the home mini-PC of the reference topology)"
+
+  "$labctl" ssh "$target_vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  for script in common install certify play-service play-entrypoint play-route \
+    play-idempotence play-reboot play-failure play-removal remove; do
+    "$labctl" copy-to "$target_vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    "$labctl" ssh "$target_vm" -- "chmod 0700 $remote_harness/$script"
+  done
+
+  # The product sources this run proves, and the synthetic fixture that stands
+  # in for the Controller, the Console and the certificate authority. The
+  # fixture is placed *inside* the module because it asks internal/plan for the
+  # canonical plan documents; it exists only in this copy and is never a package
+  # of the product.
+  tar czf "$workdir/sources.tgz" -C "$root" go.mod go.sum cmd internal
+  "$labctl" copy-to "$target_vm" "$workdir/sources.tgz" /root/lab-public-profile-sources.tgz >/dev/null
+  "$labctl" copy-to "$target_vm" "$harness/_fixture/main.go" /root/lab-public-profile-fixture-main.go >/dev/null
+  "$labctl" ssh "$target_vm" -- \
+    "rm -rf $remote_sources && install -d -m 0700 $remote_sources \
+     && tar xzf /root/lab-public-profile-sources.tgz -C $remote_sources \
+     && install -d -m 0700 $remote_sources/labfixture \
+     && mv /root/lab-public-profile-fixture-main.go $remote_sources/labfixture/main.go \
+     && rm -f /root/lab-public-profile-sources.tgz"
+
+  "$labctl" ssh "$target_vm" -- \
+    "export PATH=\$PATH:/usr/local/go/bin && $remote_harness/install $remote_sources"
+
+  # The authority the client pins travels once, here, and only its public half.
+  "$labctl" copy-from "$target_vm" "$remote_authority" "$authority" >/dev/null
+  [[ -s "$authority" ]] || fail "the synthetic authority did not reach this host"
+  echo "the client pins $(openssl x509 -noout -subject -in "$authority")"
+}
+
+on_machine() { "$labctl" ssh "$target_vm" -- "$remote_harness/$*"; }
+from_outside() { "$harness/outside" "$1" "$address" "$authority"; }
+
+reboot_target() {
+  local attempt
+  echo "== real power cycle of $target_vm =="
+  "$labctl" stop "$target_vm"
+  "$labctl" start "$target_vm"
+  locate
+  # The controller returns as soon as the machine holds an address; its own
+  # channel opens a little later. Waiting here rather than in the assertions
+  # keeps a slow boot from reading as a failed reboot.
+  for attempt in $(seq 1 180); do
+    if "$labctl" ssh "$target_vm" -- true >/dev/null 2>&1; then
+      echo "the machine answers again after ${attempt}s"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "$target_vm never answered after its power cycle"
+}
+
+# run is everything up to the power cycle, and it alternates deliberately: a
+# plan is applied on the machine, then the claim that plan is supposed to have
+# made true is read from outside it. Reading them together would let a machine
+# vouch for itself.
+#
+# The stages are chained with `&&` rather than written one per line. `set -e` is
+# suspended inside a function whose call site is part of a `||` list, which is
+# exactly how `play` calls these two — so a bare list would run every remaining
+# stage after a red and drown the first one in the failures it caused. The first
+# red is what this proof keeps, so the chain has to say so itself.
+run() {
+  locate \
+    && on_machine play-service \
+    && from_outside after-service \
+    && on_machine play-entrypoint \
+    && from_outside after-entrypoint \
+    && on_machine certify \
+    && on_machine play-route \
+    && from_outside after-route \
+    && on_machine play-idempotence
+}
+
+verify() {
+  locate \
+    && on_machine play-reboot \
+    && from_outside after-reboot \
+    && on_machine play-failure \
+    && from_outside after-route \
+    && on_machine play-removal route \
+    && from_outside after-retire \
+    && on_machine play-removal entrypoint \
+    && from_outside after-remove-entrypoint \
+    && on_machine play-removal service \
+    && from_outside after-remove-service
+}
+
+# play is the whole sequence, in order, first red kept. It never stops before
+# the removal: a machine left holding an anchor, a spent position, two lingering
+# accounts and a container listening on 443 is not a clean LAB, whatever failed
+# above.
+play() {
+  local status=0
+  setup || status=$?
+  if [[ $status -eq 0 ]]; then run || status=$?; fi
+  if [[ $status -eq 0 ]]; then reboot_target || status=$?; fi
+  if [[ $status -eq 0 ]]; then verify || status=$?; fi
+  # The removal's own verdict is kept: a teardown that could not prove absence
+  # is a red of its own, not a footnote of the step that preceded it.
+  on_machine remove || status=$?
+  "$labctl" ssh "$target_vm" -- "rm -rf $remote_harness $remote_sources" || true
+  rm -f "$authority"
+  return "$status"
+}
+
+# publish writes the run's report where a proof output belongs, naming the exact
+# tree it judged. It carries no address of the pilot, no key and no secret: the
+# LAB material is synthetic by construction and the pilot's own paths are
+# removed.
+publish() {
+  local status=$1 log=$2 directory="$result_root/$run_id"
+  install -d -m 0755 "$directory"
+  {
+    printf 'proof: your-cloud public BentoPDF profile (palier #15, issue #92)\n'
+    printf 'run: %s\n' "$run_id"
+    printf 'revision: %s\n' "$(revision)"
+    printf 'published machine: %s (topology quick)\n' "$target_vm"
+    printf 'client: the pilot host, outside that machine, pinning the run synthetic authority\n'
+    printf 'outcome: %s\n' "$([[ $status -eq 0 ]] && echo passed || echo failed)"
+    printf 'finished_at: %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # What a green run of this harness still does not establish. It is written
+    # into every report rather than left in an issue, because a report that
+    # names only what it proved invites the reader to assume the rest.
+    cat <<'DEBTS'
+what this proof does not claim, whatever its outcome:
+
+  - SharedArrayBuffer is never instantiated. No browser takes part: the client
+    is curl and openssl. What is read from outside is that the document and the
+    assets it loads — the module scripts and the WebAssembly they name — come
+    from the single declared origin, each carrying the two headers that are the
+    browser's own condition for making SharedArrayBuffer available. Whether a
+    browser then grants it is not observed. A Windows or a browser half of this
+    palier remains unproven until a machine plays it.
+  - the certificate is synthetic and so is its authority. ACME and a publicly
+    resolvable name belong to the real infrastructure; what is proven here is
+    the route and TLS mechanism, which does not change when the certificate
+    changes source.
+  - the Console window is not wired to this run. The Controller and the Console
+    are a fixture: what the machine is proven to do is what it does with
+    documents it did not write, and interoperability with the real Console is
+    held by the pinned cross-language vector and not by this proof.
+  - the hosted gate does not run this harness. It needs libvirt, a LAB and
+    fifteen minutes; the quota debt of the September candidate covers it.
+  - one machine plays the public VPS. `lab-machine-1`, the home mini-PC of the
+    reference topology, is untouched here and its paliers are still ahead.
+
+DEBTS
+    sed -e "s#$root#<repo>#g" -e "s#$HOME#<home>#g" -e "s#$(id -un)#<user>#g" "$log"
+  } >"$directory/report.txt"
+  chmod 0644 "$directory/report.txt"
+  printf '\nreport=%s\n' "$directory/report.txt"
+}
+
+case "$command" in
+  setup) setup ;;
+  run) locate && run ;;
+  reboot) reboot_target ;;
+  verify) locate && verify ;;
+  remove)
+    locate
+    on_machine remove
+    rm -f "$authority"
+    ;;
+  all)
+    # The raw stream is kept live so a long run can be watched, then published.
+    # The status is read from PIPESTATUS rather than from the pipeline, because
+    # the left-hand side of a pipe runs in a subshell and no assignment made
+    # there survives it — a proof whose verdict is lost to a pipe is a proof
+    # that always passes.
+    set +e
+    play 2>&1 | tee "$workdir/run.log"
+    status=${PIPESTATUS[0]}
+    set -e
+    publish "$status" "$workdir/run.log"
+    exit "$status"
+    ;;
+esac

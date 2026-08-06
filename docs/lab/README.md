@@ -102,13 +102,25 @@ que les preuves compilent sont posées par
 
 ```text
 tools/labctl topology create quick
-tools/provision-lab [lab-console | lab-machine-1 | all]
+tools/provision-lab [lab-console | lab-machine-1 | lab-vps | all]
 ```
 
 `lab-console` reçoit le swap, les dépendances de construction GTK et la chaîne
-Rust ; `lab-machine-1` reçoit la chaîne Go, dont elle est la seule porteuse du
-LAB. Chaque étape est idempotente : ce qui est déjà en place est laissé tel quel
-et nommé comme tel.
+Rust ; `lab-machine-1` et `lab-vps` reçoivent la chaîne Go et le sol de
+conteneurs sans privilèges. `lab-vps` reçoit en plus **`slirp4netns`**, que la
+fiche du point d'entrée nomme à la main : sans lui l'entrée ne démarre pas, et
+elle ne se rabat pas sur `pasta`. Chaque étape est idempotente : ce qui est déjà
+en place est laissé tel quel et nommé comme tel.
+
+La topologie `quick` compte donc trois machines, et elles ne sont pas
+interchangeables. `lab-console` porte la Console ; `lab-machine-1` tient le rôle
+du mini-PC domestique ; `lab-vps` tient celui du VPS public — c'est la seule
+machine qui écoute publiquement, et les preuves du profil public la lisent
+**depuis l'extérieur**, depuis le poste ou depuis une autre VM. Elle rejoint le
+réseau `lab-quick` plutôt que de recevoir un réseau public à elle : `lab-public`
+existe dans `v1-full` pour séparer un segment public d'un segment opérateur et
+d'un site privé, séparation que `quick` n'a pas à faire, et un second réseau NAT
+y serait joignable exactement depuis les mêmes endroits que le premier.
 
 **Les versions ne sont pas écrites dans cette recette.** Elles sont lues dans le
 workflow de la porte hébergée, si bien qu'une machine du LAB et un runner
@@ -151,6 +163,14 @@ même garde d'inventaire, monte les deux côtés du périmètre sur `lab-console
 prouve l'absence de ce qu'elle a créé, même lorsque la suite échoue. Les
 comptes, clés et agents sont synthétiques et générés au montage ; les deux VM
 restent démarrées et aucune topologie n'est créée ni détruite.
+
+Pour le palier du profil public (`#15`),
+[`tests/lab/v0.1.0/public-profile/prove`](../../tests/lab/v0.1.0/public-profile/prove)
+est l'entrée d'orchestration. Elle monte son périmètre sur `lab-vps`, applique
+les plans approuvés un à un, et lit depuis le poste — c'est-à-dire depuis
+l'extérieur de la machine publiée — ce que chaque plan est censé avoir rendu
+vrai. Elle ne crée ni ne détruit aucune topologie, ne parle jamais à
+`lab-machine-1`, et retire ce qu'elle a monté même quand une étape échoue.
 
 Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
 sur les sources et contrats réutilisables. La **preuve LAB** sous

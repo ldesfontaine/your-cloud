@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# The third step played on the published machine: one approved entrypoint plan,
+# and what a machine that has been allowed to listen publicly actually holds.
+#
+# Three things are read here that no other step can read: the host policy as a
+# file *and* as a running kernel setting, the network stack the entry really
+# reaches the host loopback through, and the second account allocating its own
+# subordinate range beside the first one.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+# ---------------------------------------------------------------------------
+step "3. one approved entrypoint plan, and the two public ports"
+
+lab-public-profile-fixture -operation deploy_entrypoint \
+  -sequence "$(next_sequence)" >"$state/deploy-entrypoint.json"
+
+status=0
+output=$(your-cloud auxiliary approve --format=json <"$state/deploy-entrypoint.json" 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/last-report.json"
+case "$output" in
+  *'"outcome":"applied"'*'"changed":true'*) report "the entrypoint" "applied, changed=true" ;;
+  *) red "the entrypoint" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+
+# --- the host policy, as a file and as a running setting --------------------
+case "$(file_owner "$host_ports_policy")" in
+  "root:root 644") report "the host policy's owner and mode" "root:root 644" ;;
+  *) red "the host policy's owner and mode" "$(file_owner "$host_ports_policy")" ;;
+esac
+if grep -qx "$host_ports_setting=80" "$host_ports_policy"; then
+  report "the host policy's content" "$host_ports_setting=80, the clear port and everything above it"
+else
+  red "the host policy's content" "$(grep -v '^#' "$host_ports_policy" | tr '\n' ' ')"
+fi
+case "$(host_ports_value)" in
+  80) report "the running kernel setting" "80, applied in the same effect as the file" ;;
+  *) red "the running kernel setting" "$(host_ports_value)" ;;
+esac
+report "the whole policy file, verbatim" "$(tr '\n' '|' <"$host_ports_policy")"
+
+# --- the sheet the entry runs from ------------------------------------------
+# Read once whether there is a sheet at all: a `grep` on an absent file reports
+# the absence of a control as the control being satisfied.
+if [[ ! -f "$entry_unit" || ! -f "$entry_configuration" ]]; then
+  red "the entry's own files" "the entrypoint left no sheet or no configuration to read"
+  echo "FAILED: $failures assertions" >&2
+  exit 1
+fi
+case "$(file_owner "$entry_unit")" in
+  "root:root 644") report "the entry sheet's owner and mode" "root:root 644" ;;
+  *) red "the entry sheet's owner and mode" "$(file_owner "$entry_unit")" ;;
+esac
+grep -qx 'Network=slirp4netns:allow_host_loopback=true' "$entry_unit" \
+  && report "the sheet's network" "slirp4netns:allow_host_loopback=true, and never host" \
+  || red "the sheet's network" "$(grep '^Network=' "$entry_unit" | tr '\n' ' ')"
+for control in 'Pull=never' 'ReadOnly=true' 'NoNewPrivileges=true' 'DropCapability=ALL'; do
+  grep -qx "$control" "$entry_unit" \
+    && report "the entry sheet's control $control" "present" \
+    || red "the entry sheet's control $control" "absent"
+done
+mounts=$(grep -c '^Volume=' "$entry_unit" || true)
+[[ "$mounts" == 3 ]] \
+  && report "the entry sheet's mounts" "three, all read-only: $(grep '^Volume=' "$entry_unit" | tr '\n' ' ')" \
+  || red "the entry sheet's mounts" "$mounts"
+grep -qx 'PublishPort=443:443' "$entry_unit" && grep -qx 'PublishPort=80:80' "$entry_unit" \
+  && report "the entry sheet's publication" "443 and 80, on every address" \
+  || red "the entry sheet's publication" "$(grep '^PublishPort=' "$entry_unit" | tr '\n' ' ')"
+
+# --- the static configuration, and what it deliberately omits ---------------
+case "$(file_owner "$entry_configuration")" in
+  "root:root 644") report "the configuration's owner and mode" "root:root 644" ;;
+  *) red "the configuration's owner and mode" "$(file_owner "$entry_configuration")" ;;
+esac
+for absent in 'docker' 'providers.docker' 'api:' 'certificatesResolvers'; do
+  grep -qi "$absent" "$entry_configuration" \
+    && red "the configuration mentions $absent" "present" \
+    || report "the configuration never mentions $absent" "absent, which is the control"
+done
+grep -q 'permanent: true' "$entry_configuration" \
+  && report "the clear entry point" "redirects permanently and does nothing else" \
+  || red "the clear entry point" "no permanent redirection declared"
+
+# --- what actually runs -----------------------------------------------------
+case "$(service_state "$entry_account" "$entry_service")" in
+  active) report "the entry service" "active" ;;
+  *) red "the entry service" "$(service_state "$entry_account" "$entry_service")" ;;
+esac
+if [[ "$(container_image "$entry_account" "$entry_container")" == "$pinned_entry" ]]; then
+  report "the running entry image" "the pinned digest"
+else
+  red "the running entry image" "$(container_image "$entry_account" "$entry_container")"
+fi
+audit_port() {
+  local label=$1 port=$2
+  case "$(port_listening "$port")" in
+    open) report "$label" "open" ;;
+    *) red "$label" "$(port_listening "$port")" ;;
+  esac
+}
+audit_port "the secure public port" 443
+audit_port "the clear public port" 80
+
+# --- slirp4netns is the mechanism, not an assumption ------------------------
+network_mode=$(as_account "$entry_account" podman container inspect \
+  --format '{{.HostConfig.NetworkMode}}' "$entry_container" 2>/dev/null || echo unreadable)
+case "$network_mode" in
+  slirp4netns*) report "the engine's own view of the network" "$network_mode" ;;
+  *) red "the engine's own view of the network" "$network_mode" ;;
+esac
+if pgrep -u "$entry_account" -a slirp4netns >/dev/null 2>&1; then
+  report "the stack really running" "$(pgrep -u "$entry_account" -a slirp4netns | head -1 | cut -c1-120)"
+else
+  red "the stack really running" "no slirp4netns process belongs to $entry_account"
+fi
+
+# --- two accounts, two ranges, one machine ----------------------------------
+report "the entry account" "uid $(id -u "$entry_account"), home $entry_home"
+service_range=$(subordinate_range "$service_account")
+entry_range=$(subordinate_range "$entry_account")
+report "the service account's range" "$service_range"
+report "the entry account's range" "$entry_range"
+if [[ "$service_range" == none || "$entry_range" == none || "$service_range" == "$entry_range" ]]; then
+  red "the two ranges" "they are absent or identical: $service_range / $entry_range"
+else
+  service_start=${service_range#*:}; service_start=${service_start%%:*}
+  entry_start=${entry_range#*:}; entry_start=${entry_start%%:*}
+  service_span=${service_range##*:}
+  if [[ $entry_start -ge $((service_start + service_span)) || $service_start -ge $((entry_start + 65536)) ]]; then
+    report "the two ranges" "disjoint, allocated one after the other by the product itself"
+  else
+    red "the two ranges" "they overlap: $service_range / $entry_range"
+  fi
+fi
+
+# --- the certificate directory exists and holds nothing yet -----------------
+report "the certificate directory" "$(file_owner "$entry_certificates")"
+[[ -z "$(ls -A "$entry_certificates" 2>/dev/null)" ]] \
+  && report "what it holds" "nothing: no plan describes a certificate" \
+  || red "what it holds" "$(ls -A "$entry_certificates" | tr '\n' ' ')"
+[[ "$(published_fragments)" == none ]] \
+  && report "the published routes" "none" \
+  || red "the published routes" "$(published_fragments)"
+
+printf '%s\n' "$(file_digest "$entry_unit")" >"$state/entry-unit-digest.txt"
+printf '%s\n' "$(service_property "$entry_account" "$entry_service" InvocationID)" \
+  >"$state/entry-invocation.txt"
+report "the entry sheet" "$(cat "$state/entry-unit-digest.txt")"
+report "the entry invocation" "$(cat "$state/entry-invocation.txt")"
+
+verdict "the entrypoint holds both public ports under a declared host policy, reaches the host loopback through slirp4netns, and serves no name"

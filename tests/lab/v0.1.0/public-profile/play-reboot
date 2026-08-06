@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# The tenth step played on the published machine: what a real power cycle must
+# have carried, with nobody acting.
+#
+# Three things return here or the palier does not hold: two lingering accounts
+# each bringing their own container back, a host policy that survives as a file
+# and as a running setting, and a published name still served. The invocations
+# are read to prove the opposite of what the idempotence step reads: they must
+# be new, because a machine that never restarted anything was never rebooted.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /
+
+step "10. the power cycle carried the whole state, and nobody acted"
+
+service_invocation=$(cat "$state/service-invocation.txt")
+entry_invocation=$(cat "$state/entry-invocation.txt")
+fragment_digest=$(cat "$state/fragment-digest.txt")
+
+# The machine has just come back. Both services are given a bounded wait,
+# because a user manager started by lingering is started by the boot and not by
+# this script: what is being proven is that it happens at all.
+waited=0
+while [[ $waited -lt 120 ]]; do
+  [[ "$(service_state "$service_account" "$service_service")" == active \
+    && "$(service_state "$entry_account" "$entry_service")" == active ]] && break
+  sleep 2
+  waited=$((waited + 2))
+done
+
+case "$(service_state "$service_account" "$service_service")" in
+  active) report "the managed service after the reboot" "active again after ${waited}s, unasked" ;;
+  *) red "the managed service after the reboot" "$(service_state "$service_account" "$service_service") after ${waited}s" ;;
+esac
+case "$(service_state "$entry_account" "$entry_service")" in
+  active) report "the entrypoint after the reboot" "active again after ${waited}s, unasked" ;;
+  *) red "the entrypoint after the reboot" "$(service_state "$entry_account" "$entry_service") after ${waited}s" ;;
+esac
+for account in "$service_account" "$entry_account"; do
+  report "lingering for $account" \
+    "$(loginctl show-user "$account" --property=Linger --value 2>/dev/null || echo unreadable)"
+done
+
+if [[ "$(service_property "$service_account" "$service_service" InvocationID)" != "$service_invocation" ]]; then
+  report "the service's invocation across the reboot" "new, as a real power cycle requires"
+else
+  red "the service's invocation across the reboot" "unchanged; this was not a power cycle"
+fi
+if [[ "$(service_property "$entry_account" "$entry_service" InvocationID)" != "$entry_invocation" ]]; then
+  report "the entry's invocation across the reboot" "new, as a real power cycle requires"
+else
+  red "the entry's invocation across the reboot" "unchanged; this was not a power cycle"
+fi
+
+# The host policy is the one thing a reboot could have silently dropped: a
+# `sysctl -w` alone would not have survived, and a file alone would only have
+# applied at boot. Both halves are read again.
+case "$(file_digest "$host_ports_policy")" in
+  absent) red "the host policy file across the reboot" "gone" ;;
+  *) report "the host policy file across the reboot" "still there" ;;
+esac
+case "$(host_ports_value)" in
+  80) report "the running kernel setting across the reboot" "80, applied by the machine's own boot" ;;
+  *) red "the running kernel setting across the reboot" "$(host_ports_value)" ;;
+esac
+
+[[ "$(file_digest "$entry_fragments/$declared_host.yaml")" == "$fragment_digest" ]] \
+  && report "the fragment across the reboot" "unchanged" \
+  || red "the fragment across the reboot" "$(file_digest "$entry_fragments/$declared_host.yaml")"
+for port in 443 80; do
+  case "$(port_listening "$port")" in
+    open) report "the public port $port across the reboot" "open" ;;
+    *) red "the public port $port across the reboot" "$(port_listening "$port")" ;;
+  esac
+done
+report "the consumed position across the reboot" "$(consumed_sequence)"
+
+# The envelope written before the power cycle, applied after it: the state was
+# already true, so this is still not an action.
+status=0
+output=$(your-cloud auxiliary approve --format=json <"$state/after-idempotent.json" 2>&1) || status=$?
+case "$output" in
+  *'"changed":false'*) report "an approval signed before the reboot" "accepted, changed=false" ;;
+  *) red "an approval signed before the reboot" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+
+verdict "both lingering accounts brought their container back, the declared host policy survived as a file and as a setting, and the published name is served again without an action"

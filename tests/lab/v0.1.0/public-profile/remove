@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Remove the public profile perimeter from the published machine and prove its
+# absence.
+#
+# This is the one script of the harness allowed to do what no plan may. Three
+# kinds of residue are taken away here, and each of them is the harness's own
+# act rather than a conclusion of the product:
+#
+#   - the two accounts, their homes and their subordinate ranges. No plan of
+#     this palier describes an account, so no approved document can take one
+#     away and the product deliberately leaves them;
+#   - the entrypoint's root-owned tree, including the certificates this harness
+#     itself placed there. The Auxiliary removes what it wrote and nothing else,
+#     and it never wrote a certificate;
+#   - the anchor, the anti-replay position, the synthetic authority and the two
+#     binaries this run compiled.
+#
+# It runs even when a step of the proof failed: a machine left holding an
+# anchor, a spent position, two lingering accounts and a container that listens
+# publicly is not a clean LAB.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /
+remaining=0
+
+step "16. the perimeter is removed by the harness, not by a plan"
+
+retire() {
+  local account=$1 service=$2 container=$3
+  id -u "$account" >/dev/null 2>&1 || return 0
+  as_account "$account" systemctl --user stop "$service" >/dev/null 2>&1 || true
+  as_account "$account" podman rm --force --ignore "$container" >/dev/null 2>&1 || true
+  as_account "$account" podman rmi --all --force >/dev/null 2>&1 || true
+  loginctl disable-linger "$account" >/dev/null 2>&1 || true
+  as_account "$account" systemctl --user exit >/dev/null 2>&1 || true
+  sleep 1
+  pkill -9 -u "$account" >/dev/null 2>&1 || true
+  sleep 1
+  userdel --remove "$account" >/dev/null 2>&1 || userdel "$account" >/dev/null 2>&1 || true
+  rm -rf "/var/lib/$account"
+  sed -i "/^$account:/d" /etc/subuid /etc/subgid
+}
+
+retire "$entry_account" "$entry_service" "$entry_container"
+retire "$service_account" "$service_service" "$service_container"
+
+# The host policy is removed by the entrypoint's own removal plan; it is taken
+# away here only for a run that failed before reaching that plan, and the kernel
+# setting is put back by name for the same reason.
+if [[ -e "$host_ports_policy" ]]; then
+  rm -f "$host_ports_policy"
+  sysctl --write "$host_ports_setting=1024" >/dev/null 2>&1 || true
+  sysctl --system >/dev/null 2>&1 || true
+fi
+
+rm -rf /etc/your-cloud/entrypoint
+rm -f "$anchor" "$replay" "${replay%.json}.lock"
+rmdir /etc/your-cloud 2>/dev/null || true
+rm -rf "$state" /usr/local/bin/lab-public-profile-fixture /usr/local/bin/your-cloud
+rm -rf /root/lab-public-profile-sources
+
+step "17. what the machine holds afterwards"
+
+check() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    report "$label" "FAILED: $observed"
+    remaining=$((remaining + 1))
+  fi
+}
+
+for account in "$service_account" "$entry_account"; do
+  check "the account $account" "$(account_state "$account")" absent
+  check "the home of $account" "$([[ -e /var/lib/$account ]] && echo present || echo absent)" absent
+  check "the subordinate ranges of $account" \
+    "$({ grep -h "^$account:" /etc/subuid /etc/subgid || true; } | wc -l)" 0
+done
+check "the entrypoint tree" "$([[ -e $entry_root ]] && echo present || echo absent)" absent
+check "the host ports policy" "$([[ -e $host_ports_policy ]] && echo present || echo absent)" absent
+check "the running host ports floor" "$(host_ports_value)" 1024
+check "the approval anchor" "$([[ -e $anchor ]] && echo present || echo absent)" absent
+check "the anti-replay position" "$([[ -e $replay ]] && echo present || echo absent)" absent
+check "the synthetic authority" "$([[ -e $state ]] && echo present || echo absent)" absent
+check "the product binary" "$([[ -e /usr/local/bin/your-cloud ]] && echo present || echo absent)" absent
+check "the fixture" "$([[ -e /usr/local/bin/lab-public-profile-fixture ]] && echo present || echo absent)" absent
+check "the secure public port" "$(port_listening 443)" closed
+check "the clear public port" "$(port_listening 80)" closed
+check "the loopback port of the profile" "$(port_listening "$service_port")" closed
+
+[[ $remaining -eq 0 ]] || {
+  echo "FAILED: $remaining things this harness mounted are still there" >&2
+  exit 1
+}
+echo "PASS: the machine holds nothing this harness mounted"

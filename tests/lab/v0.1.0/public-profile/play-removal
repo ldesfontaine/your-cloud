@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# The dismantling, played in the one order the contract fixes: the route, then
+# the entrypoint, then the managed service.
+#
+# It takes the stage as an argument because the palier's own claim is about the
+# order, and each stage has to be read from outside the machine before the next
+# one runs — the name stops being served while the service still answers, then
+# the public ports close, and only then does the service go. A single script
+# would have run the three of them before any client could see the middle.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+stage=${1:?usage: play-removal <route|entrypoint|service>}
+cd /root
+
+case "$stage" in
+  route)
+    step "13. the route is retired, and only the route"
+
+    service_invocation=$(service_property "$service_account" "$service_service" InvocationID)
+    entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+
+    apply "retiring the declared route" '"changed":true' \
+      -operation retire_route -route-host "$declared_host" -backend-port "$service_port" \
+      -sequence "$(next_sequence)"
+    [[ "$(file_digest "$entry_fragments/$declared_host.yaml")" == absent ]] \
+      && report "the fragment" "gone" \
+      || red "the fragment" "$(file_digest "$entry_fragments/$declared_host.yaml")"
+    [[ "$(published_fragments)" == none ]] \
+      && report "the routes this machine publishes" "none" \
+      || red "the routes this machine publishes" "$(published_fragments)"
+    case "$(service_state "$service_account" "$service_service")" in
+      active) report "the managed service" "untouched and still active" ;;
+      *) red "the managed service" "$(service_state "$service_account" "$service_service")" ;;
+    esac
+    [[ "$(service_property "$service_account" "$service_service" InvocationID)" == "$service_invocation" ]] \
+      && report "the service was not restarted" "same InvocationID" \
+      || red "the service was not restarted" "it was restarted by a route retirement"
+    [[ "$(service_property "$entry_account" "$entry_service" InvocationID)" == "$entry_invocation" ]] \
+      && report "the entry was not restarted" "same InvocationID" \
+      || red "the entry was not restarted" "it was restarted by a route retirement"
+    answer=$(loopback_answers "$service_port")
+    case "$answer" in
+      "200 text/html"*) report "the service on its loopback port" "$answer" ;;
+      *) red "the service on its loopback port" "$answer" ;;
+    esac
+    apply "retiring it again" '"changed":false' \
+      -operation retire_route -route-host "$declared_host" -backend-port "$service_port" \
+      -sequence "$(next_sequence)"
+    verdict "the declared name is no longer served, the fragment is gone, and the service it named never noticed"
+    ;;
+
+  entrypoint)
+    step "14. the entrypoint is removed, and the public ports close"
+
+    apply "removing the entrypoint" '"changed":true' \
+      -operation remove_entrypoint -sequence "$(next_sequence)"
+    [[ "$(file_digest "$entry_unit")" == absent ]] \
+      && report "the entry sheet" "gone" \
+      || red "the entry sheet" "$(file_digest "$entry_unit")"
+    [[ "$(file_digest "$entry_configuration")" == absent ]] \
+      && report "the static configuration" "gone" \
+      || red "the static configuration" "$(file_digest "$entry_configuration")"
+    [[ "$(file_digest "$host_ports_policy")" == absent ]] \
+      && report "the host policy file" "gone" \
+      || red "the host policy file" "$(file_digest "$host_ports_policy")"
+    case "$(host_ports_value)" in
+      1024) report "the running kernel setting" "1024, the kernel's own default, written back by name" ;;
+      *) red "the running kernel setting" "$(host_ports_value)" ;;
+    esac
+    case "$(service_state "$entry_account" "$entry_service")" in
+      active) red "the entry service" "still active" ;;
+      *) report "the entry service" "$(service_state "$entry_account" "$entry_service")" ;;
+    esac
+    for port in 443 80; do
+      case "$(port_listening "$port")" in
+        closed) report "the public port $port" "closed" ;;
+        *) red "the public port $port" "$(port_listening "$port")" ;;
+      esac
+    done
+    [[ "$(container_image "$entry_account" "$entry_container")" == none ]] \
+      && report "the entry container" "gone" \
+      || red "the entry container" "$(container_image "$entry_account" "$entry_container")"
+    [[ "$(stored_images "$entry_account")" == 0 ]] \
+      && report "the pinned entry image" "gone from the entry account's storage" \
+      || red "the pinned entry image" "$(stored_images "$entry_account") image(s) remain"
+    # The three directories stay, and the certificates with them: the Auxiliary
+    # removes what it wrote and nothing else, and it never wrote a certificate.
+    [[ -d "$entry_certificates" ]] \
+      && report "the certificate directory" "still there, holding $(ls -1 "$entry_certificates" | paste -sd, -)" \
+      || red "the certificate directory" "removed by something that never wrote into it"
+    case "$(service_state "$service_account" "$service_service")" in
+      active) report "the managed service" "still active on its loopback port" ;;
+      *) red "the managed service" "$(service_state "$service_account" "$service_service")" ;;
+    esac
+    apply "removing it again" '"changed":false' \
+      -operation remove_entrypoint -sequence "$(next_sequence)"
+    verdict "the entrypoint is gone, the public ports are closed and the host policy is back to the kernel's own default"
+    ;;
+
+  service)
+    step "15. the managed service is removed, and what a removal deliberately leaves"
+
+    apply "removing the managed service" '"changed":true' \
+      -operation remove_web_service -port "$service_port" -sequence "$(next_sequence)"
+    [[ "$(file_digest "$service_unit")" == absent ]] \
+      && report "the service sheet" "gone" \
+      || red "the service sheet" "$(file_digest "$service_unit")"
+    case "$(service_state "$service_account" "$service_service")" in
+      active) red "the service" "still active" ;;
+      *) report "the service" "$(service_state "$service_account" "$service_service")" ;;
+    esac
+    [[ "$(container_image "$service_account" "$service_container")" == none ]] \
+      && report "the container" "gone" \
+      || red "the container" "$(container_image "$service_account" "$service_container")"
+    [[ "$(stored_images "$service_account")" == 0 ]] \
+      && report "the pinned image" "gone from the service account's storage" \
+      || red "the pinned image" "$(stored_images "$service_account") image(s) remain"
+    [[ "$(port_listening "$service_port")" == closed ]] \
+      && report "the loopback port" "closed" \
+      || red "the loopback port" "still open"
+    apply "removing it again" '"changed":false' \
+      -operation remove_web_service -port "$service_port" -sequence "$(next_sequence)"
+
+    for account in "$service_account" "$entry_account"; do
+      case "$(account_state "$account")" in
+        present) report "the account $account" "present, as no plan of this palier describes it" ;;
+        *) red "the account $account" "absent: something removed what no plan describes" ;;
+      esac
+    done
+    report "the machine, as it now stands" "$(fingerprint)"
+    report "the final consumed position" "$(consumed_sequence)"
+    verdict "the three states are gone in the contract's order, and what remains is exactly what no plan describes"
+    ;;
+
+  *)
+    echo "usage: play-removal <route|entrypoint|service>" >&2
+    exit 2
+    ;;
+esac

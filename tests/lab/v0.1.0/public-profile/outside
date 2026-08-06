@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+# Everything this palier actually claims, read from outside the published
+# machine.
+#
+# This script never runs on lab-vps. It runs on the pilot's own host, which is a
+# different machine on the same LAB network, and it speaks to lab-vps only over
+# the addresses and ports a client of the real world would use. That is the
+# whole reason it exists: a machine that asserts it serves itself has proven
+# nothing about a client, and every constat of `#15` is written "depuis
+# l'extérieur de la machine".
+#
+# It pins the synthetic authority `install` created, and it pins nothing else:
+# a name this proof did not declare has no certificate of this product, and the
+# refusal it receives is read rather than trusted.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+stage=${1:?usage: outside <stage> <address> <authority-certificate>}
+address=${2:?usage: outside <stage> <address> <authority-certificate>}
+ca=${3:?usage: outside <stage> <address> <authority-certificate>}
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+# --- the vocabulary of a client ---------------------------------------------
+
+# reach says whether a TCP connection to one port of the published machine is
+# accepted at all. It is the only question worth asking about a port that must
+# not be public: a service refusing to answer HTTP on a port it accepted is a
+# different and weaker claim.
+reach() {
+  local port=$1
+  if timeout 4 bash -c "exec 3<>/dev/tcp/$address/$port" 2>/dev/null; then
+    echo reachable
+  else
+    echo refused
+  fi
+}
+
+# pinned_get performs one request as a client that trusts the proof's authority
+# and nothing else, resolving the declared name to the published address itself
+# so that the name travels in the SNI and in the Host header while the
+# connection goes exactly where this proof means it to go.
+pinned_get() {
+  local host=$1 path=$2 out=$3
+  curl --silent --show-error --max-time 15 \
+    --cacert "$ca" --resolve "$host:443:$address" \
+    --dump-header "$workdir/headers.txt" --output "$out" \
+    --write-out '%{http_code}' "https://$host$path" 2>"$workdir/curl.err" \
+    || { printf 'none(%s)' "$(tr -d '\n' <"$workdir/curl.err" | cut -c1-120)"; return 0; }
+}
+
+# unpinned_get is the same request made by a client that verifies nothing. It is
+# how a refusal is read: the contract's own addendum says a name nobody declared
+# obtains a handshake no client pins, and then the entry's generic refusal.
+unpinned_get() {
+  local host=$1
+  curl --silent --insecure --max-time 15 --output /dev/null \
+    --resolve "$host:443:$address" --write-out '%{http_code}' "https://$host/" 2>/dev/null \
+    || echo none
+}
+
+header_value() {
+  grep -i "^$1:" "$workdir/headers.txt" | tail -1 | cut -d' ' -f2- | tr -d '\r' || true
+}
+
+presented_certificate() {
+  local servername=$1
+  openssl s_client -connect "$address:443" -servername "$servername" \
+    </dev/null 2>/dev/null | openssl x509 -noout -subject 2>/dev/null || echo unreadable
+}
+
+expect() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    red "$label" "$observed"
+  fi
+}
+
+# --- the stages -------------------------------------------------------------
+
+case "$stage" in
+  after-service)
+    step "A. from outside, after the managed service and before any entrypoint"
+    expect "the loopback port of the profile, from outside" "$(reach "$service_port")" refused
+    expect "the secure public port, from outside" "$(reach 443)" refused
+    expect "the clear public port, from outside" "$(reach 80)" refused
+    verdict "a managed service publishes on the machine's own loopback and is reachable from nowhere else"
+    ;;
+
+  after-entrypoint)
+    step "B. from outside, an entrypoint that holds both ports and serves no name"
+    expect "the secure public port, from outside" "$(reach 443)" reachable
+    expect "the clear public port, from outside" "$(reach 80)" reachable
+    expect "the loopback port of the profile, from outside" "$(reach "$service_port")" refused
+
+    expect "https to the address itself" "$(unpinned_get "$address")" 404
+    expect "https to the name this proof will declare" "$(unpinned_get "$declared_host")" 404
+    expect "https to a name nobody ever declares" "$(unpinned_get "$unknown_host")" 404
+
+    # The contract's own precision: Traefik answers the handshake with a generic
+    # self-signed certificate rather than refusing it, and what must be true is
+    # that no certificate was ever issued for a declared name and that no
+    # application route was given.
+    for name in "$address" "$declared_host" "$unknown_host"; do
+      subject=$(presented_certificate "$name")
+      case "$subject" in
+        *"$declared_host"*) red "the certificate presented for $name" "it names the declared host: $subject" ;;
+        *) report "the certificate presented for $name" "$subject" ;;
+      esac
+    done
+    # The exit status is what is read here rather than a status line: a client
+    # that pinned this authority must not complete the handshake at all, and a
+    # `--write-out` would print `000` beside the failure and turn a refusal into
+    # a string that has to be parsed.
+    if pinned=$(curl --silent --show-error --max-time 15 --output /dev/null --cacert "$ca" \
+      --resolve "$declared_host:443:$address" "https://$declared_host/" 2>&1); then
+      red "a client pinning this proof's authority" "it accepted a certificate nobody issued"
+    else
+      report "a client pinning this proof's authority" \
+        "refuses the handshake: $(echo "$pinned" | tr '\n' ' ' | cut -c1-90)"
+    fi
+
+    status=$(curl --silent --max-time 15 --output /dev/null --dump-header "$workdir/headers.txt" \
+      --write-out '%{http_code}' "http://$address/" 2>/dev/null || echo none)
+    location=$(header_value location)
+    case "$status" in
+      301 | 308) report "http on the clear port" "$status, a permanent redirection" ;;
+      *) red "http on the clear port" "$status" ;;
+    esac
+    case "$location" in
+      https://*) report "where it redirects to" "$location" ;;
+      *) red "where it redirects to" "${location:-nowhere}" ;;
+    esac
+    verdict "the entry holds the two public ports, gives no application route to any name, issues no certificate for a declared name, and the clear port only redirects"
+    ;;
+
+  after-route)
+    step "C. from outside, the one declared name this machine publishes"
+
+    status=$(pinned_get "$declared_host" / "$workdir/index.html")
+    expect "https to the declared name, verified against the pinned authority" "$status" 200
+    expect "the media type" "$(header_value content-type | cut -d';' -f1)" "text/html"
+    expect "Cross-Origin-Opener-Policy" "$(header_value cross-origin-opener-policy)" "same-origin"
+    expect "Cross-Origin-Embedder-Policy" "$(header_value cross-origin-embedder-policy)" "require-corp"
+    report "the bytes served" "$(wc -c <"$workdir/index.html") bytes"
+
+    subject=$(presented_certificate "$declared_host")
+    case "$subject" in
+      *"$declared_host"*) report "the certificate presented for the declared name" "$subject" ;;
+      *) red "the certificate presented for the declared name" "$subject" ;;
+    esac
+
+    # --- what a headless client can honestly say about SharedArrayBuffer -----
+    #
+    # The palier asks for a representative function that depends on
+    # SharedArrayBuffer to work under HTTPS. No browser runs in this proof, so
+    # the claim is bounded and said plainly: what is constated is that the
+    # document and the assets it loads — the module scripts and the WebAssembly
+    # they instantiate — are served from the single declared origin, each with
+    # the two headers that are the browser's own condition for making
+    # SharedArrayBuffer available. Whether the browser then instantiates it is
+    # not observed here and is not claimed.
+    # What matters is what the document *loads*, not what it links to. A
+    # hyperlink is a navigation a human may choose; a script, a stylesheet, an
+    # image or a frame is a runtime dependency the origin cannot do without, and
+    # the contract's sentence — "aucune origine externe requise" — is about the
+    # second kind. The two are counted apart rather than together, because
+    # failing a page for carrying a link to its own project page would be
+    # asserting something this palier never claimed.
+    loaded=$(grep -oE '<(script|link|img|iframe|source|video|audio|embed|object)[^>]*(src|href)="https?://[^"]+"' \
+      "$workdir/index.html" | grep -v "$declared_host" | sort -u | paste -sd' ' - || true)
+    if [[ -z "$loaded" ]]; then
+      report "external origins the document loads from" "none: every resource is same-origin or a data URI"
+    else
+      red "external origins the document loads from" "$loaded"
+    fi
+    links=$(grep -oE '<a [^>]*href="https?://[^"]+"' "$workdir/index.html" \
+      | grep -oE 'https?://[^/"]+' | sort -u | paste -sd' ' - || true)
+    report "external origins it merely links to" "${links:-none} (hyperlinks, loaded by nothing)"
+
+    mapfile -t scripts < <(grep -oE '(src|href)="[^"]*\.(js|mjs)"' "$workdir/index.html" \
+      | sed -e 's/^[a-z]*="//' -e 's/"$//' | sort -u | head -4)
+    if [[ ${#scripts[@]} -eq 0 ]]; then
+      red "the module scripts the document loads" "the document referenced none"
+    fi
+    for script in "${scripts[@]}"; do
+      [[ "$script" == /* ]] || script="/$script"
+      status=$(pinned_get "$declared_host" "$script" "$workdir/asset.bin")
+      opener=$(header_value cross-origin-opener-policy)
+      embedder=$(header_value cross-origin-embedder-policy)
+      if [[ "$status" == 200 && "$opener" == "same-origin" && "$embedder" == "require-corp" ]]; then
+        report "the asset $script" "200 from the declared origin, both isolation headers"
+      else
+        red "the asset $script" "$status opener=$opener embedder=$embedder"
+      fi
+      cat "$workdir/asset.bin" >>"$workdir/scripts.txt"
+    done
+
+    mapfile -t wasm < <(grep -oaE '[A-Za-z0-9_./-]+\.wasm' "$workdir/scripts.txt" 2>/dev/null \
+      | sort -u | head -3)
+    if [[ ${#wasm[@]} -eq 0 ]]; then
+      report "the WebAssembly the scripts name" \
+        "none reachable by static reading; this proof does not claim to have exercised one"
+    fi
+    for module in "${wasm[@]}"; do
+      [[ "$module" == /* ]] || module="/$module"
+      status=$(pinned_get "$declared_host" "$module" "$workdir/module.wasm")
+      opener=$(header_value cross-origin-opener-policy)
+      embedder=$(header_value cross-origin-embedder-policy)
+      magic=$(head -c 4 "$workdir/module.wasm" | od -An -tx1 | tr -d ' \n')
+      if [[ "$magic" != "0061736d" ]]; then
+        # The name was read out of minified JavaScript, where a module path is
+        # often assembled at runtime from pieces. A path that is not a real one
+        # gets this application's single-page fallback, which is the document
+        # again — said plainly rather than counted as a module.
+        report "the name $module read out of the scripts" \
+          "not a real module path: the origin answered $status with its single-page fallback"
+      elif [[ "$status" == 200 && "$opener" == "same-origin" && "$embedder" == "require-corp" ]]; then
+        report "the WebAssembly module $module" \
+          "200 from the declared origin, real wasm magic, both isolation headers"
+      else
+        red "the WebAssembly module $module" "$status opener=$opener embedder=$embedder"
+      fi
+    done
+
+    step "D. from outside, everything that is not the declared name"
+    expect "https to a name nobody declared" "$(unpinned_get "$unknown_host")" 404
+    expect "https to the address itself" "$(unpinned_get "$address")" 404
+    for name in "$unknown_host" "$address"; do
+      subject=$(presented_certificate "$name")
+      case "$subject" in
+        *"$declared_host"*) red "the certificate presented for $name" "it names the declared host: $subject" ;;
+        *) report "the certificate presented for $name" "$subject" ;;
+      esac
+    done
+    expect "the loopback port of the profile, from outside" "$(reach "$service_port")" refused
+    verdict "the declared name is served in 200 with both isolation headers from a single origin under a certificate this proof pinned, and nothing else is"
+    ;;
+
+  after-reboot)
+    step "E. from outside, after a real power cycle"
+    status=$(pinned_get "$declared_host" / "$workdir/index.html")
+    expect "https to the declared name" "$status" 200
+    expect "Cross-Origin-Opener-Policy" "$(header_value cross-origin-opener-policy)" "same-origin"
+    expect "Cross-Origin-Embedder-Policy" "$(header_value cross-origin-embedder-policy)" "require-corp"
+    expect "the loopback port of the profile" "$(reach "$service_port")" refused
+    verdict "the published name answers a client again after a power cycle nobody followed with an action"
+    ;;
+
+  after-retire)
+    step "F. from outside, once the route is retired"
+    expect "https to the name that was published" "$(unpinned_get "$declared_host")" 404
+    subject=$(presented_certificate "$declared_host")
+    case "$subject" in
+      *"$declared_host"*) red "the certificate presented for it" "still the declared name's: $subject" ;;
+      *) report "the certificate presented for it" "$subject" ;;
+    esac
+    expect "the secure public port" "$(reach 443)" reachable
+    expect "the loopback port of the profile" "$(reach "$service_port")" refused
+    verdict "the retired name obtains the entry's generic refusal and no certificate of its own, while the entry keeps holding its ports"
+    ;;
+
+  after-remove-entrypoint)
+    step "G. from outside, once the entrypoint is removed"
+    expect "the secure public port" "$(reach 443)" refused
+    expect "the clear public port" "$(reach 80)" refused
+    expect "the loopback port of the profile" "$(reach "$service_port")" refused
+    verdict "the public ports close last and close completely"
+    ;;
+
+  after-remove-service)
+    step "H. from outside, once nothing of the profile remains"
+    expect "the secure public port" "$(reach 443)" refused
+    expect "the clear public port" "$(reach 80)" refused
+    expect "the loopback port of the profile" "$(reach "$service_port")" refused
+    verdict "the machine offers this proof's client nothing at all"
+    ;;
+
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# The eleventh step played on the published machine: one failure produced
+# honestly, after the first effect, and the only rollback a human signed.
+#
+# The failure chosen is the one the closure of `#91` named as a real risk rather
+# than an invented one: `publish_route` couples publication to a backend that
+# actually answers, so a route towards a managed service that is not running is
+# a fragment written and then a verification that fails. Nothing of the product
+# is patched; what the harness does is stop the managed service, and it says so.
+#
+# Stopping it is the harness's own act, exactly like `certify` and `remove`. It
+# is the honest way to reach the state, because no plan of this palier describes
+# a service that exists and does not run.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "11. a failure after the first effect attempts exactly the approved rollback"
+
+declared_fragment="$entry_fragments/$declared_host.yaml"
+second_fragment="$entry_fragments/$second_host.yaml"
+declared_before=$(file_digest "$declared_fragment")
+entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+
+as_account "$service_account" systemctl --user stop "$service_service" >/dev/null 2>&1 || true
+case "$(service_state "$service_account" "$service_service")" in
+  active) red "the backend the next plan names" "still running; the failure would not be honest" ;;
+  *) report "the backend the next plan names" "stopped by the harness, and named as such" ;;
+esac
+report "the loopback port it published" "$(port_listening "$service_port")"
+
+status=0
+output=$(lab-public-profile-fixture -operation publish_route -route-host "$second_host" \
+  -backend-port "$service_port" -sequence "$(next_sequence)" \
+  | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/last-report.json"
+case "$output" in
+  *'"outcome":"rolled_back_after_controlled_failure"'*)
+    report "the conclusion" "rolled_back_after_controlled_failure" ;;
+  *) red "the conclusion" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+case "$output" in
+  *'"rollback_attempted":true'*) report "the rollback" "attempted, once, through the ordinary path" ;;
+  *) red "the rollback" "not stated as attempted" ;;
+esac
+[[ $status -ne 0 ]] \
+  && report "the exit status" "a failure, as a controlled failure must be" \
+  || red "the exit status" "a controlled failure exited zero"
+
+[[ "$(file_digest "$second_fragment")" == absent ]] \
+  && report "the fragment of the failed route" "gone, which is what retire_route means" \
+  || red "the fragment of the failed route" "$(file_digest "$second_fragment")"
+[[ "$(file_digest "$declared_fragment")" == "$declared_before" ]] \
+  && report "the fragment of the route already published" "untouched" \
+  || red "the fragment of the route already published" "$(file_digest "$declared_fragment")"
+case "$(service_state "$entry_account" "$entry_service")" in
+  active) report "the entrypoint after the rollback" "still active: a route failing is not an entry failing" ;;
+  *) red "the entrypoint after the rollback" "$(service_state "$entry_account" "$entry_service")" ;;
+esac
+[[ "$(service_property "$entry_account" "$entry_service" InvocationID)" == "$entry_invocation" ]] \
+  && report "the entrypoint was not restarted" "same InvocationID" \
+  || red "the entrypoint was not restarted" "it was restarted by a route operation"
+case "$(account_state "$service_account")" in
+  present) report "the service account after the rollback" "still present, as no plan describes it" ;;
+  *) red "the service account after the rollback" "removed by something no human approved" ;;
+esac
+report "the routes this machine still publishes" "$(published_fragments)"
+
+# ---------------------------------------------------------------------------
+step "12. the drift a stopped service is, repaired by the ordinary path"
+
+apply "a fresh web service plan against the stopped service" '"changed":true' \
+  -operation deploy_web_service -port "$service_port" -sequence "$(next_sequence)"
+case "$(service_state "$service_account" "$service_service")" in
+  active) report "the managed service" "active again" ;;
+  *) red "the managed service" "$(service_state "$service_account" "$service_service")" ;;
+esac
+answer=$(loopback_answers "$service_port")
+case "$answer" in
+  "200 text/html"*) report "a local GET on 127.0.0.1:$service_port" "$answer" ;;
+  *) red "a local GET on 127.0.0.1:$service_port" "$answer" ;;
+esac
+declared_status=$(curl --silent --insecure --max-time 10 --output /dev/null \
+  --resolve "$declared_host:443:127.0.0.1" --write-out '%{http_code}' \
+  "https://$declared_host/" 2>/dev/null || echo none)
+[[ "$declared_status" == 200 ]] \
+  && report "the published name, from the machine" "200 again" \
+  || red "the published name, from the machine" "$declared_status"
+
+verdict "the failed publication rolled back to exactly the state its signed rollback describes, and the drift a stopped service is was repaired by an approved plan"

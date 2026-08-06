@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# The fifth step played on the published machine: one approved route plan, and
+# the single file it is.
+#
+# What this script reads on the machine is the fragment and what the entry did
+# with it. What the palier actually claims — the 200, the two isolation headers,
+# the certificate of the declared name — is read from outside the machine by
+# `outside`, because a machine asserting that it serves itself proves nothing
+# about a client.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+# ---------------------------------------------------------------------------
+step "5. one approved route plan writes one fragment and nothing else"
+
+before_entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+before_service_invocation=$(service_property "$service_account" "$service_service" InvocationID)
+
+lab-public-profile-fixture -operation publish_route -route-host "$declared_host" \
+  -backend-port "$service_port" -sequence "$(next_sequence)" >"$state/publish-route.json"
+
+status=0
+output=$(your-cloud auxiliary approve --format=json <"$state/publish-route.json" 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/last-report.json"
+case "$output" in
+  *'"outcome":"applied"'*'"changed":true'*) report "the publication" "applied, changed=true" ;;
+  *) red "the publication" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+case "$output" in
+  *"\"route_host\":\"$declared_host\""*) report "the name it announces" "$declared_host" ;;
+  *) red "the name it announces" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+
+fragment="$entry_fragments/$declared_host.yaml"
+case "$(file_owner "$fragment")" in
+  "root:root 644") report "the fragment's owner and mode" "root:root 644" ;;
+  *) red "the fragment's owner and mode" "$(file_owner "$fragment")" ;;
+esac
+report "the fragment's name" "$(published_fragments)"
+grep -q "http://10.0.2.2:$service_port" "$fragment" \
+  && report "the backend the fragment names" "http://10.0.2.2:$service_port, the host loopback through slirp4netns" \
+  || red "the backend the fragment names" "$(grep -A2 'servers:' "$fragment" | tr '\n' ' ')"
+grep -q 'Cross-Origin-Opener-Policy: "same-origin"' "$fragment" \
+  && grep -q 'Cross-Origin-Embedder-Policy: "require-corp"' "$fragment" \
+  && report "the isolation headers the fragment declares" "same-origin and require-corp" \
+  || red "the isolation headers the fragment declares" "$(grep -i cross-origin "$fragment" | tr '\n' ' ')"
+grep -q "certFile: \"$entry_certificates/$declared_host.crt\"" "$fragment" \
+  && report "the certificate the fragment points at" "$entry_certificates/$declared_host.crt" \
+  || red "the certificate the fragment points at" "$(grep certFile "$fragment")"
+grep -q -- '- websecure' "$fragment" && ! grep -q -- '- web$' "$fragment" \
+  && report "the entry points the router is attached to" "websecure alone" \
+  || red "the entry points the router is attached to" "$(grep -A2 entryPoints "$fragment" | tr '\n' ' ')"
+
+# Publishing a route is a file appearing. Nothing is reloaded and nothing is
+# restarted, and the two invocations are what says so.
+[[ "$(service_property "$entry_account" "$entry_service" InvocationID)" == "$before_entry_invocation" ]] \
+  && report "the entry was not restarted" "same InvocationID" \
+  || red "the entry was not restarted" "$(service_property "$entry_account" "$entry_service" InvocationID)"
+[[ "$(service_property "$service_account" "$service_service" InvocationID)" == "$before_service_invocation" ]] \
+  && report "the service was not restarted" "same InvocationID" \
+  || red "the service was not restarted" "$(service_property "$service_account" "$service_service" InvocationID)"
+
+# ---------------------------------------------------------------------------
+step "6. from the machine itself, the declared name and nothing beside it"
+
+# These four requests are the machine reading itself, which is the weaker half
+# of the claim. They are kept because they isolate the entry from the network:
+# a difference between what the machine sees and what `outside` sees would be a
+# fact about the network rather than about the entry.
+observe() {
+  local host=$1
+  curl --silent --insecure --max-time 5 --output /dev/null \
+    --resolve "$host:443:127.0.0.1" --write-out '%{http_code}' "https://$host/" 2>/dev/null \
+    || echo none
+}
+
+declared_status=$(observe "$declared_host")
+[[ "$declared_status" == 200 ]] \
+  && report "https to the declared name, from the machine" "200" \
+  || red "https to the declared name, from the machine" "$declared_status"
+
+unknown_status=$(observe "$unknown_host")
+[[ "$unknown_status" == 404 ]] \
+  && report "https to an undeclared name, from the machine" "404, the entry's generic refusal" \
+  || red "https to an undeclared name, from the machine" "$unknown_status"
+
+ip_status=$(curl --silent --insecure --max-time 5 --output /dev/null \
+  --write-out '%{http_code}' "https://127.0.0.1/" 2>/dev/null || echo none)
+[[ "$ip_status" == 404 ]] \
+  && report "https to the address itself, from the machine" "404, the entry's generic refusal" \
+  || red "https to the address itself, from the machine" "$ip_status"
+
+verdict "one approved route is one fragment, the declared name is served through the host loopback, and no other name is"

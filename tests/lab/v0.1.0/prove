@@ -44,6 +44,11 @@ usage: prove [guard | run [passe...] | close | all [passe...]]
   the controlled OCI plan palier (#14, proof #86), not the bootstrap and
   replacement palier this sequence renders. It mounts and removes its own
   perimeter on lab-machine-1 and is run by its own entry point.
+
+  `public-profile` is not part of it for the same reason as `oci-plan`: it
+  renders the public BentoPDF profile palier (#15, proof #92). Its machine is
+  `lab-vps`, which this sequence never touches, and it is run by its own entry
+  point.
 EOF
   exit 2
 }
@@ -242,7 +247,8 @@ write_result() {
     json_array "${assert_clean_residue[@]}"; printf '},\n'
     printf '  "not_run": [\n'
     printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"},\n'
-    printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"}\n'
+    printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"},\n'
+    printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"}\n'
     printf '  ],\n'
     printf '  "passes": [\n'
     for index in "${!pass_results[@]}"; do
@@ -483,6 +489,12 @@ do_run() {
   printf 'It renders the controlled OCI plan palier (#14, proof #86) and not the\n'
   printf 'bootstrap and replacement this sequence proves. It shares lab-machine-1\n'
   printf 'with these passes and therefore never runs beside them, but a verdict of\n'
+  printf 'its own belongs to its own palier and is recorded as not run here.\n'
+
+  announce "public-profile is not run here either"
+  printf 'It renders the public BentoPDF profile palier (#15, proof #92). Its\n'
+  printf 'machine is lab-vps, which this sequence never speaks to, so it could run\n'
+  printf 'beside these passes without sharing anything with them — but a verdict of\n'
   printf 'its own belongs to its own palier and is recorded as not run here.\n'
 }
 

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Place the certificate of each declared name where the entry reads it.
+#
+# This is one of the two scripts of the harness allowed to change the machine
+# outside an approved plan, and it is named as such rather than folded into a
+# step. The contract is explicit: no plan describes a certificate, the Auxiliary
+# never writes into `certificates/`, and a removed entrypoint therefore does not
+# take the directory away. The authority that signs here is synthetic, created
+# by `install` before anything was deployed, and the proof's own client outside
+# this machine pins it — which is the whole of the TLS this palier claims.
+#
+# The modes are chosen here and written down, because they are the one place the
+# rootless mapping becomes load-bearing:
+#
+#   <name>.crt  root:root 0644              a certificate is public
+#   <name>.key  root:your-cloud-entrypoint 0640
+#
+# The key is readable by the account that runs the entry and by nobody else. It
+# is enough because a rootless container maps its own UID 0 and GID 0 to that
+# account's identifiers on the host: Traefik reads the file as `root` inside the
+# namespace, and that root is this account outside it. Making the key world
+# readable would work too, and would be a wider grant than the one thing that
+# has to read it.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+step "4. the synthetic authority signs the declared names, and the harness places them"
+
+[[ -d "$entry_certificates" ]] \
+  || { echo "FAILED: the entrypoint has not created $entry_certificates" >&2; exit 1; }
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+for host in "$declared_host" "$second_host"; do
+  lab-public-profile-fixture -issue -authority-directory "$authority" -out "$workdir" -route-host "$host"
+  install -m 0644 -o root -g root "$workdir/$host.crt" "$entry_certificates/$host.crt"
+  install -m 0640 -o root -g "$entry_account" "$workdir/$host.key" "$entry_certificates/$host.key"
+  report "the certificate of $host" "$(file_owner "$entry_certificates/$host.crt")"
+  report "the key of $host" "$(file_owner "$entry_certificates/$host.key")"
+done
+
+report "the directory itself" "$(file_owner "$entry_certificates")"
+report "the authority that signed them" \
+  "$(openssl x509 -noout -subject -in "$authority/authority.crt" 2>/dev/null || echo unreadable)"
+report "what the entry now reads" "$(ls -1 "$entry_certificates" | paste -sd, -)"
+
+# The entry is not restarted and not reloaded: nothing here is an approved plan,
+# and Traefik reads the certificate when a fragment names it. What this script
+# leaves behind is a directory whose content the next approved plan will point
+# at, and no change to anything the product wrote.
+report "the entry service, untouched by this act" \
+  "$(service_state "$entry_account" "$entry_service")"
+
+verdict "the declared names hold a certificate signed by the proof's own authority, in a directory no plan writes into"

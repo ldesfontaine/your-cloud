@@ -18,13 +18,14 @@ export LC_ALL=C.UTF-8
 
 usage() {
   cat >&2 <<'EOF'
-usage: provision-lab [lab-console | lab-machine-1 | all]
+usage: provision-lab [lab-console | lab-machine-1 | lab-vps | all]
 
   lab-console    swap, GTK build dependencies and the pinned Rust toolchain
   lab-machine-1  the pinned Go toolchain and the rootless container ground
-  all            both, in that order (default)
+  lab-vps        the same ground plus slirp4netns, for the public profile
+  all            the three above, in that order (default)
 
-Both machines must already exist and be running:
+The machines must already exist and be running:
 
   tools/labctl topology create quick
 EOF
@@ -34,7 +35,7 @@ EOF
 target=${1:-all}
 [[ $# -le 1 ]] || usage
 case "$target" in
-  lab-console | lab-machine-1 | all) ;;
+  lab-console | lab-machine-1 | lab-vps | all) ;;
   *) usage ;;
 esac
 
@@ -130,59 +131,101 @@ provision_console() {
   note observed "$(remote lab-console ". /root/.cargo/env && cargo +$rust_version --version")"
 }
 
-provision_machine() {
-  step "lab-machine-1 — Go $go_version, rootless container ground"
-  guard lab-machine-1
-
-  if remote lab-machine-1 "/usr/local/go/bin/go version 2>/dev/null | grep -q 'go$go_version '"; then
+# ensure_go places the pinned toolchain a proof compiles the product with. It is
+# written once and called by both container machines, because a second copy of
+# these four lines is a second place a version could be read from.
+ensure_go() {
+  local vm=$1
+  if remote "$vm" "/usr/local/go/bin/go version 2>/dev/null | grep -q 'go$go_version '"; then
     note "Go $go_version" "already installed"
   else
-    remote lab-machine-1 "curl -fsSL -o /tmp/go.tgz \
+    remote "$vm" "curl -fsSL -o /tmp/go.tgz \
         https://go.dev/dl/go$go_version.linux-amd64.tar.gz \
       && rm -rf /usr/local/go \
       && tar -C /usr/local -xzf /tmp/go.tgz \
       && rm -f /tmp/go.tgz"
     note "Go $go_version" "installed"
   fi
-  note observed "$(remote lab-machine-1 '/usr/local/go/bin/go version')"
+  note observed "$(remote "$vm" '/usr/local/go/bin/go version')"
+}
 
-  # The ground the managed OCI deployment stands on. Three packages, each one
-  # named by a capability the Auxiliary asks the machine for, and none of them a
-  # dependency of the others — `apt-get` pulled the engine's own runtime
-  # (crun, conmon, netavark, passt, catatonit, fuse-overlayfs) automatically,
-  # while these three had to be asked for:
-  #
-  #   podman             the engine `Capabilities` looks up and `PullImage` runs
-  #   uidmap             newuidmap/newgidmap, without which a rootless engine
-  #                      cannot map more than the account's own identifier
-  #   dbus-user-session  the per-account bus at $XDG_RUNTIME_DIR/bus, which is
-  #                      the address the Auxiliary hands `systemctl --user`
-  #
-  # The guard names the newest of the three rather than the first: a machine
-  # provisioned before the list grew answers the old guard and would silently
-  # keep its old surface.
-  if remote lab-machine-1 "test -f /usr/lib/systemd/user/dbus.socket"; then
+# ensure_container_ground places the packages a rootless managed service needs,
+# and nothing beyond them.
+#
+# The caller passes the whole package list and the file that guards it, because
+# the two machines do not ask the same thing of their engine and a guard that
+# named a package common to both would let the wider machine keep the narrower
+# surface. Each name below is a capability the Auxiliary asks for, and none of
+# them is a dependency of the others — `apt-get` pulls the engine's own runtime
+# (crun, conmon, netavark, passt, catatonit, fuse-overlayfs) by itself, while
+# these had to be asked for:
+#
+#   podman             the engine `Capabilities` looks up and `PullImage` runs
+#   uidmap             newuidmap/newgidmap, without which a rootless engine
+#                      cannot map more than the account's own identifier
+#   dbus-user-session  the per-account bus at $XDG_RUNTIME_DIR/bus, which is
+#                      the address the Auxiliary hands `systemctl --user`
+#   slirp4netns        the network stack the entrypoint's sheet names by hand in
+#                      `Network=slirp4netns:allow_host_loopback=true`. Debian's
+#                      podman recommends `passt` and would leave this one out,
+#                      and the sheet does not fall back to pasta: an entrypoint
+#                      on a machine without it fails to start rather than
+#                      reaching the host loopback by another route.
+#
+# The guard always names the *newest* member of the list rather than the first:
+# a machine provisioned before the list grew answers an older guard and would
+# silently keep its older surface, which is exactly the drift this file exists
+# to prevent.
+ensure_container_ground() {
+  local vm=$1 guard_file=$2
+  shift 2
+  local packages=("$@")
+  if remote "$vm" "test -e $guard_file"; then
     note "rootless container ground" "already installed"
   else
-    remote lab-machine-1 "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    remote "$vm" "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
       && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-        podman uidmap dbus-user-session \
+        ${packages[*]} \
         >/dev/null"
     note "rootless container ground" "installed"
   fi
-  remote lab-machine-1 "command -v podman >/dev/null" \
-    || fail "podman is absent after installation"
-  remote lab-machine-1 "command -v newuidmap >/dev/null" \
-    || fail "newuidmap is absent after installation"
-  note observed "$(remote lab-machine-1 'podman --version')"
+  remote "$vm" "command -v podman >/dev/null" \
+    || fail "podman is absent after installation on $vm"
+  remote "$vm" "command -v newuidmap >/dev/null" \
+    || fail "newuidmap is absent after installation on $vm"
+  note observed "$(remote "$vm" 'podman --version')"
+}
+
+provision_machine() {
+  step "lab-machine-1 — Go $go_version, rootless container ground"
+  guard lab-machine-1
+  ensure_go lab-machine-1
+  ensure_container_ground lab-machine-1 /usr/lib/systemd/user/dbus.socket \
+    podman uidmap dbus-user-session
+}
+
+provision_vps() {
+  step "lab-vps — Go $go_version, rootless container ground, slirp4netns"
+  guard lab-vps
+  # The public machine compiles the product for the same reason lab-machine-1
+  # does: the proof of the public profile runs the real Auxiliary binary, built
+  # from the sources the run synchronised and from nothing already there.
+  ensure_go lab-vps
+  ensure_container_ground lab-vps /usr/bin/slirp4netns \
+    podman uidmap dbus-user-session slirp4netns
+  remote lab-vps "command -v slirp4netns >/dev/null" \
+    || fail "slirp4netns is absent after installation"
+  note observed "$(remote lab-vps 'slirp4netns --version | head -1')"
 }
 
 case "$target" in
   lab-console) provision_console ;;
   lab-machine-1) provision_machine ;;
+  lab-vps) provision_vps ;;
   all)
     provision_console
     provision_machine
+    provision_vps
     ;;
 esac
 

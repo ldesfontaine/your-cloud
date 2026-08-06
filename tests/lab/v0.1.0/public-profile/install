@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Mount the public profile perimeter on the published machine.
+#
+# Everything installed here is synthetic and root-owned: one approval anchor
+# minted from a synthetic seed, one empty anti-replay position, the product
+# binary and the fixture that stands in for the Controller, the Console and the
+# certificate authority of the declared names. No real key, no real
+# infrastructure, no service, no entrypoint and no route: those four are what
+# the proof asks the product to create.
+#
+# The perimeter always starts from a machine that holds neither of the two
+# accounts, neither sheet, no entrypoint tree, no host policy and no consumed
+# sequence, because a proof that began from a leftover would be measuring the
+# leftover.
+set -euo pipefail
+
+sources=${1:?usage: install <go-sources>}
+export LC_ALL=C.UTF-8
+
+state=/root/lab-public-profile
+service_account=your-cloud-svc-bentopdf
+entry_account=your-cloud-entrypoint
+anchor_directory=/etc/your-cloud
+entry_root=/etc/your-cloud/entrypoint
+host_ports_policy=/etc/sysctl.d/your-cloud-entrypoint.conf
+replay_directory=/var/lib/your-cloud-auxiliary
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+note() { printf '  %-46s %s\n' "$1" "$2"; }
+
+command -v go >/dev/null || fail "the target has no Go toolchain"
+command -v podman >/dev/null || fail "the target has no Podman: run tools/provision-lab"
+command -v newuidmap >/dev/null || fail "the target has no newuidmap: run tools/provision-lab"
+# The entrypoint's sheet names slirp4netns by hand rather than accepting the
+# engine's default, so the stack has to be on the machine as a package and not
+# as an assumption. A machine without it starts no entry at all, and this is
+# where that is said instead of being discovered as a container failure.
+command -v slirp4netns >/dev/null || fail "the target has no slirp4netns: run tools/provision-lab lab-vps"
+
+# The product binary and the fixture, both built from the sources this run
+# synchronised and from nothing already present on the machine. The fixture is
+# built inside the product module because it asks internal/plan for the
+# canonical plan documents; it lives only in this copy and is never a package of
+# the product.
+(cd "$sources" && go build -o /usr/local/bin/your-cloud ./cmd/your-cloud)
+(cd "$sources" && go build -o /usr/local/bin/lab-public-profile-fixture ./labfixture)
+note "product binary" "$(sha256sum /usr/local/bin/your-cloud | cut -d' ' -f1)"
+
+install -d -m 0700 -o root -g root "$state"
+install -d -m 0755 -o root -g root "$anchor_directory"
+install -d -m 0700 -o root -g root "$replay_directory"
+rm -f "$replay_directory/approval-state.json" "$replay_directory/approval-state.lock"
+rm -f "$state"/*.json "$state"/*.txt
+
+lab-public-profile-fixture -anchor -epoch 1 -seed 1 >"$anchor_directory/approval-anchor.json"
+chmod 0600 "$anchor_directory/approval-anchor.json"
+note anchor "epoch 1, synthetic seed, machine lab-vps"
+
+# The synthetic authority of the declared names is minted now, before anything
+# is deployed, and lives under the run's own state directory. It is not placed
+# anywhere the entry can read yet: `certify` does that, after an approved
+# entrypoint plan has created the directory it reads from.
+lab-public-profile-fixture -authority -authority-directory "$state/authority"
+chmod 0700 "$state/authority"
+note "synthetic authority" "$(sha256sum "$state/authority/authority.crt" | cut -d' ' -f1)"
+
+# No subordinate identifier range is seeded here, for either account. The
+# product allocates its own when it creates an account, and this proof exercises
+# what `#90` named and never ran: two accounts allocating two non-overlapping
+# ranges on one machine, from files that name none.
+for account in "$service_account" "$entry_account"; do
+  for file in /etc/subuid /etc/subgid; do
+    if grep -q "^$account:" "$file" 2>/dev/null; then
+      fail "$file already carries a range for $account — the machine is not stock"
+    fi
+  done
+  id -u "$account" >/dev/null 2>&1 && fail "the machine already holds the account $account"
+  [[ ! -e "/var/lib/$account" ]] || fail "the machine already holds the home of $account"
+done
+
+[[ ! -e "$entry_root" ]] || fail "the machine already holds the entrypoint tree $entry_root"
+[[ ! -e "$host_ports_policy" ]] || fail "the machine already holds the host ports policy"
+
+printf 'ANCHOR=%s\n' "$anchor_directory/approval-anchor.json"
+printf 'REPLAY=%s\n' "$replay_directory/approval-state.json"
+printf 'STATE=%s\n' "$state"
+printf 'AUTHORITY=%s\n' "$state/authority/authority.crt"

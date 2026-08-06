@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# The seventh and eighth steps played on the published machine: the same three
+# states asked for again, and the documents this machine must refuse while it
+# holds them.
+#
+# A refusal is followed by a comparison against a fingerprint taken before it,
+# because "refused" and "refused without effect" are two different claims.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+# ---------------------------------------------------------------------------
+step "7. the three approved states, asked for again, are not three actions"
+
+service_digest=$(file_digest "$service_unit")
+service_mtime=$(file_mtime "$service_unit")
+service_invocation=$(service_property "$service_account" "$service_service" InvocationID)
+entry_digest=$(file_digest "$entry_unit")
+entry_mtime=$(file_mtime "$entry_unit")
+entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+fragment="$entry_fragments/$declared_host.yaml"
+fragment_digest=$(file_digest "$fragment")
+fragment_mtime=$(file_mtime "$fragment")
+
+apply "the same web service plan" '"changed":false' \
+  -operation deploy_web_service -port "$service_port" -sequence "$(next_sequence)"
+apply "the same entrypoint plan" '"changed":false' \
+  -operation deploy_entrypoint -sequence "$(next_sequence)"
+apply "the same route plan" '"changed":false' \
+  -operation publish_route -route-host "$declared_host" -backend-port "$service_port" \
+  -sequence "$(next_sequence)"
+
+same() {
+  local label=$1 before=$2 after=$3
+  [[ "$before" == "$after" ]] && report "$label" "unchanged" || red "$label" "$before became $after"
+}
+
+same "the service sheet" "$service_digest" "$(file_digest "$service_unit")"
+same "the service sheet's mtime" "$service_mtime" "$(file_mtime "$service_unit")"
+same "the service's invocation" "$service_invocation" \
+  "$(service_property "$service_account" "$service_service" InvocationID)"
+same "the entry sheet" "$entry_digest" "$(file_digest "$entry_unit")"
+same "the entry sheet's mtime" "$entry_mtime" "$(file_mtime "$entry_unit")"
+same "the entry's invocation" "$entry_invocation" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)"
+same "the fragment" "$fragment_digest" "$(file_digest "$fragment")"
+same "the fragment's mtime" "$fragment_mtime" "$(file_mtime "$fragment")"
+same "the host policy" "$(file_digest "$host_ports_policy")" "$(file_digest "$host_ports_policy")"
+report "the running kernel setting, still" "$(host_ports_value)"
+
+# ---------------------------------------------------------------------------
+step "8. what this machine refuses while it holds this state"
+
+# A route towards a port no managed service of this machine publishes. The
+# document is honest and a human really signed it: what refuses it is the
+# machine's own state, read before anything is written.
+refuses "a route towards a port nothing manages" \
+  "no managed service of this machine publishes 127.0.0.1:$unmanaged_port" \
+  -operation publish_route -route-host "$second_host" -backend-port "$unmanaged_port" \
+  -sequence "$(next_sequence)"
+
+# Removing the entry while a route is published. Also honest, also refused by
+# the machine, and the refusal has to name the fragment that is in the way.
+before=$(fingerprint)
+if output=$(lab-public-profile-fixture -operation remove_entrypoint \
+  -sequence "$(next_sequence)" | your-cloud auxiliary approve 2>&1); then
+  red "removing the entry while a route exists" "accepted: $(echo "$output" | tr '\n' ' ')"
+else
+  case "$output" in
+    *"still publishes"*"$declared_host.yaml"*)
+      report "removing the entry while a route exists" "refused, naming $declared_host.yaml" ;;
+    *) red "removing the entry while a route exists" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+fi
+unchanged "removing the entry while a route exists, zero effect" "$before"
+
+# The envelope that published the route, presented a second time.
+before=$(fingerprint)
+if output=$(your-cloud auxiliary approve <"$state/publish-route.json" 2>&1); then
+  red "the publication envelope replayed" "accepted: $(echo "$output" | tr '\n' ' ')"
+else
+  case "$output" in
+    *"is not the exact successor of"*) report "the publication envelope replayed" "refused by anti-replay" ;;
+    *) red "the publication envelope replayed" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+fi
+unchanged "the replay, zero effect" "$before"
+
+# One byte of a transported document changed after a human read it.
+refuses "one byte of the transported route plan changed" \
+  "is not the document the approval signed" \
+  -operation publish_route -route-host "$declared_host" -backend-port "$service_port" \
+  -sequence "$(next_sequence)" -hostile altered-plan
+
+# A signed rollback that undoes another instance.
+refuses "a signed rollback that undoes another route" \
+  "does not undo exactly the approved plan" \
+  -operation publish_route -route-host "$declared_host" -backend-port "$service_port" \
+  -sequence "$(next_sequence)" -hostile mismatched-rollback
+
+# An approval aimed at another machine.
+refuses "an approval aimed at another machine" \
+  "names another machine than this one" \
+  -operation publish_route -route-host "$declared_host" -backend-port "$service_port" \
+  -sequence "$(next_sequence)" -machine lab-machine-1
+
+# ---------------------------------------------------------------------------
+step "9. what the machine must still hold when the power comes back"
+
+# Written now, before the power cycle, so that nothing signed afterwards can
+# explain an acceptance or a refusal observed after it.
+lab-public-profile-fixture -operation publish_route -route-host "$declared_host" \
+  -backend-port "$service_port" -sequence "$(next_sequence)" >"$state/after-idempotent.json"
+printf '%s\n' "$service_invocation" >"$state/service-invocation.txt"
+printf '%s\n' "$entry_invocation" >"$state/entry-invocation.txt"
+printf '%s\n' "$fragment_digest" >"$state/fragment-digest.txt"
+report "the fragment before the power cycle" "$fragment_digest"
+report "the consumed position before the power cycle" "$(consumed_sequence)"
+sync
+
+verdict "the three approved states are already held, and every document this machine must refuse was refused without effect"

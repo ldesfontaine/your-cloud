@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# The first two steps played on the published machine: what it holds before any
+# human approved anything, and what one approved web service plan puts there.
+#
+# Every verdict below is taken from what the machine holds — the sheet on disk,
+# the state systemd answers with, the image the running container was created
+# from, the bytes the loopback port returns — and never from what the plan asked
+# for.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+# The Auxiliary is deliberately started from root's home — the exact directory a
+# forced SSH command inherits and neither service account can enter. `#86` fixed
+# the defect this exposes; starting from the hostile directory is what keeps
+# that fix proven rather than assumed.
+cd /root
+
+# ---------------------------------------------------------------------------
+step "1. nothing of this profile exists before an approval"
+
+if [[ -d /run/systemd/system ]]; then
+  report "systemd" "present (/run/systemd/system)"
+else
+  red "systemd" "absent"
+fi
+if [[ -e /sys/fs/cgroup/cgroup.controllers ]]; then
+  report "cgroup v2 unified hierarchy" "$(cat /sys/fs/cgroup/cgroup.controllers)"
+else
+  red "cgroup v2 unified hierarchy" "absent"
+fi
+report "Podman" "$(podman --version)"
+report "slirp4netns" "$(slirp4netns --version | head -1)"
+
+audit() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    red "$label" "$observed"
+  fi
+}
+
+audit "the service account" "$(account_state "$service_account")" absent
+audit "the entrypoint account" "$(account_state "$entry_account")" absent
+audit "the service sheet" "$(file_digest "$service_unit")" absent
+audit "the entrypoint sheet" "$(file_digest "$entry_unit")" absent
+audit "the entrypoint tree" "$([[ -e $entry_root ]] && echo present || echo absent)" absent
+audit "the host ports policy file" "$(file_digest "$host_ports_policy")" absent
+audit "the running host ports floor" "$(host_ports_value)" 1024
+audit "the secure public port" "$(port_listening 443)" closed
+audit "the clear public port" "$(port_listening 80)" closed
+audit "the loopback port of the profile" "$(port_listening "$service_port")" closed
+audit "the consumed position" "$(consumed_sequence)" 0
+
+# ---------------------------------------------------------------------------
+step "2. one approved web service plan, and the machine says what it did"
+
+lab-public-profile-fixture -operation deploy_web_service -port "$service_port" \
+  -sequence "$(next_sequence)" >"$state/deploy-service.json"
+report "the first approved envelope" "sequence $(consumed_sequence) + 1, profile bentopdf, port $service_port"
+
+status=0
+output=$(your-cloud auxiliary approve --format=json <"$state/deploy-service.json" 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/last-report.json"
+case "$output" in
+  *'"outcome":"applied"'*'"changed":true'*) report "the deployment" "applied, changed=true" ;;
+  *) red "the deployment" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+
+case "$(file_owner "$service_unit")" in
+  "root:root 644") report "the sheet's owner and mode" "root:root 644" ;;
+  *) red "the sheet's owner and mode" "$(file_owner "$service_unit")" ;;
+esac
+case "$service_unit" in
+  "$service_home"/*) report "the sheet's place" "$service_unit, under the service account's home" ;;
+  *) red "the sheet's place" "$service_unit is outside $service_home" ;;
+esac
+# Everything below reads the sheet, so a machine that holds none is said once
+# rather than answered for line by line: a `grep` on an absent file reports the
+# absence of a control as the control being satisfied, which is the one way a
+# red could read as a green here.
+if [[ ! -f "$service_unit" ]]; then
+  red "the sheet's own content" "there is no sheet to read; the assertions below are not answered"
+  echo "FAILED: $failures assertions" >&2
+  exit 1
+fi
+
+# The sheet of a managed service carries no Volume= and no low-port Sysctl=: the
+# first because nothing a plan describes could be mounted, the second because
+# the pinned image listens above 1024 and a control that grants nothing would
+# read as a control that was needed.
+if grep -q '^Volume=' "$service_unit"; then
+  red "the service sheet's mounts" "it carries a Volume= line"
+else
+  report "the service sheet's mounts" "none, as a managed service may have none"
+fi
+if grep -q 'ip_unprivileged_port_start' "$service_unit"; then
+  red "the service sheet's low-port sysctl" "present although the image listens above 1024"
+else
+  report "the service sheet's low-port sysctl" "absent, as the image listens on 8080"
+fi
+for control in 'Pull=never' 'ReadOnly=true' 'NoNewPrivileges=true' 'DropCapability=ALL'; do
+  grep -qx "$control" "$service_unit" \
+    && report "the sheet's control $control" "present" \
+    || red "the sheet's control $control" "absent"
+done
+grep -qx "PublishPort=127.0.0.1:$service_port:8080" "$service_unit" \
+  && report "the sheet's publication" "127.0.0.1:$service_port only, towards the image's own 8080" \
+  || red "the sheet's publication" "$(grep '^PublishPort=' "$service_unit" | tr '\n' ' ')"
+
+case "$(service_state "$service_account" "$service_service")" in
+  active) report "the service" "active" ;;
+  *) red "the service" "$(service_state "$service_account" "$service_service")" ;;
+esac
+answer=$(loopback_answers "$service_port")
+case "$answer" in
+  "200 text/html"*) report "a local GET on 127.0.0.1:$service_port" "$answer" ;;
+  *) red "a local GET on 127.0.0.1:$service_port" "$answer" ;;
+esac
+if [[ "$(container_image "$service_account" "$service_container")" == "$pinned_service" ]]; then
+  report "the running container's image" "the pinned digest"
+else
+  red "the running container's image" "$(container_image "$service_account" "$service_container")"
+fi
+report "what the service account holds" "uid $(id -u "$service_account"), home $service_home"
+report "its subordinate ranges" "$(subordinate_range "$service_account")"
+report "the images its storage holds" "$(stored_images "$service_account")"
+
+# Written now so that the steps after the power cycle compare against something
+# recorded before it.
+printf '%s\n' "$(file_digest "$service_unit")" >"$state/service-unit-digest.txt"
+printf '%s\n' "$(service_property "$service_account" "$service_service" InvocationID)" \
+  >"$state/service-invocation.txt"
+report "the service sheet" "$(cat "$state/service-unit-digest.txt")"
+report "the service invocation" "$(cat "$state/service-invocation.txt")"
+
+# The public ports are still nobody's: a managed service publishes on the
+# loopback and this machine has not yet been approved to listen publicly.
+audit "the secure public port, after the service" "$(port_listening 443)" closed
+audit "the clear public port, after the service" "$(port_listening 80)" closed
+
+verdict "the machine held nothing of this profile, and one approved plan put exactly one managed service on its loopback"

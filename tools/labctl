@@ -434,7 +434,19 @@ destroy_domain() {
 topology_domains() {
   case "$1" in
     quick)
-      printf '%s\n' 'lab-console|console|lab-quick' 'lab-machine-1|machine|lab-quick'
+      # `lab-vps` is the public machine of the quick topology: the one that
+      # holds Traefik and a published profile, and the one every proof of the
+      # public profile reads *from outside*. It joins `lab-quick` rather than
+      # receiving a `lab-public`-styled network of its own, and that is the
+      # smallest faithful change rather than a shortcut. `lab-public` exists in
+      # v1-full to separate a public segment from an operator segment and a
+      # private site segment; `quick` has no such separation to make, and a
+      # second NAT network here would be reachable from exactly the same places
+      # as this one while adding a network to create, inspect, guard and
+      # destroy. What the proof needs is a client outside the machine, and the
+      # host and `lab-machine-1` are both outside it on this network.
+      printf '%s\n' 'lab-console|console|lab-quick' 'lab-machine-1|machine|lab-quick' \
+        'lab-vps|machine|lab-quick'
       ;;
     v1-full)
       printf '%s\n' \
