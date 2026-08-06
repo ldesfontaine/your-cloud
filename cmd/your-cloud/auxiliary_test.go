@@ -708,3 +708,169 @@ func TestTheObservedFragmentIsAbsentFromEveryAnswerThatIsNotARoute(t *testing.T)
 		t.Fatalf("a probe's text observation named a fragment: %q", text.String())
 	}
 }
+
+// TestThePassageIsReportedByItsPublicKeyAndNeverByAnythingPrivate holds the
+// answer a reader receives for one side of the private passage.
+//
+// One value of that palier travels and exactly one: the public half of the key
+// the prepared machine holds, which the Controller reads here as an observation
+// and carries, readable, into the junction plan of the other machine. Its
+// private half is born on that machine and never leaves it, so no field of this
+// report can carry one — which is what the closed field list below is checked
+// against.
+func TestThePassageIsReportedByItsPublicKeyAndNeverByAnythingPrivate(t *testing.T) {
+	t.Parallel()
+	const publicKey = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8="
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationPrepareLink,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges: []string{
+				approval.PrivilegeMutateLocalState,
+				approval.PrivilegeReadLocalState,
+			},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 7,
+		},
+	}
+	report := buildAppliedAuxiliaryReport(accepted, &auxiliary.Application{
+		Operation:     approval.OperationPrepareLink,
+		UnitPath:      auxiliary.LinkNetdevPath(),
+		LinkPublicKey: publicKey,
+		ServiceState:  auxiliary.ServiceStateActive,
+		Changed:       true,
+	})
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["link_public_key"] != publicKey {
+		t.Fatalf("the report does not carry the public key the machine established: %v", decoded)
+	}
+	if decoded["unit_path"] != auxiliary.LinkNetdevPath() {
+		t.Fatalf("the report does not name the file the passage owns: %v", decoded)
+	}
+	// A passage has no loopback port, no declared name and no fragment, and no
+	// report of this product has ever had a field for a private key.
+	for _, field := range []string{
+		"local_port", "route_host", "fragment_path",
+		"link_private_key", "private_key", "plan", "rollback",
+	} {
+		if _, present := decoded[field]; present {
+			t.Fatalf("the passage report carries %q", field)
+		}
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"plan operation: " + approval.OperationPrepareLink,
+		"unit: " + auxiliary.LinkNetdevPath(),
+		"link public key: " + publicKey,
+		"service: active",
+		"changed: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "route: ") || strings.Contains(text.String(), "fragment: ") {
+		t.Fatalf("the passage report named a route: %q", text.String())
+	}
+}
+
+// TestAPassageLeftPartialIsObservedInItsOwnWordsAndNeverByAKeysValue holds the
+// other end of the same rule.
+//
+// A rollback that failed took away the certainty of what this machine holds, and
+// what replaces it is a list of what could still be read. For a passage that
+// list is a description, a key, an interface and a peer — not an account and a
+// container it never had — and the key appears in it as present or absent and
+// never as a value, because what a key is is not something a report of this
+// product may see.
+func TestAPassageLeftPartialIsObservedInItsOwnWordsAndNeverByAKeysValue(t *testing.T) {
+	t.Parallel()
+	accepted := &approval.Acceptance{
+		Envelope: &approval.Envelope{
+			Operation:      approval.OperationPrepareLink,
+			PlanSHA256:     strings.Repeat("0", 64),
+			RollbackSHA256: strings.Repeat("1", 64),
+			Privileges:     []string{approval.PrivilegeMutateLocalState},
+		},
+		State: &approval.State{
+			SchemaVersion:    approval.SchemaVersion,
+			InfrastructureID: "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",
+			MachineID:        "lab-machine-1",
+			ApprovalEpoch:    1,
+			ConsumedSequence: 8,
+		},
+	}
+	report := buildFailedAuxiliaryReport(accepted, &auxiliary.ControlledFailure{
+		Operation: approval.OperationPrepareLink,
+		UnitPath:  auxiliary.LinkNetdevPath(),
+		Outcome:   auxiliary.OutcomePartial,
+		Cause:     errors.New("the manager would not read it"),
+		Rollback:  errors.New("and would not forget it either"),
+		Observed: &auxiliary.Observation{
+			UnitFile:      "absent",
+			LinkKey:       "present",
+			LinkInterface: "inactive",
+			LinkPeer:      "absent",
+		},
+	})
+
+	var rendered bytes.Buffer
+	if err := renderAuxiliaryReport(&rendered, "json", report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(rendered.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	observed, ok := decoded["observed"].(map[string]any)
+	if !ok || observed["link_key"] != "present" || observed["unit_file"] != "absent" {
+		t.Fatalf("the report does not say what the passage was left holding: %v", decoded)
+	}
+	// The four words of a service are absent rather than admitted unknown: a
+	// passage has no account and no container, so nobody looked at either.
+	for _, word := range []string{"account", "service", "container", "fragment"} {
+		if _, present := observed[word]; present {
+			t.Fatalf("a passage was observed as if it had a %s: %v", word, observed)
+		}
+	}
+	if _, present := observed["link_private_key"]; present {
+		t.Fatalf("an observation carried private material: %v", observed)
+	}
+
+	var text bytes.Buffer
+	if err := renderAuxiliaryReport(&text, "text", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"observed unit file: absent",
+		"observed link key: present",
+		"observed link interface: inactive",
+		"observed link peer: absent",
+		"rollback attempted: true",
+	} {
+		if !strings.Contains(text.String(), line) {
+			t.Fatalf("the text report does not state %q: %q", line, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "observed account") || strings.Contains(text.String(), "observed container") {
+		t.Fatalf("a passage was reported as if it had an account: %q", text.String())
+	}
+}

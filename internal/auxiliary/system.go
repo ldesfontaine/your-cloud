@@ -2,7 +2,10 @@ package auxiliary
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
 const (
@@ -46,6 +51,35 @@ const (
 	// the bound exists because an Auxiliary may not hang.
 	lingerReadyTimeout      = 15 * time.Second
 	lingerReadyPollInterval = 200 * time.Millisecond
+
+	// linkKeyDirectoryMode and linkKeyFileMode are how this machine's own passage
+	// key is held, and the second of them is the one place this implementation
+	// departs from the letter of the contract.
+	//
+	// The contract says root-owned `0600`. A key at `0600` cannot be read by
+	// systemd-networkd, which runs as the unprivileged `systemd-network` account
+	// and is what holds the interface across a reboot — so a key nobody but root
+	// could read would be a passage that never comes up. What is written instead
+	// is root-owned `0640` with that account's own group, which is the narrowest
+	// arrangement that still lets exactly one further identity read it: the one
+	// this product asked to hold the interface. No human account, no service
+	// account of this product and no container is in that group.
+	//
+	// A machine with no such group keeps `0600`. Nothing is silently widened
+	// there: the interface will fail to appear and the preparation says so, which
+	// is a named failure rather than a key relaxed to make an error go away.
+	linkKeyDirectoryMode = 0o750
+	linkKeyFileMode      = 0o640
+	linkKeyStrictMode    = 0o600
+
+	// networkAccount is the unprivileged identity systemd-networkd runs as, and
+	// therefore the one identity beside root that may read the key.
+	networkAccount = "systemd-network"
+
+	// interfaceUpFlag is the bit /sys reports for an interface that is up. The
+	// state is read from the kernel's own file rather than from a tool's word for
+	// it, for the same reason the unified cgroup hierarchy is.
+	interfaceUpFlag = 0x1
 )
 
 // SystemExecutor is the real effects of this package on a real machine.
@@ -647,6 +681,214 @@ func (executor SystemExecutor) RouteAnswers(routeHost string) error {
 		last = errors.New("the entrypoint never served this name")
 	}
 	return last
+}
+
+// LinkPublicKey reports the public half of this machine's own passage key.
+//
+// It is derived from the private half rather than kept beside it, so the two can
+// never drift apart and this machine holds exactly one file it must protect. The
+// private bytes exist inside this function and nowhere else: they are read, used
+// to compute the public half, and never returned, logged or carried into any
+// value a caller can reach.
+//
+// An absent key is an answer and not a failure. A key that is there and is not a
+// key is a failure and never a quiet absence, because a machine that cannot say
+// what it holds has not answered.
+func (executor SystemExecutor) LinkPublicKey() (string, bool, error) {
+	encoded, err := os.ReadFile(linkPrivateKeyPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	private, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encoded)))
+	if err != nil || len(private) != plan.PeerPublicKeyBytes {
+		return "", false, fmt.Errorf("%s does not hold one passage key", linkPrivateKeyPath)
+	}
+	public, err := publicKeyOf(private)
+	if err != nil {
+		return "", false, err
+	}
+	return public, true, nil
+}
+
+// GenerateLinkKey generates this machine's own passage key and returns only its
+// public half.
+//
+// Three decisions are carried here and each of them is owed an explanation:
+//
+//   - the key is generated with the standard library's own X25519 rather than by
+//     shelling out to `wg`, because it is one call over an algorithm the standard
+//     library already implements and because a passage would otherwise refuse to
+//     be prepared on a machine that has the WireGuard tools uninstalled — which
+//     the kernel does not require;
+//   - the scalar is clamped before it is written, so the file holds exactly the
+//     bytes `wg genkey` would have written. The kernel clamps again on load and
+//     the public half is computed from the clamped scalar either way, so this
+//     changes no value; it removes the question of whether two implementations
+//     wrote the same key differently;
+//   - the file is created exclusively. A key that already exists is never
+//     replaced, whatever a caller asks: replacing a key is a withdrawal followed
+//     by a preparation, two plans a human reads, and the refusal is here as well
+//     as in the flow above so that no future caller can arrange to skip it.
+func (executor SystemExecutor) GenerateLinkKey() (string, error) {
+	if err := os.MkdirAll(linkRoot, linkKeyDirectoryMode); err != nil {
+		return "", fmt.Errorf("create the passage's root-owned directory: %w", err)
+	}
+	private := make([]byte, plan.PeerPublicKeyBytes)
+	if _, err := rand.Read(private); err != nil {
+		return "", fmt.Errorf("draw this machine's own passage key: %w", err)
+	}
+	private[0] &= 248
+	private[31] &= 127
+	private[31] |= 64
+
+	public, err := publicKeyOf(private)
+	if err != nil {
+		return "", err
+	}
+
+	mode := os.FileMode(linkKeyStrictMode)
+	group, groupErr := user.LookupGroup(networkAccount)
+	if groupErr == nil {
+		mode = linkKeyFileMode
+	}
+	handle, err := os.OpenFile(linkPrivateKeyPath,
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, mode)
+	if err != nil {
+		return "", fmt.Errorf("create this machine's own passage key: %w", err)
+	}
+	if _, err := handle.Write([]byte(base64.StdEncoding.EncodeToString(private) + "\n")); err != nil {
+		handle.Close()
+		os.Remove(linkPrivateKeyPath)
+		return "", fmt.Errorf("write this machine's own passage key: %w", err)
+	}
+	if err := handle.Sync(); err != nil {
+		handle.Close()
+		os.Remove(linkPrivateKeyPath)
+		return "", fmt.Errorf("synchronise this machine's own passage key: %w", err)
+	}
+	if err := handle.Close(); err != nil {
+		os.Remove(linkPrivateKeyPath)
+		return "", fmt.Errorf("close this machine's own passage key: %w", err)
+	}
+	// The mode requested at creation is subject to the process umask, so it is
+	// stated again rather than assumed, and the group is set only where it exists.
+	if err := os.Chmod(linkPrivateKeyPath, mode); err != nil {
+		os.Remove(linkPrivateKeyPath)
+		return "", fmt.Errorf("hold this machine's own passage key at %#o: %w", mode, err)
+	}
+	if groupErr == nil {
+		gid, err := strconv.Atoi(group.Gid)
+		if err != nil {
+			os.Remove(linkPrivateKeyPath)
+			return "", fmt.Errorf("read the %s group: %w", networkAccount, err)
+		}
+		if err := os.Chown(linkPrivateKeyPath, 0, gid); err != nil {
+			os.Remove(linkPrivateKeyPath)
+			return "", fmt.Errorf("give this machine's own passage key to root and %s: %w", networkAccount, err)
+		}
+	}
+	if err := syncDirectory(linkRoot); err != nil {
+		return "", err
+	}
+	return public, nil
+}
+
+// publicKeyOf computes the public half of one X25519 scalar.
+//
+// It takes the private bytes and returns a string, and that asymmetry is the
+// point: nothing in this package can go the other way, and the one value that
+// leaves here is the one the contract lets travel.
+func publicKeyOf(private []byte) (string, error) {
+	key, err := ecdh.X25519().NewPrivateKey(private)
+	if err != nil {
+		return "", fmt.Errorf("read this machine's own passage key: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), nil
+}
+
+// RemoveLinkKey takes the private key away, and does not object to it being
+// gone.
+func (executor SystemExecutor) RemoveLinkKey() error {
+	if err := os.Remove(linkPrivateKeyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return syncDirectory(linkRoot)
+}
+
+// LinkInterfaceActive reports whether the closed interface of the passage exists
+// on this machine and is up.
+//
+// Both facts are read from the kernel's own files rather than from a tool's
+// summary of them: an absent directory is an absent interface, and the flags
+// file is what the kernel itself says about the one that is there.
+func (executor SystemExecutor) LinkInterfaceActive() (bool, error) {
+	flags, err := os.ReadFile("/sys/class/net/" + LinkInterfaceName + "/flags")
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	value, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(string(flags)), "0x"), 16, 64)
+	if err != nil {
+		return false, fmt.Errorf("read the state of %s: %w", LinkInterfaceName, err)
+	}
+	return value&interfaceUpFlag != 0, nil
+}
+
+// RemoveLinkInterface takes the interface away, and does not object to it being
+// gone.
+//
+// Removing the two files that describe it is not enough: a network manager that
+// has forgotten a description does not take down the device it already created,
+// so a withdrawal that only removed files would leave a tunnel standing that no
+// plan describes any more.
+func (executor SystemExecutor) RemoveLinkInterface() error {
+	if _, err := os.Stat("/sys/class/net/" + LinkInterfaceName); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	_, err := executor.run(commandTimeout, "ip", "link", "delete", LinkInterfaceName)
+	return err
+}
+
+// EnableNetworkManagement makes systemd-networkd run now and after a reboot.
+//
+// It is one command rather than two because the two halves are one effect, for
+// the reason the host ports policy is: enabling without starting would leave a
+// machine that has approved a passage holding no interface until it reboots, and
+// starting without enabling would lose the passage at the next boot — which the
+// palier's proof requires to survive.
+//
+// What it does not do is take anything away from whatever already configures
+// this machine's real interfaces. networkd manages exactly the devices its own
+// [Match] sections name, and the only file this product writes matches one
+// interface by its name.
+func (executor SystemExecutor) EnableNetworkManagement() error {
+	_, err := executor.run(commandTimeout, "systemctl", "enable", "--now", "systemd-networkd")
+	return err
+}
+
+// ReloadNetworkConfiguration makes the network manager read the passage's two
+// files again.
+//
+// The reload is what creates the interface from a description that did not exist
+// before. The reconfiguration that follows is what makes an *edited* description
+// take effect on an interface that is already there — a peer attached or
+// detached above all — and it is skipped while there is no such interface,
+// because reconfiguring a device that does not exist is an error rather than an
+// answer.
+func (executor SystemExecutor) ReloadNetworkConfiguration() error {
+	if _, err := executor.run(commandTimeout, "networkctl", "reload"); err != nil {
+		return err
+	}
+	if _, err := os.Stat("/sys/class/net/" + LinkInterfaceName); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	_, err := executor.run(commandTimeout, "networkctl", "reconfigure", LinkInterfaceName)
+	return err
 }
 
 // run executes one fixed argument vector as root, with a replaced environment.

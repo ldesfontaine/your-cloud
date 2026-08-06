@@ -1,17 +1,19 @@
 package auxiliary
 
-// This file is the dispatch of the two plan schemas: which decoder a carried
+// This file is the dispatch of the three plan schemas: which decoder a carried
 // pair reaches, what happens when the two documents do not agree on one, and
-// which schema 2 operations this Auxiliary performs rather than merely reads.
+// which operations this Auxiliary performs rather than merely reads.
 //
-// Adding schema 2 to this Auxiliary widened what it performs in two steps.
-// `#90` added the two managed web service operations and left the four
-// entrypoint and route ones refused by name, before any effect and before this
-// machine was even read. `#91` performs all six, so what this file now holds is
-// that each of the three document shapes reaches the effects of its own kind and
-// no other, and that the two decoders still refuse to cover for one another.
+// Each schema widened what this Auxiliary performs in steps, and each step
+// closed a window a test named. `#90` added the two managed web service
+// operations and `#91` the four entrypoint and route ones; `#96` closes the last
+// window, the six operations of the private passage, which were refused by the
+// schema dispatch alone until it landed. What this file holds is therefore that
+// every document shape of every schema reaches the effects of its own kind and
+// no other, and that no decoder covers for another.
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -171,17 +173,22 @@ func TestAPairWrittenInTwoSchemasIsNotAPair(t *testing.T) {
 }
 
 // TestASchemaThisAuxiliaryDoesNotReadIsRefusedByName keeps the dispatch closed
-// at both ends: a document declaring a schema neither decoder owns is refused
-// before either of them is asked to try.
+// at both ends: a document declaring a schema no decoder owns is refused before
+// any of them is asked to try.
+//
+// The number it declares is one beyond the last contract this product has
+// written, which is exactly the case the refusal exists for: a Controller ahead
+// of the machine it is talking to.
 func TestASchemaThisAuxiliaryDoesNotReadIsRefusedByName(t *testing.T) {
 	t.Parallel()
 	executor := deployedServiceMachine(t, fixturePort)
 	accepted, input := approvedService(t, plan.OperationDeployWebService, fixturePort)
+	unread := strconv.Itoa(plan.SchemaVersionV3 + 1)
 	input.PlanDocument = forgedServicePlan(t, plan.OperationDeployWebService, fixturePort, map[string]string{
-		"schema_version": "3",
+		"schema_version": unread,
 	})
 	input.RollbackDocument = forgedServicePlan(t, plan.OperationRemoveWebService, fixturePort, map[string]string{
-		"schema_version": "3",
+		"schema_version": unread,
 	})
 
 	if _, err := Apply(executor, accepted, input); err == nil {
@@ -194,55 +201,168 @@ func TestASchemaThisAuxiliaryDoesNotReadIsRefusedByName(t *testing.T) {
 	}
 }
 
-// TestEverySchemaThreeOperationIsRefusedByNameBeforeAnyEffect is the window this
-// issue opens, named here so that the issue that closes it has one test to
-// replace rather than a silence to notice.
+// TestEverySchemaThreeOperationIsNowPerformedAndNamesItsOwnInstance is the
+// window this issue closes.
 //
-// The approval package now holds the six operations of the private passage in its
-// closed list, so a human may sign one and this Auxiliary may be handed the pair.
-// Reading schema 3 is `#96` and `#97`; until then the six pairs below are real,
-// valid, canonically frozen documents of that contract, and every one of them is
-// refused by the schema dispatch — by name, before any effect, and before this
-// machine is read at all. A window that let one of them through unread would be
-// this Auxiliary acting on a contract it does not implement.
-func TestEverySchemaThreeOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
+// Until `#96` the six operations of the private passage were refused at the
+// schema dispatch by name, before any effect and before any read: the approval
+// package held them in its closed list, so a human could sign one and this
+// Auxiliary could be handed a real, valid, canonically frozen pair of that
+// contract — and it acted on none of them. They are performed now, so what this
+// test holds is the property that refusal used to guard: each of the six reaches
+// the effects of its own kind, announces the state of its own kind, and names
+// the one file a passage owns on this machine rather than any other.
+//
+// The two junctions and the two departures share one flow apiece, which is
+// exactly why both roles appear below: a regression that resolved the initiator's
+// constants for a listener's plan would be caught here.
+func TestEverySchemaThreeOperationIsNowPerformedAndNamesItsOwnInstance(t *testing.T) {
 	t.Parallel()
-	for name, frozen := range map[string]func(*testing.T) (string, plan.Frozen){
-		"a link preparation": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationPrepareLink, frozenLinkPair(t, plan.OperationPrepareLink, plan.LinkRoleListener)
+	for name, subject := range map[string]struct {
+		operation string
+		machine   func() *fakeExecutor
+		approved  func(*testing.T) (*approval.Acceptance, *Input)
+		state     string
+	}{
+		"a listener preparation": {
+			operation: plan.OperationPrepareLink,
+			machine:   linkMachine,
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedLink(t, plan.OperationPrepareLink, plan.LinkRoleListener)
+			},
+			state: ServiceStateActive,
 		},
-		"a link withdrawal": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationWithdrawLink, frozenLinkPair(t, plan.OperationWithdrawLink, plan.LinkRoleInitiator)
+		"an initiator preparation": {
+			operation: plan.OperationPrepareLink,
+			machine:   linkMachine,
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedLink(t, plan.OperationPrepareLink, plan.LinkRoleInitiator)
+			},
+			state: ServiceStateActive,
 		},
-		"a listener junction": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationAttachLinkPeer, frozenListenerPeerPair(t, plan.OperationAttachLinkPeer, fixturePort)
+		"a listener withdrawal": {
+			operation: plan.OperationWithdrawLink,
+			machine:   func() *fakeExecutor { return preparedLinkMachine(plan.LinkRoleListener) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedLink(t, plan.OperationWithdrawLink, plan.LinkRoleListener)
+			},
+			state: ServiceStateAbsent,
 		},
-		"a listener detachment": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationDetachLinkPeer, frozenListenerPeerPair(t, plan.OperationDetachLinkPeer, fixturePort)
+		"a listener junction": {
+			operation: plan.OperationAttachLinkPeer,
+			machine:   func() *fakeExecutor { return preparedLinkMachine(plan.LinkRoleListener) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedListenerPeer(t, plan.OperationAttachLinkPeer, fixturePort)
+			},
+			state: ServiceStateActive,
 		},
-		"an initiator junction": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationJoinLinkPeer, frozenInitiatorPeerPair(t, plan.OperationJoinLinkPeer, fixturePort)
+		"a listener detachment": {
+			operation: plan.OperationDetachLinkPeer,
+			machine:   func() *fakeExecutor { return joinedLinkMachine(plan.LinkRoleListener) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedListenerPeer(t, plan.OperationDetachLinkPeer, fixturePort)
+			},
+			state: ServiceStateAbsent,
 		},
-		"an initiator departure": func(t *testing.T) (string, plan.Frozen) {
-			return plan.OperationLeaveLinkPeer, frozenInitiatorPeerPair(t, plan.OperationLeaveLinkPeer, fixturePort)
+		"an initiator junction": {
+			operation: plan.OperationJoinLinkPeer,
+			machine:   func() *fakeExecutor { return preparedLinkMachine(plan.LinkRoleInitiator) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedInitiatorPeer(t, plan.OperationJoinLinkPeer, fixturePort)
+			},
+			state: ServiceStateActive,
+		},
+		"an initiator departure": {
+			operation: plan.OperationLeaveLinkPeer,
+			machine:   func() *fakeExecutor { return joinedLinkMachine(plan.LinkRoleInitiator) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedInitiatorPeer(t, plan.OperationLeaveLinkPeer, fixturePort)
+			},
+			state: ServiceStateAbsent,
 		},
 	} {
-		operation, pair := frozen(t)
-		executor := deployedServiceMachine(t, fixturePort)
-		accepted, input := approvedFrozenPair(operation, pair)
+		executor := subject.machine()
+		accepted, input := subject.approved(t)
 
 		application, err := Apply(executor, accepted, input)
-		if err == nil {
-			t.Fatalf("%s was applied by an Auxiliary that does not read its schema", name)
+		if err != nil {
+			t.Fatalf("%s was refused by an Auxiliary that performs it: %v", name, err)
 		}
-		if application != nil {
-			t.Fatalf("%s returned an application: %+v", name, application)
+		if application.Operation != subject.operation || application.ServiceState != subject.state {
+			t.Fatalf("%s announced another instance or another state: %+v", name, application)
 		}
-		if !strings.Contains(err.Error(), "which this Auxiliary does not read") {
-			t.Fatalf("%s was refused for another reason than its schema: %v", name, err)
+		if !application.Changed {
+			t.Fatalf("%s found nothing to do on a machine that needed it: %+v", name, application)
 		}
-		if len(executor.effects) != 0 || len(executor.reads) != 0 {
-			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		if application.UnitPath != linkNetdevPath {
+			t.Fatalf("%s named %q rather than the file a passage owns", name, application.UnitPath)
+		}
+		// A passage has no loopback port, no declared name and no fragment: those
+		// are what the two older schemas describe, and a report that named one
+		// would be claiming something this operation never touched.
+		if application.LocalPort != 0 || application.RouteHost != "" || application.FragmentPath != "" {
+			t.Fatalf("%s named an instance of another schema: %+v", name, application)
+		}
+		if len(executor.effects) == 0 {
+			t.Fatalf("%s reported a change without touching the machine", name)
+		}
+	}
+}
+
+// TestOnlyThePreparationOfAPassageReportsAPublicKey holds the one value of the
+// private passage that is meant to travel, and the five operations that must not
+// carry it.
+//
+// The public key is an observation: the Controller reads it here and carries it,
+// readable, into the junction plan of the other machine. A junction reporting one
+// would be this machine restating a value it was given rather than one it
+// established, and a withdrawal reporting one would be a machine answering for a
+// key it has just taken away.
+func TestOnlyThePreparationOfAPassageReportsAPublicKey(t *testing.T) {
+	t.Parallel()
+	for name, subject := range map[string]struct {
+		machine  func() *fakeExecutor
+		approved func(*testing.T) (*approval.Acceptance, *Input)
+		reports  bool
+	}{
+		"a preparation": {
+			machine: linkMachine,
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedLink(t, plan.OperationPrepareLink, plan.LinkRoleListener)
+			},
+			reports: true,
+		},
+		"a withdrawal": {
+			machine: func() *fakeExecutor { return preparedLinkMachine(plan.LinkRoleListener) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedLink(t, plan.OperationWithdrawLink, plan.LinkRoleListener)
+			},
+		},
+		"a junction": {
+			machine: func() *fakeExecutor { return preparedLinkMachine(plan.LinkRoleListener) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedListenerPeer(t, plan.OperationAttachLinkPeer, fixturePort)
+			},
+		},
+		"a departure": {
+			machine: func() *fakeExecutor { return joinedLinkMachine(plan.LinkRoleInitiator) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedInitiatorPeer(t, plan.OperationLeaveLinkPeer, fixturePort)
+			},
+		},
+	} {
+		executor := subject.machine()
+		accepted, input := subject.approved(t)
+
+		application, err := Apply(executor, accepted, input)
+		if err != nil {
+			t.Fatalf("%s was refused: %v", name, err)
+		}
+		if subject.reports && application.LinkPublicKey != fixtureLinkPublicKey {
+			t.Fatalf("%s did not report the public key this machine holds: %+v", name, application)
+		}
+		if !subject.reports && application.LinkPublicKey != "" {
+			t.Fatalf("%s reported a key it had no business establishing: %+v", name, application)
 		}
 	}
 }

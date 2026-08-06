@@ -95,6 +95,10 @@ Aucune de ces valeurs n'est un champ de plan. `AllowedIPs` est le `/32` du
 pair et rien d'autre : le sous-réseau du LAN n'est jamais annoncé, jamais
 routé, et le VPS ne connaît du LAN qu'une adresse de tunnel.
 
+Le mode de la clé privée est précisé par l'addendum d'application en fin de
+document : `0600` y devient `0640` root et `systemd-network`, et la raison de
+cet écart y est nommée plutôt que tue.
+
 ## Le passage est borné par nftables, des deux côtés
 
 Une table nommée `inet your-cloud-link` est posée par la jonction et retirée
@@ -194,3 +198,49 @@ correspond à un constat :
 8. le rapport qualifie la topologie de scénario de référence, pas de
    prérequis produit, et le démontage rend les machines à leur état de
    clôture nommé.
+
+## Addendum d'application : ce que l'Auxiliaire écrit vraiment (`#96`)
+
+Le contrat ci-dessus dit quel état une machine doit tenir. Cet addendum dit par
+quel mécanisme elle le tient, parce que trois décisions d'application ne se
+déduisent pas du contrat et qu'une d'elles s'en écarte.
+
+**Le mécanisme est `systemd-networkd`, deux fichiers par machine.** Une
+`yc-link0.netdev` déclare l'interface fermée et nomme la clé **par son chemin**
+(`PrivateKeyFile=`) ; une `yc-link0.network` porte l'adresse `/32` du rôle. La
+règle du contrat sur les clés décide ce choix à elle seule : une configuration
+`wg-quick` porte la clé privée *à l'intérieur* du fichier, donc une machine qui
+en tient une tient sa clé deux fois, à deux endroits et sous deux modes. Le
+`.netdev` la nomme, il ne la contient pas. La persistance au redémarrage ne
+coûte alors rien de plus : networkd recrée l'interface depuis ces deux fichiers
+au démarrage, ce qui est exactement le critère 7.
+
+**La clé privée est en `0640`, root et `systemd-network`, et non en `0600`.**
+C'est le seul écart de cette implémentation au texte ci-dessus, et il est
+arithmétique : `systemd-networkd` tourne sous un compte non privilégié, donc une
+clé que seul root peut lire est un passage qui ne monte jamais. `0640` avec le
+groupe de ce compte est l'arrangement le plus étroit qui laisse lire exactement
+une identité de plus — celle à qui ce produit a demandé de tenir l'interface.
+Aucun compte humain, aucun compte de service de ce produit et aucun conteneur
+n'est dans ce groupe. Une machine sans ce groupe garde `0600` : rien n'y est
+élargi en silence, l'interface ne monte pas et la préparation le dit.
+
+**Une jonction écrit aussi une route, et c'est le `/32` qui l'impose.** Les deux
+adresses du tunnel sont des `/32`, donc aucune d'elles ne donne à sa machine de
+route vers l'autre : sans une ligne `[Route]` nommant l'adresse du pair sur
+cette interface, le tunnel serait établi et inutilisable. La destination est
+l'adresse du rôle opposé — une constante, jamais une valeur de plan — donc la
+route atteint exactement ce que `AllowedIPs` autorise et pas une adresse de
+plus. Elle est écrite avec la jonction et retirée avec elle.
+
+**Ce que le retrait ne défait pas est nommé.** `withdraw_link` retire
+l'interface, les deux fichiers et la clé. Il ne désactive pas le gestionnaire de
+réseau : networkd ne gère que les interfaces que ses propres `[Match]`
+désignent, et couper le gestionnaire de réseau d'une machine comme effet de bord
+du retrait d'un tunnel est une liberté que ce produit ne prend pas.
+
+**Découpage entre `#96` et `#97`.** `#96` tient le cycle de vie WireGuard :
+clés, interface, pairs, idempotence, rollback, refus. Les tables `nftables`, la
+règle de présence du `service_port` et la matrice complète des refus du palier
+sont `#97`, et les points de couture sont nommés dans le flux des jonctions —
+les règles se posent avant que le pair existe et se retirent avec lui.

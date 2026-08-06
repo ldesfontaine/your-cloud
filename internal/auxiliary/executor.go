@@ -159,4 +159,57 @@ type Executor interface {
 	// takes the same constat from outside the machine, against a pinned
 	// authority, and that one is `#92`.
 	RouteAnswers(routeHost string) error
+
+	// The six methods below are the whole of what a private passage needs, and
+	// they are separate from everything above for a reason that is not
+	// convenience: a passage has no account, no container and no image, so none
+	// of the methods above answer for one. The two files a passage owns travel
+	// through the three file methods, because they are exactly what those methods
+	// describe — root-owned files this Auxiliary writes and nothing else may
+	// rewrite.
+
+	// LinkPublicKey reports the public half of this machine's own passage key,
+	// and whether this machine holds such a key at all.
+	//
+	// It is the one value of a passage that is meant to travel: the Controller
+	// reads it as an observation and carries it, readable, into the junction plan
+	// of the other machine. The private half is never a return value of this
+	// interface, so no caller of it can leak what it has no way of holding.
+	LinkPublicKey() (string, bool, error)
+	// GenerateLinkKey generates this machine's own passage key, writes the
+	// private half root-owned where only the network manager may also read it,
+	// and returns only the public half.
+	//
+	// It refuses to replace a key that already exists rather than overwriting
+	// one, so a preparation can never regenerate a key even if a caller asked it
+	// to: replacing a key is a withdrawal followed by a preparation, two plans a
+	// human reads. Creating the root-owned directory the key lives in is part of
+	// this one effect, because a key and the place it lives are one fact.
+	GenerateLinkKey() (string, error)
+	// RemoveLinkKey takes that private key away, and is content with it being
+	// absent.
+	RemoveLinkKey() error
+
+	// LinkInterfaceActive reports whether the closed interface of the passage
+	// exists on this machine right now. An interface that is absent is not an
+	// error here: it is an answer.
+	LinkInterfaceActive() (bool, error)
+	// RemoveLinkInterface takes that interface away, and is content with it being
+	// absent. It removes the interface and never the files that describe it: what
+	// a withdrawal removes, it removes one named effect at a time.
+	RemoveLinkInterface() error
+
+	// EnableNetworkManagement makes this machine's network manager run now and
+	// after a reboot, and ReloadNetworkConfiguration makes it read the passage's
+	// two files again.
+	//
+	// The first is a declared effect of the preparation rather than a step of a
+	// bootstrap, exactly as the host ports policy is a declared effect of the
+	// entrypoint: the human who approves a passage approves this machine letting
+	// its network manager hold the interfaces this product's files match. It is
+	// scoped by those files and by nothing else — networkd manages what its own
+	// [Match] sections name — which is what makes it coexist with whatever else
+	// already configures this machine's real interfaces.
+	EnableNetworkManagement() error
+	ReloadNetworkConfiguration() error
 }

@@ -823,12 +823,18 @@ func TestAMachineThatCannotRunTheFlowIsRefusedBeforeAnyWrite(t *testing.T) {
 			AccountPresent: true, RootlessPodman: false,
 		},
 	} {
-		// The eight operations this Auxiliary performs, across both plan schemas:
-		// a machine that cannot run the flow is refused for the entry and for a
-		// route exactly as it is for the probe, and the account each refusal
-		// names is the one that operation's own placement carries. A route is in
-		// this list because it is served by a container: a machine that cannot
-		// run one cannot publish a name through it either.
+		// The eight operations that run a container, across the two plan schemas
+		// that describe one: a machine that cannot run the flow is refused for
+		// the entry and for a route exactly as it is for the probe, and the
+		// account each refusal names is the one that operation's own placement
+		// carries. A route is in this list because it is served by a container: a
+		// machine that cannot run one cannot publish a name through it either.
+		//
+		// The six operations of the private passage are deliberately absent. A
+		// passage owns no account, no container and no image, so a machine
+		// without Podman or without a unified cgroup hierarchy holds one
+		// perfectly well; what it asks for instead is systemd alone, and that is
+		// held in link_test.go where the rest of its conduct is.
 		for _, operation := range []string{
 			plan.OperationDeployOCIProbe, plan.OperationRemoveOCIProbe,
 			plan.OperationDeployWebService, plan.OperationRemoveWebService,
@@ -920,5 +926,215 @@ func TestASequenceAlreadySpentStaysRefusedAfterACut(t *testing.T) {
 	}
 	if !half.holds(UnitPath()) || half.active {
 		t.Fatalf("the replay repaired the state it found: %+v", half)
+	}
+}
+
+// TestNothingIsTouchedWhileTheApprovedLinkDocumentsAreStillInDoubt is the same
+// matrix over the three closed field lists of the private passage.
+//
+// It is a third table rather than a widened second one, for the reason the
+// second is a table of its own: a case must forge the document of the schema and
+// of the group it is refusing, and schema 3 carries three groups that share only
+// their common head. What each case asserts is unchanged — refused, refused for
+// its own reason, and with neither an effect nor a read recorded.
+//
+// The three groups appear together because the whole point of their separation
+// is that a field of one is an unknown field of the others: an endpoint on the
+// listener's junction, a role on a peer plan, a peer on a preparation. Every one
+// of them is refused by the strict decoding before its value is ever read.
+func TestNothingIsTouchedWhileTheApprovedLinkDocumentsAreStillInDoubt(t *testing.T) {
+	t.Parallel()
+	other := frozenLinkPair(t, plan.OperationPrepareLink, plan.LinkRoleInitiator)
+
+	for name, subject := range map[string]refusal{
+		// The two documents against the two digests a human signed.
+		"a link plan that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.PlanSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"a link plan altered after it was signed": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkPlan(t, plan.OperationPrepareLink, plan.LinkRoleInitiator, nil)
+			},
+			named: "the carried plan is not the document the approval signed",
+		},
+		"a link rollback that is not the one the approval signed": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.RollbackSHA256 = strings.Repeat("0", 64)
+			},
+			named: "the carried rollback is not the document the approval signed",
+		},
+
+		// The plan against this machine and against the approval that carries it.
+		"a link plan aimed at another machine": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.MachineID = "lab-machine-2"
+			},
+			named: "targets another machine than this one",
+		},
+		"a link plan aimed at another infrastructure": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.State.InfrastructureID = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3"
+			},
+			named: "targets another infrastructure than this machine's anchor",
+		},
+		"a link plan describing another operation than the approval": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.accepted.Envelope.Operation = plan.OperationWithdrawLink
+			},
+			named: "the approved plan describes",
+		},
+
+		// The rollback against the plan it claims to undo. A withdrawal naming the
+		// other role is not the undoing of this preparation: it is a second plan,
+		// and it would leave this machine describing a side nobody approved.
+		"a link rollback that withdraws the other role": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.input.RollbackDocument = other.RollbackDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.RollbackSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+		"a link rollback that is a second preparation rather than an undoing": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.input.RollbackDocument = other.PlanDocument
+				subject.accepted.Envelope.RollbackSHA256 = other.PlanSHA256
+			},
+			named: "does not undo exactly the approved plan",
+		},
+
+		// The content against the closed contract of the passage. The role decides
+		// every constant the plan does not state, so a role outside the closed list
+		// is refused before a single one of them is chosen.
+		"a link plan naming a role this contract does not describe": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkPlan(t, plan.OperationPrepareLink, "relay", nil)
+			},
+			named: "plan link_role",
+		},
+		"a link plan carrying no role at all": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkPlan(t, plan.OperationPrepareLink, plan.LinkRoleListener, map[string]string{
+					"link_role": "",
+				})
+			},
+			named: "plan link_role",
+		},
+
+		// A field of another group is an unknown field, refused before its value is
+		// read. This is the whole reason the three groups are three shapes.
+		"a preparation carrying a peer it has no business naming": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkPlan(t, plan.OperationPrepareLink, plan.LinkRoleListener, map[string]string{
+					"peer_public_key": quotedJSON(t, fixturePeerPublicKey),
+				})
+			},
+			named: "carried plan",
+		},
+		"a preparation carrying a service port it has no business naming": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkPlan(t, plan.OperationPrepareLink, plan.LinkRoleListener, map[string]string{
+					"service_port": strconv.Itoa(fixturePort),
+				})
+			},
+			named: "carried plan",
+		},
+		"a link plan declaring no schema version at all": {
+			forge: func(t *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = forgedLinkPlan(t, plan.OperationPrepareLink, plan.LinkRoleListener, map[string]string{
+					"schema_version": "",
+				})
+			},
+			named: "no plan schema version is declared",
+		},
+		"a link plan longer than a plan may be": {
+			forge: func(_ *testing.T, subject *approvedInput) {
+				subject.input.PlanDocument = []byte(strings.Repeat("a", plan.MaxPlanBytes+1))
+			},
+			named: "plan document must contain",
+		},
+	} {
+		executor := preparedLinkMachine(plan.LinkRoleListener)
+		accepted, input := approvedLink(t, plan.OperationPrepareLink, plan.LinkRoleListener)
+		forged := &approvedInput{accepted: accepted, input: input}
+		subject.forge(t, forged)
+
+		application, err := Apply(executor, forged.accepted, forged.input)
+		if err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), subject.named) {
+			t.Fatalf("%s was refused for another reason than its own: %v", name, err)
+		}
+		var controlled *ControlledFailure
+		if errors.As(err, &controlled) {
+			t.Fatalf("%s was reported as a controlled failure: %v", name, err)
+		}
+		if len(executor.effects) != 0 {
+			t.Fatalf("%s changed the machine before being refused: %q", name, executor.effects)
+		}
+		if len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine before being refused: %q", name, executor.reads)
+		}
+	}
+}
+
+// TestAJunctionCarryingAFieldOfTheOtherRoleIsRefusedBeforeItIsRead is the
+// asymmetry of the contract held at the layer that enforces it.
+//
+// The listener has no endpoint to reach, so its junction plan has no such field
+// — not empty, not ignored, absent. A document carrying one is an unknown field
+// of that shape and is refused by the strict decoding, before this machine is
+// read and before the value could decide anything. The mirror case is a peer
+// plan carrying the role a preparation names.
+func TestAJunctionCarryingAFieldOfTheOtherRoleIsRefusedBeforeItIsRead(t *testing.T) {
+	t.Parallel()
+	for name, forge := range map[string]func(*testing.T) []byte{
+		"the listener's junction naming an endpoint": func(t *testing.T) []byte {
+			return forgedListenerPeerPlan(t, plan.OperationAttachLinkPeer, fixturePort, map[string]string{
+				"peer_endpoint_host": quotedJSON(t, fixtureEndpointHost),
+			})
+		},
+		"the listener's junction naming a role": func(t *testing.T) []byte {
+			return forgedListenerPeerPlan(t, plan.OperationAttachLinkPeer, fixturePort, map[string]string{
+				"link_role": quotedJSON(t, plan.LinkRoleListener),
+			})
+		},
+		"the initiator's junction carrying no endpoint at all": func(t *testing.T) []byte {
+			return forgedInitiatorPeerPlan(t, plan.OperationJoinLinkPeer, fixturePort, map[string]string{
+				"peer_endpoint_host": "",
+			})
+		},
+		"a junction naming a port no managed service could listen on": func(t *testing.T) []byte {
+			return forgedListenerPeerPlan(t, plan.OperationAttachLinkPeer, 80, nil)
+		},
+		"a junction naming a peer key with a second spelling": func(t *testing.T) []byte {
+			return forgedListenerPeerPlan(t, plan.OperationAttachLinkPeer, fixturePort, map[string]string{
+				"peer_public_key": quotedJSON(t, strings.Repeat("A", 43)+"="),
+			})
+		},
+	} {
+		executor := preparedLinkMachine(plan.LinkRoleListener)
+		accepted, input := approvedListenerPeer(t, plan.OperationAttachLinkPeer, fixturePort)
+		input.PlanDocument = forge(t)
+
+		application, err := Apply(executor, accepted, input)
+		if err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), "carried plan") {
+			t.Fatalf("%s was refused somewhere other than the decoding of its own document: %v", name, err)
+		}
+		if len(executor.effects) != 0 || len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		}
 	}
 }

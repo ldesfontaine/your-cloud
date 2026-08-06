@@ -64,11 +64,12 @@ const (
 // computed from what was observed before acting and never announced in advance:
 // it is the one field a reader uses to tell an operation that did something from
 // an operation that found the approved state already there.
-// The three fields below the operation name the instance that was applied, and
-// which of them are filled is decided by what kind of instance it was: a managed
+// The fields below the operation name the instance that was applied, and which
+// of them are filled is decided by what kind of instance it was: a managed
 // service names its loopback port and its sheet, an entrypoint names its sheet
-// alone, and a route names the declared host and the one fragment file that host
-// owns. Nothing here carries a certificate, a key or any content of a file.
+// alone, a route names the declared host and the one fragment file that host
+// owns, and a passage names the file that describes its interface. Nothing here
+// carries a certificate, a private key or any content of a file.
 type Application struct {
 	Operation    string
 	LocalPort    int
@@ -76,7 +77,20 @@ type Application struct {
 	RouteHost    string
 	FragmentPath string
 	ServiceState string
-	Changed      bool
+	// LinkPublicKey is filled by the preparation of a passage and by nothing
+	// else. It is the public half of the key that machine just generated — or of
+	// the key it already held, since a preparation never regenerates one — and it
+	// is the single value of the private passage that is meant to travel: the
+	// Controller reads it here and carries it, readable, into the junction plan
+	// of the other machine, so the human who approves that plan names exactly the
+	// peer they accept.
+	//
+	// The private half has no field here and no field anywhere else. It is not
+	// omitted from this structure, it is unreachable from it: nothing in this
+	// package can obtain it, because the seam that writes it returns the public
+	// half alone.
+	LinkPublicKey string
+	Changed       bool
 }
 
 // Observation is what read-only calls could still establish about this machine
@@ -86,17 +100,29 @@ type Application struct {
 // command: a reader learns what was seen, or that it could not be seen at all.
 // It is deliberately incapable of saying that the machine is in a known state,
 // because a failed rollback is precisely the moment that ceased to be true.
+// Which words it carries is decided by the kind of instance that was being
+// applied, and every one of them is omitted rather than reported empty where the
+// operation never touched what it answers for: an observation says what was
+// seen, and a word about something nobody looked at would be neither a fact nor
+// an admission. The four words of an account and a container are what a service,
+// an entrypoint and a route are left holding; a route adds the one file it is;
+// and a passage carries none of the four, because it has neither an account nor
+// a container to be left holding.
 type Observation struct {
-	Account   string `json:"account"`
-	UnitFile  string `json:"unit_file"`
-	Service   string `json:"service"`
-	Container string `json:"container"`
+	Account   string `json:"account,omitempty"`
+	UnitFile  string `json:"unit_file,omitempty"`
+	Service   string `json:"service,omitempty"`
+	Container string `json:"container,omitempty"`
 	// Fragment is filled only while the instance that was being applied is a
-	// route, because it is the only instance whose state is a fragment file. It
-	// is omitted rather than reported empty everywhere else: an observation says
-	// what was seen, and a word about something the operation never touched would
-	// be neither a fact nor an admission.
+	// route, because it is the only instance whose state is a fragment file.
 	Fragment string `json:"fragment,omitempty"`
+	// LinkKey, LinkInterface and LinkPeer are filled only for a passage. The key
+	// is reported present or absent and never by its value: the public half would
+	// say more than an observation needs, and the private half is not something
+	// any function of this package can reach.
+	LinkKey       string `json:"link_key,omitempty"`
+	LinkInterface string `json:"link_interface,omitempty"`
+	LinkPeer      string `json:"link_peer,omitempty"`
 }
 
 // ControlledFailure is a failure that happened after this machine had already
@@ -145,6 +171,19 @@ func (failure *ControlledFailure) Error() string {
 			failure.Operation, failure.Cause,
 		)
 	}
+	// A passage is left holding other things than a service is, so it is named in
+	// its own words rather than in four that would all read "unknown" about an
+	// account and a container it never had. The key is named present or absent
+	// and never by its value, here as everywhere else.
+	if failure.Observed.LinkKey != "" {
+		return fmt.Sprintf(
+			"%s failed after this machine was changed (%v): the approved rollback was attempted and failed in its turn (%v): "+
+				"this machine is left in a partial state, observed as description %s, key %s, interface %s, peer %s",
+			failure.Operation, failure.Cause, failure.Rollback,
+			failure.Observed.UnitFile, failure.Observed.LinkKey,
+			failure.Observed.LinkInterface, failure.Observed.LinkPeer,
+		)
+	}
 	return fmt.Sprintf(
 		"%s failed after this machine was changed (%v): the approved rollback was attempted and failed in its turn (%v): "+
 			"this machine is left in a partial state, observed as account %s, unit file %s, service %s, container %s",
@@ -159,16 +198,18 @@ func (failure *ControlledFailure) Error() string {
 // read a sentence.
 func (failure *ControlledFailure) Unwrap() error { return failure.Cause }
 
-// instanceKind is which of the three shapes an approved instance has, and it is
+// instanceKind is which of the four shapes an approved instance has, and it is
 // read from the operation rather than guessed from which fields happen to be
 // filled. It is what keeps a route from ever being applied through the sheet
-// path, and an entrypoint from ever being applied through the service one.
+// path, an entrypoint from ever being applied through the service one, and a
+// passage from ever being applied through any of them.
 type instanceKind int
 
 const (
 	kindWebService instanceKind = iota + 1
 	kindEntrypoint
 	kindRoute
+	kindLink
 )
 
 // instance is one thing this Auxiliary has been approved to act on, once the
@@ -185,6 +226,11 @@ const (
 // no account, no sheet and no container: it is one file inside the directory the
 // entry reads, so the placement it names is the entry it is served by, and the
 // two fields below are what a route actually is.
+//
+// A passage carries no placement at all, and the zero value below is the whole
+// of the statement: it runs as root, owns no account, no home, no sheet and no
+// container, so there is nothing for a placement to hold. What it carries
+// instead is its role and the three bounded values a junction plan names.
 type instance struct {
 	kind        instanceKind
 	operation   string
@@ -192,15 +238,37 @@ type instance struct {
 	localPort   int
 	routeHost   string
 	backendPort int
+	// linkRole is which side of the passage this machine is, resolved from the
+	// plan's own field for a preparation and from the operation itself for a
+	// junction — the asymmetry of the contract lives in the operations, so the
+	// listener's junction needs no field to say it is the listener's.
+	linkRole string
+	// peerPublicKey and peerEndpointHost name the one peer a junction attaches,
+	// and peerEndpointHost is filled for the initiator alone because only the
+	// initiator has somewhere to reach.
+	peerPublicKey    string
+	peerEndpointHost string
+	// servicePort is the single port the bounding tables of `#97` will let
+	// through the passage. It is carried this far by `#96` so that the issue that
+	// poses those tables adds effects to the existing junction flows rather than
+	// reshaping them.
+	servicePort int
 }
 
 // reportedUnitPath and reportedFragmentPath are how one instance names itself in
 // a conclusion, each answering only for the kind that has such a thing.
 func (subject instance) reportedUnitPath() string {
-	if subject.kind == kindRoute {
+	switch subject.kind {
+	case kindRoute:
 		return ""
+	case kindLink:
+		// A passage names the file that describes its interface. It is a
+		// root-owned file this Auxiliary writes and nobody else rewrites, which is
+		// exactly what this field has always meant.
+		return linkNetdevPath
+	default:
+		return subject.placement.unitPath()
 	}
-	return subject.placement.unitPath()
 }
 
 func (subject instance) reportedFragmentPath() string {
@@ -219,12 +287,10 @@ func (subject instance) reportedFragmentPath() string {
 //     the root-owned anchor, target, epoch, expiry, exact privileges, and the
 //     sequence durably consumed. A run interrupted after that point has spent
 //     its sequence and will never be replayed;
-//  2. the schema the two carried documents declare is read, and the two are
+//  2. the schema the two carried documents declare is read, and the three are
 //     required to declare the same one: a pair written in two schemas is not a
-//     pair, and neither decoder is allowed to cover for the other. A schema this
-//     package does not read is refused here by name, with nothing decoded —
-//     schema 3, the private passage, is exactly that until the issues that own
-//     its application land;
+//     pair, and no decoder is allowed to cover for another. A schema this
+//     package does not read is refused here by name, with nothing decoded;
 //  3. the two received documents are held against the two digests that
 //     approval signed, through the transcript of their own schema, so a
 //     Controller that reindented them carries the same plan and a Controller
@@ -261,7 +327,7 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 	if err != nil {
 		return nil, fmt.Errorf("observe this machine's capabilities: %w", err)
 	}
-	if err := requireCapableMachine(capabilities, requested.placement); err != nil {
+	if err := requireCapableMachineFor(requested, capabilities); err != nil {
 		return nil, err
 	}
 
@@ -284,6 +350,21 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 	case plan.OperationRetireRoute:
 		application, touched, err := retireRoute(executor, requested)
 		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationPrepareLink:
+		application, touched, err := prepareLink(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationWithdrawLink:
+		application, touched, err := withdrawLink(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	// The two junctions share one flow and the two departures share the other:
+	// what differs between the listener and the initiator is the role's constants
+	// and the fields their own plans carry, which dispatch has already resolved.
+	case plan.OperationAttachLinkPeer, plan.OperationJoinLinkPeer:
+		application, touched, err := joinLinkPeer(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationDetachLinkPeer, plan.OperationLeaveLinkPeer:
+		application, touched, err := partLinkPeer(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
 	default:
 		// Unreachable while dispatch and this switch agree on the same closed
 		// list, and kept as a refusal rather than a panic so that a disagreement
@@ -297,7 +378,7 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 //
 // The schema is chosen by what the documents declare and never by trying each
 // decoder in turn, and both documents must declare the same one. That single
-// rule is what keeps the two schemas from covering for one another: a schema 1
+// rule is what keeps the three schemas from covering for one another: a schema 1
 // plan cannot be undone by a schema 2 rollback, and a schema 2 plan cannot be
 // smuggled past the older contract by a rollback written in the older schema.
 func approvedInstances(accepted *approval.Acceptance, input *Input) (instance, instance, error) {
@@ -320,6 +401,8 @@ func approvedInstances(accepted *approval.Acceptance, input *Input) (instance, i
 		return probeInstances(accepted, input)
 	case plan.SchemaVersionV2:
 		return serviceInstances(accepted, input)
+	case plan.SchemaVersionV3:
+		return linkInstances(accepted, input)
 	default:
 		return instance{}, instance{}, fmt.Errorf(
 			"the approved documents declare plan schema %d, which this Auxiliary does not read", planSchema)
@@ -483,6 +566,101 @@ func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, in
 	}
 }
 
+// linkInstances holds one schema 3 pair against the approval that carries it,
+// and turns it into the two instances the passage's effects act on.
+//
+// It is the very procedure serviceInstances follows — the same digests, the same
+// target, the same exact inverse, then one assertion per shape — over the other
+// closed interface. What differs is what comes out of it: a passage has no
+// placement, because it has no account to run as and no container to be. What it
+// has instead is a role, and the role is read from the plan's own field for a
+// preparation and from the operation itself for a junction. That is the contract
+// read literally: the listener's junction is an operation of its own precisely so
+// that no field has to say which side it is for.
+//
+// Until `#96` landed, all six operations were refused at this exact point by the
+// schema dispatch above, by name and before this machine was read at all.
+func linkInstances(accepted *approval.Acceptance, input *Input) (instance, instance, error) {
+	envelope := accepted.Envelope
+	requested, err := v3DocumentMatching(input.PlanDocument, envelope.PlanSHA256, "plan")
+	if err != nil {
+		return instance{}, instance{}, err
+	}
+	rollback, err := v3DocumentMatching(input.RollbackDocument, envelope.RollbackSHA256, "rollback")
+	if err != nil {
+		return instance{}, instance{}, err
+	}
+	target := requested.Target()
+	if err := requireApprovedTarget(accepted, target.InfrastructureID, target.MachineID, requested.OperationName()); err != nil {
+		return instance{}, instance{}, err
+	}
+	if !rollback.IsExactInverseOf(requested) {
+		return instance{}, instance{}, errors.New("the approved rollback does not undo exactly the approved plan")
+	}
+
+	switch subject := requested.(type) {
+	case plan.LinkDocument:
+		undoing, paired := rollback.(plan.LinkDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		// The role is held against this Auxiliary's own closed list before any
+		// effect, for the reason placementFor exists: a role a plan may name and
+		// this machine has no constants for is refused rather than configured.
+		if _, err := linkPlacementFor(subject.LinkRole); err != nil {
+			return instance{}, instance{}, err
+		}
+		return instance{
+				kind: kindLink, operation: subject.Operation, linkRole: subject.LinkRole,
+			},
+			instance{
+				kind: kindLink, operation: undoing.Operation, linkRole: undoing.LinkRole,
+			},
+			nil
+	case plan.ListenerPeerDocument:
+		undoing, paired := rollback.(plan.ListenerPeerDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		// No endpoint is carried, because the listener has none: the field does
+		// not exist in the document and is not invented here either.
+		return instance{
+				kind: kindLink, operation: subject.Operation, linkRole: plan.LinkRoleListener,
+				peerPublicKey: subject.PeerPublicKey, servicePort: subject.ServicePort,
+			},
+			instance{
+				kind: kindLink, operation: undoing.Operation, linkRole: plan.LinkRoleListener,
+				peerPublicKey: undoing.PeerPublicKey, servicePort: undoing.ServicePort,
+			},
+			nil
+	case plan.InitiatorPeerDocument:
+		undoing, paired := rollback.(plan.InitiatorPeerDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		return instance{
+				kind: kindLink, operation: subject.Operation, linkRole: plan.LinkRoleInitiator,
+				peerPublicKey: subject.PeerPublicKey, peerEndpointHost: subject.PeerEndpointHost,
+				servicePort: subject.ServicePort,
+			},
+			instance{
+				kind: kindLink, operation: undoing.Operation, linkRole: plan.LinkRoleInitiator,
+				peerPublicKey: undoing.PeerPublicKey, peerEndpointHost: undoing.PeerEndpointHost,
+				servicePort: undoing.ServicePort,
+			},
+			nil
+	default:
+		// Unreachable while the plan package's closed interface holds exactly the
+		// three shapes above, and kept as a refusal rather than a panic so that a
+		// fourth shape added there without constants here is refused instead of
+		// applied by accident.
+		return instance{}, instance{}, fmt.Errorf(
+			"the approved plan describes %q, which this Auxiliary has no constants for",
+			requested.OperationName(),
+		)
+	}
+}
+
 // errMismatchedPair is unreachable while the exact-inverse check above compares
 // the two documents whole, and is kept so that a disagreement between that check
 // and these assertions refuses rather than acts on half a pair.
@@ -576,6 +754,19 @@ func v2DocumentMatching(document []byte, signedDigest, role string) (plan.V2Docu
 	return parsed, nil
 }
 
+// v3DocumentMatching returns the schema 3 plan a digest names, or a refusal. It
+// is the same procedure again, over the transcript of the private passage.
+func v3DocumentMatching(document []byte, signedDigest, role string) (plan.V3Document, error) {
+	parsed, err := plan.DecodeV3(document)
+	if err != nil {
+		return nil, fmt.Errorf("carried %s: %w", role, err)
+	}
+	if err := requireSignedDigest(parsed, signedDigest, role); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
 // requireSignedDigest holds one validated document against the digest a human
 // signed for it, and is the one place either schema does so.
 //
@@ -592,6 +783,27 @@ func requireSignedDigest(parsed interface{ SHA256() (string, error) }, signedDig
 		return fmt.Errorf("the carried %s is not the document the approval signed", role)
 	}
 	return nil
+}
+
+// requireCapableMachineFor asks of this machine exactly what the kind of
+// instance being applied needs, and nothing beside it.
+//
+// The passage is the one instance of this product that owns no account, no
+// container and no image: it is a host-level identity held by root, so a
+// container engine and a cgroup hierarchy decide nothing about whether this
+// machine can hold one. Asking for them anyway would refuse a passage on a
+// machine perfectly able to carry it, which is a refusal nothing in the contract
+// asks for. What a passage does need is systemd, because the network manager
+// that holds the interface across a reboot is one of its units — and that is the
+// same reason the managed services need it, read once here for both.
+func requireCapableMachineFor(subject instance, capabilities Capabilities) error {
+	if subject.kind == kindLink {
+		if !capabilities.Systemd {
+			return errors.New("this machine is not run by systemd: the private passage is refused before any write")
+		}
+		return nil
+	}
+	return requireCapableMachine(capabilities, subject.placement)
 }
 
 // requireCapableMachine refuses a machine that cannot run the flow, while that
@@ -681,7 +893,7 @@ func attemptRollback(executor Executor, rollback instance) error {
 	if err != nil {
 		return fmt.Errorf("observe this machine before rolling back: %w", err)
 	}
-	if err := requireCapableMachine(capabilities, rollback.placement); err != nil {
+	if err := requireCapableMachineFor(rollback, capabilities); err != nil {
 		return err
 	}
 	switch rollback.operation {
@@ -703,6 +915,18 @@ func attemptRollback(executor Executor, rollback instance) error {
 	case plan.OperationPublishRoute:
 		_, _, err := publishRoute(executor, rollback)
 		return err
+	case plan.OperationWithdrawLink:
+		_, _, err := withdrawLink(executor, rollback)
+		return err
+	case plan.OperationPrepareLink:
+		_, _, err := prepareLink(executor, rollback)
+		return err
+	case plan.OperationDetachLinkPeer, plan.OperationLeaveLinkPeer:
+		_, _, err := partLinkPeer(executor, rollback)
+		return err
+	case plan.OperationAttachLinkPeer, plan.OperationJoinLinkPeer:
+		_, _, err := joinLinkPeer(executor, rollback)
+		return err
 	default:
 		// Unreachable while the rollback has been proven the exact inverse of an
 		// operation this package applies, and kept as a refusal so that a
@@ -720,6 +944,12 @@ func attemptRollback(executor Executor, rollback instance) error {
 // report of this product carries the conclusions of the machine and never the
 // output of a command.
 func observe(executor Executor, subject instance) Observation {
+	if subject.kind == kindLink {
+		// A passage is left holding other things than a service is, so it is
+		// observed in its own words. Asking for an account and a container it
+		// never had would produce four admissions about things nobody looked at.
+		return observeLink(executor)
+	}
 	where := subject.placement
 	observed := Observation{
 		Account:   observedUnknown,

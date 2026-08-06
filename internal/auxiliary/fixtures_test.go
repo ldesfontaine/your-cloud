@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"sort"
 	"strconv"
@@ -371,6 +372,19 @@ type fakeExecutor struct {
 	probedContentTypes []string
 	verifiedRoutes     []string
 	entrypointChecks   int
+	// The passage's own state. linkPrivateKey is what this fake machine "wrote"
+	// when it was asked for a key, and it is deliberately a value no seam of the
+	// Executor can return: the tests that prove no private material travels grep
+	// for exactly these bytes in everything a run produces, so a leak anywhere
+	// would have to spell them.
+	linkPrivateKey        string
+	linkPublicKey         string
+	linkKeyPresent        bool
+	linkKeysGenerated     int
+	linkActive            bool
+	linkInterfaceRemovals int
+	networkEnablings      int
+	networkReloads        int
 }
 
 func newFakeExecutor() *fakeExecutor {
@@ -624,6 +638,89 @@ func (executor *fakeExecutor) RouteAnswers(routeHost string) error {
 	return executor.fail("RouteAnswers")
 }
 
+// LinkPublicKey answers with the public half alone, exactly as the real machine
+// does. There is no seam here — and none in the interface it implements —
+// through which the private half could be asked for.
+func (executor *fakeExecutor) LinkPublicKey() (string, bool, error) {
+	executor.reads = append(executor.reads, "LinkPublicKey")
+	if err := executor.fail("LinkPublicKey"); err != nil {
+		return "", false, err
+	}
+	if !executor.linkKeyPresent {
+		return "", false, nil
+	}
+	return executor.linkPublicKey, true, nil
+}
+
+// GenerateLinkKey refuses to replace a key that already exists, as the real
+// machine does by creating the file exclusively. A test that could regenerate a
+// key here would prove nothing about a machine that cannot.
+func (executor *fakeExecutor) GenerateLinkKey() (string, error) {
+	executor.effects = append(executor.effects, "GenerateLinkKey")
+	if err := executor.fail("GenerateLinkKey"); err != nil {
+		return "", err
+	}
+	if executor.linkKeyPresent {
+		return "", errors.New("this machine already holds a passage key")
+	}
+	executor.linkKeysGenerated++
+	executor.linkKeyPresent = true
+	executor.linkPrivateKey = fixtureLinkPrivateKey
+	executor.linkPublicKey = fixtureLinkPublicKey
+	return executor.linkPublicKey, nil
+}
+
+func (executor *fakeExecutor) RemoveLinkKey() error {
+	executor.effects = append(executor.effects, "RemoveLinkKey")
+	if err := executor.fail("RemoveLinkKey"); err != nil {
+		return err
+	}
+	executor.linkKeyPresent = false
+	executor.linkPrivateKey = ""
+	executor.linkPublicKey = ""
+	return nil
+}
+
+func (executor *fakeExecutor) LinkInterfaceActive() (bool, error) {
+	executor.reads = append(executor.reads, "LinkInterfaceActive")
+	if err := executor.fail("LinkInterfaceActive"); err != nil {
+		return false, err
+	}
+	return executor.linkActive, nil
+}
+
+func (executor *fakeExecutor) RemoveLinkInterface() error {
+	executor.effects = append(executor.effects, "RemoveLinkInterface")
+	if err := executor.fail("RemoveLinkInterface"); err != nil {
+		return err
+	}
+	executor.linkInterfaceRemovals++
+	executor.linkActive = false
+	return nil
+}
+
+func (executor *fakeExecutor) EnableNetworkManagement() error {
+	executor.effects = append(executor.effects, "EnableNetworkManagement")
+	if err := executor.fail("EnableNetworkManagement"); err != nil {
+		return err
+	}
+	executor.networkEnablings++
+	return nil
+}
+
+// ReloadNetworkConfiguration is what makes the interface appear, exactly as it
+// is on a real machine: the description is on disk first and the manager reads
+// it, so a machine whose files were never written holds no interface.
+func (executor *fakeExecutor) ReloadNetworkConfiguration() error {
+	executor.effects = append(executor.effects, "ReloadNetworkConfiguration")
+	if err := executor.fail("ReloadNetworkConfiguration"); err != nil {
+		return err
+	}
+	executor.networkReloads++
+	executor.linkActive = executor.holds(linkNetdevPath) && executor.holds(linkNetworkPath)
+	return nil
+}
+
 // halfWrittenMachine is what a cut in the middle of a deployment leaves behind:
 // the sheet is on disk, the service was never started, and nothing on the
 // machine says whether the run that wrote it meant to stop there.
@@ -684,18 +781,28 @@ func frozenRoutePair(t *testing.T, operation, host string, port int) plan.Frozen
 }
 
 // The three schema 3 pairs a Controller would have built and transported for the
-// private passage. They exist here so that the window this Auxiliary keeps open
-// on schema 3 is proven against real documents rather than against a schema
-// number written into a schema 2 shape: what must be refused is a whole, valid,
-// canonically frozen pair of the newer contract.
+// private passage.
 //
 // fixturePeerPublicKey is the synthetic key the plan package pins as its own
-// vector — thirty-two bytes counting from one — for the same reason: a key
-// invented here would prove nothing about the one spelling the two
-// implementations agreed on.
+// vector — thirty-two bytes counting from one — so that the two implementations
+// are held against one spelling rather than against two inventions.
+//
+// fixtureLinkPublicKey is what this machine's own preparation reports, and
+// fixtureLinkPrivateKey is what it wrote and what nothing may ever carry. The
+// second is deliberately not a plausible key at all: it is a sentence, so that a
+// test grepping a report or an error for it can only match if something really
+// did carry the private half, and never by coincidence.
 const (
 	fixturePeerPublicKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
 	fixtureEndpointHost  = "vps.lab.your-cloud.test"
+
+	// fixtureOtherPeerPublicKey is a second, equally canonical key, so that a
+	// machine holding a peer the approved plan does not name is a real case
+	// rather than a malformed value refused a layer earlier.
+	fixtureOtherPeerPublicKey = "ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0A="
+
+	fixtureLinkPublicKey  = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8="
+	fixtureLinkPrivateKey = "THIS-PRIVATE-KEY-MUST-NEVER-LEAVE-ITS-MACHINE"
 )
 
 func frozenLinkPair(t *testing.T, operation, role string) plan.Frozen {
@@ -904,5 +1011,118 @@ func routableMachine(port int) *fakeExecutor {
 func publishedRouteMachine(host string, port int) *fakeExecutor {
 	executor := routableMachine(port)
 	executor.hold(routeFragmentPath(host), renderRouteFragment(host, port))
+	return executor
+}
+
+// approvedLink, approvedListenerPeer and approvedInitiatorPeer are the nominal
+// schema 3 subjects of the three operation groups of the private passage.
+func approvedLink(t *testing.T, operation, role string) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenLinkPair(t, operation, role))
+}
+
+func approvedListenerPeer(t *testing.T, operation string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenListenerPeerPair(t, operation, port))
+}
+
+func approvedInitiatorPeer(t *testing.T, operation string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenInitiatorPeerPair(t, operation, port))
+}
+
+// approvedJunction is the junction of one role, or its departure, so that a
+// check about a property both sides share walks the two roles without repeating
+// which of the four operations each of them is written in.
+func approvedJunction(t *testing.T, role string, undoing bool) (*approval.Acceptance, *Input) {
+	t.Helper()
+	if role == plan.LinkRoleListener {
+		operation := plan.OperationAttachLinkPeer
+		if undoing {
+			operation = plan.OperationDetachLinkPeer
+		}
+		return approvedListenerPeer(t, operation, fixturePort)
+	}
+	operation := plan.OperationJoinLinkPeer
+	if undoing {
+		operation = plan.OperationLeaveLinkPeer
+	}
+	return approvedInitiatorPeer(t, operation, fixturePort)
+}
+
+// forgedLinkPlan, forgedListenerPeerPlan and forgedInitiatorPeerPlan render the
+// three closed field lists of schema 3 document by document, for the reason the
+// two other forgers exist: half the documents a refusal matrix presents are
+// documents the plan package refuses to build at all.
+func forgedLinkPlan(t *testing.T, operation, role string, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV3)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"link_role", quotedJSON(t, role)},
+	}, altered)
+}
+
+func forgedListenerPeerPlan(t *testing.T, operation string, port int, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV3)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"peer_public_key", quotedJSON(t, fixturePeerPublicKey)},
+		{"service_port", strconv.Itoa(port)},
+	}, altered)
+}
+
+func forgedInitiatorPeerPlan(t *testing.T, operation string, port int, altered map[string]string) []byte {
+	t.Helper()
+	return forgeDocument(t, [][2]string{
+		{"schema_version", strconv.Itoa(plan.SchemaVersionV3)},
+		{"infrastructure_id", quotedJSON(t, fixtureInfrastructure)},
+		{"machine_id", quotedJSON(t, fixtureMachine)},
+		{"operation", quotedJSON(t, operation)},
+		{"peer_public_key", quotedJSON(t, fixturePeerPublicKey)},
+		{"peer_endpoint_host", quotedJSON(t, fixtureEndpointHost)},
+		{"service_port", strconv.Itoa(port)},
+	}, altered)
+}
+
+// linkMachine is a host that can hold a passage, with nothing of one on it: no
+// key, no description, no interface. It carries none of the container machinery
+// on purpose — a passage runs as root and needs no account, and a machine
+// without Podman holds a tunnel perfectly well.
+func linkMachine() *fakeExecutor {
+	executor := newFakeExecutor()
+	executor.capabilities = Capabilities{Systemd: true}
+	return executor
+}
+
+// preparedLinkMachine is a machine already holding exactly one prepared side of
+// the passage: its own key, both files as the role describes them, and the
+// interface up.
+func preparedLinkMachine(role string) *fakeExecutor {
+	where := linkPlacements[role]
+	executor := linkMachine()
+	executor.linkKeyPresent = true
+	executor.linkPrivateKey = fixtureLinkPrivateKey
+	executor.linkPublicKey = fixtureLinkPublicKey
+	executor.hold(linkNetdevPath, renderLinkNetdev(where))
+	executor.hold(linkNetworkPath, renderLinkNetwork(where))
+	executor.linkActive = true
+	return executor
+}
+
+// joinedLinkMachine is that same machine with the one approved peer attached,
+// exactly as the junction plan of its own role describes it.
+func joinedLinkMachine(role string) *fakeExecutor {
+	where := linkPlacements[role]
+	executor := preparedLinkMachine(role)
+	executor.hold(linkNetdevPath, append(renderLinkNetdev(where),
+		renderLinkPeerSection(where, fixturePeerPublicKey, fixtureEndpointHost)...))
+	executor.hold(linkNetworkPath, append(renderLinkNetwork(where),
+		renderLinkRouteSection(where)...))
 	return executor
 }

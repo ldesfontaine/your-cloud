@@ -71,7 +71,20 @@ type auxiliaryReport struct {
 	// a key is not a conclusion.
 	RouteHost    string `json:"route_host,omitempty"`
 	FragmentPath string `json:"fragment_path,omitempty"`
-	ServiceState string `json:"service_state,omitempty"`
+	// LinkPublicKey is the public half of the passage key the machine that
+	// prepared its own side of the private passage holds. It is the one value of
+	// that palier that is meant to travel: the Controller reads it here as an
+	// observation and carries it, readable, into the junction plan of the other
+	// machine, so the human who approves that plan names exactly the peer they
+	// accept.
+	//
+	// No other operation fills it, and no operation of this product fills
+	// anything with the private half. A private key is born on its machine and
+	// never leaves it, so there is nothing here that could carry one — not in a
+	// success, not in a controlled failure, and not in an observation, which
+	// reports a key present or absent and never by its value.
+	LinkPublicKey string `json:"link_public_key,omitempty"`
+	ServiceState  string `json:"service_state,omitempty"`
 	// Outcome names which conclusion this is, in the closed vocabulary of the
 	// auxiliary package, so that no reader has to tell a rollback from a refusal
 	// by reading a sentence. A read-only diagnostic carries none of these
@@ -244,6 +257,7 @@ func buildAppliedAuxiliaryReport(accepted *approval.Acceptance, application *aux
 	report.UnitPath = application.UnitPath
 	report.RouteHost = application.RouteHost
 	report.FragmentPath = application.FragmentPath
+	report.LinkPublicKey = application.LinkPublicKey
 	report.ServiceState = application.ServiceState
 	report.Outcome = auxiliary.OutcomeApplied
 	report.Changed = application.Changed
@@ -320,6 +334,15 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 			return err
 		}
 	}
+	// The public key of a passage is printed only for the one operation that has
+	// one to report. It is the single value of the private passage a report ever
+	// carries; its private half exists on this machine alone and no line here,
+	// nor any field above, can hold one.
+	if report.LinkPublicKey != "" {
+		if _, err := fmt.Fprintf(writer, "link public key: %s\n", report.LinkPublicKey); err != nil {
+			return err
+		}
+	}
 	// A service state is printed only while there is one to state. A rollback
 	// that failed took that certainty away, and the observation below replaces
 	// it without pretending to be it.
@@ -334,20 +357,26 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 		}
 	}
 	if report.Observed != nil {
-		if _, err := fmt.Fprintf(writer,
-			"observed account: %s\nobserved unit file: %s\nobserved service: %s\nobserved container: %s\n",
-			report.Observed.Account,
-			report.Observed.UnitFile,
-			report.Observed.Service,
-			report.Observed.Container,
-		); err != nil {
-			return err
-		}
-		// The fifth word exists only for a route, because it is the only instance
-		// whose state is a fragment file. It is absent rather than empty
-		// everywhere else, for the same reason it is omitted from the JSON.
-		if report.Observed.Fragment != "" {
-			if _, err := fmt.Fprintf(writer, "observed fragment: %s\n", report.Observed.Fragment); err != nil {
+		// Each word is printed only where the instance that was being applied
+		// actually has the thing it answers for, exactly as each of them is
+		// omitted from the JSON: a route adds the one file it is, a passage
+		// answers for a key, an interface and a peer instead of for an account and
+		// a container it never had, and a word about something nobody looked at
+		// would be neither a fact nor an admission.
+		for _, word := range [][2]string{
+			{"account", report.Observed.Account},
+			{"unit file", report.Observed.UnitFile},
+			{"service", report.Observed.Service},
+			{"container", report.Observed.Container},
+			{"fragment", report.Observed.Fragment},
+			{"link key", report.Observed.LinkKey},
+			{"link interface", report.Observed.LinkInterface},
+			{"link peer", report.Observed.LinkPeer},
+		} {
+			if word[1] == "" {
+				continue
+			}
+			if _, err := fmt.Fprintf(writer, "observed %s: %s\n", word[0], word[1]); err != nil {
 				return err
 			}
 		}
