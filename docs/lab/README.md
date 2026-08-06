@@ -132,6 +132,25 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — audit d'endpoints déclarés, sans mutation et sans scan](v0.1.0-endpoint-audit.md) :
+  passage `quick` du 6 août 2026 pour #36, à la révision `aac5d843`. La lecture
+  seule est **prouvée et non affirmée** : l'empreinte de la machine auditée —
+  chemins, tailles, dates de modification et modes — est identique avant et
+  après sept audits, si bien qu'un fichier réécrit à longueur égale serait vu
+  par sa date. L'endpoint canari est un vrai `sshd` portant la même clé d'hôte,
+  les mêmes comptes et les mêmes algorithmes que l'endpoint déclaré, et ne
+  déviant que sur un point : personne ne le déclare jamais. Il ne gagne pas une
+  connexion — et son **contrôle positif appartient au cas**, une session
+  délibérée y étant ouverte à la fin, sans quoi un journal vide n'aurait rien
+  dit de l'audit et tout du journal. Chaque incompatibilité est assertée par
+  égalité : la machine qui ne dévie que d'un point produit exactement ce
+  refus-là, et celle qui dévie deux fois les nomme tous les deux. Une machine
+  muette est refusée pour n'avoir **pas répondu**, pas pour avoir répondu faux.
+  Une session d'audit ne garde aucun canal pour s'élever, et une recommandation
+  n'installe rien — seule l'approbation exacte en est une. Limite qui commande
+  la lecture du reste : **les machines déviantes sont synthétiques**, aucune
+  vraie Ubuntu ni `aarch64` n'existant dans ce LAB, et le canari vit sur la
+  machine auditée plutôt que sur une troisième machine du réseau.
 - [`v0.1.0` — remplacement explicite d'un Controller, et retrait de ses autorités](v0.1.0-controller-replacement.md) :
   passage `quick` du 5 août 2026 pour #40, le seul palier dont le sujet est ce
   qui se passe **quand on ne sait pas**. `lab-console` est **réellement
