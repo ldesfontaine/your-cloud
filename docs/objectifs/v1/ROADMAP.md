@@ -109,7 +109,29 @@ seule**. Cette fermeture ne vaut pas attestation : aucune matrice native n'a
 couvert ce code et le dernier SHA porteur d'une preuve native reste `8ed2f57`.
 `#52`, `#53` et `#54` restent donc ouvertes et portent cette dette ; une seule
 matrice les couvrira sur un candidat de palier unique à la réinitialisation du
-cycle, vers le 1er septembre 2026. La suite du palier `#13` reprend à `#36`.
+cycle, vers le 1er septembre 2026.
+
+Le mainteneur a ensuite fermé `#36`, `#37`, `#38`, `#39` et `#40` le 6 août
+2026, **sur la même base et sous la même réserve** : chacune est adossée à un
+rapport LAB exécuté sous [`docs/lab/`](../../lab/), chacune porte un
+commentaire de fermeture qui nomme la dette qu'elle emporte, et aucune n'a été
+couverte par une porte hébergée. Le code est intégré à `main` par fast-forward,
+SHA préservés, jusqu'à `e89fae5`. **Le découpage exécutable du palier `#13` est
+donc entièrement coché à l'exception de `#41`**, qui est sa preuve globale et
+qui ne peut pas fermer avant le candidat : elle exige un SHA publié que le
+quota épuisé rend inatteignable jusqu'à la réinitialisation du cycle.
+
+Les deux pièces de `#41` qui ne dépendaient d'aucune porte hébergée sont
+acquises : l'orchestrateur
+[`tests/lab/v0.1.0/prove`](../../../tests/lab/v0.1.0/prove), qui enchaîne les
+passages sous une révision unique et refuse d'annoncer un succès complet à un
+passage partiel, et le harnais
+[`enrolment-bounds`](../../../tests/lab/v0.1.0/enrolment-bounds/), qui frappe un
+parc de soixante-quatre identités réelles et fait refuser la soixante-cinquième
+en annonçant sa représentativité — deux machines réelles sur soixante-quatre.
+Restent hors d'atteinte sans le candidat : les quatre lignes encore planifiées
+de la matrice, et un `assert-clean` vert, que le nom de la VM Windows manuelle
+rend impossible tant qu'elle s'appelle `lab-windows`.
 
 ## État de départ
 
@@ -123,7 +145,7 @@ Le développement produit se poursuit avec l'incrément ouvert décrit ci-dessou
 | `v0.0.1` | oui | oui | oui — artefact unique, cohabitation isolée et refus Relay inclus |
 | `v0.0.2` | oui | oui | oui — mTLS, profil borné, saturation, lacune et reprise |
 | `v0.0.3` | oui — architecture, paramètres et placement des preuves validés | oui — candidat produit Linux/Windows `3b8f81f` | oui — fonctionnel LAB Linux ; porte native finale verte dans `30710037004`, liée au SHA exact par `#9` |
-| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | partiel — #43, #45 et #51 acquises et fusionnées ; #52 en revue dans la PR #69 ; #42 et #35 ouverts | partiel — #43 et #45 prouvés et fermés, #45 sur `c0569d0` dans `30779157351` ; la moitié Linux de #52 est prouvée par le LAB seul, sans porte native |
+| Amorçage et remplacement du Controller | oui — prochain contrat de `v0.1.0` ouvert après `v0.0.3` | oui — tout le découpage exécutable de #13 est fusionné dans `main` jusqu'à `e89fae5` ; seule la preuve globale #41 reste ouverte | partiel — #43 et #45 prouvés et fermés, #45 sur `c0569d0` dans `30779157351` ; #36 à #40 prouvés dans le LAB Linux et fermés le 6 août 2026 **sans porte native**, comme #52 dont la moitié Linux l'est aussi |
 | Autres paliers de `v0.1.0` | proposés, à relire | non | non |
 
 ## Couverture des décisions validées
