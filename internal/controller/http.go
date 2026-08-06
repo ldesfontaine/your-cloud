@@ -173,6 +173,8 @@ func (handler *ControllerHandler) ServeHTTP(response http.ResponseWriter, reques
 		handler.serveMachines(response, request, certificate)
 	case "/v0/recovery-key":
 		handler.serveRecoveryKey(response, request, certificate)
+	case "/v0/probe-plans":
+		handler.serveProbePlans(response, request, certificate)
 	default:
 		if rotationID, ok := deviceRotationRoute(request.URL.Path); ok {
 			handler.serveDeviceRotation(response, request, certificate, rotationID)
@@ -681,6 +683,8 @@ func controllerRouteMethods(path string) ([]string, bool) {
 		return []string{http.MethodGet}, true
 	case "/v0/recovery-key":
 		return []string{http.MethodPut}, true
+	case "/v0/probe-plans":
+		return []string{http.MethodPost}, true
 	}
 	if _, ok := machineRoute(path); ok {
 		return []string{http.MethodPut}, true

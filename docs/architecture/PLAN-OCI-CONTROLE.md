@@ -99,6 +99,32 @@ C'est la première utilisation réelle de `mutate_local_state`, jusqu'ici nommé
 seulement pour être refusé. `diagnose_protocol_read_only` continue de le
 refuser.
 
+## Surface du Controller étendue d'une route
+
+`CONTRAT-V0.0.3.md` fermait la surface métier du Controller à quatre routes ;
+ce texte reste vrai pour ce que `v0.0.3` a prouvé. Le présent contrat étend
+cette surface d'exactement une route, et d'aucune autre :
+
+| Méthode et route | Effet autorisé |
+|---|---|
+| `POST /v0/probe-plans` | construire et geler la paire plan/rollback de la sonde pour une machine de l'inventaire, sans muter aucune machine |
+
+Décisions attachées à cette route :
+
+- Elle emprunte la même authentification de session que les routes métier
+  existantes : aucun nouveau chemin d'autorité, aucun nouveau code d'erreur.
+  Une machine hors inventaire reçoit `422 machine_not_active`, dans la liste
+  fermée existante.
+- L'appartenance à l'inventaire est une **preuve passée** d'enrôlement, et
+  c'est suffisant ici : un plan décrit sans muter, et l'Auxiliaire re-dérive
+  localement toute autorité avant d'agir. La route n'exige donc pas de lecture
+  Relay fraîche ; exiger la preuve au présent reste le contrat des routes qui
+  écrivent l'inventaire.
+- Les deux documents voyagent comme **chaînes JSON portant leurs octets
+  canoniques exacts**, accompagnés de leurs digests. La Console vérifie ainsi
+  les hachages sur les octets reçus sans posséder de ré-encodeur ; c'est la
+  seule forme de transport, il n'en existe pas de seconde.
+
 ## Sonde de validation épinglée
 
 L'image retenue pour la sonde du palier `#14` est **`traefik/whoami`,
