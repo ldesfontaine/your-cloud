@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# The approved services the passage will be asked to bound, deployed on the
+# machine of the LAN by the paths two earlier paliers already proved.
+#
+# Two of them, and the reason there are two is the first honest finding of this
+# proof rather than a convenience:
+#
+#   - the **sonde of `#14`** is what the contract of this palier names as the
+#     reference service the tunnel joins ("le service de référence joint par le
+#     tunnel est la sonde du palier `#14`"). It is deployed here by
+#     `deploy_oci_probe`, the schema 1 path proven at `#86`;
+#   - the **BentoPDF profile of `#15`** is deployed beside it by
+#     `deploy_web_service`, the schema 2 path proven at `#92`.
+#
+# Which of the two the passage can actually be bounded to is not decided here. It
+# is asked of the machine in `play-junction`, and what the machine answers is a
+# constat of this proof either way.
+#
+# Both publish on `127.0.0.1` and on nothing else, which is the constant of the
+# service sheets that makes the initiator's redirection necessary at all.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+# The Auxiliary is deliberately started from root's home — the exact directory a
+# forced SSH command inherits and a service account cannot enter.
+cd /root
+
+step "1. the approved services of the machine of the LAN"
+
+report "the probe account, before anything" "$(account_state "$probe_account")"
+report "the profile account, before anything" "$(account_state "$service_account")"
+
+apply "the sonde of #14 on 127.0.0.1:$probe_port" '"outcome":"applied"' \
+  -operation deploy_oci_probe -port "$probe_port"
+apply "the BentoPDF profile of #15 on 127.0.0.1:$service_port" '"outcome":"applied"' \
+  -operation deploy_web_service -profile bentopdf -port "$service_port"
+
+expect "the probe's service" "$(service_state "$probe_account" "$probe_service")" active
+expect "the profile's service" "$(service_state "$service_account" "$service_service")" active
+expect "the probe's loopback port" "$(port_listening "$probe_port")" open
+expect "the profile's loopback port" "$(port_listening "$service_port")" open
+
+case "$(loopback_answers "$probe_port")" in
+  *Hostname:*) report "a local GET on 127.0.0.1:$probe_port" "answered by whoami" ;;
+  *) red "a local GET on 127.0.0.1:$probe_port" "$(loopback_answers "$probe_port" | tr '\n' ' ')" ;;
+esac
+case "$(loopback_answers "$service_port")" in
+  *'<'*) report "a local GET on 127.0.0.1:$service_port" "answered with a document" ;;
+  *) red "a local GET on 127.0.0.1:$service_port" "$(loopback_answers "$service_port" | tr '\n' ' ')" ;;
+esac
+
+# The sentence of the sheets the whole redirection of `#97` rests on, read from
+# the two sheets themselves rather than assumed.
+for sheet in "$probe_unit" "$service_unit"; do
+  published=$(grep '^PublishPort=' "$sheet" 2>/dev/null || echo none)
+  case "$published" in
+    PublishPort=127.0.0.1:*) report "$(basename "$sheet") publishes on" "$published" ;;
+    *) red "$(basename "$sheet") publishes on" "$published" ;;
+  esac
+done
+
+# The passage has not been asked for anything yet, and nothing of it exists.
+expect "this machine's own passage key, still" "$(present "$link_key")" absent
+expect "the interface, still" "$(interface_state)" absent
+
+verdict "the machine of the LAN holds two managed services, each publishing on its own loopback port and on nothing else, and holds no passage at all"

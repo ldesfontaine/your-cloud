@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# One controlled failure, produced on the real machine by a real host condition,
+# and the approved rollback that follows it.
+#
+# Finding an honest mechanism for this is harder here than in the two earlier
+# paliers, and the reason is worth writing down: every refusal this contract
+# carries fires *before* the first effect, so a refusal is exactly what a
+# controlled failure is not. What is needed is an operation that succeeds at its
+# first effect and then cannot finish.
+#
+# The mechanism is the machine's own filesystem, and nothing is faked. A
+# preparation generates the key first — because networkd reads the path the
+# description gives it, and a description pointing at nothing is an interface
+# that never comes up — and writes the two description files second. So the
+# directory those files live in is made immutable, with `chattr +i`, before the
+# plan is applied: the key is really created, the description really cannot be
+# written, and the Auxiliary really has to undo what it did.
+#
+# That directory is `/etc/systemd/network`, and on this LAB image it is empty and
+# unused: the machine's real interface is configured by netplan, which renders
+# into `/run/systemd/network`. Making it immutable therefore touches nothing this
+# machine depends on, and it is put back in the same script. This is the second
+# and last place this harness changes a machine outside an approved plan.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+network_directory=/etc/systemd/network
+
+restore() { chattr -i "$network_directory" 2>/dev/null || true; }
+trap restore EXIT
+
+step "14. a preparation that fails after its first effect"
+
+# The machine starts from the state the withdrawal left it in.
+expect "this machine's own passage key, before" "$(present "$link_key")" absent
+expect "the interface, before" "$(interface_state)" absent
+report "what the directory to be made immutable holds" \
+  "$(ls -A "$network_directory" | paste -sd, - || echo nothing)"
+report "what really configures this machine's interface" \
+  "$(networkctl status enp1s0 | sed -n 's/^ *Network File: *//p')"
+
+chattr +i "$network_directory"
+report "the description directory" "made immutable for the duration of this step"
+
+status=0
+output=$(fixture -operation prepare_link -link-role "$link_role" \
+  | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/last-report.json"
+report "what the machine concluded" "$(echo "$output" | tr '\n' ' ' | cut -c1-220)"
+
+case "$output" in
+  *'"outcome":"rolled_back_after_controlled_failure"'*)
+    report "the conclusion" "rolled_back_after_controlled_failure"
+    ;;
+  *'"outcome":"applied"'*)
+    red "the conclusion" "the preparation claimed to have applied while it could not write its description"
+    ;;
+  *)
+    red "the conclusion" "$(echo "$output" | tr '\n' ' ' | cut -c1-220)"
+    ;;
+esac
+[[ $status -ne 0 ]] \
+  && report "the exit status" "$status, non-zero as a controlled failure must be" \
+  || red "the exit status" "0"
+
+# What the rollback had to undo is the one thing the preparation had already
+# done: a key existed for the length of one failed operation and does not exist
+# now. It is the whole reason the rollback of a preparation is a withdrawal.
+expect "the key the failed preparation generated" "$(present "$link_key")" absent
+expect "the description it could not write" "$(present "$link_netdev")" absent
+expect "the addressing it never reached" "$(present "$link_network")" absent
+expect "the interface" "$(interface_state)" absent
+expect "the bounding table" "$(link_table_loaded)" absent
+expect "the foreign table this harness posed" "$(foreign_table_loaded)" loaded
+
+restore
+trap - EXIT
+report "the description directory" "immutable bit removed"
+
+step "14b. the same plan, on a machine that can write again"
+
+apply "prepare_link, once the host condition is gone" '"changed":true' \
+  -operation prepare_link -link-role "$link_role"
+expect "the interface" "$(interface_state)" up
+expect "the key's owner and mode" "$(file_owner "$link_key")" "root:systemd-network 640"
+
+apply "withdraw_link, to leave the machine as this step found it" '"changed":true' \
+  -operation withdraw_link -link-role "$link_role"
+expect "the key" "$(present "$link_key")" absent
+expect "the interface" "$(interface_state)" absent
+
+verdict "a preparation that could not write its description undid the key it had just generated, reported the controlled failure, and left the machine holding nothing of a passage"

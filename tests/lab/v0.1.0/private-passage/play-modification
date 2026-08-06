@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Changing a passage is a new plan and never a mutation in place — and a new plan
+# is held against the machine exactly like the first one was.
+#
+# The contract's sentence is "Changer de pair, d'endpoint ou de port est un
+# nouveau plan ; rien ne se modifie en place". This script asks for the port to
+# change, because the port is the value with a rule of its own on this machine:
+# it must name the loopback port of a managed service present. So the new plan is
+# refused before any effect, and the refusal is the constat — a passage cannot be
+# widened towards a port nothing manages, not even by a document a human signed.
+#
+# What must be true afterwards is that the junction already standing is exactly
+# where it was: a refused plan that half-applied would be worse than one that
+# applied, because nobody would know which half.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-modification <peer-public-key> <peer-endpoint-host> <service-port>}
+endpoint=${2:?usage: play-modification <peer-public-key> <peer-endpoint-host> <service-port>}
+bounded_port=${3:?usage: play-modification <peer-public-key> <peer-endpoint-host> <service-port>}
+
+cd /root
+
+step "10. a junction naming another port is a new plan, and this one is refused"
+
+report "the port the standing junction carries" "$bounded_port"
+report "the port this new plan names" "$unmanaged_port, which nothing on this machine publishes"
+
+refuses "a junction towards a port nothing manages" \
+  "no managed service of this machine publishes 127.0.0.1:$unmanaged_port" \
+  -operation join_link_peer -link-role initiator \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$unmanaged_port"
+
+# The standing junction, read again after the refusal. `refuses` already compared
+# the machine with itself; these lines name the three things a reader of this
+# report will want to see by their own names rather than inside one fingerprint.
+matches_bytes "the description of the standing junction" "$link_netdev" \
+  "$(expected_netdev "$peer_key" "$endpoint")"
+expect "the peer the kernel still holds" "$(wg_peers)" "$peer_key"
+if printf '%s\n' "$(link_table_rules)" | grep -qF "tcp dport $bounded_port"; then
+  report "the port the loaded table still bounds" "$bounded_port"
+else
+  red "the port the loaded table still bounds" "$(link_table_rules | tr '\n' ' ')"
+fi
+if printf '%s\n' "$(link_table_rules)" | grep -qF "tcp dport $unmanaged_port"; then
+  red "the port of the refused plan" "it reached the loaded table"
+else
+  report "the port of the refused plan" "absent from the loaded table"
+fi
+
+step "10b. a junction on a machine holding no prepared passage of that role"
+
+# The listener's junction, presented to the initiator. Two sides that are not
+# interchangeable is a rule of the contract and not a consequence of the fields,
+# so it is asked of the machine that holds the other role.
+refuses "the listener's junction, applied to the initiator" \
+  "not interchangeable" \
+  -operation attach_link_peer -link-role listener \
+  -peer-public-key "$peer_key" -service-port "$bounded_port"
+
+step "10c. hostile documents, against a machine that holds a passage"
+
+refuses "one byte of the transported plan changed" \
+  "is not the document the approval signed" \
+  -operation join_link_peer -link-role initiator \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$bounded_port" -hostile altered-plan
+refuses "a signed rollback that undoes another junction" \
+  "does not undo exactly the approved plan" \
+  -operation join_link_peer -link-role initiator \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$bounded_port" -hostile mismatched-rollback
+refuses "an approval whose window has closed" \
+  "has expired" \
+  -operation join_link_peer -link-role initiator \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$bounded_port" -lifetime 300 -age 400
+
+verdict "a port no managed service publishes is refused before any effect, the standing junction is untouched, and nothing of a refused plan reached the table this machine holds"

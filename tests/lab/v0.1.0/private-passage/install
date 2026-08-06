@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Mount the private passage perimeter on one machine of the link.
+#
+# Everything installed here is synthetic and root-owned: one approval anchor
+# minted from a synthetic seed and naming this machine, one empty anti-replay
+# position, the product binary and the fixture that stands in for the Controller
+# and the Console. No key of the passage, no interface, no table, no unit and no
+# managed service: those are what the proof asks the product to create.
+#
+# The perimeter always starts from a machine that holds none of them, because a
+# proof that began from a leftover would be measuring the leftover. The refusals
+# below are hard stops rather than cleanups for the same reason: a machine
+# carrying a passage nobody in this run created is a machine whose state nobody
+# can attribute, and this harness will not silently take somebody else's tunnel
+# away.
+set -euo pipefail
+
+sources=${1:?usage: install <go-sources> <listener|initiator> <machine-id>}
+role=${2:?usage: install <go-sources> <listener|initiator> <machine-id>}
+machine=${3:?usage: install <go-sources> <listener|initiator> <machine-id>}
+export LC_ALL=C.UTF-8
+
+state=/root/lab-private-passage
+anchor_directory=/etc/your-cloud
+link_root=/etc/your-cloud/link
+replay_directory=/var/lib/your-cloud-auxiliary
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+note() { printf '  %-46s %s\n' "$1" "$2"; }
+
+case "$role" in
+  listener | initiator) ;;
+  *) fail "a passage has two roles and $role is not one of them" ;;
+esac
+
+command -v go >/dev/null || fail "the target has no Go toolchain"
+command -v podman >/dev/null || fail "the target has no Podman: run tools/provision-lab"
+command -v newuidmap >/dev/null || fail "the target has no newuidmap: run tools/provision-lab"
+# The three the passage itself needs. `nft` and `sysctl` are named by their
+# absolute paths because the oneshot unit a junction writes names them that way
+# and a systemd unit takes nothing else; `wg` is the harness's own, because the
+# kernel's view of a peer is what this proof reads rather than the file the
+# product wrote.
+[[ -x /usr/sbin/nft ]] || fail "the target has no /usr/sbin/nft: run tools/provision-lab"
+[[ -x /usr/sbin/sysctl ]] || fail "the target has no /usr/sbin/sysctl: run tools/provision-lab"
+command -v wg >/dev/null || fail "the target has no wg: run tools/provision-lab"
+getent group systemd-network >/dev/null \
+  || fail "the target has no systemd-network group: the passage key would stay 0600 and the interface would never come up"
+modinfo wireguard >/dev/null 2>&1 || fail "this kernel carries no WireGuard module"
+
+# The product binary and the fixture, both built from the sources this run
+# synchronised and from nothing already present on the machine. The fixture is
+# built inside the product module because it asks internal/plan for the canonical
+# plan documents; it lives only in this copy and is never a package of the
+# product.
+(cd "$sources" && go build -o /usr/local/bin/your-cloud ./cmd/your-cloud)
+(cd "$sources" && go build -o /usr/local/bin/lab-private-passage-fixture ./labfixture)
+note "product binary" "$(sha256sum /usr/local/bin/your-cloud | cut -d' ' -f1)"
+
+install -d -m 0700 -o root -g root "$state"
+install -d -m 0755 -o root -g root "$anchor_directory"
+install -d -m 0700 -o root -g root "$replay_directory"
+rm -f "$replay_directory/approval-state.json" "$replay_directory/approval-state.lock"
+rm -f "$state"/*.json "$state"/*.txt
+
+printf '%s\n' "$role" >"$state/role"
+
+lab-private-passage-fixture -anchor -epoch 1 -seed 1 -machine "$machine" \
+  >"$anchor_directory/approval-anchor.json"
+chmod 0600 "$anchor_directory/approval-anchor.json"
+note anchor "epoch 1, synthetic seed, machine $machine, role $role"
+
+# The machine must hold nothing of a passage and nothing of the two managed
+# services this proof deploys. Each of these is named separately rather than
+# swept, so that a machine failing this check says which leftover it is.
+[[ ! -e "$link_root" ]] || fail "the machine already holds the passage tree $link_root"
+[[ ! -e /etc/systemd/network/yc-link0.netdev ]] || fail "the machine already describes yc-link0"
+[[ ! -e /etc/systemd/network/yc-link0.network ]] || fail "the machine already addresses yc-link0"
+[[ ! -d /sys/class/net/yc-link0 ]] || fail "the machine already holds the interface yc-link0"
+[[ ! -e /etc/systemd/system/your-cloud-link-rules.service ]] \
+  || fail "the machine already holds the unit that puts a passage's bounds back"
+[[ ! -e /etc/sysctl.d/your-cloud-link.conf ]] || fail "the machine already holds a passage's host relaxation"
+/usr/sbin/nft list table inet your-cloud-link >/dev/null 2>&1 \
+  && fail "the machine already holds the bounding table of a passage"
+
+for account in your-cloud-probe your-cloud-svc-bentopdf; do
+  id -u "$account" >/dev/null 2>&1 && fail "the machine already holds the account $account"
+  [[ ! -e "/var/lib/$account" ]] || fail "the machine already holds the home of $account"
+  for file in /etc/subuid /etc/subgid; do
+    if grep -q "^$account:" "$file" 2>/dev/null; then
+      fail "$file already carries a range for $account — the machine is not stock"
+    fi
+  done
+done
+
+# What manages this machine's real interfaces, read *before* the product is
+# asked to enable a network manager. The contract's addendum says a withdrawal
+# never disables that manager, and the risk this line answers is the other end of
+# the same sentence: a preparation must not take the machine's own networking
+# away either. It is printed rather than judged, because what is correct here is
+# a fact about this LAB image and not a claim of the product.
+note "the primary interface" "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+note "what manages it" \
+  "$(networkctl status enp1s0 2>/dev/null | sed -n 's/^ *Network File: *//p' || echo unknown)"
+note "systemd-networkd, before any plan" \
+  "$(systemctl is-enabled systemd-networkd 2>&1)/$(systemctl is-active systemd-networkd 2>&1)"
+
+# ---------------------------------------------------------------------------
+# The first run of this proof had to create /etc/your-cloud/link by hand: the
+# product made it root:root and networkd, running as `systemd-network`, had no
+# search permission on the directory holding a key it was allowed to read. The
+# product now gives the directory the same group as the key it holds, and this
+# proof exercises exactly that: a stock machine where the directory does not
+# exist is the required start.
+[[ -e "$link_root" ]] && fail "$link_root already exists — the machine is not stock"
+note "the passage directory" "absent, as a stock machine requires; the product creates and groups it"
+
+printf 'ANCHOR=%s\n' "$anchor_directory/approval-anchor.json"
+printf 'REPLAY=%s\n' "$replay_directory/approval-state.json"
+printf 'STATE=%s\n' "$state"
+printf 'ROLE=%s\n' "$role"

@@ -112,6 +112,27 @@ fiche du point d'entrée nomme à la main : sans lui l'entrée ne démarre pas, 
 elle ne se rabat pas sur `pasta`. Chaque étape est idempotente : ce qui est déjà
 en place est laissé tel quel et nommé comme tel.
 
+Les deux machines du passage privé reçoivent enfin un **sol du passage**, et ce
+qu'il contient vaut d'être séparé en trois, parce que ce ne sont pas les mêmes
+affirmations :
+
+- le **noyau** n'installe rien. WireGuard est dans l'arbre de Debian 13 ; le
+  provisionnement vérifie seulement que le module est là, parce qu'une machine
+  dont le noyau n'en a pas décrit une interface qui n'apparaît jamais, et une
+  preuve lirait cela comme un échec du produit ;
+- le **produit** n'ajoute rien non plus sur une machine d'origine : `nftables`
+  et `procps` portent `/usr/sbin/nft` et `/usr/sbin/sysctl`, que l'unité écrite
+  par une jonction nomme par leur chemin absolu, et l'image cloud les livre
+  déjà. Les deux chemins sont donc **vérifiés** plutôt que supposés — un chemin
+  absolu qu'une unité nomme est une promesse sur la machine, pas sur un paquet.
+  Le groupe `systemd-network` est vérifié pour la même raison : c'est de lui que
+  dépend toute l'arithmétique du mode `0640` de la clé ;
+- le seul paquet réellement ajouté est **`wireguard-tools`**, et il l'est pour
+  la *preuve* et non pour le produit. Les clés sont générées par le produit avec
+  le X25519 de la bibliothèque standard et jamais en appelant `wg` ; ce qui a
+  besoin de `wg` est le harnais, qui relit du noyau le pair, ses `AllowedIPs` et
+  la dernière poignée de main plutôt que le fichier que le produit a écrit.
+
 La topologie `quick` compte donc trois machines, et elles ne sont pas
 interchangeables. `lab-console` porte la Console ; `lab-machine-1` tient le rôle
 du mini-PC domestique ; `lab-vps` tient celui du VPS public — c'est la seule
@@ -171,6 +192,29 @@ les plans approuvés un à un, et lit depuis le poste — c'est-à-dire depuis
 l'extérieur de la machine publiée — ce que chaque plan est censé avoir rendu
 vrai. Elle ne crée ni ne détruit aucune topologie, ne parle jamais à
 `lab-machine-1`, et retire ce qu'elle a monté même quand une étape échoue.
+
+Pour le palier du passage privé (`#16`),
+[`tests/lab/v0.1.0/private-passage/prove`](../../tests/lab/v0.1.0/private-passage/prove)
+est l'entrée d'orchestration. C'est la première preuve LAB qui **monte un
+périmètre sur deux machines à la fois** : `lab-machine-1` tient le rôle
+`initiator` — la machine du LAN, qui porte le service borné et ne gagne aucun
+port entrant — et `lab-vps` le rôle `listener`. Elle applique les quatre plans
+dans l'ordre du contrat, porte la clé publique rapportée par la préparation de
+chaque machine dans le plan de jonction de l'autre, redémarre réellement les
+deux machines, puis démonte tout même quand une étape échoue. `lab-console` n'y
+reçoit rien du produit : elle sert d'**observateur hostile**, à qui la preuve
+donne à la main les routes qu'un attaquant se donnerait, et qui les rend. Le
+poste, lui, scanne les deux machines avant et après pour que « aucun port
+entrant de plus » soit une comparaison et non une affirmation. Aucune topologie
+n'est créée ni détruite.
+
+Deux limites d'honnêteté sont portées par le rapport de cette preuve plutôt que
+par une note de bas de page : la topologie `quick` est **plate**, donc l'hôte
+hostile atteint déjà l'adresse propre de `lab-machine-1` avant que le passage
+existe — ce que la preuve constate est qu'il n'en atteint **pas un port de
+plus** ; et un poste pilote peut lui-même porter une adresse de `10.66.66.0/24`
+pour des raisons étrangères au LAB, auquel cas il le dit et laisse
+`lab-console` faire l'observation à sa place.
 
 Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
 sur les sources et contrats réutilisables. La **preuve LAB** sous

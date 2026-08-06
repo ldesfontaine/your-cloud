@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Nothing of the passage exists before an approval, and the machine says so
+# itself.
+#
+# This is the first constat of the palier and it is worth a script of its own:
+# every claim made after the four plans is a difference from what is read here,
+# so a proof that skipped it would be comparing an approved state against
+# nothing.
+#
+# It also poses the one thing this harness deliberately leaves on the machine
+# for the whole run: a foreign nftables table that the product never names. Every
+# later step reads it back, and the departure that deletes `your-cloud-link` by
+# its name must leave this one exactly where it is.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "0. the machine before any approval — role $link_role"
+
+report "the machine this anchor names" "$(machine_id)"
+report "the consumed position" "$(consumed_sequence)"
+
+expect "this machine's own passage key" "$(present "$link_key")" absent
+# The root-owned tree is there and empty, and it is there because this harness
+# put it there: see the DIAGNOSTIC-ONLY note in `install` and the defect it
+# stands in for. Its mode is read back here so that every later constat of this
+# proof is read beside the one line of it the product did not write.
+report "the tree that key will live in (posed by the harness)" "$(stat -c '%U:%G %a' "$link_root")"
+expect "the description of $link_interface" "$(present "$link_netdev")" absent
+expect "the addressing of $link_interface" "$(present "$link_network")" absent
+expect "the interface itself" "$(interface_state)" absent
+expect "the bounding rules on disk" "$(present "$link_rules")" absent
+expect "the unit that puts the bounds back at boot" "$(present "$link_unit")" absent
+expect "the host relaxation of a junction" "$(present "$link_policy")" absent
+expect "the bounding table in the kernel" "$(link_table_loaded)" absent
+expect "the interface-scoped route_localnet" "$(sysctl_value "$route_localnet_key")" unreadable
+expect "route_localnet on every interface at once" "$(sysctl_value net.ipv4.conf.all.route_localnet)" 0
+expect "route_localnet on the primary interface" "$(sysctl_value net.ipv4.conf.enp1s0.route_localnet)" 0
+
+# The kernel's own capability, read before anything asks it for a tunnel: a
+# machine whose kernel has no WireGuard would describe an interface that never
+# appears, and this proof would read that as a product failure rather than as a
+# missing kernel.
+if modinfo wireguard >/dev/null 2>&1; then
+  report "the kernel's WireGuard" "$(modinfo -F filename wireguard)"
+else
+  red "the kernel's WireGuard" "absent"
+fi
+report "the systemd-network group" "$(getent group systemd-network)"
+report "what already manages the real interfaces" \
+  "$(networkctl status enp1s0 2>/dev/null | sed -n 's/^ *Network File: *//p')"
+report "systemd-networkd, before any plan" \
+  "$(systemctl is-enabled systemd-networkd 2>&1)/$(systemctl is-active systemd-networkd 2>&1)"
+
+step "0b. the foreign table this harness poses and the product must never touch"
+
+# A previous partial run of this harness may have left its own table here, and
+# that is the one leftover this script may take away by itself: it is the
+# harness's and not the product's. Everything else is a hard refusal, in
+# `install`.
+remove_foreign_table
+expect "the tables this machine holds" "$(nft_tables)" ""
+pose_foreign_table
+expect "the foreign table, once posed" "$(foreign_table_loaded)" loaded
+report "the tables this machine now holds" "$(nft_tables)"
+
+verdict "the machine holds no key, no interface, no peer, no table of the passage and no host relaxation, and it holds one table this harness posed that the product never names"

@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# Everything this palier claims about what the two machines expose, read from a
+# machine that is neither of them.
+#
+# This script never runs on lab-vps and never on lab-machine-1. It runs on the
+# pilot's own host and, for the one constat that needs root on a third machine,
+# drives lab-console — the two hostile observers the palier names. It speaks to
+# the two machines only over the addresses and ports any other host of that
+# network would use.
+#
+# **The honesty this proof owes its reader is written here rather than in a
+# footnote.** The `quick` topology is one flat network: lab-console and the pilot
+# sit on the same subnet as lab-machine-1, so they can reach lab-machine-1's own
+# address directly, and they could before this passage existed. That is a
+# property of the LAB scenario and not a failure of the product — the reference
+# topology the contract describes puts the machine of the LAN behind a NAT that
+# nothing of this topology reproduces. What can therefore honestly be constated
+# here is not "the machine of the LAN is unreachable", which the topology makes
+# false, but three things that are exactly what the passage is answerable for:
+#
+#   1. the passage adds **no new inbound port** to the machine of the LAN — the
+#      set of ports reachable from outside is byte-identical before and after;
+#   2. the listener adds **exactly one**, the UDP of the tunnel;
+#   3. neither machine becomes a **way towards** the other's tunnel address, and
+#      nothing of the passage answers to an outsider.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$here/../../../.." && pwd)
+labctl="$root/tools/labctl"
+
+stage=${1:?usage: outside <stage> <initiator-address> <listener-address> [port]}
+initiator=${2:?usage: outside <stage> <initiator-address> <listener-address> [port]}
+listener=${3:?usage: outside <stage> <initiator-address> <listener-address> [port]}
+bounded_port=${4:-18180}
+
+export LC_ALL=C.UTF-8
+# The baselines outlive one invocation on purpose: the whole claim of this script
+# is a comparison between a machine before a passage and the same machine after
+# it, and the two readings are taken by two different runs of this file.
+observations="${TMPDIR:-/tmp}/your-cloud-lab-private-passage"
+mkdir -p "$observations"
+
+failures=0
+report() { printf '%-66s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+step() { printf '\n== %s ==\n' "$*"; }
+expect() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    red "$label" "expected [$expected], observed [$observed]"
+  fi
+}
+verdict() {
+  [[ $failures -eq 0 ]] || {
+    echo "FAILED: $failures assertions" >&2
+    exit 1
+  }
+  echo "PASS: $1"
+}
+
+# tcp_surface is every TCP port of one machine that accepts a connection from
+# here, read by a full connect scan. It is the whole port range rather than a
+# list somebody chose, because "no new inbound port" is a claim about the ports
+# nobody thought of as much as about the ones they did.
+tcp_surface() {
+  nmap -Pn -n -T4 -p- --open "$1" 2>/dev/null \
+    | sed -n 's/^\([0-9]*\)\/tcp *open.*/\1/p' | sort -n | paste -sd, -
+}
+
+# udp_answers asks whether one UDP port of one machine is bound, from outside and
+# without root. A connected UDP socket learns of an ICMP port-unreachable as a
+# refusal on its next read; a port something is listening on returns nothing at
+# all. So "refused" means nothing is bound and "silent" means something is.
+udp_answers() {
+  python3 - "$1" "$2" <<'EOF'
+import socket, sys
+address, port = sys.argv[1], int(sys.argv[2])
+probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+probe.settimeout(3)
+try:
+    probe.connect((address, port))
+    probe.send(b"\x01" + b"\x00" * 31)
+    try:
+        probe.recv(64)
+        print("answered")
+    except socket.timeout:
+        print("silent")
+except ConnectionRefusedError:
+    print("refused")
+except OSError as failure:
+    print("error:%s" % failure)
+EOF
+}
+
+reach() {
+  local address=$1 port=$2
+  if timeout 5 bash -c "exec 3<>/dev/tcp/$address/$port" 2>/dev/null; then
+    echo reachable
+  else
+    echo unreachable
+  fi
+}
+
+case "$stage" in
+  before)
+    step "A. from outside, before any plan of the passage"
+    tcp_surface "$initiator" >"$observations/initiator-before.txt"
+    tcp_surface "$listener" >"$observations/listener-before.txt"
+    report "the TCP ports lab-machine-1 accepts, from here" "$(cat "$observations/initiator-before.txt")"
+    report "the TCP ports lab-vps accepts, from here" "$(cat "$observations/listener-before.txt")"
+    expect "UDP 51820 on lab-vps, before" "$(udp_answers "$listener" 51820)" refused
+    expect "UDP 51820 on lab-machine-1, before" "$(udp_answers "$initiator" 51820)" refused
+    # The flat-network honesty, stated as an observation rather than as prose: the
+    # hostile host can already reach lab-machine-1 before this proof does
+    # anything, and it will be able to afterwards. What the passage is answerable
+    # for is that this does not change.
+    report "what this topology already grants a hostile host" \
+      "lab-machine-1:22 is $(reach "$initiator" 22) from here, before any passage exists"
+    verdict "the surface of both machines is recorded, and nothing of the passage answers anywhere"
+    ;;
+
+  after)
+    step "B. from outside, once the passage carries the approved service"
+    [[ -s "$observations/initiator-before.txt" ]] || {
+      echo "FAILED: no baseline was recorded" >&2
+      exit 1
+    }
+    tcp_surface "$initiator" >"$observations/initiator-after.txt"
+    tcp_surface "$listener" >"$observations/listener-after.txt"
+
+    expect "the TCP ports of lab-machine-1, after the passage" \
+      "$(cat "$observations/initiator-after.txt")" "$(cat "$observations/initiator-before.txt")"
+    expect "the TCP ports of lab-vps, after the passage" \
+      "$(cat "$observations/listener-after.txt")" "$(cat "$observations/listener-before.txt")"
+
+    # The one port the passage adds, and the machine it adds it to.
+    expect "UDP 51820 on lab-vps, after" "$(udp_answers "$listener" 51820)" silent
+    expect "UDP 51820 on lab-machine-1, after" "$(udp_answers "$initiator" 51820)" refused
+
+    step "C. from outside, the tunnel itself answers nobody"
+    expect "the bounded service on lab-machine-1's own address" \
+      "$(reach "$initiator" "$bounded_port")" unreachable
+    expect "the bounded service on lab-vps's own address" \
+      "$(reach "$listener" "$bounded_port")" unreachable
+
+    # Whether *this* host can reach the two tunnel addresses is a question this
+    # host may be unable to answer, and saying so is the point.
+    #
+    # `10.66.66.0/24` is reserved by the contract, and a pilot may already hold an
+    # address inside it for reasons that have nothing to do with this LAB — the
+    # project knows this well enough that `labctl` refuses to mutate any machine
+    # carrying `10.66.66.1`. On such a host a probe towards `10.66.66.2` never
+    # leaves the machine, so `unreachable` would be a statement about the pilot's
+    # own routing table and not about the passage. It is therefore read, named and
+    # deferred rather than dressed up as a constat: `lab-console`, which holds no
+    # address of that subnet, makes this observation in stage D below.
+    own=$(ip -4 -brief address show | awk '$3 ~ /^10\.66\.66\./ || $4 ~ /^10\.66\.66\./ {print $1"="$3}' | paste -sd' ' -)
+    if [[ -n "$own" ]]; then
+      report "this host holds an address of the reserved subnet" \
+        "$own — a probe from here towards 10.66.66.0/24 never leaves this machine"
+      report "so the two tunnel addresses are not probed from here" \
+        "the observation is made by lab-console in stage D, which holds none"
+    else
+      expect "the listener's tunnel address, from here" "$(reach 10.66.66.1 "$bounded_port")" unreachable
+      expect "the initiator's tunnel address, from here" "$(reach 10.66.66.2 "$bounded_port")" unreachable
+      report "the route this host has towards the reserved subnet" \
+        "$(ip route get 10.66.66.2 2>&1 | head -1)"
+    fi
+
+    step "D. from a third machine with root, neither machine relays anything"
+    # lab-console is the hostile observer the palier names. It is given, by hand,
+    # exactly what an attacker would give itself: a route towards the tunnel
+    # address through each of the two machines in turn. Both attempts must fail,
+    # and the routes are taken away again whatever happens.
+    # The observer is held against the same rule before it is believed: a
+    # lab-console that itself carried an address of the reserved subnet could not
+    # make this observation either.
+    console_own=$("$labctl" ssh lab-console -- \
+      "ip -4 -brief address show | grep -c 10[.]66[.]66[.] || true" 2>/dev/null | tr -d '\r' | head -1)
+    expect "addresses of the reserved subnet lab-console holds of its own" "${console_own:-unknown}" 0
+
+    for relay in "$initiator" "$listener"; do
+      "$labctl" ssh lab-console -- \
+        "ip route replace 10.66.66.2/32 via $relay 2>/dev/null; \
+         ip route replace 10.66.66.1/32 via $relay 2>/dev/null" >/dev/null 2>&1 || true
+      for target in 10.66.66.1 10.66.66.2; do
+        observed=$("$labctl" ssh lab-console -- \
+          "timeout 5 bash -c 'exec 3<>/dev/tcp/$target/$bounded_port' 2>/dev/null \
+           && echo reachable || echo unreachable" 2>/dev/null | tr -d '\r')
+        expect "lab-console -> $target:$bounded_port, routed through $relay" "$observed" unreachable
+      done
+      "$labctl" ssh lab-console -- \
+        "ip route del 10.66.66.2/32 via $relay 2>/dev/null; \
+         ip route del 10.66.66.1/32 via $relay 2>/dev/null" >/dev/null 2>&1 || true
+    done
+    expect "the routes lab-console is left holding towards the reserved subnet" \
+      "$("$labctl" ssh lab-console -- 'ip route show | grep -c 10[.]66[.]66[.] || true' 2>/dev/null | tr -d '\r' | head -1)" 0
+
+    verdict "the machine of the LAN exposes not one port it did not expose before, the listener adds exactly the tunnel's UDP, and no third machine can route itself into the passage through either of them"
+    ;;
+
+  removed)
+    step "E. from outside, once nothing of the passage remains"
+    tcp_surface "$initiator" >"$observations/initiator-removed.txt"
+    tcp_surface "$listener" >"$observations/listener-removed.txt"
+    expect "the TCP ports of lab-machine-1, at the end" \
+      "$(cat "$observations/initiator-removed.txt")" "$(cat "$observations/initiator-before.txt")"
+    expect "the TCP ports of lab-vps, at the end" \
+      "$(cat "$observations/listener-removed.txt")" "$(cat "$observations/listener-before.txt")"
+    expect "UDP 51820 on lab-vps, at the end" "$(udp_answers "$listener" 51820)" refused
+    expect "UDP 51820 on lab-machine-1, at the end" "$(udp_answers "$initiator" 51820)" refused
+    verdict "both machines are back to the surface they had before this proof mounted anything"
+    ;;
+
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 2
+    ;;
+esac

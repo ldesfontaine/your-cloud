@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# What the passage carries, and everything it refuses to carry, asked from the
+# listener — the machine at the public end of the tunnel.
+#
+# This is the constat the whole palier exists for. It runs on `lab-vps` because
+# the claim is "depuis le VPS, par le tunnel": a machine reporting on its own
+# reachability from itself would have proven nothing.
+#
+# One limit of this script is named here rather than left to be discovered. Every
+# refusal read below is read at the *first* layer the traffic meets, which is the
+# listener's own output chain: `oifname yc-link0 drop`. With that table posed,
+# nothing this machine sends can reach the initiator's own input chain, so the
+# second layer — the initiator's `drop` and the fact that its redirection chooses
+# only the approved port — cannot be isolated from here. It is asserted where it
+# can be: from the bytes of the table the initiator's kernel holds, from the
+# routing decisions its kernel makes, and from the unit suite. The report says so.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+bounded_port=${1:?usage: play-tunnel <service-port> <initiator-lan-address>}
+initiator_lan=${2:?usage: play-tunnel <service-port> <initiator-lan-address>}
+
+cd /root
+
+# reach_through says whether one TCP port of the peer is reachable through the
+# tunnel at all. A drop is a timeout rather than a refusal, so the timeout is
+# short and the two are told apart by name.
+reach_through() {
+  local port=$1
+  if timeout 5 bash -c "exec 3<>/dev/tcp/$peer_address/$port" 2>/dev/null; then
+    echo reachable
+  else
+    echo unreachable
+  fi
+}
+
+step "5. the tunnel is established"
+
+report "the peer this machine holds" "$(wg_peers)"
+if handshake=$(handshake_within 60); then
+  report "the latest handshake" "$handshake"
+else
+  red "the latest handshake" "$handshake"
+fi
+report "what has crossed it" "$(wg_transfer)"
+report "the endpoint the listener learned" "$(wg_endpoints)"
+
+step "6. through the tunnel, exactly one couple passes"
+
+answer=$(curl --silent --show-error --max-time 8 "http://$peer_address:$bounded_port/" 2>&1 || true)
+case "$answer" in
+  *'<'* | *Hostname:*)
+    report "GET http://$peer_address:$bounded_port/ from the VPS" \
+      "answered by the approved service ($(printf '%s' "$answer" | wc -c) bytes)"
+    ;;
+  *) red "GET http://$peer_address:$bounded_port/ from the VPS" "$(printf '%s' "$answer" | tr '\n' ' ' | cut -c1-140)" ;;
+esac
+
+step "7. through the tunnel, everything else is refused"
+
+# Which layer these refusals are read at is stated before they are read, because
+# the answer changes what they prove.
+#
+# Two independent layers stand between this machine and the approved service: the
+# listener's own output chain, which drops anything leaving yc-link0 that is not
+# the approved couple, and — at the other end — the initiator's redirection,
+# which only ever chooses the approved port as a destination, and its input
+# chain, which drops the rest. With both posed, every refusal below is decided by
+# the first and the second is never reached, so it cannot be isolated from here.
+# With the listener's table absent, the very same probes travel the tunnel and
+# are decided by the initiator alone.
+if [[ "$(link_table_loaded)" == loaded ]]; then
+  report "which layer these refusals are read at" \
+    "the listener's own output chain, posed: the initiator's own bounds are not reached from here"
+else
+  report "which layer these refusals are read at" \
+    "the initiator's alone: this machine holds no bounding table, so these packets really cross the tunnel"
+fi
+
+expect "SSH on $peer_address:22, through the tunnel" "$(reach_through 22)" unreachable
+expect "the other managed service on $peer_address:$probe_port" \
+  "$(reach_through "$probe_port")" unreachable
+expect "a port nothing at all listens on, $peer_address:$unmanaged_port" \
+  "$(reach_through "$unmanaged_port")" unreachable
+
+# The LAN behind the initiator is never announced and never routed: AllowedIPs is
+# one /32 and the route the junction wrote names that one address. A LAN address
+# is therefore not something the passage refuses — it is something the passage
+# was never a way towards, and the routing table is where that is read.
+through_tunnel=$(ip -4 route show dev "$link_interface" | paste -sd'; ' -)
+# Exactly one destination, and it is the peer's own /32. The comparison is on the
+# set of destinations rather than on the whole line, because the attributes a
+# kernel prints beside a route are its business and the number of routes is the
+# claim.
+destinations=$(ip -4 route show dev "$link_interface" | awk '{print $1}' | sort | paste -sd, -)
+expect "what this machine routes into the tunnel" "$destinations" "$peer_address"
+report "the route itself" "$through_tunnel"
+lan_route=$(ip route get "$initiator_lan" 2>/dev/null | head -1)
+case "$lan_route" in
+  *"dev $link_interface"*) red "the LAN address of the initiator" "routed into the tunnel: $lan_route" ;;
+  *) report "the LAN address of the initiator" "not routed into the tunnel: $lan_route" ;;
+esac
+# And a second address of the reserved subnet, which no AllowedIPs allows: the
+# kernel has nowhere to send it.
+if timeout 5 bash -c "exec 3<>/dev/tcp/10.66.66.9/$bounded_port" 2>/dev/null; then
+  red "another address of the reserved subnet" "reachable"
+else
+  report "another address of the reserved subnet" "unreachable: no AllowedIPs, no route"
+fi
+
+step "8. what the listener adds to its own machine, and what it does not"
+
+report "the bounding table this machine holds right now" "$(link_table_loaded)"
+expect "the tunnel's UDP port, in this machine's own set" "$(udp_port_bound "$link_listen_port")" bound
+expect "any new TCP port" "$(port_listening "$bounded_port")" closed
+expect "the foreign table this harness posed" "$(foreign_table_loaded)" loaded
+
+verdict "the tunnel carries the one approved couple and nothing else: SSH, every other port, an address of the reserved subnet nobody allowed and the LAN behind the initiator are all out of its reach"

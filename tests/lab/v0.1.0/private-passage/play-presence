@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# The one question this palier's own contract answers differently from this
+# palier's own code, asked of the machine rather than of either text.
+#
+# `PASSAGE-PRIVE-WIREGUARD.md` says, in the section that describes what this very
+# proof must constate: "Le service de référence joint par le tunnel est la
+# **sonde du palier `#14`**, déployée sur la machine du LAN par le chemin déjà
+# prouvé". The presence rule the `#97` addendum installs says something narrower:
+# the approved `service_port` must name the loopback port of a *managed service*,
+# read exactly as the route of `#15` reads it — and that reading walks the closed
+# list of **service profiles**, which the sonde of `#14` is not a member of.
+#
+# The two sentences cannot both be true of one machine, so the machine is asked.
+# Whatever it answers is a constat, and the port the rest of this proof bounds
+# the passage to is chosen from the answer rather than assumed by the harness.
+#
+# It runs on the initiator, because the initiator is the machine the service
+# lives on and the only one the presence rule is held against.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-presence <peer-public-key> <peer-endpoint-host>}
+endpoint=${2:?usage: play-presence <peer-public-key> <peer-endpoint-host>}
+
+cd /root
+
+step "3. can the passage be bounded to the service the contract names?"
+
+report "the sonde of #14 answers on" "127.0.0.1:$probe_port"
+report "the profile of #15 answers on" "127.0.0.1:$service_port"
+
+before=$(fingerprint)
+status=0
+output=$(fixture -operation join_link_peer -link-role initiator \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$probe_port" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/presence-answer.txt"
+
+if [[ $status -eq 0 ]]; then
+  # The contract's own reference service is accepted. The harness then bounds the
+  # rest of the proof to it, and undoes this junction first so that the four
+  # plans are played in the contract's order rather than with the fourth already
+  # applied.
+  report "a junction bounded to the sonde of #14" "accepted: $(echo "$output" | tr '\n' ' ')"
+  apply "that junction, undone so the four plans run in order" '"outcome":"applied"' \
+    -operation leave_link_peer -link-role initiator \
+    -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+    -service-port "$probe_port"
+  printf '%s\n' "$probe_port" >"$state/bounded-port"
+  report "the port this proof bounds the passage to" "$probe_port, the sonde of #14"
+else
+  case "$output" in
+    *"no managed service of this machine publishes 127.0.0.1:$probe_port"*)
+      report "a junction bounded to the sonde of #14" \
+        "refused: no managed service of this machine publishes 127.0.0.1:$probe_port"
+      unchanged "that refusal, zero effect" "$before"
+      divergence \
+        "the contract names the sonde of #14 as the service the tunnel joins, and the machine refuses to bound the passage to it" \
+        "requireBoundedService reads publishesLoopbackPort, which walks the closed list of service profiles (internal/auxiliary/profile.go: profilePlacements holds bentopdf alone). The sonde of #14 has its own placement and is not in that list, so its loopback port is a port 'nothing manages' as far as a junction is concerned. Either the contract's reference service or the presence rule's reading has to move; this proof bounds the passage to the BentoPDF profile of #15 instead and says so everywhere."
+      printf '%s\n' "$service_port" >"$state/bounded-port"
+      report "the port this proof bounds the passage to" "$service_port, the profile of #15"
+      ;;
+    *)
+      red "a junction bounded to the sonde of #14" \
+        "refused for another reason: $(echo "$output" | tr '\n' ' ')"
+      printf '%s\n' "$service_port" >"$state/bounded-port"
+      ;;
+  esac
+fi
+
+# Whichever of the two it is, the machine still holds no junction: the four plans
+# of the contract have not been played yet.
+expect "the peers the kernel holds, after this question" "$(wg_peers)" none
+expect "the bounding table, after this question" "$(link_table_loaded)" absent
+
+printf 'BOUNDED_PORT=%s\n' "$(cat "$state/bounded-port")"
+verdict "the machine has said which of its two managed services a junction may be bounded to, and holds no junction"

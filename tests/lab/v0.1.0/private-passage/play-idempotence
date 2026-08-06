@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# The same state, asked for again, is not an action — for both plans this machine
+# holds.
+#
+# Fresh approvals, at the next position this machine's own anti-replay file
+# allows, carrying the very documents that were applied before. What must not
+# happen is anything at all: no key regenerated, no file rewritten, no interface
+# recreated, no handshake lost.
+#
+# The interface index is the reading that a rewritten file could not fake: the
+# kernel mints a new ifindex for every device it creates, so a replay that took
+# the tunnel down and put it back would be visible here even if every byte on
+# disk matched.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-idempotence <peer-public-key> <peer-endpoint-host> <service-port>}
+endpoint=${2:?usage: play-idempotence <peer-public-key> <peer-endpoint-host> <service-port>}
+bounded_port=${3:?usage: play-idempotence <peer-public-key> <peer-endpoint-host> <service-port>}
+
+cd /root
+
+operation=attach_link_peer
+[[ "$link_role" == initiator ]] && operation=join_link_peer
+
+step "9. the four plans, replayed on the $link_role"
+
+key_mtime=$(file_mtime "$link_key")
+netdev_mtime=$(file_mtime "$link_netdev")
+rules_mtime=$(file_mtime "$link_rules")
+index=$(interface_index)
+handshake=$(wg_handshake)
+public_key=$(cat "$state/own-public-key.txt")
+before=$(fingerprint)
+
+report "the interface index before the replay" "$index"
+report "the latest handshake before the replay" "$handshake"
+
+apply "prepare_link replayed" '"changed":false' \
+  -operation prepare_link -link-role "$link_role"
+expect "the key it reports is the very same" "$(json_field link_public_key)" "$public_key"
+
+apply "$operation replayed" '"changed":false' \
+  -operation "$operation" -link-role "$link_role" \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$bounded_port"
+
+expect "the key was not regenerated" "$(file_mtime "$link_key")" "$key_mtime"
+expect "the description was not even touched" "$(file_mtime "$link_netdev")" "$netdev_mtime"
+expect "the bounding rules were not even touched" "$(file_mtime "$link_rules")" "$rules_mtime"
+expect "the interface did not flap" "$(interface_index)" "$index"
+expect "the peer is still the one peer" "$(wg_peers)" "$peer_key"
+expect "the unit is still enabled" "$(unit_enabled)" enabled
+expect "the bounding table is still loaded" "$(link_table_loaded)" loaded
+
+# A handshake that went backwards would mean the tunnel was rebuilt; one that
+# moved forward is the keepalive doing its work through an interface nothing
+# touched. Both are correct, and a handshake that returned to zero is not.
+now=$(wg_handshake)
+if [[ "$now" -ge "$handshake" && "$now" != 0 ]]; then
+  report "the handshake across the replay" "continuous ($handshake then $now)"
+else
+  red "the handshake across the replay" "was $handshake and is now $now"
+fi
+
+unchanged "the two replayed plans, together" "$before"
+
+verdict "replaying both plans of this machine changed nothing: the key was not regenerated, no file was touched, the interface was not recreated and the tunnel was never lost"

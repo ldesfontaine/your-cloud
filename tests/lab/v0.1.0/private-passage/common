@@ -1,0 +1,533 @@
+# Shared observations of the private passage perimeter, sourced by every script
+# that runs on either machine of the link. It asserts nothing by itself: it is
+# the vocabulary the judging scripts speak, so that a fact read before a refusal
+# and the same fact read after it are read by the same lines.
+#
+# Everything here is read-only except where a function says otherwise, and the
+# two scripts allowed to change a machine outside an approved plan are `remove`,
+# which takes the perimeter away, and `play-failure`, which produces one real
+# host condition and puts it back — both say so where they do it.
+#
+# The two machines source the same file. What differs between them is written
+# once, at the bottom, and read from the role this machine's perimeter was
+# mounted with.
+
+export LC_ALL=C.UTF-8
+
+state=/root/lab-private-passage
+anchor=/etc/your-cloud/approval-anchor.json
+replay=/var/lib/your-cloud-auxiliary/approval-state.json
+
+# Everything the product owns of a passage on this machine. Not one of these
+# paths is a value of a plan: they are constants of the contract, repeated here
+# so that what the machine holds is compared against a constant this harness
+# wrote rather than against whatever the machine happens to answer.
+link_root=/etc/your-cloud/link
+link_key="$link_root/private.key"
+link_rules="$link_root/rules.nft"
+link_interface=yc-link0
+link_netdev="/etc/systemd/network/$link_interface.netdev"
+link_network="/etc/systemd/network/$link_interface.network"
+link_policy=/etc/sysctl.d/your-cloud-link.conf
+link_unit_name=your-cloud-link-rules.service
+link_unit="/etc/systemd/system/$link_unit_name"
+link_table_family=inet
+link_table_name=your-cloud-link
+link_listen_port=51820
+listener_address=10.66.66.1
+initiator_address=10.66.66.2
+route_localnet_key="net.ipv4.conf.$link_interface.route_localnet"
+
+# The two managed services of this proof, and the port neither of them
+# publishes.
+#
+#   probe_port     the sonde of `#14`, which the contract of this palier names as
+#                  the reference service the tunnel joins;
+#   service_port   the loopback port of the BentoPDF profile of `#15`, which is
+#                  what the passage is actually bounded to here — the report says
+#                  in full why the two are not the same port;
+#   unmanaged_port a port inside the approvable range that no managed service of
+#                  this machine ever publishes, so that the refusal it draws is
+#                  about the machine's own state and not about a bound the plan
+#                  validation already holds.
+probe_port=18080
+service_port=18180
+unmanaged_port=18181
+
+# The account and sheet of each of the two managed services, named exactly as the
+# two paliers that proved them named them.
+probe_account=your-cloud-probe
+probe_home="/var/lib/$probe_account"
+probe_unit="$probe_home/.config/containers/systemd/$probe_account.container"
+probe_service="$probe_account.service"
+
+service_account=your-cloud-svc-bentopdf
+service_home="/var/lib/$service_account"
+service_unit="$service_home/.config/containers/systemd/$service_account.container"
+service_service="$service_account.service"
+
+# The foreign table this harness poses on both machines before the passage
+# exists. It is not the product's and the product never names it: what it proves
+# is that a removal deleting `your-cloud-link` by name leaves the firewall a
+# machine holds by itself exactly where it was.
+foreign_table_name=lab-foreign-table
+
+failures=0
+
+report() { printf '%-66s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+step() { printf '\n== %s ==\n' "$*"; }
+
+verdict() {
+  [[ $failures -eq 0 ]] || {
+    echo "FAILED: $failures assertions" >&2
+    exit 1
+  }
+  if [[ $defects -gt 0 ]]; then
+    echo "PASS with $defects product defect(s) reported above: $1"
+  else
+    echo "PASS: $1"
+  fi
+}
+
+# defect names something the machine does that the product did not intend, in
+# full, and lets the rest of the palier run.
+#
+# It deliberately does not count as a failed assertion. A defect stops *its own*
+# path — the assertions it makes impossible are not judged — and everything the
+# palier can still constate is still constated, because a proof that stopped at
+# the first defect would have to be re-run from scratch for every one after it.
+# The run does not pass: `prove` reads these markers out of the log and reports
+# the outcome as failed whatever the assertion count is.
+defects=0
+defect() {
+  defects=$((defects + 1))
+  printf '\n!! PRODUCT DEFECT: %s\n' "$1"
+  printf '%s\n' "$2" | sed -e 's/^/   /'
+  printf '\n'
+}
+
+# divergence names a place where the machine and one of this project's own
+# written contracts do not agree, without turning it into a failed assertion.
+#
+# It exists because a proof that could only say "pass" or "fail" would have to
+# choose between stopping at the first disagreement and hiding it. What a
+# disagreement between a contract and an implementation deserves is to be named
+# in full, carried into the report, and left for the humans who own both texts to
+# resolve — while the rest of the palier is still exercised.
+divergences=0
+divergence() {
+  divergences=$((divergences + 1))
+  printf '\n!! DIVERGENCE %d: %s\n   %s\n\n' "$divergences" "$1" "$2"
+  printf '%s\n   %s\n' "$1" "$2" >>"$state/divergences.txt"
+}
+
+expect() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    red "$label" "expected [$expected], observed [$observed]"
+  fi
+}
+
+# --- what this machine holds of the passage ---------------------------------
+
+file_owner() { stat -c '%U:%G %a' "$1" 2>/dev/null || echo absent; }
+
+file_digest() {
+  [[ -f "$1" ]] || {
+    echo absent
+    return
+  }
+  sha256sum "$1" | cut -d' ' -f1
+}
+
+file_mtime() { stat -c %Y "$1" 2>/dev/null || echo absent; }
+
+present() { [[ -e "$1" ]] && echo present || echo absent; }
+
+# interface_state is read from the kernel's own files rather than from a tool's
+# summary of them, exactly as the product reads it: an absent directory is an
+# absent interface, and the flags file is what the kernel itself says about the
+# one that is there.
+interface_state() {
+  [[ -d "/sys/class/net/$link_interface" ]] || {
+    echo absent
+    return
+  }
+  local flags
+  flags=$(cat "/sys/class/net/$link_interface/flags")
+  (((flags & 0x1) != 0)) && echo up || echo down
+}
+
+# interface_index is what a flap cannot survive: the kernel mints a new ifindex
+# for every interface it creates, so a replay that recreated the device would be
+# visible here even if every file matched.
+interface_index() { cat "/sys/class/net/$link_interface/ifindex" 2>/dev/null || echo absent; }
+
+interface_address() {
+  ip -4 -brief address show "$link_interface" 2>/dev/null | awk '{print $3}' | paste -sd, - \
+    || echo absent
+}
+
+# wg_* read the kernel's own view of the tunnel rather than the file the product
+# wrote. The distinction is the whole reason `wg` is on these machines: a peer
+# written into a .netdev and a peer the kernel holds are two different claims,
+# and the one this proof needs is the second.
+# Each of these reports `none` for "the kernel holds none", and that has to be
+# said explicitly: `wg show` answers a machine with no peer by printing nothing
+# at all and succeeding, so a `|| echo none` would never fire and an empty
+# reading would be compared against the word.
+#
+# The fields are separated by tabs and a value may itself contain spaces, so the
+# separator is named rather than left to the default splitting.
+wg_field() {
+  local value
+  value=$(wg show "$link_interface" "$1" 2>/dev/null | awk -F'\t' '{print $2}' | paste -sd, -)
+  echo "${value:-none}"
+}
+
+wg_peers() {
+  local value
+  value=$(wg show "$link_interface" peers 2>/dev/null | paste -sd, -)
+  echo "${value:-none}"
+}
+
+wg_allowed_ips() { wg_field allowed-ips; }
+
+wg_endpoints() { wg_field endpoints; }
+
+wg_keepalive() { wg_field persistent-keepalive; }
+
+wg_listen_port() {
+  local value
+  value=$(wg show "$link_interface" listen-port 2>/dev/null)
+  echo "${value:-none}"
+}
+
+wg_public_key() {
+  local value
+  value=$(wg show "$link_interface" public-key 2>/dev/null)
+  echo "${value:-none}"
+}
+
+# wg_handshake is seconds since the epoch, or 0 when the two ends have never
+# spoken. It is what says the tunnel is established rather than merely described.
+wg_handshake() {
+  local value
+  value=$(wg show "$link_interface" latest-handshakes 2>/dev/null | awk -F'\t' '{print $2}' | head -1)
+  echo "${value:-0}"
+}
+
+wg_transfer() {
+  local value
+  value=$(wg show "$link_interface" transfer 2>/dev/null | awk -F'\t' '{print $2 " received / " $3 " sent"}' | head -1)
+  echo "${value:-nothing}"
+}
+
+# handshake_within waits for the two ends to speak, and says how long it took.
+# It is a wait rather than a single reading because a handshake is a fact about
+# two machines: the initiator's keepalive drives it, and the listener learns of
+# it when the packet arrives.
+handshake_within() {
+  local bound=$1 attempt now handshake
+  for attempt in $(seq 1 "$bound"); do
+    handshake=$(wg_handshake)
+    if [[ "$handshake" != 0 ]]; then
+      now=$(date -u +%s)
+      echo "$((now - handshake))s ago (after ${attempt}s)"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "never within ${bound}s"
+  return 1
+}
+
+# --- what the contract says the two files must contain -----------------------
+#
+# These render, from the constants of the contract alone, the exact bytes each
+# file is supposed to carry. They exist so that "the machine wrote the right
+# file" is a byte comparison against a text written here rather than a glance at
+# a few greps: a `[Route]` in the wrong section, an `AllowedIPs` one prefix too
+# wide or an `Endpoint` on the listener would all pass a grep and none of them
+# passes this.
+#
+# They are deliberately a second spelling of what internal/auxiliary renders. A
+# harness that asked the product for the expected bytes would be asking the
+# accused to write the verdict.
+
+product_header() {
+  cat <<'EOF'
+# Written by your-cloud auxiliary from one approved plan. Do not edit: this
+# machine compares this file byte for byte against the plan it is given, and an
+# edit here is a drift that requires a new approved plan rather than a repair.
+EOF
+}
+
+# expected_netdev [peer-public-key] [peer-endpoint-host]
+#
+# With no argument it is the head a preparation owns; with a key it is that head
+# followed by the tail exactly one junction owns.
+expected_netdev() {
+  local peer_key=${1:-} endpoint=${2:-}
+  product_header
+  printf '[NetDev]\nName=%s\nKind=wireguard\nDescription=Your Cloud private passage (%s)\n\n' \
+    "$link_interface" "$link_role"
+  printf '[WireGuard]\nPrivateKeyFile=%s\n' "$link_key"
+  # The listening port exists on the listener alone: a machine that never answers
+  # must not hold a socket that could.
+  [[ "$link_role" == listener ]] && printf 'ListenPort=%d\n' "$link_listen_port"
+  [[ -n "$peer_key" ]] || return 0
+  printf '\n[WireGuardPeer]\nPublicKey=%s\nAllowedIPs=%s/32\n' "$peer_key" "$peer_address"
+  # The endpoint and the keepalive exist on the initiator alone: the listener has
+  # nowhere to reach and nothing to keep open, so its section carries neither.
+  [[ "$link_role" == initiator ]] \
+    && printf 'Endpoint=%s:%d\nPersistentKeepalive=25\n' "$endpoint" "$link_listen_port"
+  return 0
+}
+
+# expected_network [with-route]
+#
+# The `[Route]` tail is what a junction adds, and it exists because both
+# addresses are /32: without one line naming the peer's own address on this
+# interface the tunnel would be established and unusable.
+expected_network() {
+  product_header
+  printf '[Match]\nName=%s\n\n[Network]\nAddress=%s/32\n' "$link_interface" "$own_address"
+  [[ -n "${1:-}" ]] || return 0
+  printf '\n[Route]\nDestination=%s/32\nScope=link\n' "$peer_address"
+  return 0
+}
+
+# matches_bytes compares a file on the machine with the bytes the contract says
+# it must carry, and names the difference rather than the fact that there is one.
+matches_bytes() {
+  local label=$1 path=$2 expected=$3 observed
+  if [[ ! -f "$path" ]]; then
+    red "$label" "$path is absent"
+    return
+  fi
+  observed=$(cat "$path")
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$(wc -c <"$path") bytes, identical to the contract's"
+  else
+    red "$label" "$(diff <(printf '%s\n' "$expected") "$path" | tr '\n' '|')"
+  fi
+}
+
+nft_tables() { /usr/sbin/nft list tables 2>/dev/null | paste -sd'; ' - || echo none; }
+
+link_table_loaded() {
+  /usr/sbin/nft list table "$link_table_family" "$link_table_name" >/dev/null 2>&1 \
+    && echo loaded || echo absent
+}
+
+link_table_rules() {
+  /usr/sbin/nft --stateless list table "$link_table_family" "$link_table_name" 2>/dev/null \
+    | sed -e 's/^[[:space:]]*//' -e '/^$/d' || true
+}
+
+foreign_table_loaded() {
+  /usr/sbin/nft list table "$link_table_family" "$foreign_table_name" >/dev/null 2>&1 \
+    && echo loaded || echo absent
+}
+
+# pose_foreign_table is one of the two places this harness changes a machine
+# outside an approved plan, and it says so. It stands in for the firewall an
+# administrator holds by their own means: the product must delete its own table
+# by name and leave this one exactly where it was.
+pose_foreign_table() {
+  /usr/sbin/nft -f - <<EOF
+add table $link_table_family $foreign_table_name
+delete table $link_table_family $foreign_table_name
+table $link_table_family $foreign_table_name {
+	chain input {
+		type filter hook input priority filter; policy accept;
+		iifname "lo" accept
+	}
+}
+EOF
+}
+
+remove_foreign_table() {
+  /usr/sbin/nft add table "$link_table_family" "$foreign_table_name" 2>/dev/null || true
+  /usr/sbin/nft delete table "$link_table_family" "$foreign_table_name" 2>/dev/null || true
+}
+
+sysctl_value() { sysctl -n "$1" 2>/dev/null || echo unreadable; }
+
+# systemctl prints its answer *and* exits non-zero for anything that is not
+# enabled or active, so the value is captured first and the fallback only fills
+# in for a unit the manager knows nothing about at all.
+unit_enabled() {
+  local value
+  value=$(systemctl is-enabled "$link_unit_name" 2>/dev/null || true)
+  echo "${value:-absent}"
+}
+
+unit_state() {
+  local value
+  value=$(systemctl is-active "$link_unit_name" 2>/dev/null || true)
+  echo "${value:-inactive}"
+}
+
+port_listening() {
+  ss -Hltn "sport = :$1" 2>/dev/null | grep -q . && echo open || echo closed
+}
+
+udp_port_bound() {
+  ss -Hlun "sport = :$1" 2>/dev/null | grep -q . && echo bound || echo unbound
+}
+
+as_account() {
+  local account=$1 uid
+  shift
+  uid=$(id -u "$account" 2>/dev/null) || return 1
+  cd / && runuser -u "$account" -- env \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME="/var/lib/$account" \
+    USER="$account" \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    "$@"
+}
+
+account_state() { id -u "$1" >/dev/null 2>&1 && echo present || echo absent; }
+
+service_state() {
+  local account=$1 service=$2
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_account "$account" systemctl --user is-active "$service" 2>/dev/null || true
+}
+
+loopback_answers() {
+  curl --silent --show-error --max-time 5 "http://127.0.0.1:$1/" 2>&1 || true
+}
+
+# --- the fingerprint --------------------------------------------------------
+
+# fingerprint is everything an operation of this palier could have changed, read
+# in one place so that "zero effect" is a comparison and never a claim. It spans
+# the key, both description files, the interface, the kernel's own peers, the
+# three files of the bounds, the table in the kernel and the host relaxation,
+# because the six operations of this contract touch different halves of the same
+# machine.
+fingerprint() {
+  printf 'key=%s/%s netdev=%s network=%s iface=%s/%s/%s ' \
+    "$(present "$link_key")" "$(file_owner "$link_key")" \
+    "$(file_digest "$link_netdev")" "$(file_digest "$link_network")" \
+    "$(interface_state)" "$(interface_index)" "$(interface_address)"
+  printf 'peers=%s allowed=%s rules=%s unit=%s/%s policy=%s ' \
+    "$(wg_peers)" "$(wg_allowed_ips)" "$(file_digest "$link_rules")" \
+    "$(file_digest "$link_unit")" "$(unit_enabled)" "$(file_digest "$link_policy")"
+  printf 'table=%s foreign=%s localnet=%s tables=[%s]\n' \
+    "$(link_table_loaded)" "$(foreign_table_loaded)" \
+    "$(sysctl_value "$route_localnet_key")" "$(nft_tables)"
+}
+
+unchanged() {
+  local label=$1 before=$2 after
+  after=$(fingerprint)
+  if [[ "$before" == "$after" ]]; then
+    report "$label" "zero effect"
+  else
+    red "$label" "the machine changed: before [$before] after [$after]"
+  fi
+}
+
+# --- the approval channel ---------------------------------------------------
+
+consumed_sequence() {
+  [[ -f "$replay" ]] || {
+    echo 0
+    return
+  }
+  sed -n 's/.*"consumed_sequence":\([0-9]*\).*/\1/p' "$replay"
+}
+
+# next_sequence is read from the machine rather than counted by the harness. A
+# document refused before the sequence is consumed leaves the position where it
+# was, and one refused after it has spent it: only the machine knows which.
+next_sequence() { echo $(($(consumed_sequence) + 1)); }
+
+# machine_id is what this machine's own anchor names, so that every document
+# this harness asks for is aimed at the machine it is applied on and a copied
+# script cannot address the other one.
+machine_id() { sed -n 's/.*"machine_id":"\([^"]*\)".*/\1/p' "$anchor"; }
+
+# fixture wraps the fixture binary with the two values every document of this
+# machine carries: the machine the anchor names, and the next position the
+# machine's own anti-replay file allows.
+fixture() {
+  lab-private-passage-fixture -machine "$(machine_id)" -sequence "$(next_sequence)" "$@"
+}
+
+# apply <label> <expectation> <fixture arguments...>
+#
+# It prints what the machine concluded, and holds it against exactly one
+# expected fragment of the JSON report. A run that fails is still printed whole,
+# because the conclusion of a controlled failure is part of the contract.
+apply() {
+  local label=$1 expected=$2 output status=0
+  shift 2
+  output=$(fixture "$@" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+  case "$output" in
+    *"$expected"*) report "$label" "$expected (status $status)" ;;
+    *) red "$label" "expected $expected, got: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+  printf '%s\n' "$output" >"$state/last-report.json"
+}
+
+# refuses <label> <expected reason> <fixture arguments...>
+#
+# The reason is asserted, not merely the non-zero status: a refusal that fired
+# for another cause has not proven the rule it is named after. The machine is
+# compared with itself before and after, so a refusal that changed something
+# would be a red even while its reason was right.
+refuses() {
+  local label=$1 expected=$2 output before
+  shift 2
+  before=$(fingerprint)
+  if output=$(fixture "$@" | your-cloud auxiliary approve 2>&1); then
+    red "$label" "accepted: $(echo "$output" | tr '\n' ' ')"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) red "$label" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+  printf '%s\n' "$output" >"$state/last-refusal.txt"
+  unchanged "$label, zero effect" "$before"
+}
+
+json_field() { sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" "$state/last-report.json"; }
+
+# --- what the role decides --------------------------------------------------
+
+# role is written by `install` from the argument the driver gave it, and read
+# back here rather than guessed from a hostname: the role decides the address
+# this machine holds, the address it will ever know of its peer, and which of the
+# two asymmetries of the contract this side carries.
+link_role=$(cat "$state/role" 2>/dev/null || echo unknown)
+case "$link_role" in
+  listener)
+    own_address=$listener_address
+    peer_address=$initiator_address
+    ;;
+  initiator)
+    own_address=$initiator_address
+    peer_address=$listener_address
+    ;;
+  *)
+    own_address=unknown
+    peer_address=unknown
+    ;;
+esac

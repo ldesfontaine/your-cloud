@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# The junction of this machine's side: exactly one peer, and the bounds that
+# peer's traffic is allowed inside.
+#
+# The peer is named by the public key the *other* machine's preparation reported.
+# It arrives here as an argument because that is exactly how it travels in the
+# real chain: an observation the Controller read out of one report and carried,
+# readable, into the plan a human approves on the other machine. Nothing here
+# generates it and nothing here could.
+#
+# Everything asserted below is read from the kernel or from the files on disk,
+# never from what the plan asked for.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-junction <peer-public-key> <peer-endpoint-host> <service-port>}
+endpoint=${2:?usage: play-junction <peer-public-key> <peer-endpoint-host> <service-port>}
+bounded_port=${3:?usage: play-junction <peer-public-key> <peer-endpoint-host> <service-port>}
+
+cd /root
+
+operation=attach_link_peer
+[[ "$link_role" == initiator ]] && operation=join_link_peer
+
+step "4. the junction of the $link_role, bounded to $bounded_port"
+
+report "the peer this plan names" "$peer_key"
+[[ "$link_role" == initiator ]] && report "the endpoint it reaches" "$endpoint:$link_listen_port"
+
+apply "$operation" '"changed":true' \
+  -operation "$operation" -link-role "$link_role" \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$bounded_port"
+
+# --- the two files ----------------------------------------------------------
+matches_bytes "the description, with its one peer" "$link_netdev" \
+  "$(expected_netdev "$peer_key" "$endpoint")"
+matches_bytes "the addressing, with its one route" "$link_network" \
+  "$(expected_network with-route)"
+
+# --- the kernel's own view of the tunnel ------------------------------------
+expect "the interface" "$(interface_state)" up
+expect "the address it holds" "$(interface_address)" "$own_address/32"
+expect "the peers the kernel holds" "$(wg_peers)" "$peer_key"
+expect "what that peer is allowed to be" "$(wg_allowed_ips)" "$peer_address/32"
+if [[ "$link_role" == initiator ]]; then
+  expect "the endpoint the kernel reaches" "$(wg_endpoints)" "$endpoint:$link_listen_port"
+  expect "the keepalive that crosses the NAT, in seconds" "$(wg_keepalive)" 25
+else
+  # The listener never goes out and never keeps anything open: it learns its
+  # peer's endpoint from the packets that arrive, so before the first handshake
+  # it has none, and it holds no keepalive at all.
+  report "the endpoint the listener holds" "$(wg_endpoints)"
+  expect "the keepalive of the listener" "$(wg_keepalive)" "off"
+fi
+
+# --- the route the /32 imposes ----------------------------------------------
+route=$(ip -4 route show dev "$link_interface" 2>/dev/null | paste -sd'; ' -)
+case "$route" in
+  *"$peer_address"*) report "the route towards the peer" "$route" ;;
+  *) red "the route towards the peer" "${route:-none}" ;;
+esac
+
+# --- the bounds -------------------------------------------------------------
+expect "the bounding rules on disk" "$(file_owner "$link_rules")" "root:root 644"
+expect "the bounding table in the kernel" "$(link_table_loaded)" loaded
+expect "the unit that puts the bounds back at boot" "$(unit_enabled)" enabled
+expect "that unit's own file" "$(file_owner "$link_unit")" "root:root 644"
+# The unit is enabled and deliberately not started by the junction: the junction
+# already applied both files itself.
+report "the state of that unit right now" "$(unit_state)"
+
+rules=$(link_table_rules)
+printf '%s\n' "$rules" >"$state/loaded-table.txt"
+
+# Every rule of this table carries the passage's interface, and exactly one does
+# not. The property is read from the table the kernel actually holds rather than
+# from the file, and the single exception is required to be the one the contract
+# names by hand.
+unscoped=$(printf '%s\n' "$rules" \
+  | grep -vE '^(table|chain|type|\}|$)' \
+  | grep -vE 'iifname "yc-link0"|oifname "yc-link0"' || true)
+case "$link_role" in
+  listener)
+    expect "the one rule of this table without an interface scope" \
+      "$(printf '%s' "$unscoped" | paste -sd'; ' -)" "udp dport $link_listen_port accept"
+    ;;
+  initiator)
+    expect "rules of this table without an interface scope" \
+      "$(printf '%s' "$unscoped" | paste -sd'; ' -)" ""
+    ;;
+esac
+
+# The named priorities the contract writes, read back from the ruleset the
+# kernel parsed: an nft that did not know one of these names would have refused
+# the whole file.
+expect "the base chains at the named filter priority" \
+  "$(printf '%s\n' "$rules" | grep -c 'hook \(input\|output\|forward\) priority filter')" 3
+if [[ "$link_role" == initiator ]]; then
+  expect "the nat chain at the named dstnat priority" \
+    "$(printf '%s\n' "$rules" | grep -c 'hook prerouting priority dstnat')" 1
+fi
+
+# Every base chain of this table has an accept policy, which is the property that
+# makes it able to take away and never to give: two tables at one hook are both
+# traversed, so a drop policy here would decide for the whole machine.
+expect "base chains carrying a policy other than accept" \
+  "$(printf '%s\n' "$rules" | grep -c 'policy drop')" 0
+
+has_rule() {
+  local label=$1 pattern=$2
+  if printf '%s\n' "$rules" | grep -qF -- "$pattern"; then
+    report "$label" "$pattern"
+  else
+    red "$label" "absent from the loaded table"
+  fi
+}
+
+if [[ "$link_role" == listener ]]; then
+  has_rule "what may leave by the passage" \
+    "oifname \"$link_interface\" ip daddr $peer_address tcp dport $bounded_port accept"
+  has_rule "and nothing else may" "oifname \"$link_interface\" drop"
+  has_rule "what may come in" "iifname \"$link_interface\" ct state established accept"
+  has_rule "and nothing else may" "iifname \"$link_interface\" drop"
+  has_rule "the one public port the passage adds" "udp dport $link_listen_port accept"
+  # The listener holds no redirection and declares no host relaxation: they are
+  # the initiator's, and asking a listener for them would turn "this machine
+  # never had one" into a drift to repair.
+  expect "the host relaxation, on the listener" "$(present "$link_policy")" absent
+  expect "the interface-scoped route_localnet, on the listener" \
+    "$(sysctl_value "$route_localnet_key")" 0
+  expect "any dnat in the listener's table" "$(printf '%s\n' "$rules" | grep -c dnat)" 0
+else
+  has_rule "the redirection towards the loopback" \
+    "iifname \"$link_interface\" ip saddr $peer_address tcp dport $bounded_port dnat ip to 127.0.0.1:$bounded_port"
+  has_rule "what may come in" \
+    "iifname \"$link_interface\" ip saddr $peer_address tcp dport $bounded_port accept"
+  has_rule "and nothing else may" "iifname \"$link_interface\" drop"
+  has_rule "what may leave" "oifname \"$link_interface\" ct state established accept"
+  has_rule "and nothing else may" "oifname \"$link_interface\" drop"
+
+  # The host relaxation, and the whole reason it is scoped: the kernel refuses to
+  # route towards a loopback address from a real interface unless told otherwise,
+  # and what is told otherwise is this interface and no other.
+  expect "the host relaxation the junction declares" "$(file_owner "$link_policy")" "root:root 644"
+  expect "route_localnet on the passage's interface" "$(sysctl_value "$route_localnet_key")" 1
+  expect "route_localnet on every interface at once" \
+    "$(sysctl_value net.ipv4.conf.all.route_localnet)" 0
+  expect "route_localnet on the interface facing the LAN" \
+    "$(sysctl_value net.ipv4.conf.enp1s0.route_localnet)" 0
+
+  # The kernel's own routing decision, asked twice with the same destination and
+  # two different arriving interfaces. This is the scoping as a fact rather than
+  # as a setting: the same loopback destination is reachable from the passage and
+  # martian from the LAN.
+  if ip route get 127.0.0.1 from "$peer_address" iif "$link_interface" >/dev/null 2>&1; then
+    report "a loopback destination arriving on $link_interface" "routed: $(ip route get 127.0.0.1 from "$peer_address" iif "$link_interface" | head -1)"
+  else
+    red "a loopback destination arriving on $link_interface" "refused by the routing layer"
+  fi
+  lan_peer=$(ip -4 route show default | awk '{print $3; exit}')
+  if ip route get 127.0.0.1 from "$lan_peer" iif enp1s0 >/dev/null 2>&1; then
+    red "a loopback destination arriving on the LAN interface" "the kernel routed it"
+  else
+    report "a loopback destination arriving on the LAN interface" \
+      "refused by the routing layer: $(ip route get 127.0.0.1 from "$lan_peer" iif enp1s0 2>&1 | tr '\n' ' ')"
+  fi
+fi
+
+# --- everything the junction is not allowed to have touched -----------------
+expect "the foreign table this harness posed" "$(foreign_table_loaded)" loaded
+expect "forwarding on this machine" "$(sysctl_value net.ipv4.ip_forward)" 0
+report "the tables this machine holds" "$(nft_tables)"
+report "the real interfaces" "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+
+step "4b. what this machine refuses while it holds this junction"
+
+refuses "a withdrawal while the junction stands" "still holds a junction" \
+  -operation withdraw_link -link-role "$link_role"
+
+printf '%s\n' "$(file_mtime "$link_key")" >"$state/key-mtime.txt"
+printf '%s\n' "$(interface_index)" >"$state/ifindex.txt"
+
+verdict "this machine holds exactly one peer, the route its /32 imposes, one named table, one boot unit, and — on the initiator alone — one interface-scoped relaxation"

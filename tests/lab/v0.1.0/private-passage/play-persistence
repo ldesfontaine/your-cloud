@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# What the machine holds when the power comes back, and nobody did anything.
+#
+# Two mechanisms are under proof here and they are separate. The interface comes
+# back because networkd recreates it from the two files a preparation and a
+# junction wrote — that costs nothing extra and is the reason the contract chose
+# networkd over a configuration carrying the key inside it. The *bounds* come back
+# because of a oneshot unit the junction declared: a table loaded with `nft -f`
+# lives in the kernel and not on disk, and an interface-scoped sysctl written
+# under /etc/sysctl.d is read by systemd-sysctl long before any interface of that
+# name exists, so at boot that line would apply to nothing.
+#
+# So the unit is not merely observed to be enabled: what it did at this boot is
+# read out of the manager and out of its own journal.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-persistence <peer-public-key> <peer-endpoint-host> <service-port>}
+endpoint=${2:?usage: play-persistence <peer-public-key> <peer-endpoint-host> <service-port>}
+bounded_port=${3:?usage: play-persistence <peer-public-key> <peer-endpoint-host> <service-port>}
+
+cd /root
+
+step "11. after a real power cycle of the $link_role, with no action at all"
+
+report "how long this machine has been up" "$(uptime -p)"
+report "the consumed position, unchanged by a reboot" "$(consumed_sequence)"
+
+# --- the tunnel -------------------------------------------------------------
+expect "the interface" "$(interface_state)" up
+expect "the address it holds" "$(interface_address)" "$own_address/32"
+expect "the peer the kernel holds" "$(wg_peers)" "$peer_key"
+expect "what that peer is allowed to be" "$(wg_allowed_ips)" "$peer_address/32"
+matches_bytes "the description, still" "$link_netdev" "$(expected_netdev "$peer_key" "$endpoint")"
+matches_bytes "the addressing, still" "$link_network" "$(expected_network with-route)"
+expect "the passage key's owner and mode" "$(file_owner "$link_key")" "root:systemd-network 640"
+
+route=$(ip -4 route show dev "$link_interface" | paste -sd'; ' -)
+case "$route" in
+  *"$peer_address"*) report "the route towards the peer" "$route" ;;
+  *) red "the route towards the peer" "${route:-none}" ;;
+esac
+
+# The handshake is driven by the initiator's keepalive, so both sides get it
+# without an action; the listener simply waits for the first packet.
+if handshake=$(handshake_within 90); then
+  report "the handshake, re-established by nobody" "$handshake"
+else
+  red "the handshake, re-established by nobody" "$handshake"
+fi
+
+# --- the bounds -------------------------------------------------------------
+expect "the unit that puts the bounds back" "$(unit_enabled)" enabled
+report "when it ran" \
+  "$(systemctl show "$link_unit_name" --property=ExecMainStartTimestamp --value)"
+report "how it finished" \
+  "$(systemctl show "$link_unit_name" --property=Result --value), status $(systemctl show "$link_unit_name" --property=ExecMainStatus --value)"
+report "its ordering" \
+  "$(systemctl show "$link_unit_name" --property=After --value | tr ' ' '\n' | grep -c systemd-networkd) after systemd-networkd"
+
+bounds_back=1
+if [[ "$(unit_state)" == active ]]; then
+  report "what that unit did at this boot" "active"
+else
+  report "what that unit did at this boot" "$(unit_state)"
+  bounds_back=0
+  defect "the unit that puts a passage's bounds back never reaches its second command on the listener" \
+"renderLinkRulesUnit (internal/auxiliary/linkrules.go) writes the same unit on both
+roles and takes no argument, 'because there is nothing to pass'. It carries two
+unconditional commands:
+
+  ExecStart=/usr/sbin/sysctl --quiet --load /etc/sysctl.d/your-cloud-link.conf
+  ExecStart=/usr/sbin/nft --file /etc/your-cloud/link/rules.nft
+
+The host relaxation is written on the initiator alone — poseLinkBounds guards it
+with 'if where.goesOut', and readLinkBounds does not even look for it on a
+listener — so on the listener that file has never existed. At boot the first
+command exits 1:
+
+  sysctl: cannot open \"/etc/sysctl.d/your-cloud-link.conf\": No such file or directory
+
+A Type=oneshot unit stops at the first failing ExecStart, so the second one never
+runs and the bounding table is never reloaded. The listener therefore comes back
+from a reboot holding its key, its interface, its peer, its route and an
+established tunnel — and no 'inet your-cloud-link' table at all: the two drops
+that bound what may cross yc-link0 and the one line that names the passage's
+public UDP port are absent until a new junction plan is applied.
+
+This is criterion 7 of the palier ('le tunnel revient sans action et les règles
+avec lui') failing on one of the two machines, and it is invisible to the unit
+suite: the fake executor records that a unit file was written and never runs it.
+
+$(journalctl -u $link_unit_name -b --no-pager | tail -4)"
+fi
+
+if [[ $bounds_back -eq 1 ]]; then
+  expect "the bounding table, back in the kernel" "$(link_table_loaded)" loaded
+  if printf '%s\n' "$(link_table_rules)" | grep -qF "tcp dport $bounded_port"; then
+    report "the port the table bounds after the reboot" "$bounded_port"
+  else
+    red "the port the table bounds after the reboot" "$(link_table_rules | tr '\n' ' ')"
+  fi
+else
+  report "the bounding table, back in the kernel" \
+    "$(link_table_loaded) — not judged: the defect above is why"
+fi
+
+# The table this harness posed is gone, and that is correct rather than a
+# finding: an nftables table lives in the kernel and nothing persists it. It is
+# exactly the reason the contract gives a junction a boot unit of its own, and
+# the contrast is worth one line. The harness poses its table again here, because
+# what it exists to prove — that a removal deletes one table by its name and
+# leaves this one — is asked at the departure, which is still ahead.
+expect "the foreign table this harness posed, after a reboot" "$(foreign_table_loaded)" absent
+pose_foreign_table
+report "it is posed again by the harness" "$(foreign_table_loaded)"
+
+if [[ "$link_role" == initiator ]]; then
+  expect "route_localnet on the passage's interface" "$(sysctl_value "$route_localnet_key")" 1
+  expect "route_localnet on every interface at once" \
+    "$(sysctl_value net.ipv4.conf.all.route_localnet)" 0
+  expect "route_localnet on the interface facing the LAN" \
+    "$(sysctl_value net.ipv4.conf.enp1s0.route_localnet)" 0
+  expect "the managed service the passage bounds" \
+    "$(port_listening "$bounded_port")" open
+fi
+
+# The machine's own networking, read again: a passage that came back must not
+# have come back at the expense of anything else.
+report "the real interfaces" "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+report "systemd-networkd" \
+  "$(systemctl is-enabled systemd-networkd)/$(systemctl is-active systemd-networkd)"
+
+verdict "the interface, its peer, its route, its table and — on the initiator — its host relaxation all came back at boot with nobody doing anything"

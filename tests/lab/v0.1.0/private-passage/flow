@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# One established flow through the passage, held open across a departure.
+#
+# The `#97` addendum ends on a question this proof is asked to answer: "ce qu'un
+# flux établi devient quand les règles sont retirées". A flow is opened here in
+# the one way that keeps a real server holding it — a request whose headers are
+# sent and whose blank line is not — so the connection is genuinely established
+# on both machines while the departure runs, rather than a socket in a state a
+# test invented.
+#
+# It runs on the listener, because the listener is the side that opens anything
+# at all: the initiator never reaches out through the passage.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+case "${1:?usage: flow <open|hold|finish> [port]}" in
+  open)
+    port=${2:?usage: flow open <port>}
+    rm -f "$state"/flow-*
+    setsid "$here/flow" hold "$port" >/dev/null 2>&1 &
+    for _ in $(seq 1 15); do
+      [[ -e "$state/flow-opened" || -e "$state/flow-result" ]] && break
+      sleep 1
+    done
+    if [[ -e "$state/flow-opened" ]]; then
+      report "an established flow through the passage" \
+        "$(ss -Htn state established "dst $peer_address" | awk '{print $3" -> "$4}' | head -1)"
+    else
+      red "an established flow through the passage" \
+        "it never opened: $(cat "$state/flow-result" 2>/dev/null || echo unknown)"
+    fi
+    [[ $failures -eq 0 ]] || exit 1
+    ;;
+
+  hold)
+    port=${2:?usage: flow hold <port>}
+    exec 3<>"/dev/tcp/$peer_address/$port" || {
+      echo open-failed >"$state/flow-result"
+      exit 1
+    }
+    # The headers go, the blank line does not: the server holds the connection
+    # open waiting for the rest of a request that is genuinely in flight.
+    printf 'GET / HTTP/1.1\r\nHost: passage\r\nUser-Agent: your-cloud-lab\r\n' >&3
+    echo established >"$state/flow-opened"
+    for _ in $(seq 1 240); do
+      [[ -e "$state/flow-finish" ]] && break
+      sleep 1
+    done
+    if printf '\r\n' >&3 2>/dev/null \
+      && timeout 8 head -c 32 <&3 >"$state/flow-answer" 2>/dev/null \
+      && [[ -s "$state/flow-answer" ]]; then
+      echo carried >"$state/flow-result"
+    else
+      echo cut >"$state/flow-result"
+    fi
+    ;;
+
+  finish)
+    touch "$state/flow-finish"
+    for _ in $(seq 1 30); do
+      [[ -e "$state/flow-result" ]] && break
+      sleep 1
+    done
+    case "$(cat "$state/flow-result" 2>/dev/null || echo unknown)" in
+      cut)
+        report "the flow that was established before the departure" \
+          "cut: its peer stopped being reachable and the request never completed"
+        ;;
+      carried)
+        red "the flow that was established before the departure" \
+          "still carried after both bounds and peer were removed: $(cat "$state/flow-answer")"
+        ;;
+      *) red "the flow that was established before the departure" "no verdict: the holder never reported" ;;
+    esac
+    [[ $failures -eq 0 ]] || exit 1
+    ;;
+
+  *)
+    echo "unknown flow command: $1" >&2
+    exit 2
+    ;;
+esac

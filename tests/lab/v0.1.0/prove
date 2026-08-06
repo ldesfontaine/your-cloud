@@ -248,7 +248,8 @@ write_result() {
     printf '  "not_run": [\n'
     printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"},\n'
     printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"},\n'
-    printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"}\n'
+    printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"},\n'
+    printf '    {"pass": "private-passage", "reason": "it renders the private WireGuard passage palier (#16, proofs #96 and #97, machine proof #98) across lab-machine-1 and lab-vps, not the bootstrap and replacement this sequence proves"}\n'
     printf '  ],\n'
     printf '  "passes": [\n'
     for index in "${!pass_results[@]}"; do
@@ -495,6 +496,13 @@ do_run() {
   printf 'It renders the public BentoPDF profile palier (#15, proof #92). Its\n'
   printf 'machine is lab-vps, which this sequence never speaks to, so it could run\n'
   printf 'beside these passes without sharing anything with them — but a verdict of\n'
+  printf 'its own belongs to its own palier and is recorded as not run here.\n'
+
+  announce "private-passage is not run here either"
+  printf 'It renders the private WireGuard passage palier (#16, proofs #96 and #97,\n'
+  printf 'machine proof #98). It needs both lab-machine-1 and lab-vps at once, power\n'
+  printf 'cycles both of them, and borrows lab-console as a hostile observer, so it\n'
+  printf 'shares machines with these passes and never runs beside them. A verdict of\n'
   printf 'its own belongs to its own palier and is recorded as not run here.\n'
 }
 

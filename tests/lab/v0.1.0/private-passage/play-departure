@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# The passage undone, in the two stages the contract sequences and in that order
+# only.
+#
+#   part      the junction: the peer, then the unit, then the table, then the
+#             host relaxation. The interface, the key and the machine's own
+#             address stay exactly where they are — a machine that has left a
+#             peer still holds a prepared passage;
+#   withdraw  the passage itself: the interface, the two files and the key. It is
+#             refused while a junction or any of its bounds remain, which the
+#             junction's own script already exercised.
+#
+# The reading this stage exists for is the one `#96` left open in writing: a
+# `[WireGuardPeer]` removed from a `.netdev` is removed from the *file*, and what
+# takes it out of the *kernel* is `networkctl reconfigure`. Whether that really
+# happens is not a question a file can answer, so the peer is read from `wg show`
+# and a peer still there is reported as a product defect rather than explained
+# away.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+stage=${1:?usage: play-departure <part|withdraw> [peer-key] [endpoint] [port]}
+peer_key=${2:-}
+endpoint=${3:-}
+bounded_port=${4:-}
+
+cd /root
+
+case "$stage" in
+  part)
+    operation=detach_link_peer
+    [[ "$link_role" == initiator ]] && operation=leave_link_peer
+
+    step "12. the junction of the $link_role is undone"
+
+    report "the peer the kernel held" "$(wg_peers)"
+    report "the table it held" "$(link_table_loaded)"
+    index=$(interface_index)
+
+    apply "$operation" '"changed":true' \
+      -operation "$operation" -link-role "$link_role" \
+      -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+      -service-port "$bounded_port"
+
+    # The question `#96` left open, asked of the kernel and not of the file.
+    observed=$(wg_peers)
+    if [[ "$observed" == none || -z "$observed" ]]; then
+      report "the peer, in the kernel, after the departure" \
+        "gone: networkctl reconfigure really detached it"
+    else
+      red "the peer, in the kernel, after the departure" \
+        "STILL THERE: $observed — the file no longer names it and the kernel still holds it"
+    fi
+    matches_bytes "the description, back to what a preparation owns" "$link_netdev" "$(expected_netdev)"
+    matches_bytes "the addressing, back to what a preparation owns" "$link_network" "$(expected_network)"
+
+    expect "the bounding table in the kernel" "$(link_table_loaded)" absent
+    expect "the bounding rules on disk" "$(present "$link_rules")" absent
+    expect "the unit that put the bounds back" "$(present "$link_unit")" absent
+    # `not-found` is systemd's own word for a unit it has no file for, and it is
+    # kept rather than translated: what is asserted is the manager's answer.
+    expect "that unit's enablement" "$(unit_enabled)" not-found
+    expect "the host relaxation" "$(present "$link_policy")" absent
+    if [[ "$link_role" == initiator ]]; then
+      expect "route_localnet, put back by name" "$(sysctl_value "$route_localnet_key")" 0
+    fi
+
+    # What a departure is not: it leaves the passage standing.
+    expect "the interface" "$(interface_state)" up
+    expect "the address it still holds" "$(interface_address)" "$own_address/32"
+    expect "the key, untouched" "$(file_owner "$link_key")" "root:systemd-network 640"
+    expect "the interface did not flap" "$(interface_index)" "$index"
+    expect "the route towards the peer" \
+      "$(ip -4 route show dev "$link_interface" | grep -c "$peer_address" || true)" 0
+
+    # The table this harness posed and the product never names.
+    expect "the foreign table this harness posed" "$(foreign_table_loaded)" loaded
+    report "the tables this machine holds" "$(nft_tables)"
+
+    step "12b. the same departure, asked for again"
+    apply "$operation replayed" '"changed":false' \
+      -operation "$operation" -link-role "$link_role" \
+      -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+      -service-port "$bounded_port"
+
+    verdict "the peer is gone from the kernel and not only from the file, the three files of the bounds are gone, the relaxation is back to its default, and the prepared passage is still standing"
+    ;;
+
+  withdraw)
+    step "13. the passage of the $link_role is withdrawn"
+
+    apply "withdraw_link" '"changed":true' \
+      -operation withdraw_link -link-role "$link_role"
+
+    expect "the interface" "$(interface_state)" absent
+    expect "this machine's own passage key" "$(present "$link_key")" absent
+    expect "the description of $link_interface" "$(present "$link_netdev")" absent
+    expect "the addressing of $link_interface" "$(present "$link_network")" absent
+    expect "the bounding rules on disk" "$(present "$link_rules")" absent
+    expect "the unit that put the bounds back" "$(present "$link_unit")" absent
+    expect "the host relaxation" "$(present "$link_policy")" absent
+    expect "the bounding table in the kernel" "$(link_table_loaded)" absent
+    expect "the tunnel's UDP port" "$(udp_port_bound "$link_listen_port")" unbound
+
+    # What a withdrawal deliberately does not undo, named rather than hidden: the
+    # network manager stays enabled, because cutting a machine's networking as a
+    # side effect of retiring a tunnel is a liberty this product does not take.
+    report "systemd-networkd, after the withdrawal" \
+      "$(systemctl is-enabled systemd-networkd)/$(systemctl is-active systemd-networkd)"
+    report "the real interfaces, after the withdrawal" \
+      "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+
+    expect "the foreign table this harness posed" "$(foreign_table_loaded)" loaded
+    report "the tables this machine holds" "$(nft_tables)"
+
+    step "13b. the same withdrawal, asked for again"
+    apply "withdraw_link replayed" '"changed":false' \
+      -operation withdraw_link -link-role "$link_role"
+
+    verdict "the interface, the key and both files are gone, the machine's own networking is untouched, and the table this harness posed is exactly where it was"
+    ;;
+
+  *)
+    echo "unknown departure stage: $stage" >&2
+    exit 2
+    ;;
+esac
