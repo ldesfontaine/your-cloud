@@ -70,13 +70,15 @@ pub const MAX_SIGNED_APPROVAL_BYTES: usize = 1_024;
 /// [`Self::DiagnoseProtocolReadOnly`] is the protocol diagnostic of the
 /// previous palier: it states what it verified and what it consumed, and it
 /// changes nothing. The two probe operations are the first ones that ask to
-/// change a machine, and the six operations of the public profile are the ones
-/// that describe a service, an entrypoint and a published route. Each of them
-/// belongs to an exact pair of a plan and its rollback — what each describes is
-/// the plan document whose digest the envelope names, never anything the
-/// envelope itself could spell. An operation name outside this list has no
-/// variant, so an envelope naming an installation, an arbitrary container or an
-/// operation of a later palier is refused while it is still being parsed.
+/// change a machine, the six operations of the public profile are the ones that
+/// describe a service, an entrypoint and a published route, and the six
+/// operations of the private passage are the ones that describe one machine's
+/// own side of a link and the two junctions that bound it. Each of them belongs
+/// to an exact pair of a plan and its rollback — what each describes is the plan
+/// document whose digest the envelope names, never anything the envelope itself
+/// could spell. An operation name outside this list has no variant, so an
+/// envelope naming an installation, an arbitrary container or an operation of a
+/// later palier is refused while it is still being parsed.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalOperation {
@@ -89,6 +91,12 @@ pub enum ApprovalOperation {
     RemoveEntrypoint,
     PublishRoute,
     RetireRoute,
+    PrepareLink,
+    WithdrawLink,
+    AttachLinkPeer,
+    DetachLinkPeer,
+    JoinLinkPeer,
+    LeaveLinkPeer,
 }
 
 impl ApprovalOperation {
@@ -103,6 +111,12 @@ impl ApprovalOperation {
             Self::RemoveEntrypoint => "remove_entrypoint",
             Self::PublishRoute => "publish_route",
             Self::RetireRoute => "retire_route",
+            Self::PrepareLink => "prepare_link",
+            Self::WithdrawLink => "withdraw_link",
+            Self::AttachLinkPeer => "attach_link_peer",
+            Self::DetachLinkPeer => "detach_link_peer",
+            Self::JoinLinkPeer => "join_link_peer",
+            Self::LeaveLinkPeer => "leave_link_peer",
         }
     }
 
@@ -115,7 +129,10 @@ impl ApprovalOperation {
     /// including the removals and the retirement: undoing has to read the
     /// machine to find the instance it names before it changes anything, and
     /// retiring a route rewrites the entrypoint's fragments exactly as
-    /// publishing one does.
+    /// publishing one does. The six operations of the private passage are in the
+    /// same list for the same reason — withdrawing a link and leaving a peer
+    /// read the machine to find what they are about to remove, and preparing a
+    /// link reads it to refuse regenerating a key that already exists.
     pub fn required_privileges(self) -> &'static [ApprovalPrivilege] {
         match self {
             Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],
@@ -126,7 +143,13 @@ impl ApprovalOperation {
             | Self::DeployEntrypoint
             | Self::RemoveEntrypoint
             | Self::PublishRoute
-            | Self::RetireRoute => &[
+            | Self::RetireRoute
+            | Self::PrepareLink
+            | Self::WithdrawLink
+            | Self::AttachLinkPeer
+            | Self::DetachLinkPeer
+            | Self::JoinLinkPeer
+            | Self::LeaveLinkPeer => &[
                 ApprovalPrivilege::MutateLocalState,
                 ApprovalPrivilege::ReadLocalState,
             ],
@@ -651,10 +674,10 @@ mod tests {
         );
     }
 
-    /// The nine operations this palier's envelope may name, in declaration
+    /// The fifteen operations this palier's envelope may name, in declaration
     /// order. Holding the list in one place is what keeps the tests below from
-    /// silently covering eight of nine.
-    const DECLARED_OPERATIONS: [ApprovalOperation; 9] = [
+    /// silently covering fourteen of fifteen.
+    const DECLARED_OPERATIONS: [ApprovalOperation; 15] = [
         ApprovalOperation::DiagnoseProtocolReadOnly,
         ApprovalOperation::DeployOciProbe,
         ApprovalOperation::RemoveOciProbe,
@@ -664,11 +687,17 @@ mod tests {
         ApprovalOperation::RemoveEntrypoint,
         ApprovalOperation::PublishRoute,
         ApprovalOperation::RetireRoute,
+        ApprovalOperation::PrepareLink,
+        ApprovalOperation::WithdrawLink,
+        ApprovalOperation::AttachLinkPeer,
+        ApprovalOperation::DetachLinkPeer,
+        ApprovalOperation::JoinLinkPeer,
+        ApprovalOperation::LeaveLinkPeer,
     ];
 
-    /// The eight operations that describe a state of a machine, which is every
-    /// declared operation but the read-only diagnostic.
-    const MUTATING_OPERATIONS: [ApprovalOperation; 8] = [
+    /// The fourteen operations that describe a state of a machine, which is
+    /// every declared operation but the read-only diagnostic.
+    const MUTATING_OPERATIONS: [ApprovalOperation; 14] = [
         ApprovalOperation::DeployOciProbe,
         ApprovalOperation::RemoveOciProbe,
         ApprovalOperation::DeployWebService,
@@ -677,6 +706,12 @@ mod tests {
         ApprovalOperation::RemoveEntrypoint,
         ApprovalOperation::PublishRoute,
         ApprovalOperation::RetireRoute,
+        ApprovalOperation::PrepareLink,
+        ApprovalOperation::WithdrawLink,
+        ApprovalOperation::AttachLinkPeer,
+        ApprovalOperation::DetachLinkPeer,
+        ApprovalOperation::JoinLinkPeer,
+        ApprovalOperation::LeaveLinkPeer,
     ];
 
     #[test]
@@ -694,6 +729,12 @@ mod tests {
             (ApprovalOperation::RemoveEntrypoint, "remove_entrypoint"),
             (ApprovalOperation::PublishRoute, "publish_route"),
             (ApprovalOperation::RetireRoute, "retire_route"),
+            (ApprovalOperation::PrepareLink, "prepare_link"),
+            (ApprovalOperation::WithdrawLink, "withdraw_link"),
+            (ApprovalOperation::AttachLinkPeer, "attach_link_peer"),
+            (ApprovalOperation::DetachLinkPeer, "detach_link_peer"),
+            (ApprovalOperation::JoinLinkPeer, "join_link_peer"),
+            (ApprovalOperation::LeaveLinkPeer, "leave_link_peer"),
         ] {
             assert_eq!(
                 serde_json::to_value(operation).unwrap(),
@@ -713,7 +754,7 @@ mod tests {
             );
             names.push(operation.as_str());
         }
-        assert_eq!(names.len(), 9);
+        assert_eq!(names.len(), 15);
         for (privilege, wire_name) in [
             (ApprovalPrivilege::ReadLocalState, "read_local_state"),
             (ApprovalPrivilege::MutateLocalState, "mutate_local_state"),
@@ -748,11 +789,11 @@ mod tests {
         }
         assert!(canonical_privileges(&DECLARED));
 
-        // Held for the nine operations rather than for the three of the
-        // previous palier: the invariant is about every list this side can
-        // sign, and an operation added without being listed here would be one
-        // whose privilege order nobody checked.
-        assert_eq!(DECLARED_OPERATIONS.len(), 9);
+        // Held for the fifteen operations rather than for the three of the
+        // first palier: the invariant is about every list this side can sign,
+        // and an operation added without being listed here would be one whose
+        // privilege order nobody checked.
+        assert_eq!(DECLARED_OPERATIONS.len(), 15);
         for operation in DECLARED_OPERATIONS {
             let required = operation.required_privileges();
             assert!(
@@ -765,7 +806,7 @@ mod tests {
     /// Each operation carries exactly its own privileges, and the read-only one
     /// still refuses to mutate whatever else its envelope carries.
     ///
-    /// The equality runs both ways, for each of the eight operations that
+    /// The equality runs both ways, for each of the fourteen operations that
     /// describe a state: the diagnostic cannot be given the mutating pair, and
     /// none of them can be given the reading privilege alone or the mutating one
     /// alone. Naming an operation is therefore the whole of asking for a power

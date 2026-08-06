@@ -2,6 +2,7 @@ mod approval;
 mod monotonic;
 mod plan;
 mod plan_v2;
+mod plan_v3;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,14 @@ pub use plan_v2::{
     ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL, MAX_PLAN_BACKEND_PORT, MAX_ROUTE_HOST_BYTES,
     MIN_PLAN_BACKEND_PORT, MIN_ROUTE_HOST_BYTES, PLAN_V2_SCHEMA_VERSION, PLAN_V2_TRANSCRIPT_DOMAIN,
     ROUTE_ISOLATION_HEADERS, SERVICE_LOCAL_ADDRESS, SERVICE_PROFILE_BENTOPDF,
+};
+pub use plan_v3::{
+    decode_plan_v3_document, verify_plan_v3_document, InitiatorPeerPlanDocumentV3,
+    LinkPlanDocumentV3, LinkRole, ListenerPeerPlanDocumentV3, PlanDocumentV3, PlanV3Group,
+    PlanV3Operation, LINK_INITIATOR_TUNNEL_ADDRESS, LINK_INTERFACE_NAME, LINK_KEEPALIVE_SECONDS,
+    LINK_LISTENER_TUNNEL_ADDRESS, LINK_LISTEN_PORT, LINK_NFTABLES_TABLE, MAX_PLAN_SERVICE_PORT,
+    MIN_PLAN_SERVICE_PORT, PEER_PUBLIC_KEY_BYTES, PEER_PUBLIC_KEY_ENCODED_BYTES,
+    PLAN_V3_SCHEMA_VERSION, PLAN_V3_TRANSCRIPT_DOMAIN,
 };
 
 pub const REQUEST_ID_BYTES: usize = 16;

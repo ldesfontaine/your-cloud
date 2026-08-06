@@ -377,6 +377,10 @@ const probePlanRuntime = await readSourceText(
 const publicationPlanRuntime = await readSourceText(
   join(consoleRoot, "src-tauri", "src", "publication_plan.rs"),
 );
+const planV3Protocol = await readSourceText(
+  join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "plan_v3.rs"),
+);
+const linkPlanRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "link_plan.rs"));
 const bootstrapProtocolManifest = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "Cargo.toml"),
 );
@@ -2052,10 +2056,26 @@ for (const bound of [
   'Self::PublishRoute => "publish_route",',
   'Self::RetireRoute => "retire_route",',
   "Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],",
-  "| Self::DeployWebService\n            | Self::RemoveWebService\n            | Self::DeployEntrypoint\n            | Self::RemoveEntrypoint\n            | Self::PublishRoute\n            | Self::RetireRoute => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
+  "| Self::DeployWebService\n            | Self::RemoveWebService\n            | Self::DeployEntrypoint\n            | Self::RemoveEntrypoint\n            | Self::PublishRoute\n            | Self::RetireRoute\n            | Self::PrepareLink\n            | Self::WithdrawLink\n            | Self::AttachLinkPeer\n            | Self::DetachLinkPeer\n            | Self::JoinLinkPeer\n            | Self::LeaveLinkPeer => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
 ]) {
   if (!approvalProtocol.includes(bound)) {
     failures.push(`approval.rs (protocole): opération du profil public absente (${bound})`);
+  }
+}
+// Les six opérations du passage privé existent dans la même enveloppe et y
+// demandent la même paire mutante : préparer un lien lit la machine pour refuser
+// de régénérer une clé existante, et retirer ou quitter lit la machine pour
+// trouver ce qu'il s'apprête à défaire.
+for (const bound of [
+  'Self::PrepareLink => "prepare_link",',
+  'Self::WithdrawLink => "withdraw_link",',
+  'Self::AttachLinkPeer => "attach_link_peer",',
+  'Self::DetachLinkPeer => "detach_link_peer",',
+  'Self::JoinLinkPeer => "join_link_peer",',
+  'Self::LeaveLinkPeer => "leave_link_peer",',
+]) {
+  if (!approvalProtocol.includes(bound)) {
+    failures.push(`approval.rs (protocole): opération du passage privé absente (${bound})`);
   }
 }
 // La Console ne possède pas plus de ré-encodeur canonique au schéma 2 qu'au
@@ -2108,6 +2128,163 @@ for (const [fragment, expected] of [
 for (const forbidden of ["SigningKey", "signing_key", "human_private_seed", "Signer"]) {
   if (publicationPlanRuntime.replace(/#\[cfg\(test\)\][\s\S]*$/u, "").includes(forbidden)) {
     failures.push(`publication_plan.rs: une notion de clé privée y apparaît (${forbidden})`);
+  }
+}
+
+// Le schéma 3 ajoute six opérations en trois paires inverses sans rouvrir les
+// deux schémas plus anciens : son domaine diffère d'un octet, chaque groupe
+// écrit sa propre queue de transcription champ par champ sous sa propre
+// longueur, et le côté Auxiliaire écrit la même table dans
+// internal/plan/schema3.go.
+for (const bound of [
+  'pub const PLAN_V3_TRANSCRIPT_DOMAIN: &[u8] = b"your-cloud/oci-plan.v3\\0";',
+  "pub const PLAN_V3_SCHEMA_VERSION: u8 = 3;",
+  "transcript.extend_from_slice(PLAN_V3_TRANSCRIPT_DOMAIN);",
+  "transcript.extend_from_slice(&schema_version.to_be_bytes());",
+  "append_field(&mut transcript, infrastructure_id.as_bytes())?;",
+  "append_field(&mut transcript, machine_id.as_bytes())?;",
+  "append_field(&mut transcript, operation.as_str().as_bytes())?;",
+  "append_field(&mut transcript, self.link_role.as_str().as_bytes())?;",
+  "append_field(&mut transcript, &key)?;",
+  "append_field(&mut transcript, self.peer_endpoint_host.as_bytes())?;",
+  "transcript.extend_from_slice(&self.service_port.to_be_bytes());",
+  // L'opération est le discriminant : elle est lue d'abord, et seule, puis le
+  // document est tenu contre exactement la liste fermée qu'elle déclare.
+  "fn declared_operation(document: &[u8]) -> Result<PlanV3Operation, ProtocolError> {",
+  "let parsed = match declared_operation(document)?.group() {",
+  "#[serde(deny_unknown_fields)]\npub struct LinkPlanDocumentV3 {",
+  "#[serde(deny_unknown_fields)]\npub struct ListenerPeerPlanDocumentV3 {",
+  "#[serde(deny_unknown_fields)]\npub struct InitiatorPeerPlanDocumentV3 {",
+  // La clé du pair est lue avec indulgence et ré-écrite avec rigueur : c'est le
+  // ré-encodage qui refuse une seconde orthographe des mêmes trente-deux
+  // octets, donc il doit rester la règle plutôt qu'une précaution.
+  "const PEER_PUBLIC_KEY_BASE64: GeneralPurpose = GeneralPurpose::new(\n    &alphabet::STANDARD,\n    GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),\n);",
+  "pub const PEER_PUBLIC_KEY_BYTES: usize = 32;",
+  "pub const PEER_PUBLIC_KEY_ENCODED_BYTES: usize = 44;",
+  "if value.len() != PEER_PUBLIC_KEY_ENCODED_BYTES || !value.is_ascii() {",
+  "let decoded = PEER_PUBLIC_KEY_BASE64.decode(value.as_bytes()).ok()?;",
+  "if decoded.len() != PEER_PUBLIC_KEY_BYTES || PEER_PUBLIC_KEY_BASE64.encode(&decoded) != value {",
+  "decode_peer_public_key(&self.peer_public_key).is_none()",
+  "!canonical_peer_endpoint_host(&self.peer_endpoint_host)",
+  "!(MIN_PLAN_SERVICE_PORT..=MAX_PLAN_SERVICE_PORT).contains(&self.service_port)",
+  // L'endpoint reprend la borne de route_host, jusqu'aux deux nombres qu'il lit
+  // dans le module du schéma 2 plutôt que de les redire.
+  "bytes.len() < MIN_ROUTE_HOST_BYTES || bytes.len() > MAX_ROUTE_HOST_BYTES",
+  '!alphanumeric(bytes[0]) || !alphanumeric(bytes[bytes.len() - 1]) || host.contains("..")',
+  // Constantes du scénario : affichées, jamais approuvées comme valeurs.
+  'pub const LINK_INTERFACE_NAME: &str = "yc-link0";',
+  'pub const LINK_LISTENER_TUNNEL_ADDRESS: &str = "10.66.66.1";',
+  'pub const LINK_INITIATOR_TUNNEL_ADDRESS: &str = "10.66.66.2";',
+  "pub const LINK_LISTEN_PORT: u32 = 51_820;",
+  "pub const LINK_KEEPALIVE_SECONDS: u32 = 25;",
+  'pub const LINK_NFTABLES_TABLE: &str = "inet your-cloud-link";',
+]) {
+  if (!planV3Protocol.includes(bound)) {
+    failures.push(`plan_v3.rs (protocole): lien haché absent (${bound})`);
+  }
+}
+// Les deux groupes de jonction hachent chacun la clé décodée et le port dans
+// leur propre transcription, et les deux seuls. C'est compté plutôt que constaté
+// présent : une garde de présence passerait encore si l'un des deux groupes
+// cessait de hacher la sienne.
+for (const [fragment, expected] of [
+  ["append_field(&mut transcript, &key)?;", 2],
+  ["decode_peer_public_key(&self.peer_public_key).is_none()", 2],
+  ["transcript.extend_from_slice(&self.service_port.to_be_bytes());", 2],
+]) {
+  const occurrences = planV3Protocol.split(fragment).length - 1;
+  if (occurrences !== expected) {
+    failures.push(
+      `plan_v3.rs (protocole): ${fragment} est écrit ${occurrences} fois au lieu de ${expected}`,
+    );
+  }
+}
+// La clé du pair voyage décodée, comme un digest d'image : trente-deux octets
+// sous leur propre longueur. Hacher la chaîne base64 donnerait une empreinte à
+// une orthographe plutôt qu'à une clé, donc la chaîne n'entre nulle part dans
+// une transcription.
+if (planV3Protocol.includes("self.peer_public_key.as_bytes()")) {
+  failures.push("plan_v3.rs (protocole): la clé du pair serait hachée sous sa forme encodée");
+}
+// Aucun des trois documents ne porte de champ exécutable, et aucun ne porte une
+// constante du contrat : le sous-réseau, les deux adresses, l'interface, le port
+// d'écoute, le keepalive, les règles et surtout une clé privée n'ont pas de
+// champ à occuper.
+for (const forbidden of [
+  "pub private_key:",
+  "pub interface:",
+  "pub listen_port:",
+  "pub keepalive_seconds:",
+  "pub allowed_ips:",
+  "pub address:",
+  "pub subnet:",
+  "pub peer_endpoint_port:",
+  "pub nftables:",
+  "pub command:",
+]) {
+  if (planV3Protocol.includes(forbidden)) {
+    failures.push(`plan_v3.rs (protocole): un schéma déclare un champ interdit (${forbidden})`);
+  }
+}
+// La Console ne possède pas plus de ré-encodeur canonique au schéma 3 qu'aux
+// deux précédents : elle vérifie les octets reçus contre leurs digests avant de
+// rien afficher, elle revérifie avant de signer, et ce que l'humain doit lire
+// est nommé ligne par ligne — le rôle et ce que ce rôle décide sans qu'aucun
+// champ ne le porte ; la clé publique du pair entière, le port que les règles
+// borneront et le seul couple qui passera ; l'endpoint et le port d'écoute du
+// contrat qu'il est joint dessus.
+for (const bound of [
+  "pub fn verify(view: &LinkPlanPairView) -> Result<Self, LinkPlanError>",
+  "verify_plan_v3_document(view.plan_document.as_bytes(), &view.plan_sha256)",
+  "verify_plan_v3_document(view.rollback_document.as_bytes(), &view.rollback_sha256)",
+  "if !plan.is_undone_by(&rollback) {",
+  "pub fn confirmation_lines(&self) -> Vec<String> {",
+  "if Self::verify(documents)? != *self {",
+  "if self.plan.infrastructure_id() != association.summary.infrastructure_id.as_str() {",
+  "operation: approval_operation(self.plan.operation()),",
+  'format!("Rôle du lien : {}", role_text(document.link_role))',
+  '"Adresse de tunnel : {}/32 sur l’interface {LINK_INTERFACE_NAME}"',
+  '"Port d’écoute (UDP) : {LINK_LISTEN_PORT}, sur l’écouteur seulement"',
+  '"Keepalive : {LINK_KEEPALIVE_SECONDS} s, sur l’initiateur seulement"',
+  '"Clés : générées sur cette machine, la moitié privée n’en sort jamais"',
+  '"Clé publique du pair : {}"',
+  'format!("Port du service : {}", document.service_port)',
+  '"Seul flux autorisé : TCP vers {LINK_INITIATOR_TUNNEL_ADDRESS}:{}, \\',
+  '"Seul flux autorisé : TCP depuis {LINK_LISTENER_TUNNEL_ADDRESS} vers \\',
+  '"Table de règles : {LINK_NFTABLES_TABLE}, posée avec ce plan \\',
+  '"Endpoint joint : {}:{LINK_LISTEN_PORT}"',
+  'format!("Empreinte du plan : {}", self.plan_sha256)',
+  'format!("Empreinte du rollback : {}", self.rollback_sha256)',
+]) {
+  if (!linkPlanRuntime.includes(bound)) {
+    failures.push(`link_plan.rs: garde du plan présenté absente (${bound})`);
+  }
+}
+// Les deux genres de jonction montrent chacun la clé qu'ils acceptent, le port
+// qu'ils bornent et la table qu'ils posent. Comme au-dessus, c'est compté : une
+// jonction dont la clé aurait disparu des lignes passerait une garde de simple
+// présence.
+for (const [fragment, expected] of [
+  ['"Clé publique du pair : {}"', 2],
+  ['format!("Port du service : {}", document.service_port)', 2],
+  ['"Table de règles : {LINK_NFTABLES_TABLE}, posée avec ce plan \\', 2],
+]) {
+  const occurrences = linkPlanRuntime.split(fragment).length - 1;
+  if (occurrences !== expected) {
+    failures.push(
+      `link_plan.rs: ${fragment} est affiché ${occurrences} fois au lieu de ${expected}`,
+    );
+  }
+}
+for (const forbidden of [
+  "SigningKey",
+  "signing_key",
+  "human_private_seed",
+  "Signer",
+  "private_key",
+]) {
+  if (linkPlanRuntime.replace(/#\[cfg\(test\)\][\s\S]*$/u, "").includes(forbidden)) {
+    failures.push(`link_plan.rs: une notion de clé privée y apparaît (${forbidden})`);
   }
 }
 

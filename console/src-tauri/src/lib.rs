@@ -6,6 +6,13 @@
 #[allow(dead_code)]
 mod approval;
 mod bootstrap;
+// The six plans of the private passage are verified, displayed and signed here,
+// for the same reason `approval` above and the two plan modules below are not
+// reachable from a command: the window that must render a plan before it is
+// approved belongs to the palier that adds the command, and the source contract
+// holds the command surface against that.
+#[allow(dead_code)]
+mod link_plan;
 mod native_assistant;
 mod network;
 // The probe plan is verified, displayed and signed here for the same reason the
@@ -15,7 +22,7 @@ mod network;
 #[allow(dead_code)]
 mod probe_plan;
 // The three plans of the public profile are verified, displayed and signed
-// here, for the same reason the two modules above are not reachable from a
+// here, for the same reason the three modules above are not reachable from a
 // command: the window that must render a plan before it is approved belongs to
 // the palier that adds the command, and the source contract holds the command
 // surface against that.
