@@ -74,6 +74,46 @@ func TestTheQuadletSheetDeclaresOnlyTheControlsThisPalierOwes(t *testing.T) {
 	}
 }
 
+// TestTheScratchPathsAreAPropertyOfTheImageAndNeverOfAPlan holds the one line
+// a sheet may carry beyond `#14`'s controls: the in-memory scratch an image
+// requires before it can serve at all.
+//
+// The paths come from the placement and from nowhere else — the machine proof
+// of `#92` isolated them one control at a time — and a profile whose image
+// needs none carries none, because a mount that grants nothing still reads as
+// a mount that was needed. The probe is that second profile, and its sheet is
+// asserted free of scratch rather than assumed to be.
+func TestTheScratchPathsAreAPropertyOfTheImageAndNeverOfAPlan(t *testing.T) {
+	t.Parallel()
+
+	service := string(renderSheet(bentoPDFPlacement, fixturePort))
+	expected := []string{
+		"Tmpfs=/var/cache/nginx:rw,mode=1777",
+		"Tmpfs=/etc/nginx/tmp:rw,mode=1777",
+	}
+	lines := []string{}
+	for _, line := range strings.Split(service, "\n") {
+		if strings.HasPrefix(line, "Tmpfs=") {
+			lines = append(lines, line)
+		}
+	}
+	if strings.Join(lines, ",") != strings.Join(expected, ",") {
+		t.Fatalf("the BentoPDF scratch is not exactly the two proven paths: %q", lines)
+	}
+	if !strings.Contains(service, "ReadOnly=true") {
+		t.Fatalf("the scratch replaced the read-only control instead of standing beside it:\n%s", service)
+	}
+
+	probe := string(renderSheet(probePlacement, fixturePort))
+	if strings.Contains(probe, "Tmpfs=") {
+		t.Fatalf("the probe's sheet gained a scratch its image never asked for:\n%s", probe)
+	}
+	entry := string(renderEntrypointSheet())
+	if strings.Contains(entry, "Tmpfs=") {
+		t.Fatalf("the entrypoint's sheet gained a scratch its image never asked for:\n%s", entry)
+	}
+}
+
 // TestTheOnlyPlanValueThatReachesTheSheetIsThePort holds the transport rule at
 // its narrowest: two plans that differ only by their port produce two sheets
 // that differ only by that one line, so no plan-derived string can ride into the

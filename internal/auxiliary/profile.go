@@ -83,6 +83,14 @@ type placement struct {
 	// the proof. The probe answers plain text and proves only that it answers;
 	// a static web profile proves that what it answers is a document.
 	expectedContentType string
+	// writablePaths are the in-memory scratch directories the image requires
+	// before it can serve at all, mounted as tmpfs inside the container. They
+	// are a property of the image, proven on a machine, never a plan value:
+	// the container's own filesystem stays read-only, the scratch lives in
+	// memory and nothing reaches the host. An image that needs none names
+	// none, because a mount that grants nothing still reads as a mount that
+	// was needed.
+	writablePaths []string
 }
 
 // quadletDirectory is where a rootless Quadlet sheet is read from, relative to
@@ -136,6 +144,11 @@ var bentoPDFPlacement = placement{
 	image:               plan.BentoPDFImageReference + "@" + plan.BentoPDFImageDigest,
 	containerPort:       BentoPDFContainerPort,
 	expectedContentType: contentTypeHTMLDocument,
+	// The pinned image is an unprivileged nginx, and nginx creates its client
+	// scratch and its pid file before it listens. Exactly these two paths, and
+	// no third: the machine proof of `#92` isolated them one control at a time
+	// (`/tmp` in particular is not among them).
+	writablePaths: []string{"/var/cache/nginx", "/etc/nginx/tmp"},
 }
 
 // profilePlacements is the closed list of service profiles this Auxiliary

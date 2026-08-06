@@ -153,6 +153,24 @@ cas de la sonde, ce ne l'est pas de BentoPDF. La fiche du profil reprend donc
 tous les autres contrôles à l'identique et **ne porte pas** cette ligne : un
 contrôle qui n'ouvre rien se lirait comme un contrôle dont on a eu besoin.
 
+### Le brouillon en mémoire est une propriété de l'image
+
+La première preuve machine du palier (`#92`) a montré que l'image épinglée ne
+peut pas servir sous `ReadOnly=true` nu : son NGINX crée son brouillon client
+et son fichier pid avant d'écouter. Les chemins exacts ont été isolés contrôle
+par contrôle sur la machine — **`/var/cache/nginx` et `/etc/nginx/tmp`, et
+aucun troisième** (`/tmp` n'en fait pas partie).
+
+Le profil les nomme donc comme **constantes de placement**, montées en
+`tmpfs` : le système de fichiers de l'image reste en lecture seule, le
+brouillon vit en mémoire dans le conteneur et disparaît avec lui, rien ne
+touche l'hôte, et aucun champ de plan ne peut en décrire un. Le mode est
+celui de `/tmp` (`1777`), parce que le compte propre à l'image doit pouvoir y
+écrire et que le profil ne présume pas son identifiant. Un profil dont
+l'image n'exige rien n'en porte aucun — la sonde et l'entrée n'en portent
+pas — pour la même raison que le sysctl : une monture qui n'accorde rien se
+lirait comme une monture nécessaire.
+
 ## Le point d'entrée : Traefik sans socket de moteur
 
 - **Aucun provider Docker/Podman.** Traefik ne voit aucun socket de moteur :

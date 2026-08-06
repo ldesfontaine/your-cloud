@@ -84,11 +84,22 @@ func renderUnit(document *plan.Document) []byte {
 //     needed;
 //   - ReadOnly makes the container's own filesystem unwritable, which every
 //     profile of this palier can afford because none of them keeps data;
+//   - Tmpfs gives the image the in-memory scratch it requires before it can
+//     serve at all — a property of the image named by its placement, proven
+//     blocking on a machine before it was added. The scratch is memory inside
+//     the container, gone with it; the mode is the one /tmp carries, because
+//     the image's own account must be able to write there and the profile does
+//     not assume that account's identifier. A profile that needs none carries
+//     none;
 //   - Pull=never keeps starting the service off the network: the one fetch this
 //     operation performs is explicit, and happens before the sheet is written;
 //   - no Volume, no Device, no Environment and no extra Network exist here,
 //     because no plan has a field that could describe one.
 func renderSheet(where placement, localPort int) []byte {
+	scratch := ""
+	for _, path := range where.writablePaths {
+		scratch += "Tmpfs=" + path + ":rw,mode=1777\n"
+	}
 	lowPorts := ""
 	if where.containerPort < firstUnprivilegedPort {
 		lowPorts = "Sysctl=net.ipv4.ip_unprivileged_port_start=0\n"
@@ -107,7 +118,7 @@ Pull=never
 ReadOnly=true
 NoNewPrivileges=true
 DropCapability=ALL
-%s
+%s%s
 [Service]
 Restart=on-failure
 
@@ -120,6 +131,7 @@ WantedBy=default.target
 		loopbackAddress,
 		localPort,
 		where.containerPort,
+		scratch,
 		lowPorts,
 	))
 }
