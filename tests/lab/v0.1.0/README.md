@@ -23,7 +23,7 @@ tests/lab/v0.1.0/prove close
 
 L'ordre est celui des dépendances de #13 : `personal-access` (#51, #52),
 `signed-approval` (#37), `controller-install` (#38), `machine-identity` (#39),
-puis `controller-replacement` (#40).
+`enrolment-bounds` (#41), puis `controller-replacement` (#40).
 
 - **Le premier rouge est conservé.** Le passage qui échoue arrête la séquence,
   son journal est retenu entier, les passages suivants sont enregistrés
@@ -70,6 +70,57 @@ puis `controller-replacement` (#40).
   seul `labctl stop` les conserve. Une passe complète est donc jouable une
   fois, puis le LAB doit être reprovisionné avant la suivante. C'est le prix
   du critère qui exige une fermeture, et il se paie en connaissance de cause.
+
+## [`enrolment-bounds/`](enrolment-bounds/) — la borne des soixante-quatre
+
+Ce harnais prouve l'**échelle**, et rien d'autre. Que chaque machine n'admette
+que son identité est la propriété de #39, éprouvée là-bas contre une vraie
+commande forcée ; la rejuger ici lui donnerait un second domicile. Ce que ce
+passage ajoute et qui n'existe nulle part ailleurs est triple : le parc entier
+de soixante-quatre identités frappé d'un coup par la porte compilée avec de
+vraies clés, la soixante-cinquième refusée par son nom, et l'**accord** entre
+ce que la porte décide et ce qu'un vrai `sshd` fait là où une machine existe.
+
+- [`prove`](enrolment-bounds/prove) est l'entrée unique. Elle commence par la
+  garde d'inventaire obligatoire, puis enchaîne sept sous-commandes :
+  `artifact`, `setup`, `estate`, `refuse`, `agree`, `mutate` et `remove`. Sans
+  argument, elle fait les sept dans l'ordre et démonte même lorsqu'une étape
+  échoue.
+- [`mount-machine`](enrolment-bounds/mount-machine) monte un compte synthétique
+  détenant exactement une clé publique, et **imprime sa provenance** plutôt que
+  de la supposer. Il n'installe ni commande forcée, ni règle d'élévation, ni
+  ancre : ce sont les propriétés de #39.
+- [`remove-machine`](enrolment-bounds/remove-machine) ne retire un compte que si
+  ce harnais l'a créé, la provenance étant celle que le montage a imprimée et
+  que le pilote lui rend. Un compte trouvé en place est laissé en place.
+
+`estate` imprime `MINTED count=64 bound=64` — les deux nombres sortant de la
+porte, jamais du harnais. `refuse` prend la soixante-cinquième
+(`TooManyMachines { count: 65 }`) et les deux collisions qui doivent encore être
+attrapées **à** la borne, identité partagée et machine déclarée deux fois.
+`agree` confronte le verdict de la porte à quatre vraies tentatives SSH.
+`mutate` porte la borne à soixante-cinq dans les sources, reconstruit, montre
+que la suite rougit, puis restaure et vérifie son propre point d'application.
+
+### Représentativité
+
+**Soixante-quatre machines ne sont pas prouvées.** Deux identités sur
+soixante-quatre sont détenues par une vraie machine de la topologie ; les
+soixante-deux autres sont de vraies clés Ed25519 que personne ne détient. Le
+harnais imprime cette proportion à chaque passage, parce qu'un rapport qui la
+tairait laisserait lire « soixante-quatre machines prouvées ». Ce qui est prouvé
+est que la porte frappe un parc de soixante-quatre identités réelles, et que là
+où une machine existe vraiment son jugement correspond à ce que cette machine
+fait vraiment.
+
+### Limites
+
+- Aucun registre Go n'est touché. Les bornes homonymes du registre Relay schéma
+  2 et de l'inventaire du Controller sont les leurs, et restent sans épreuve.
+- Les clés sont générées au montage et détruites au démontage ; aucune adresse
+  et aucune matière de clé ne vit dans ces fichiers.
+- Le compte synthétique ne porte ni commande forcée ni élévation : ce harnais
+  ne dit donc rien de ce qu'une session ouverte peut faire.
 
 ## [`personal-access/`](personal-access/) — périmètre de l'accès personnel
 

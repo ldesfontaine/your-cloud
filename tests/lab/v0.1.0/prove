@@ -34,6 +34,7 @@ usage: prove [guard | run [passe...] | close | all [passe...]]
     signed-approval         #37       the approval anchor and its anti-replay
     controller-install      #38       a Controller installed from the bundle
     machine-identity        #39       one SSH identity per machine, roles opened
+    enrolment-bounds        #41       an estate of sixty-four, and the sixty-fifth refused
     controller-replacement  #40       a Controller replaced, authorities withdrawn
 
   `windows-helper` is not part of this sequence: its machine lives outside
@@ -65,6 +66,7 @@ pass_names=(
   signed-approval
   controller-install
   machine-identity
+  enrolment-bounds
   controller-replacement
 )
 declare -A pass_bound=(
@@ -72,6 +74,7 @@ declare -A pass_bound=(
   [signed-approval]=1800
   [controller-install]=3600
   [machine-identity]=2700
+  [enrolment-bounds]=2700
   [controller-replacement]=3600
 )
 declare -A pass_issue=(
@@ -79,6 +82,7 @@ declare -A pass_issue=(
   [signed-approval]="#37"
   [controller-install]="#38"
   [machine-identity]="#39"
+  [enrolment-bounds]="#41"
   [controller-replacement]="#40"
 )
 declare -A vm_template=(

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Mount the machine half of the enrolment-bounds perimeter: one synthetic
+# account holding exactly one public key.
+#
+# It deliberately installs no forced command, no sudoers rule and no anchor.
+# What this palier proves is scale — that an estate of the bound mints and that
+# the gate's judgement matches reality where reality exists. The bounded command
+# and the refusal of shell, PTY and transfer belong to #39 and are proved there;
+# re-deciding them here would give those properties a second home.
+#
+# The provenance of the account is printed rather than assumed, so the removal
+# can refuse to delete something it did not create.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() { echo "usage: mount-machine ACCOUNT PUBLIC_KEY" >&2; exit 2; }
+[[ $# -eq 2 ]] || usage
+account=$1
+public_key=$2
+
+[[ "$account" =~ ^[a-z][a-z0-9-]{2,30}$ ]] || { echo "FAILED: implausible account name" >&2; exit 1; }
+[[ -f "$public_key" ]] || { echo "FAILED: public key is absent: $public_key" >&2; exit 1; }
+grep -q '^ssh-ed25519 ' "$public_key" \
+  || { echo "FAILED: this perimeter only carries Ed25519 public keys" >&2; exit 1; }
+
+if id "$account" >/dev/null 2>&1; then
+  provenance=FOUND
+else
+  provenance=CREATED
+  useradd --system --create-home --home-dir "/home/$account" --shell /bin/sh "$account"
+fi
+passwd --lock "$account" >/dev/null
+
+home=$(getent passwd "$account" | cut -d: -f6)
+[[ -n "$home" && "$home" != /nonexistent ]] || { echo "FAILED: account has no usable home" >&2; exit 1; }
+install -d -m 0700 -o "$account" -g "$account" "$home/.ssh"
+install -m 0600 -o "$account" -g "$account" "$public_key" "$home/.ssh/authorized_keys"
+
+# One key and one only. A file that accumulated keys across passes would let a
+# machine admit an identity this run never gave it.
+[[ $(wc -l <"$home/.ssh/authorized_keys") -eq 1 ]] \
+  || { echo "FAILED: authorized_keys holds more than the one identity" >&2; exit 1; }
+
+printf 'MOUNTED account=%s provenance=%s home=%s key=%s\n' \
+  "$account" "$provenance" "$home" "$(ssh-keygen -lf "$public_key" | awk '{print $2}')"
