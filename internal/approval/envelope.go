@@ -60,6 +60,18 @@ const (
 	OperationDeployOCIProbe = "deploy_oci_probe"
 	OperationRemoveOCIProbe = "remove_oci_probe"
 
+	// The six operations of the public profile. Each of them mutates, each of
+	// them is described by a plan document of schema 2 whose digest this
+	// envelope signs, and each of them is named here beside the probe pair
+	// rather than derived from it: an operation this Auxiliary may act on is a
+	// decision written once, in a list a reader can count.
+	OperationDeployWebService = "deploy_web_service"
+	OperationRemoveWebService = "remove_web_service"
+	OperationDeployEntrypoint = "deploy_entrypoint"
+	OperationRemoveEntrypoint = "remove_entrypoint"
+	OperationPublishRoute     = "publish_route"
+	OperationRetireRoute      = "retire_route"
+
 	// PrivilegeReadLocalState allows reading what the machine already holds.
 	PrivilegeReadLocalState = "read_local_state"
 	// PrivilegeMutateLocalState allows changing the machine. The read-only
@@ -81,6 +93,12 @@ var requiredPrivileges = map[string][]string{
 	OperationDiagnoseProtocolReadOnly: {PrivilegeReadLocalState},
 	OperationDeployOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	OperationRemoveOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationDeployWebService:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRemoveWebService:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationDeployEntrypoint:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRemoveEntrypoint:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationPublishRoute:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRetireRoute:              {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 }
 
 // mutatingOperations is the closed list of operations that are allowed to reach
@@ -88,8 +106,14 @@ var requiredPrivileges = map[string][]string{
 // deriving it from the privileges is deliberate: an operation added to the table
 // above does not silently become one this machine will act on.
 var mutatingOperations = map[string]struct{}{
-	OperationDeployOCIProbe: {},
-	OperationRemoveOCIProbe: {},
+	OperationDeployOCIProbe:   {},
+	OperationRemoveOCIProbe:   {},
+	OperationDeployWebService: {},
+	OperationRemoveWebService: {},
+	OperationDeployEntrypoint: {},
+	OperationRemoveEntrypoint: {},
+	OperationPublishRoute:     {},
+	OperationRetireRoute:      {},
 }
 
 var (

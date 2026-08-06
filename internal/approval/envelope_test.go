@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
 const (
@@ -350,10 +352,15 @@ func TestDecodeSignedRefusesEveryDocumentOutsideTheSchema(t *testing.T) {
 // privilege table against the closed list of operations that may change the
 // machine, in both directions.
 //
-// The read-only operation keeps refusing the mutating privilege, and the two
-// probe operations require it in the exact strictly increasing spelling the Rust
-// side pins: an envelope that permutes the two privileges is a different
-// document, not the same approval written differently.
+// The read-only operation keeps refusing the mutating privilege, and every
+// operation that changes the machine — the two probe operations of the previous
+// palier and the six of the public profile — requires it in the exact strictly
+// increasing spelling the Rust side pins: an envelope that permutes the two
+// privileges is a different document, not the same approval written differently.
+//
+// The table below is written out rather than derived from the one under test, so
+// that adding an operation to the product is a change a reader of this test has
+// to agree with.
 func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testing.T) {
 	t.Parallel()
 	mutating := vectorEnvelope()
@@ -370,6 +377,12 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		OperationDiagnoseProtocolReadOnly: {PrivilegeReadLocalState},
 		OperationDeployOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 		OperationRemoveOCIProbe:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationDeployWebService:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRemoveWebService:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationDeployEntrypoint:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRemoveEntrypoint:         {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationPublishRoute:             {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRetireRoute:              {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	}
 	if len(requiredPrivileges) != len(expected) {
 		t.Fatalf("this palier performs %d operations, not %d", len(expected), len(requiredPrivileges))
@@ -398,6 +411,33 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		}
 		if _, applied := mutatingOperations[operation]; applied != carriesMutation {
 			t.Fatalf("operation %q is applied=%t while requiring mutation=%t", operation, applied, carriesMutation)
+		}
+	}
+
+	// The closed list of applied mutations is held in both directions, so that an
+	// operation cannot enter it without also declaring the privileges it needs.
+	for operation := range mutatingOperations {
+		if _, declared := expected[operation]; !declared {
+			t.Fatalf("operation %q may be applied without declaring its privileges", operation)
+		}
+	}
+
+	// The envelope names an operation and the plan describes it; the Auxiliary
+	// refuses the pair unless the two strings are equal. They are two closed
+	// lists in two packages, so they are held against one another here rather
+	// than assumed to have been written the same way twice.
+	for operation, spelling := range map[string]string{
+		OperationDeployOCIProbe:   plan.OperationDeployOCIProbe,
+		OperationRemoveOCIProbe:   plan.OperationRemoveOCIProbe,
+		OperationDeployWebService: plan.OperationDeployWebService,
+		OperationRemoveWebService: plan.OperationRemoveWebService,
+		OperationDeployEntrypoint: plan.OperationDeployEntrypoint,
+		OperationRemoveEntrypoint: plan.OperationRemoveEntrypoint,
+		OperationPublishRoute:     plan.OperationPublishRoute,
+		OperationRetireRoute:      plan.OperationRetireRoute,
+	} {
+		if operation != spelling {
+			t.Fatalf("the approval spells %q where the plan spells %q", operation, spelling)
 		}
 	}
 }

@@ -244,9 +244,9 @@ func (document *Document) Transcript() ([]byte, error) {
 	if err := document.Validate(); err != nil {
 		return nil, err
 	}
-	image, err := hex.DecodeString(strings.TrimPrefix(document.ImageDigest, "sha256:"))
-	if err != nil || len(image) != DigestBytes {
-		return nil, errMalformedImageDigest
+	image, err := decodeOCIDigest(document.ImageDigest)
+	if err != nil {
+		return nil, err
 	}
 	transcript := make([]byte, 0, len(TranscriptDomain)+192)
 	transcript = append(transcript, TranscriptDomain...)
@@ -262,14 +262,7 @@ func (document *Document) Transcript() ([]byte, error) {
 
 // SHA256 is the lower-case hexadecimal value an envelope names as plan_sha256
 // or rollback_sha256, in the exact spelling that envelope requires.
-func (document *Document) SHA256() (string, error) {
-	transcript, err := document.Transcript()
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(transcript)
-	return hex.EncodeToString(digest[:]), nil
-}
+func (document *Document) SHA256() (string, error) { return digestOf(document) }
 
 // BuildPair freezes one operation on one instance together with the complete
 // document that undoes it.
@@ -307,29 +300,60 @@ func BuildPair(operation, infrastructureID, machineID string, localPort int) (Pa
 // Freeze renders a pair once and keeps the documents and their digests
 // together, so that no caller can transport one document beside the digest of
 // another.
-func (pair Pair) Freeze() (Frozen, error) {
-	planDocument, err := pair.Plan.Encode()
+func (pair Pair) Freeze() (Frozen, error) { return freeze(&pair.Plan, &pair.Rollback) }
+
+// hashedDocument is what freezing a pair requires of a document, whatever its
+// schema: the one canonical spelling of its bytes, and the digest an envelope
+// names. Both schemas answer it, so neither owns a second way of being frozen.
+type hashedDocument interface {
+	Encode() ([]byte, error)
+	SHA256() (string, error)
+}
+
+func freeze(planDocument, rollbackDocument hashedDocument) (Frozen, error) {
+	encodedPlan, err := planDocument.Encode()
 	if err != nil {
 		return Frozen{}, err
 	}
-	planDigest, err := pair.Plan.SHA256()
+	planDigest, err := planDocument.SHA256()
 	if err != nil {
 		return Frozen{}, err
 	}
-	rollbackDocument, err := pair.Rollback.Encode()
+	encodedRollback, err := rollbackDocument.Encode()
 	if err != nil {
 		return Frozen{}, err
 	}
-	rollbackDigest, err := pair.Rollback.SHA256()
+	rollbackDigest, err := rollbackDocument.SHA256()
 	if err != nil {
 		return Frozen{}, err
 	}
 	return Frozen{
-		PlanDocument:     planDocument,
+		PlanDocument:     encodedPlan,
 		PlanSHA256:       planDigest,
-		RollbackDocument: rollbackDocument,
+		RollbackDocument: encodedRollback,
 		RollbackSHA256:   rollbackDigest,
 	}, nil
+}
+
+// digestOf is the one place a plan digest is taken, so that no schema can hash
+// its transcript by a second procedure.
+func digestOf(document interface{ Transcript() ([]byte, error) }) (string, error) {
+	transcript, err := document.Transcript()
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(transcript)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+// decodeOCIDigest turns the textual field into the 32 bytes the transcript
+// carries, and refuses everything else.
+func decodeOCIDigest(value string) ([]byte, error) {
+	decoded, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	if err != nil || len(decoded) != DigestBytes {
+		return nil, errMalformedImageDigest
+	}
+	return decoded, nil
 }
 
 func appendField(buffer []byte, value []byte) []byte {

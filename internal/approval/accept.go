@@ -36,13 +36,13 @@ func Accept(directory string, anchor *Anchor, signed *SignedApproval, nowUnixSec
 //
 // It is a second subject rather than a relaxation of the first: the read-only
 // subject keeps refusing every mutation, and this one refuses every envelope
-// that is not one of the two probe operations, so neither can be reached by an
-// envelope meant for the other. What the mutation may actually do is not decided
-// here at all — this returns an acceptance, and the caller still has to hold the
-// plan documents against the digests this envelope signed before touching
-// anything.
+// naming an operation outside the closed list of mutations, so neither can be
+// reached by an envelope meant for the other. What the mutation may actually do
+// is not decided here at all — this returns an acceptance, and the caller still
+// has to hold the plan documents against the digests this envelope signed before
+// touching anything.
 func AcceptMutating(directory string, anchor *Anchor, signed *SignedApproval, nowUnixSeconds uint64) (*Acceptance, error) {
-	return accept(directory, anchor, signed, nowUnixSeconds, requireProbeMutation)
+	return accept(directory, anchor, signed, nowUnixSeconds, requireAppliedMutation)
 }
 
 // requireReadOnlyDiagnostic is the limit of the read-only subject, checked on
@@ -59,10 +59,10 @@ func requireReadOnlyDiagnostic(envelope *Envelope) error {
 	return nil
 }
 
-// requireProbeMutation is the symmetric limit of the mutating subject: exactly
+// requireAppliedMutation is the symmetric limit of the mutating subject: exactly
 // the closed list of operations that may change the machine, and only while the
 // envelope actually asks for the privilege that changing it requires.
-func requireProbeMutation(envelope *Envelope) error {
+func requireAppliedMutation(envelope *Envelope) error {
 	if _, known := mutatingOperations[envelope.Operation]; !known {
 		return fmt.Errorf("approval operation %q is not one this Auxiliary applies", envelope.Operation)
 	}

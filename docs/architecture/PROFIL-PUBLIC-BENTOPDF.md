@@ -1,10 +1,11 @@
 # Profil public BentoPDF et point d'entrée Traefik
 
-> Statut : proposition de contrat pour le palier `#15`, suivie par `#87`.
+> Statut : contrat d'architecture validé (`#87`) pour le palier `#15`.
 > Il étend le contrat du plan (`PLAN-OCI-CONTROLE.md`) aux opérations de
 > service et de publication, fixe l'édition, la licence et les images
-> épinglées du profil, et décrit ce que la preuve devra constater. Rien ici
-> n'est implémenté tant que ce contrat n'est pas validé.
+> épinglées du profil, et décrit ce que la preuve devra constater. Les
+> implémentations le suivent depuis `#88` (plans et surface du Controller) ;
+> la preuve LAB du palier reste `#92`.
 
 ## Ce que ce profil est, et n'est pas
 
@@ -49,7 +50,8 @@ Le schéma `2` conserve tout le procédé du schéma `1` — document JSON stric
 borné à 4096 octets, transcript binaire à domaine séparé
 (`your-cloud/oci-plan.v2\0`), rollback comme document complet inverse, paire
 gelée par le Controller, signature par la Console, revérification par
-l'Auxiliaire — et ajoute quatre opérations aux listes de champs fermées :
+l'Auxiliaire — et ajoute six opérations, en trois paires inverses, aux
+listes de champs fermées :
 
 | Opération | Champs propres (au-delà de `schema_version`, `infrastructure_id`, `machine_id`, `operation`) |
 |---|---|
@@ -77,6 +79,47 @@ Décisions portées par cette forme :
   `1024..65535` et doit nommer le port loopback d'un service géré présent.
 - **Le rollback reste l'inverse exact** : retrait pour un déploiement,
   redéploiement pour un retrait, `retire_route` pour `publish_route`.
+
+## Surface du Controller étendue de trois routes
+
+`PLAN-OCI-CONTROLE.md` avait étendu la surface métier du Controller d'exactement
+une route, `POST /v0/probe-plans`. Le présent contrat l'étend de trois, et
+d'aucune autre :
+
+| Méthode et route | Effet autorisé |
+|---|---|
+| `POST /v0/service-plans` | construire et geler la paire plan/rollback d'un service géré pour une machine de l'inventaire, sans muter aucune machine |
+| `POST /v0/entrypoint-plans` | construire et geler la paire plan/rollback du point d'entrée pour une machine de l'inventaire, sans muter aucune machine |
+| `POST /v0/route-plans` | construire et geler la paire plan/rollback d'une route publiée pour une machine de l'inventaire, sans muter aucune machine |
+
+Décisions attachées à ces routes :
+
+- **Trois routes sœurs plutôt qu'une route à discriminant.** Une route unique
+  aurait exigé un schéma de requête portant les champs des trois groupes, donc
+  une lecture avant refus ; séparées, chaque requête est une liste fermée et un
+  champ d'un autre groupe est refusé par le décodage strict avant que sa valeur
+  soit lue. C'est la décision que prennent déjà les documents eux-mêmes.
+- Elles empruntent la **même authentification de session** que les routes métier
+  existantes : aucun nouveau chemin d'autorité, aucun nouveau code d'erreur. Une
+  machine hors inventaire reçoit `422 machine_not_active`, dans la liste fermée
+  existante.
+- L'appartenance à l'inventaire reste une **preuve passée** d'enrôlement, pour
+  la même raison qu'au palier précédent : un plan décrit sans muter, et
+  l'Auxiliaire re-dérive localement toute autorité avant d'agir.
+- Les deux documents voyagent comme **chaînes JSON portant leurs octets
+  canoniques exacts**, accompagnés de leurs digests — la seule forme de
+  transport, il n'en existe pas de seconde.
+- La Console ne choisit **ni l'infrastructure, ni l'image, ni le digest** :
+  l'infrastructure est celle dont ce Controller est l'autorité, et l'image est
+  celle que le profil épingle. Elle choisit le profil, et un profil inconnu est
+  refusé avant que le reste de la requête compte.
+
+La borne de `route_host` se lit exactement ainsi : minuscules, chiffres, tirets
+et points ; 3 à 253 caractères ; premier et dernier caractère lettre ou chiffre —
+donc ni point ni tiret en tête ou en fin ; aucun label vide, donc aucun point
+consécutif. Les tirets consécutifs restent acceptés parce qu'un label punycode en
+porte. Le joker n'a pas de refus propre : il n'appartient pas au jeu de
+caractères.
 
 ## Comptes et placement
 
