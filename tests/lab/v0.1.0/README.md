@@ -51,13 +51,14 @@ L'ordre est celui des dépendances de #13 : `personal-access` (#51, #52),
   d'évaluation vit hors de `labctl` et hors de cette topologie. Elle est
   enregistrée `not_run`, jamais `passed`. La moitié Windows du palier reste non
   prouvée tant que cette machine ne la joue pas.
-- **`labctl assert-clean` ne peut pas être vert** tant que `lab-windows` existe
-  sous ce nom : la garde retient tout domaine nommé `lab-*`, et cette VM est
-  manuelle par décision. La fermeture détruit la topologie que le passage
-  possède, relit la garde, et **nomme** ce qui reste au lieu de l'appeler
-  propre. Si l'un des résidus appartenait à la topologie détruite, c'est un
-  échec de nettoyage et la fermeture rougit. Le critère de #41 qui demande un
-  `assert-clean` vert ne peut donc pas être satisfait en l'état.
+- **La fermeture relit la garde et nomme ce qui reste**, au lieu d'appeler le
+  LAB propre. Si l'un des résidus appartenait à la topologie détruite, c'est un
+  échec de nettoyage et la fermeture rougit ; s'il lui préexistait, il est
+  nommé comme conservation et non tu. Le critère de #41 qui demande un
+  `assert-clean` vert est atteignable depuis que la VM Windows manuelle a
+  quitté le préfixe `lab-*` — elle s'appelait `lab-windows`, et sous ce nom la
+  garde la retenait indéfiniment, ce qui rendait le critère impossible à
+  satisfaire quoi que fasse un passage.
 - **Démarrer une VM arrêtée est la seule mutation** que l'orchestrateur fait
   hors d'un passage, et c'est elle qui rend la topologie sienne à fermer. Il
   remonte alors le swapfile, que `labctl start` laisse présent mais inutilisé :
@@ -538,7 +539,7 @@ tests/lab/v0.1.0/windows-helper/prove run [suite...]
 ```
 
 `YOUR_CLOUD_WINDOWS_LAB_USER` (défaut `Administrator`),
-`YOUR_CLOUD_WINDOWS_LAB_DOMAIN` (défaut `lab-windows`) et
+`YOUR_CLOUD_WINDOWS_LAB_DOMAIN` (défaut `windows-eval`) et
 `YOUR_CLOUD_WINDOWS_LAB_PROFILE` (`release` ou `debug`) complètent cette
 description.
 

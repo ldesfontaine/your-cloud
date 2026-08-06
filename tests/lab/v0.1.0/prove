@@ -535,11 +535,9 @@ do_close() {
   cat >&2 <<EOF
 
 LIMIT: \`labctl assert-clean\` is red, and this run did not make it red. What
-remains is named above and was there before the proof started — the Windows
-evaluation machine is outside labctl by design, and \`assert-clean\` flags any
-domain named lab-*. The topology this run owns is gone; the acceptance
-criterion of #41 that asks for a green assert-clean cannot be met while that
-machine exists under that name.
+remains is named above and was there before the proof started. The topology
+this run owns is gone, so this is a retention to account for, not a cleanup
+failure — name it, its reason and the task responsible for it in the report.
 EOF
   return 0
 }

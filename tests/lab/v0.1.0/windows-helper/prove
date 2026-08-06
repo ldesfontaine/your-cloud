@@ -16,7 +16,7 @@ The machine is described by the environment, never by this file:
   YOUR_CLOUD_WINDOWS_LAB_ADDRESS      address of the evaluation machine
   YOUR_CLOUD_WINDOWS_LAB_KEY          path of the private key that opens it
   YOUR_CLOUD_WINDOWS_LAB_USER         account to open it with (default Administrator)
-  YOUR_CLOUD_WINDOWS_LAB_DOMAIN       libvirt domain to cross-check (default lab-windows)
+  YOUR_CLOUD_WINDOWS_LAB_DOMAIN       libvirt domain to cross-check (default windows-eval)
   YOUR_CLOUD_WINDOWS_LAB_KNOWN_HOSTS  pinned host keys (default ~/.ssh/known_hosts)
   YOUR_CLOUD_WINDOWS_LAB_PROFILE      release or debug (default release)
   YOUR_CLOUD_WINDOWS_LAB_SYSTEM_AGENT run the personal transport suite under
@@ -61,7 +61,7 @@ fail() { echo "FAILED: $*" >&2; exit 1; }
 address=${YOUR_CLOUD_WINDOWS_LAB_ADDRESS:-}
 key=${YOUR_CLOUD_WINDOWS_LAB_KEY:-}
 user=${YOUR_CLOUD_WINDOWS_LAB_USER:-Administrator}
-domain=${YOUR_CLOUD_WINDOWS_LAB_DOMAIN:-lab-windows}
+domain=${YOUR_CLOUD_WINDOWS_LAB_DOMAIN:-windows-eval}
 known_hosts=${YOUR_CLOUD_WINDOWS_LAB_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}
 profile=${YOUR_CLOUD_WINDOWS_LAB_PROFILE:-release}
 

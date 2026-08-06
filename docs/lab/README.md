@@ -316,7 +316,7 @@ ne couvre pas Windows sans contrainte. La décision de placement des preuves
 cette position.
 
 Ce LAB Windows minimal existe depuis le 4 août 2026. Il tient dans un seul
-domaine libvirt, `lab-windows` : Windows Server 2025 Standard Évaluation avec
+domaine libvirt, `windows-eval` : Windows Server 2025 Standard Évaluation avec
 interface graphique — le même système que le runner `windows-2025` de la porte
 native, délibérément —, 6 Gio de mémoire, 4 processeurs virtuels, un disque de
 80 Gio alloué à la demande et le réseau libvirt `default`. Il porte
@@ -346,14 +346,24 @@ archivé.
 
 **Sa fermeture est explicite.** `tools/labctl assert-clean` ne voit pas ce
 domaine : il refuse les VM portant l'origine `your-cloud/labctl` et les noms
-`lab-*` suspects, mais `lab-windows` n'a été créée ni par le contrôleur ni avec
-ses métadonnées. Un `assert-clean` vert ne dit donc rien de six gibioctets
-encore alloués. La fin d'une tâche qui l'emploie exige la commande suivante,
-nommée dans le compte rendu :
+`lab-*` suspects, or `windows-eval` n'a été créée ni par le contrôleur, ni avec
+ses métadonnées, ni sous son préfixe. Un `assert-clean` vert ne dit donc rien de
+six gibioctets encore alloués. La fin d'une tâche qui l'emploie exige la
+commande suivante, nommée dans le compte rendu :
 
 ```text
-virsh -c qemu:///system shutdown lab-windows
+virsh -c qemu:///system shutdown windows-eval
 ```
+
+**Le nom est la moitié de cette propriété.** Ce domaine s'est d'abord appelé
+`lab-windows`, et sous ce nom la garde le retenait : le préfixe `lab-*` est un
+filet volontairement large, qui rattrape une VM que le contrôleur aurait créée
+puis dont les métadonnées auraient disparu. Une machine manuelle portant ce
+préfixe rendait donc `assert-clean` **rouge par construction et pour toujours**,
+c'est-à-dire inutilisable comme critère de fermeture. Elle a été renommée le
+6 août 2026 par `virsh domrename`, disques et configuration inchangés. Les
+rapports LAB antérieurs à cette date la nomment encore `lab-windows` : ce sont
+des relevés d'exécution, et ils ne sont pas réécrits.
 
 Pour la même raison de mémoire, cette VM et les VM Debian de `labctl` ne
 tournent jamais ensemble sur le poste ; le harnais refuse de démarrer lorsque

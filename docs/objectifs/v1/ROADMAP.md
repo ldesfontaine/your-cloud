@@ -129,9 +129,12 @@ passage partiel, et le harnais
 [`enrolment-bounds`](../../../tests/lab/v0.1.0/enrolment-bounds/), qui frappe un
 parc de soixante-quatre identités réelles et fait refuser la soixante-cinquième
 en annonçant sa représentativité — deux machines réelles sur soixante-quatre.
-Restent hors d'atteinte sans le candidat : les quatre lignes encore planifiées
-de la matrice, et un `assert-clean` vert, que le nom de la VM Windows manuelle
-rend impossible tant qu'elle s'appelle `lab-windows`.
+Un troisième obstacle est levé : la VM Windows manuelle s'appelait
+`lab-windows`, et sous ce préfixe la garde de fermeture la retenait
+indéfiniment, si bien qu'un `assert-clean` vert était impossible quoi que fît un
+passage. Elle a été renommée `windows-eval` le 6 août 2026, disques et
+configuration inchangés. Reste hors d'atteinte sans le candidat : les quatre
+lignes encore planifiées de la matrice.
 
 ## État de départ
 
