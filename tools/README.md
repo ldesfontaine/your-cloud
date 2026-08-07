@@ -11,6 +11,13 @@ aucun scénario de test.
   LAB encore persistant à la clôture.
 - [`check-docs`](check-docs) vérifie la structure et les liens de la
   documentation sans lancer le produit.
+- [`release-artifacts`](release-artifacts) produit les artefacts vérifiables de
+  la révision courante — manifeste, sommes, SBOM CycloneDX et provenance — sans
+  réseau, sans horodatage et sans nom de machine, de sorte que deux exécutions
+  sur une même révision rendent les mêmes octets. Sa commande
+  `check-determinism` le prouve en produisant deux fois, et un tiers vérifie le
+  résultat avec `sha256sum -c checksums.txt`. Il ne construit rien et ne signe
+  rien.
 - [`ci-usage`](ci-usage) mesure les minutes GitHub Actions réellement
   facturées du cycle courant, en appliquant le facteur de plateforme, et sert
   de garde avant une matrice native : `tools/ci-usage --guard 100` échoue

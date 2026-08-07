@@ -1,0 +1,919 @@
+#!/usr/bin/env python3
+"""Produit les artefacts vérifiables d'une révision exacte (#111).
+
+Cet outil n'exécute ni le produit, ni un test, ni un build : il lit le dépôt,
+ses verrous et les versions des chaînes d'outils installées, puis écrit quatre
+fichiers déterministes. Aucun accès réseau n'a lieu à la production : le SBOM
+est résolu depuis les verrous versionnés, jamais depuis un registre.
+
+La liste close des artefacts de release est fixée par le contrat `#19`
+(`docs/objectifs/v1/PREUVE-COMPLETE.md`) et compte cinq entrées. Quatre sont
+écrites ici — `manifest.json`, `checksums.txt`, `sbom.json`, `provenance.json`.
+La cinquième, `report.txt`, appartient à la preuve complète (`#112`) : elle
+porte des dates, des machines et des limites, c'est-à-dire exactement ce que
+deux exécutions sur une même révision ne peuvent pas rendre identique. Le
+manifeste la nomme donc sans l'empreindre, plutôt que de taire son existence.
+
+Trois décisions du contrat gouvernent chaque octet écrit ici :
+
+  mêmes octets   aucune date d'exécution, aucun chemin de travail, aucun nom de
+                 machine n'entre dans un artefact ; ce qui varie appartient au
+                 rapport, pas au manifeste ;
+  arbre nommé    un arbre modifié est écrit `<sha>+worktree`, orthographe que
+                 les rapports de preuve du produit emploient déjà ;
+  pas d'identité la provenance dit d'où viennent les octets, pas qui en répond ;
+                 aucune signature n'entre dans la liste tant que `#12` n'a pas
+                 conclu.
+
+Refus, tous par leur nom plutôt que par une valeur inventée : un répertoire de
+sortie non vide sans `--force`, un dépôt Git illisible, une chaîne d'outils
+absente, un verrou absent ou illisible, un module requis absent de `go.sum`,
+une version de verrou npm non gérée, une constante d'image OCI dépareillée.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+from typing import NoReturn
+
+ROOT = Path(__file__).resolve().parents[1]
+SELF = Path(__file__).resolve()
+
+TOOL_NAME = "tools/release-artifacts"
+TOOL_VERSION = 1
+
+MANIFEST_SCHEMA_VERSION = 1
+PROVENANCE_SCHEMA_VERSION = 1
+
+# La liste close du contrat `#19`, dans l'ordre du tableau qui la porte.
+MANIFEST_NAME = "manifest.json"
+CHECKSUMS_NAME = "checksums.txt"
+SBOM_NAME = "sbom.json"
+PROVENANCE_NAME = "provenance.json"
+REPORT_NAME = "report.txt"
+CLOSED_LIST = (MANIFEST_NAME, CHECKSUMS_NAME, SBOM_NAME, PROVENANCE_NAME, REPORT_NAME)
+
+# Les fichiers que cet outil écrit lui-même, dans leur ordre de production :
+# le manifeste empreint ce qui le précède, checksums.txt empreint le manifeste.
+PRODUCED = (SBOM_NAME, PROVENANCE_NAME, MANIFEST_NAME, CHECKSUMS_NAME)
+
+PRODUCED_BY_TOOL = TOOL_NAME
+PRODUCED_BY_PROOF = "the complete v0.1.0 proof (#112)"
+
+# Les verrous du dépôt, source unique des composants du SBOM. Un verrou absent
+# ou illisible fait refuser la production entière : un SBOM partiel se lit
+# comme un SBOM complet et ment mieux qu'il n'informe.
+LOCKS = {
+    "go.mod": "go.mod",
+    "go.sum": "go.sum",
+    "cargo": "console/src-tauri/Cargo.lock",
+    "npm": "console/package-lock.json",
+}
+
+# La source de vérité des images épinglées. Elles sont des constantes du
+# produit : les relire ici évite qu'un artefact énonce une image que le plan
+# n'accepterait pas.
+PLAN_SOURCE_DIR = "internal/plan"
+
+# Les chaînes d'outils lues, jamais supposées. La commande est celle qui rend
+# la version, pas celle qui construit quoi que ce soit.
+TOOLCHAINS = {
+    "cargo": ("cargo", "--version"),
+    "go": ("go", "version"),
+    "node": ("node", "--version"),
+}
+
+# Le tableau du contrat, rendu fidèlement en anglais : les cinq artefacts sont
+# lus ensemble, et `report.txt` — écrit par la preuve — est en anglais comme
+# tous les rapports de preuve du produit.
+ATTESTATIONS = {
+    MANIFEST_NAME: (
+        "the exact revision, the state of the tree, the list of the artifacts "
+        "and their digests",
+        "that this revision has been attested by a hosted gate",
+    ),
+    CHECKSUMS_NAME: (
+        "the digest of every file produced, recomputable from the repository "
+        "alone",
+        "the origin of a third party's bytes",
+    ),
+    SBOM_NAME: (
+        "the components of the product and their pinned versions, resolved "
+        "from the locks of the repository",
+        "the absence of a flaw in those components",
+    ),
+    PROVENANCE_NAME: (
+        "who produced what, from which revision and with which tools",
+        "a publicly recognised identity",
+    ),
+    REPORT_NAME: (
+        "what was observed on machines, with its dates and its limits",
+        "what the product would do on a real infrastructure",
+    ),
+}
+
+# Ce que ce jeu d'artefacts n'atteste pas, liste close. Ce sont les décisions
+# que le contrat `#19` porte, rendues fidèlement.
+DOES_NOT_ATTEST = (
+    "that this revision has been attested by a hosted gate: no local run "
+    "produces that attestation.",
+    "any identity: provenance.json says where the bytes come from, not who "
+    "answers for them.",
+    "any signature: none enters this list while #12 is unresolved, because a "
+    "synthetic signature proves a mechanism and never a trust.",
+    "the distributable payloads: the Debian 13 amd64 server .deb and the "
+    "Console installers are built elsewhere and bound by their own signed "
+    "bundle manifest; this set carries none of their bytes.",
+)
+
+# Ce que la production ne consigne jamais, et pourquoi. La phrase est écrite
+# dans la provenance plutôt que laissée à découvrir.
+ENVIRONMENT_NOT_RECORDED = (
+    "no hostname, no working path, no execution date: two runs on one revision "
+    "must render the same bytes, and what varies belongs to report.txt."
+)
+
+
+class Refusal(Exception):
+    """Refus nommé : la production s'arrête sans écrire d'artefact partiel."""
+
+
+def fail(message: str) -> NoReturn:
+    raise Refusal(message)
+
+
+# ---------------------------------------------------------------------------
+# Lectures : dépôt, chaînes d'outils, verrous
+# ---------------------------------------------------------------------------
+
+
+def run_read_only(command: tuple[str, ...], *, what: str) -> str:
+    """Exécute une commande de lecture et refuse par son nom si elle manque."""
+
+    environment = dict(os.environ, LC_ALL="C", LANG="C")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        fail(f"{what} is absent: {command[0]} could not be executed")
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        fail(f"{what} could not be read: {' '.join(command)} said {detail!r}")
+    return completed.stdout
+
+
+def read_revision() -> dict[str, str]:
+    """Nomme la révision une fois, et nomme un arbre modifié comme tel."""
+
+    commit = run_read_only(
+        ("git", "rev-parse", "HEAD"), what="the repository revision"
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        fail(f"the repository revision is not a commit SHA: {commit!r}")
+
+    unstaged = run_read_only(("git", "diff", "--name-only"), what="the worktree state")
+    staged = run_read_only(
+        ("git", "diff", "--cached", "--name-only"), what="the index state"
+    )
+    untracked = run_read_only(
+        ("git", "ls-files", "--others", "--exclude-standard"),
+        what="the untracked files",
+    )
+    modified = bool(unstaged.strip() or staged.strip() or untracked.strip())
+
+    # L'orthographe est celle des rapports de preuve du produit : un manifeste
+    # qui tairait la différence attesterait une révision qui n'existe nulle part.
+    return {
+        "commit": commit,
+        "id": f"{commit}+worktree" if modified else commit,
+        "tree": "modified" if modified else "clean",
+    }
+
+
+def read_toolchains() -> dict[str, str]:
+    """Lit les versions réellement installées ; refuse plutôt qu'écrire 'unknown'."""
+
+    versions: dict[str, str] = {}
+    for name, command in sorted(TOOLCHAINS.items()):
+        if shutil.which(command[0]) is None:
+            fail(
+                f"the {name} toolchain is absent: {command[0]} is not on PATH. "
+                "A provenance that wrote 'unknown' here would attest nothing."
+            )
+        output = run_read_only(command, what=f"the {name} version")
+        first_line = output.strip().splitlines()
+        if not first_line:
+            fail(f"the {name} toolchain printed no version")
+        versions[name] = first_line[0].strip()
+    return versions
+
+
+def lock_path(key: str) -> Path:
+    """Retourne un verrou lisible ou refuse en le nommant."""
+
+    path = ROOT / LOCKS[key]
+    if not path.is_file():
+        fail(f"the lock {LOCKS[key]} is absent; refusing to emit a partial SBOM")
+    if not os.access(path, os.R_OK):
+        fail(f"the lock {LOCKS[key]} is unreadable; refusing to emit a partial SBOM")
+    return path
+
+
+def read_go_modules() -> list[dict[str, object]]:
+    """Résout les modules Go depuis go.mod, chacun confirmé par go.sum."""
+
+    go_mod = lock_path("go.mod").read_text(encoding="utf-8")
+    go_sum = lock_path("go.sum").read_text(encoding="utf-8")
+
+    sums: dict[tuple[str, str], str] = {}
+    for line in go_sum.splitlines():
+        fields = line.split()
+        if len(fields) != 3 or not fields[2].startswith("h1:"):
+            continue
+        module, version, digest = fields
+        if version.endswith("/go.mod"):
+            continue
+        sums[(module, version)] = digest
+
+    modules: list[dict[str, object]] = []
+    in_block = False
+    for raw in go_mod.splitlines():
+        line = raw.split("//")[0].strip()
+        comment = raw.partition("//")[2]
+        if in_block:
+            if line == ")":
+                in_block = False
+                continue
+            entry = line
+        elif line.startswith("require ("):
+            in_block = True
+            continue
+        elif line.startswith("require "):
+            entry = line[len("require ") :].strip()
+        else:
+            continue
+        if not entry:
+            continue
+        fields = entry.split()
+        if len(fields) != 2:
+            fail(f"go.mod holds a require line this tool cannot read: {raw.strip()!r}")
+        module, version = fields
+        digest = sums.get((module, version))
+        if digest is None:
+            fail(
+                f"go.mod requires {module} {version} but go.sum does not hold it; "
+                "refusing to emit a partial SBOM"
+            )
+        modules.append(
+            {
+                "module": module,
+                "version": version,
+                "sum": digest,
+                "indirect": "indirect" in comment,
+            }
+        )
+    if not modules:
+        fail("go.mod declares no required module; refusing to emit an empty SBOM")
+    return modules
+
+
+def read_cargo_packages() -> list[dict[str, object]]:
+    """Résout les crates depuis Cargo.lock, verrou du dépôt et rien d'autre."""
+
+    path = lock_path("cargo")
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+        fail(f"the lock {LOCKS['cargo']} is unreadable: {error}")
+    packages = document.get("package")
+    if not isinstance(packages, list) or not packages:
+        fail(f"the lock {LOCKS['cargo']} declares no package")
+    resolved: list[dict[str, object]] = []
+    for package in packages:
+        name = package.get("name")
+        version = package.get("version")
+        if not name or not version:
+            fail(f"the lock {LOCKS['cargo']} holds a package without name or version")
+        resolved.append(
+            {
+                "name": name,
+                "version": version,
+                "checksum": package.get("checksum"),
+                "source": package.get("source"),
+            }
+        )
+    return resolved
+
+
+def read_npm_packages() -> list[dict[str, object]]:
+    """Résout les paquets npm depuis package-lock.json, verrou du dépôt."""
+
+    path = lock_path("npm")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        fail(f"the lock {LOCKS['npm']} is unreadable: {error}")
+    version = document.get("lockfileVersion")
+    if version not in (2, 3):
+        fail(
+            f"the lock {LOCKS['npm']} is lockfileVersion {version!r}; this tool "
+            "reads 2 and 3 and refuses to guess at another shape"
+        )
+    entries = document.get("packages")
+    if not isinstance(entries, dict) or not entries:
+        fail(f"the lock {LOCKS['npm']} declares no package")
+
+    resolved: list[dict[str, object]] = []
+    for location, entry in entries.items():
+        if not isinstance(entry, dict) or entry.get("link"):
+            continue
+        package_version = entry.get("version")
+        if not package_version:
+            continue
+        if location == "":
+            name = entry.get("name")
+            if not name:
+                fail(f"the lock {LOCKS['npm']} names no root package")
+            resolved.append(
+                {
+                    "name": name,
+                    "version": package_version,
+                    "integrity": None,
+                    "root": True,
+                }
+            )
+            continue
+        name = entry.get("name") or location.rsplit("node_modules/", 1)[-1]
+        resolved.append(
+            {
+                "name": name,
+                "version": package_version,
+                "integrity": entry.get("integrity"),
+                "root": False,
+            }
+        )
+    if not resolved:
+        fail(f"the lock {LOCKS['npm']} resolved to no component")
+    return resolved
+
+
+def read_pinned_images() -> list[dict[str, str]]:
+    """Relit les images épinglées dans internal/plan plutôt que les redire ici."""
+
+    directory = ROOT / PLAN_SOURCE_DIR
+    if not directory.is_dir():
+        fail(f"{PLAN_SOURCE_DIR} is absent; the pinned images have no source of truth")
+
+    reference_pattern = re.compile(r"^\t(\w+)ImageReference\s*=\s*\"([^\"]+)\"")
+    digest_pattern = re.compile(r"^\t(\w+)ImageDigest\s*=\s*\"(sha256:[0-9a-f]{64})\"")
+    references: dict[str, str] = {}
+    digests: dict[str, str] = {}
+    for source in sorted(directory.glob("*.go")):
+        if source.name.endswith("_test.go"):
+            continue
+        for line in source.read_text(encoding="utf-8").splitlines():
+            reference = reference_pattern.match(line)
+            if reference:
+                references[reference.group(1)] = reference.group(2)
+                continue
+            digest = digest_pattern.match(line)
+            if digest:
+                digests[digest.group(1)] = digest.group(2)
+
+    if not references:
+        fail(f"{PLAN_SOURCE_DIR} declares no pinned image reference")
+    orphans = sorted(set(references) ^ set(digests))
+    if orphans:
+        fail(
+            "the pinned images of "
+            f"{PLAN_SOURCE_DIR} are mismatched: {', '.join(orphans)} has a "
+            "reference or a digest but not both"
+        )
+    return [
+        {"role": role, "reference": references[role], "digest": digests[role]}
+        for role in sorted(references)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# SBOM : CycloneDX 1.6 JSON
+# ---------------------------------------------------------------------------
+#
+# CycloneDX 1.6 est retenu parce qu'il a un schéma JSON publié qu'un validateur
+# du commerce applique sans rien de nous, parce que ses consommateurs — les
+# scanners, les portes de dépendance — le lisent déjà, et parce qu'il admet un
+# document sans horodatage : un SBOM SPDX minimal impose un `created`, donc une
+# date, donc deux exécutions qui ne rendent pas les mêmes octets.
+
+
+def npm_purl_name(name: str) -> str:
+    """Encode un nom npm dans un purl sans dépendre d'un encodeur d'URL."""
+
+    return name.replace("@", "%40")
+
+
+def integrity_hashes(integrity: str | None) -> list[dict[str, str]]:
+    """Traduit un champ integrity npm en empreintes CycloneDX hexadécimales."""
+
+    if not integrity:
+        return []
+    algorithms = {"sha512": "SHA-512", "sha384": "SHA-384", "sha256": "SHA-256"}
+    hashes: list[dict[str, str]] = []
+    for token in integrity.split():
+        prefix, separator, encoded = token.partition("-")
+        algorithm = algorithms.get(prefix)
+        if not separator or algorithm is None:
+            continue
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            continue
+        hashes.append({"alg": algorithm, "content": raw.hex()})
+    return sorted(hashes, key=lambda item: (item["alg"], item["content"]))
+
+
+def derived_serial(revision_id: str) -> str:
+    """Dérive le numéro de série du SBOM de la révision, jamais de l'exécution.
+
+    Un `serialNumber` aléatoire ferait diverger deux exécutions d'une même
+    révision ; l'omettre priverait le consommateur d'une identité de document.
+    Le compromis est un UUID de version 8 — la version que la RFC 9562 réserve
+    aux valeurs dérivées — calculé sur la révision : stable pour une révision,
+    distinct d'une révision à l'autre, indépendant de la machine.
+    """
+
+    seed = hashlib.sha256(f"your-cloud release sbom {revision_id}".encode()).digest()
+    octets = bytearray(seed[:16])
+    octets[6] = (octets[6] & 0x0F) | 0x80  # version 8
+    octets[8] = (octets[8] & 0x3F) | 0x80  # variant RFC 9562
+    hexadecimal = octets.hex()
+    groups = (
+        hexadecimal[0:8],
+        hexadecimal[8:12],
+        hexadecimal[12:16],
+        hexadecimal[16:20],
+        hexadecimal[20:32],
+    )
+    return "urn:uuid:" + "-".join(groups)
+
+
+def build_sbom(revision: dict[str, str], module_path: str) -> dict[str, object]:
+    """Assemble le SBOM depuis les verrous, trié et sans horodatage."""
+
+    components: list[dict[str, object]] = []
+
+    for module in read_go_modules():
+        purl = f"pkg:golang/{module['module']}@{module['version']}"
+        components.append(
+            {
+                "bom-ref": purl,
+                "type": "library",
+                "name": module["module"],
+                "version": module["version"],
+                "purl": purl,
+                "properties": [
+                    {"name": "yourcloud:lock", "value": LOCKS["go.mod"]},
+                    {"name": "yourcloud:go-sum", "value": module["sum"]},
+                    {
+                        "name": "yourcloud:scope",
+                        "value": "indirect" if module["indirect"] else "direct",
+                    },
+                ],
+            }
+        )
+
+    for package in read_cargo_packages():
+        purl = f"pkg:cargo/{package['name']}@{package['version']}"
+        component: dict[str, object] = {
+            "bom-ref": purl,
+            "type": "library",
+            "name": package["name"],
+            "version": package["version"],
+            "purl": purl,
+            "properties": [
+                {"name": "yourcloud:lock", "value": LOCKS["cargo"]},
+                {
+                    "name": "yourcloud:origin",
+                    "value": "registry" if package["source"] else "workspace",
+                },
+            ],
+        }
+        if package["checksum"]:
+            component["hashes"] = [
+                {"alg": "SHA-256", "content": package["checksum"]}
+            ]
+        components.append(component)
+
+    for package in read_npm_packages():
+        purl = f"pkg:npm/{npm_purl_name(str(package['name']))}@{package['version']}"
+        component = {
+            "bom-ref": purl,
+            "type": "application" if package["root"] else "library",
+            "name": package["name"],
+            "version": package["version"],
+            "purl": purl,
+            "properties": [
+                {"name": "yourcloud:lock", "value": LOCKS["npm"]},
+                {
+                    "name": "yourcloud:origin",
+                    "value": "workspace" if package["root"] else "registry",
+                },
+            ],
+        }
+        hashes = integrity_hashes(package["integrity"])  # type: ignore[arg-type]
+        if hashes:
+            component["hashes"] = hashes
+        components.append(component)
+
+    for image in read_pinned_images():
+        reference = image["reference"]
+        purl = f"pkg:oci/{reference.rsplit('/', 1)[-1]}@{image['digest']}"
+        purl = f"{purl}?repository_url={reference}"
+        components.append(
+            {
+                "bom-ref": purl,
+                "type": "container",
+                "name": reference,
+                "version": image["digest"],
+                "purl": purl,
+                "hashes": [
+                    {
+                        "alg": "SHA-256",
+                        "content": image["digest"].removeprefix("sha256:"),
+                    }
+                ],
+                "properties": [
+                    {"name": "yourcloud:lock", "value": f"{PLAN_SOURCE_DIR} (pinned)"},
+                    {"name": "yourcloud:plan-role", "value": image["role"]},
+                ],
+            }
+        )
+
+    # Deux verrous peuvent nommer un même paquet à une même version ; le
+    # document en porte une entrée, et l'ordre ne dépend d'aucune exécution.
+    unique: dict[str, dict[str, object]] = {}
+    for component in components:
+        unique.setdefault(str(component["bom-ref"]), component)
+    ordered = sorted(
+        unique.values(),
+        key=lambda item: (str(item["type"]), str(item["name"]), str(item["version"])),
+    )
+
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "serialNumber": derived_serial(revision["id"]),
+        "version": 1,
+        "metadata": {
+            "component": {
+                "bom-ref": f"pkg:golang/{module_path}@{revision['id']}",
+                "type": "application",
+                "name": module_path,
+                "version": revision["id"],
+                "description": (
+                    "Your Cloud, at the exact revision these artifacts name. A "
+                    "modified tree is written '+worktree' and is not fetchable "
+                    "by anyone else."
+                ),
+            },
+            "tools": {
+                "components": [
+                    {
+                        "type": "application",
+                        "name": TOOL_NAME,
+                        "version": str(TOOL_VERSION),
+                    }
+                ]
+            },
+            "properties": [
+                {"name": "yourcloud:revision", "value": revision["id"]},
+                {"name": "yourcloud:tree", "value": revision["tree"]},
+                {
+                    "name": "yourcloud:resolution",
+                    "value": (
+                        "locks only; no registry was queried while producing "
+                        "this document"
+                    ),
+                },
+                {
+                    "name": "yourcloud:does-not-attest",
+                    "value": ATTESTATIONS[SBOM_NAME][1],
+                },
+            ],
+        },
+        "components": ordered,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Provenance, manifeste, sommes
+# ---------------------------------------------------------------------------
+
+
+def module_path() -> str:
+    """Lit le chemin du module comme identité du dépôt, jamais un remote local."""
+
+    for line in lock_path("go.mod").read_text(encoding="utf-8").splitlines():
+        if line.startswith("module "):
+            return line[len("module ") :].strip()
+    fail("go.mod declares no module path")
+
+
+def digest_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_provenance(revision: dict[str, str], toolchains: dict[str, str]) -> dict:
+    """Dit d'où viennent les octets, et dit qu'elle ne dit pas qui en répond."""
+
+    return {
+        "attests": (
+            "the origin of these bytes: the revision they were produced from, "
+            "the locks they were resolved from and the toolchains that were "
+            "read to produce them"
+        ),
+        "does_not_attest": (
+            "a publicly recognised identity. This document says where the bytes "
+            "come from, not who answers for them; what an identity says belongs "
+            "to a signature, and no signature enters this release while #12 is "
+            "unresolved."
+        ),
+        "environment_not_recorded": ENVIRONMENT_NOT_RECORDED,
+        "kind": "your-cloud-release-provenance",
+        "locks": sorted(
+            (
+                {"path": LOCKS[key], "sha256": digest_file(lock_path(key))}
+                for key in sorted(LOCKS)
+            ),
+            key=lambda entry: entry["path"],
+        ),
+        "producer": {
+            "name": TOOL_NAME,
+            "sha256": hashlib.sha256(SELF.read_bytes()).hexdigest(),
+            "version": TOOL_VERSION,
+        },
+        "revision": dict(revision),
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "source": {"module_path": module_path()},
+        "toolchains": dict(sorted(toolchains.items())),
+    }
+
+
+def build_manifest(revision: dict[str, str], hashed: dict[str, Path]) -> dict:
+    """Nomme les cinq artefacts, empreint ceux qu'un manifeste peut empreindre."""
+
+    not_hashed = {
+        MANIFEST_NAME: (
+            "a manifest cannot carry its own digest; checksums.txt carries it, "
+            "and verifying checksums.txt verifies this file"
+        ),
+        CHECKSUMS_NAME: (
+            "checksums.txt is written after this manifest and carries this "
+            "manifest's digest; hashing it here would be circular"
+        ),
+        REPORT_NAME: (
+            "report.txt is written by the complete proof, after these files. It "
+            "carries dates, machines and limits, which is exactly what two runs "
+            "on one revision cannot render identical, so it is named here and "
+            "not covered by these digests"
+        ),
+    }
+
+    artifacts = []
+    for name in CLOSED_LIST:
+        attests, does_not = ATTESTATIONS[name]
+        entry: dict[str, object] = {
+            "attests": attests,
+            "does_not_attest": does_not,
+            "name": name,
+            "produced_by": (
+                PRODUCED_BY_PROOF if name == REPORT_NAME else PRODUCED_BY_TOOL
+            ),
+        }
+        path = hashed.get(name)
+        if path is None:
+            entry["digest_absent_because"] = not_hashed[name]
+        else:
+            entry["sha256"] = digest_file(path)
+            entry["size"] = path.stat().st_size
+        artifacts.append(entry)
+
+    return {
+        "artifacts": artifacts,
+        "does_not_attest": list(DOES_NOT_ATTEST),
+        "environment_not_recorded": ENVIRONMENT_NOT_RECORDED,
+        "kind": "your-cloud-release-manifest",
+        "revision": dict(revision),
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "verification": {
+            "command": f"sha256sum -c {CHECKSUMS_NAME}",
+            "note": (
+                "run it inside the directory holding these files. Nothing of "
+                "ours is needed to verify them."
+            ),
+        },
+    }
+
+
+def write_json(path: Path, document: object) -> None:
+    """Écrit un document JSON canonique : clés triées, LF, une ligne finale."""
+
+    text = json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    path.write_text(text, encoding="utf-8", newline="\n")
+    path.chmod(0o644)
+
+
+def write_checksums(path: Path, directory: Path, names: tuple[str, ...]) -> None:
+    """Écrit le format exact de `sha256sum`, trié, sans commentaire ni entête."""
+
+    lines = [f"{digest_file(directory / name)}  {name}\n" for name in sorted(names)]
+    path.write_text("".join(lines), encoding="utf-8", newline="\n")
+    path.chmod(0o644)
+
+
+# ---------------------------------------------------------------------------
+# Production
+# ---------------------------------------------------------------------------
+
+
+def produce(output_dir: Path, *, force: bool) -> dict[str, str]:
+    """Produit les quatre artefacts déterministes dans un répertoire vide."""
+
+    if output_dir.exists() and not output_dir.is_dir():
+        fail(f"{output_dir} exists and is not a directory")
+    if output_dir.is_dir():
+        existing = sorted(entry.name for entry in output_dir.iterdir())
+        if existing and not force:
+            fail(
+                f"{output_dir} is not empty ({', '.join(existing[:5])}); refusing "
+                "to overwrite silently. Pass --force to produce into it anyway."
+            )
+
+    # Tout est lu et assemblé avant qu'un octet ne soit écrit : un refus ne
+    # laisse ni fichier partiel, ni répertoire créé pour rien.
+    revision = read_revision()
+    toolchains = read_toolchains()
+    path = module_path()
+    sbom = build_sbom(revision, path)
+    provenance = build_provenance(revision, toolchains)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # L'ordre est celui des dépendances d'empreinte : le SBOM et la provenance
+    # d'abord, le manifeste qui les empreint, puis les sommes qui empreignent
+    # le manifeste.
+    write_json(output_dir / SBOM_NAME, sbom)
+    write_json(output_dir / PROVENANCE_NAME, provenance)
+    write_json(
+        output_dir / MANIFEST_NAME,
+        build_manifest(
+            revision,
+            {
+                SBOM_NAME: output_dir / SBOM_NAME,
+                PROVENANCE_NAME: output_dir / PROVENANCE_NAME,
+            },
+        ),
+    )
+    write_checksums(
+        output_dir / CHECKSUMS_NAME,
+        output_dir,
+        (MANIFEST_NAME, PROVENANCE_NAME, SBOM_NAME),
+    )
+    return revision
+
+
+def command_produce(arguments: argparse.Namespace) -> int:
+    output_dir = Path(arguments.output_dir).resolve()
+    revision = produce(output_dir, force=arguments.force)
+    print(f"REVISION={revision['id']}")
+    print(f"TREE={revision['tree']}")
+    for name in PRODUCED:
+        print(f"{name.upper().replace('.', '_')}={output_dir / name}")
+    if revision["tree"] == "modified":
+        print(
+            "\nLIMIT: these artifacts name an unpublished tree. `+worktree` names "
+            "a state no one else can fetch, and closes no line of the palier.",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def command_check_determinism(arguments: argparse.Namespace) -> int:
+    """Produit deux fois et compare octet pour octet, puis vérifie au tiers.
+
+    La preuve de déterminisme n'est pas une intention écrite dans un commentaire :
+    elle est cette commande, et elle échoue si un seul octet diffère.
+    """
+
+    workspace = Path(tempfile.mkdtemp(prefix="release-artifacts-determinism-"))
+    keep = bool(arguments.keep)
+    try:
+        first, second = workspace / "run-1", workspace / "run-2"
+        produce(first, force=False)
+        produce(second, force=False)
+
+        left = sorted(entry.name for entry in first.iterdir())
+        right = sorted(entry.name for entry in second.iterdir())
+        print(f"run-1: {first}")
+        print(f"run-2: {second}")
+        if left != right:
+            print(f"FAILED: the two runs produced different files: {left} vs {right}")
+            return 1
+        differing = [
+            name
+            for name in left
+            if (first / name).read_bytes() != (second / name).read_bytes()
+        ]
+        for name in left:
+            state = "differs" if name in differing else "identical"
+            print(f"  {name:<18} {state}  {digest_file(first / name)}")
+        if differing:
+            print(f"FAILED: {', '.join(differing)} differ between two runs")
+            return 1
+        print("DETERMINISM=identical (byte for byte, both runs)")
+
+        # La vérification par un tiers n'est pas une promesse : elle est le
+        # même outil du commerce qu'un tiers utiliserait, exécuté ici.
+        if shutil.which("sha256sum") is None:
+            print("THIRD-PARTY=not run (sha256sum is absent from this host)")
+            return 1
+        completed = subprocess.run(
+            ("sha256sum", "-c", CHECKSUMS_NAME),
+            cwd=first,
+            env=dict(os.environ, LC_ALL="C", LANG="C"),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        sys.stdout.write(completed.stdout)
+        if completed.returncode != 0:
+            sys.stderr.write(completed.stderr)
+            print(f"FAILED: sha256sum -c {CHECKSUMS_NAME} refused the artifacts")
+            return 1
+        print(f"THIRD-PARTY=sha256sum -c {CHECKSUMS_NAME} passed")
+        return 0
+    finally:
+        if keep:
+            print(f"kept: {workspace}")
+        else:
+            shutil.rmtree(workspace, ignore_errors=True)
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="release-artifacts",
+        description=(
+            "Produit les artefacts vérifiables de la révision courante, sans "
+            "réseau et sans horodatage."
+        ),
+    )
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    produce_parser = subcommands.add_parser(
+        "produce",
+        help="écrit manifest.json, checksums.txt, sbom.json et provenance.json",
+    )
+    produce_parser.add_argument("output_dir", help="répertoire de sortie, vide")
+    produce_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="autorise un répertoire non vide ; sans lui, la production refuse",
+    )
+    produce_parser.set_defaults(handler=command_produce)
+
+    determinism_parser = subcommands.add_parser(
+        "check-determinism",
+        help="produit deux fois, compare octet pour octet, vérifie au sha256sum",
+    )
+    determinism_parser.add_argument(
+        "--keep", action="store_true", help="conserve les deux répertoires produits"
+    )
+    determinism_parser.set_defaults(handler=command_check_determinism)
+
+    arguments = parser.parse_args(argv)
+    try:
+        return int(arguments.handler(arguments))
+    except Refusal as refusal:
+        print(f"FAILED: {refusal}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

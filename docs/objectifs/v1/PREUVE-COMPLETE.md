@@ -85,6 +85,73 @@ Décisions portées par cette liste :
   confiance : la faire figurer parmi les artefacts de release ferait lire
   comme distribuée une chose qui ne l'est pas.
 
+## L'outil qui produit ces artefacts, et comment un tiers le vérifie
+
+[`tools/release-artifacts`](../../../tools/release-artifacts) écrit quatre des
+cinq artefacts depuis l'état courant du dépôt — `manifest.json`,
+`checksums.txt`, `sbom.json` et `provenance.json`. Le cinquième, `report.txt`,
+appartient à la preuve complète : il porte des dates, des machines et des
+limites, c'est-à-dire exactement ce que deux exécutions sur une même révision
+ne peuvent pas rendre identique. Le manifeste le nomme donc dans la liste close
+sans l'empreindre, et dit pourquoi, plutôt que de laisser un lecteur croire la
+liste couverte en entier.
+
+```text
+tools/release-artifacts produce <répertoire>     écrit les quatre fichiers
+tools/release-artifacts check-determinism        produit deux fois et compare
+```
+
+Trois propriétés sont tenues par l'outil et non par une intention :
+
+- **Le déterminisme est une commande, pas une promesse.**
+  `check-determinism` produit deux fois dans deux répertoires distincts,
+  compare octet pour octet et échoue si un seul octet diffère. Aucun horodatage,
+  aucun chemin de travail, aucun nom de machine n'entre dans un artefact ; le
+  numéro de série du SBOM est dérivé de la révision, jamais tiré au hasard.
+- **La vérification n'a besoin de rien de nous.** `checksums.txt` est au format
+  exact de `sha256sum`, sans entête ni commentaire :
+  `sha256sum -c checksums.txt`, exécuté dans le répertoire, suffit à un tiers.
+- **Le refus précède l'écriture.** Un répertoire non vide sans `--force`, un
+  dépôt illisible, une chaîne d'outils absente, un verrou absent ou illisible
+  arrêtent la production avant qu'un octet soit écrit. Une chaîne d'outils
+  manquante est nommée ; elle n'est jamais consignée comme `unknown`.
+
+Le SBOM est un document **CycloneDX 1.6 JSON** : un schéma publié qu'un
+validateur du commerce applique sans rien de nous, des consommateurs qui le
+lisent déjà, et un document licite sans horodatage — là où un SPDX minimal
+impose une date de création, donc deux exécutions qui ne rendent pas les mêmes
+octets. Ses composants sont résolus depuis les verrous versionnés — `go.mod` et
+`go.sum`, `console/src-tauri/Cargo.lock`, `console/package-lock.json` — et
+depuis les images OCI épinglées, relues dans `internal/plan` plutôt que
+redites ici. Aucun registre n'est interrogé à la production.
+
+Ce que cet outil ne couvre pas, et le manifeste l'écrit : les charges
+distribuables. Le `.deb` serveur Debian 13 `amd64` et les installateurs Console
+sont construits ailleurs et liés par leur propre manifeste signé ; ce jeu
+d'artefacts n'en porte aucun octet.
+
+### Le rapport est nommé par le manifeste et scellé par sa propre course
+
+Un lecteur attentif verra que `report.txt` figure dans la liste close sans
+empreinte au manifeste, et la question mérite mieux qu'un silence : sans
+rien pour le sceller, un rapport se réécrit.
+
+La réponse tient à ce que chaque document atteste. Les quatre premiers
+artefacts parlent d'une **révision** : mêmes octets, deux fois, sur la même
+révision, c'est ce qui les rend vérifiables par un tiers qui ne détient que
+le dépôt. Le rapport parle d'une **course** : ses dates, ses machines et ses
+limites sont précisément ce que deux exécutions ne peuvent pas rendre
+identique. Mettre son empreinte dans le manifeste ferait varier le manifeste
+d'une course à l'autre et détruirait la propriété qui fonde les quatre
+autres.
+
+La preuve complète écrit donc, à côté de son rapport, un
+`proof-checksum.txt` au même format que `checksums.txt`, couvrant le seul
+rapport. Un tiers vérifie alors deux choses distinctes avec le même outil du
+système : que les quatre artefacts sont ceux de cette révision, et que le
+rapport qu'il lit est celui que cette course a produit. Deux portées, deux
+fichiers, aucune des deux ne prétendant à l'autre.
+
 ## La règle de blocage, sans exception implicite
 
 **Toute capacité que la preuve complète n'établit pas est annoncée comme non
