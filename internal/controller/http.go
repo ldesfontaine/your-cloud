@@ -88,6 +88,7 @@ type ControllerHandler struct {
 	pairing   *PairingManager
 	sessions  *SessionManager
 	inventory *InventoryStore
+	external  *ExternalStore
 	relay     relaySnapshotReader
 	host      string
 	now       func() time.Time
@@ -104,20 +105,24 @@ func NewControllerHandler(
 	pairing *PairingManager,
 	sessions *SessionManager,
 	inventory *InventoryStore,
+	external *ExternalStore,
 	relay relaySnapshotReader,
 	host string,
 ) (*ControllerHandler, error) {
-	if authority == nil || pairing == nil || sessions == nil || inventory == nil || relay == nil ||
+	if authority == nil || pairing == nil || sessions == nil || inventory == nil || external == nil || relay == nil ||
 		host == "" || strings.ContainsAny(host, "/?#@") {
 		return nil, errors.New("Controller HTTP dependencies and exact Host are required")
 	}
 	state := authority.Snapshot()
 	inventoryState := inventory.Snapshot()
-	if inventoryState.ControllerID != state.ControllerID || inventoryState.InfrastructureID != state.InfrastructureID {
+	externalState := external.Snapshot()
+	if inventoryState.ControllerID != state.ControllerID || inventoryState.InfrastructureID != state.InfrastructureID ||
+		externalState.ControllerID != state.ControllerID || externalState.InfrastructureID != state.InfrastructureID {
 		return nil, errors.New("Controller HTTP authorities do not describe the same installation")
 	}
 	return &ControllerHandler{
-		authority: authority, pairing: pairing, sessions: sessions, inventory: inventory, relay: relay, host: host,
+		authority: authority, pairing: pairing, sessions: sessions, inventory: inventory,
+		external: external, relay: relay, host: host,
 		now: time.Now, random: rand.Reader, active: make(map[string]uint8),
 		sleep: func(ctx context.Context, delay time.Duration) error {
 			timer := time.NewTimer(delay)
@@ -171,6 +176,10 @@ func (handler *ControllerHandler) ServeHTTP(response http.ResponseWriter, reques
 		handler.serveInfrastructure(response, request, certificate)
 	case "/v0/machines":
 		handler.serveMachines(response, request, certificate)
+	case "/v0/external-elements":
+		handler.serveExternalElements(response, request, certificate)
+	case "/v0/external-element-withdrawals":
+		handler.serveExternalElementWithdrawals(response, request, certificate)
 	case "/v0/recovery-key":
 		handler.serveRecoveryKey(response, request, certificate)
 	case "/v0/probe-plans":
@@ -701,6 +710,14 @@ func controllerRouteMethods(path string) ([]string, bool) {
 		return []string{http.MethodGet, http.MethodPut}, true
 	case "/v0/machines":
 		return []string{http.MethodGet}, true
+	// The declared inventory reads and grows here and retreats on its own route.
+	// There is no DELETE: the business surface of the contract exposes none, and
+	// an element the product does not own is the last thing a DELETE should be
+	// invented for.
+	case "/v0/external-elements":
+		return []string{http.MethodGet, http.MethodPost}, true
+	case "/v0/external-element-withdrawals":
+		return []string{http.MethodPost}, true
 	case "/v0/recovery-key":
 		return []string{http.MethodPut}, true
 	case "/v0/probe-plans", "/v0/service-plans", "/v0/entrypoint-plans", "/v0/route-plans",

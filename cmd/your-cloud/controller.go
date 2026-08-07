@@ -109,6 +109,10 @@ func runControllerServe(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("Controller inventory: %w", err)
 	}
+	external, err := controller.OpenExternalStore(configuration.stateDirectory, state.ControllerID, state.InfrastructureID)
+	if err != nil {
+		return fmt.Errorf("Controller external inventory: %w", err)
+	}
 	cache, err := controller.OpenRelayCacheStore(configuration.stateDirectory, state.ControllerID, state.InfrastructureID)
 	if err != nil {
 		return fmt.Errorf("Controller Relay cache: %w", err)
@@ -141,7 +145,7 @@ func runControllerServe(arguments []string) error {
 		return fmt.Errorf("Controller sessions: %w", err)
 	}
 	host := protocol.ControllerServerName(state.InfrastructureID) + ":9443"
-	handler, err := controller.NewControllerHandler(authority, pairing, sessions, inventory, reader, host)
+	handler, err := controller.NewControllerHandler(authority, pairing, sessions, inventory, external, reader, host)
 	if err != nil {
 		return fmt.Errorf("Controller HTTP: %w", err)
 	}

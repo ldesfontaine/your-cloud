@@ -11,6 +11,15 @@ import (
 
 const maxConsoleResponseBytes = 128 * 1024
 
+// observationFreshnessLimit is the one ageing limit this product announces.
+//
+// A reading is presented as current up to and including this age and as old
+// beyond it, and the same limit governs every dated constat the Console shows:
+// the machines projected from the Relay cache and the external elements read by
+// an adapter. A second threshold would put two meanings of "old" on the same
+// screen, and the human would have to know which one a line is speaking.
+const observationFreshnessLimit = 90 * time.Second
+
 type RelayStatus string
 
 const (
@@ -109,7 +118,7 @@ func ProjectMachines(inventory Inventory, cache *RelaySnapshot, status RelayStat
 				return MachinesView{}, errors.New("cached observation age is invalid")
 			}
 			age := snapshotAt.Sub(receivedAt) + ageIncrement
-			if age <= 90*time.Second {
+			if age <= observationFreshnessLimit {
 				machine.ObservationStatus = stringPointer("recent")
 			} else {
 				machine.ObservationStatus = stringPointer("old")
@@ -125,6 +134,113 @@ func ProjectMachines(inventory Inventory, cache *RelaySnapshot, status RelayStat
 		view.Machines = append(view.Machines, machine)
 	}
 	return view, nil
+}
+
+// ExternalElementsView is the declared inventory as the Console reads it.
+//
+// It carries no capability field. The four things the product cannot do to an
+// external element — update it, restore it, delete it, guarantee its state — are
+// properties of what an external element is, identical for every line, and there
+// is no state in which they differ. Projecting them would suggest a Controller
+// could one day answer otherwise, and a Console that read them instead of
+// knowing them would offer a management action the day a compromised Controller
+// said yes. The Console announces those four absences from the context of this
+// route, as it does for every other user-facing sentence.
+type ExternalElementsView struct {
+	SchemaVersion    int                        `json:"schema_version"`
+	ControllerID     string                     `json:"controller_id"`
+	InfrastructureID string                     `json:"infrastructure_id"`
+	ExternalRevision uint64                     `json:"external_revision"`
+	Elements         []ProjectedExternalElement `json:"elements"`
+}
+
+// ProjectedExternalElement holds the declaration, the reading and the age of the
+// reading as three separate facts.
+//
+// `state` is the contract's own vocabulary and never a fourth value in disguise;
+// `observation_status` is the independent ageing dimension, in the same three
+// words the machines already use. A verified reading past the announced limit
+// keeps saying `verified` and stops saying `recent`, which is exactly "the state
+// is no longer presented as current" without inventing a state for it.
+type ProjectedExternalElement struct {
+	ElementID         string  `json:"element_id"`
+	MachineID         string  `json:"machine_id"`
+	Label             string  `json:"label"`
+	Kind              string  `json:"kind"`
+	ProbePort         int     `json:"probe_port"`
+	DeclaredAt        string  `json:"declared_at"`
+	State             string  `json:"state"`
+	Reason            *string `json:"reason"`
+	ObservedAt        *string `json:"observed_at"`
+	ObservationStatus string  `json:"observation_status"`
+}
+
+// ProjectExternalElements renders the declared inventory at one instant.
+//
+// It infers nothing. A declaration nobody has read is `declared` and `absent`,
+// not "probably fine"; a reading whose date this Controller cannot place before
+// now is `old`, because an age that cannot be computed is never a reason to call
+// something current.
+func ProjectExternalElements(inventory ExternalInventory, now time.Time) (ExternalElementsView, error) {
+	if err := validateExternalInventory(inventory); err != nil {
+		return ExternalElementsView{}, err
+	}
+	view := ExternalElementsView{
+		SchemaVersion:    1,
+		ControllerID:     inventory.ControllerID,
+		InfrastructureID: inventory.InfrastructureID,
+		ExternalRevision: inventory.ExternalRevision,
+		Elements:         make([]ProjectedExternalElement, 0, len(inventory.Elements)),
+	}
+	for _, element := range inventory.Elements {
+		projected, err := projectExternalElement(element, now)
+		if err != nil {
+			return ExternalElementsView{}, err
+		}
+		view.Elements = append(view.Elements, projected)
+	}
+	return view, nil
+}
+
+// projectExternalElement is the one place a declaration becomes something the
+// Console reads, so a single declaration and a listing can never disagree about
+// the same element.
+func projectExternalElement(element ExternalElement, now time.Time) (ProjectedExternalElement, error) {
+	projected := ProjectedExternalElement{
+		ElementID:         element.ElementID,
+		MachineID:         element.MachineID,
+		Label:             element.Label,
+		Kind:              element.Kind,
+		ProbePort:         element.ProbePort,
+		DeclaredAt:        element.DeclaredAt,
+		State:             ExternalStateDeclared,
+		ObservationStatus: "absent",
+	}
+	if element.Observation == nil {
+		return projected, nil
+	}
+	observedAt, err := parseCanonicalUTC(element.Observation.ObservedAt)
+	if err != nil {
+		return ProjectedExternalElement{}, err
+	}
+	projected.State = element.Observation.State
+	projected.ObservedAt = cloneString(&element.Observation.ObservedAt)
+	if element.Observation.Reason != "" {
+		projected.Reason = cloneString(&element.Observation.Reason)
+	}
+	projected.ObservationStatus = "old"
+	if !now.Before(observedAt) && now.Sub(observedAt) <= observationFreshnessLimit {
+		projected.ObservationStatus = "recent"
+	}
+	return projected, nil
+}
+
+func EncodeExternalElementsView(view ExternalElementsView) ([]byte, error) {
+	encoded, err := json.Marshal(view)
+	if err != nil || len(encoded) > maxConsoleResponseBytes {
+		return nil, errors.New("external projection exceeds its response bound")
+	}
+	return encoded, nil
 }
 
 func EncodeMachinesView(view MachinesView) ([]byte, error) {

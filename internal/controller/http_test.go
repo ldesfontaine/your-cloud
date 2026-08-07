@@ -44,6 +44,7 @@ type controllerHTTPFixture struct {
 	certificate *x509.Certificate
 	sessions    *SessionManager
 	inventory   *InventoryStore
+	external    *ExternalStore
 	relay       *fakeRelayReader
 	host        string
 	token       string
@@ -59,6 +60,10 @@ func newControllerHTTPFixture(t *testing.T) controllerHTTPFixture {
 		t.Fatal(err)
 	}
 	inventory, err := OpenInventoryStore(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := OpenExternalStore(directory, state.ControllerID, state.InfrastructureID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,14 +83,14 @@ func newControllerHTTPFixture(t *testing.T) controllerHTTPFixture {
 	pairing, _ := NewPairingManager(authority)
 	relay := &fakeRelayReader{status: RelayUnavailable, err: errors.New("offline")}
 	host := controllerServerName(state.InfrastructureID) + ":9443"
-	handler, err := NewControllerHandler(authority, pairing, sessions, inventory, relay, host)
+	handler, err := NewControllerHandler(authority, pairing, sessions, inventory, external, relay, host)
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler.now = func() time.Time { return current }
 	return controllerHTTPFixture{
 		handler: handler, authority: authority, certificate: certificate, sessions: sessions,
-		inventory: inventory, relay: relay, host: host, token: token, current: &current,
+		inventory: inventory, external: external, relay: relay, host: host, token: token, current: &current,
 	}
 }
 

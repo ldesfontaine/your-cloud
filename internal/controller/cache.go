@@ -92,42 +92,7 @@ func persistRelayCache(directory, path string, candidate RelaySnapshot) error {
 	if err != nil || len(encoded) > maxRelaySnapshotBytes {
 		return errors.New("Relay cache cannot be encoded within its bound")
 	}
-	temporary, err := os.CreateTemp(directory, ".relay-cache-")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	removeTemporary := true
-	defer func() {
-		if removeTemporary {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(encoded); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return err
-	}
-	removeTemporary = false
-	directoryFile, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	defer directoryFile.Close()
-	return directoryFile.Sync()
+	return writePrivateStateFile(directory, path, ".relay-cache-", encoded)
 }
 
 func cloneRelaySnapshot(snapshot RelaySnapshot) RelaySnapshot {

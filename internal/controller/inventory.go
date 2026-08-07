@@ -267,7 +267,15 @@ func persistInventory(directory, path string, candidate Inventory) error {
 	if err != nil || int64(len(encoded)) > maxInventoryBytes {
 		return errors.New("inventory cannot be encoded within its bound")
 	}
-	temporary, err := os.CreateTemp(directory, ".inventory-")
+	return writePrivateStateFile(directory, path, ".inventory-", encoded)
+}
+
+// writePrivateStateFile is the one way every durable Controller document reaches
+// the disk: a private temporary file in the same directory, synced, renamed over
+// the target and followed by a directory sync. Held in one place so that a new
+// document cannot arrive with a weaker version of the same dance.
+func writePrivateStateFile(directory, path, temporaryPrefix string, encoded []byte) error {
+	temporary, err := os.CreateTemp(directory, temporaryPrefix)
 	if err != nil {
 		return err
 	}
