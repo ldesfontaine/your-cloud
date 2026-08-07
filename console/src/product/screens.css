@@ -65,6 +65,27 @@
   border-color: var(--color-primary);
 }
 
+.yc-external-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+/* Le libellé d'un élément externe et tout octet venu d'un tiers sont inertes là
+   où ils s'affichent : bornés à leur cadre, coupés plutôt que débordants, et
+   isolés du sens de lecture pour qu'une séquence hostile ne réordonne pas la
+   page autour d'elle. Aucun libellé ne peut donc élargir une mise en page. */
+.yc-external__label,
+.yc-external__origin {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+.yc-external__origin {
+  color: var(--color-muted);
+}
+
 .yc-definition-list {
   display: grid;
   grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);

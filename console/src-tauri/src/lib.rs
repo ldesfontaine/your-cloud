@@ -34,7 +34,10 @@ mod windows_security;
 
 use bootstrap::BootstrapState;
 use native_assistant::{NativeAssistantPoll, NativeAssistantSupervisor};
-use network::{InfrastructureView, MachineMutationView, MachinesView, NetworkState, PairingInput};
+use network::{
+    ExternalElementsView, ExternalWithdrawalView, InfrastructureView, MachineMutationView,
+    MachinesView, NetworkState, PairingInput,
+};
 use serde::Serialize;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -409,6 +412,46 @@ fn read_machines(
         .map_err(Into::into)
 }
 
+// The declared inventory is read beside the managed one, by the same session
+// and against the same association. No command below it mutates an external
+// element, because there is no such command to write: the only act this palier
+// offers on a declaration is withdrawing the declaration.
+#[tauri::command]
+fn read_external_elements(
+    infrastructure_id: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<ExternalElementsView, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut network = state.network.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    network
+        .read_external_elements(&association, generation, &state.request_generation)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn withdraw_external_element(
+    infrastructure_id: String,
+    element_id: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<ExternalWithdrawalView, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut network = state.network.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    network
+        .withdraw_external_element(
+            &association,
+            &element_id,
+            generation,
+            &state.request_generation,
+        )
+        .map_err(Into::into)
+}
+
 #[tauri::command]
 fn logout_session(
     infrastructure_id: String,
@@ -655,6 +698,8 @@ pub fn run() {
             pair_controller,
             read_infrastructure,
             read_machines,
+            read_external_elements,
+            withdraw_external_element,
             put_infrastructure,
             put_machine,
             rotate_device,

@@ -21,7 +21,7 @@ use reqwest::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Read,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -36,6 +36,11 @@ use zeroize::{Zeroize, Zeroizing};
 
 const REQUEST_MAX_BYTES: usize = 4 * 1024;
 const RESPONSE_MAX_BYTES: usize = 128 * 1024;
+// The declared inventory is bounded by the Controller at 128 declarations, and
+// a label is closed on bytes rather than on the managed label profile: 1 to 64
+// printable ASCII characters, kept exactly as the human wrote them.
+const MAX_EXTERNAL_ELEMENTS: usize = 128;
+const MAX_EXTERNAL_LABEL_BYTES: usize = 64;
 const TEMPORARY_RESPONSE_MAX_BYTES: usize = 8 * 1024;
 const ERROR_MAX_BYTES: usize = 1024;
 const CSR_MAX_BYTES: usize = 2 * 1024;
@@ -409,6 +414,34 @@ impl NetworkState {
         Ok(view)
     }
 
+    /// Reads the declared inventory beside the managed one, by the same session
+    /// and the same bounded decode.
+    ///
+    /// It is a second read rather than a second field of `GET /v0/machines`:
+    /// a declaration must not move the revision a Console caches its machines
+    /// against, and the two inventories refuse each other in both directions.
+    pub(crate) fn read_external_elements(
+        &mut self,
+        association: &AssociationRecord,
+        generation: u64,
+        current_generation: &AtomicU64,
+    ) -> Result<ExternalElementsView, NetworkError> {
+        let client = association_client(association)?;
+        let token = self.session(association, &client, generation, current_generation)?;
+        let response = send_empty::<ExternalElementsView>(
+            &client,
+            "GET",
+            &format!("{}/v0/external-elements", association.summary.origin),
+            Some(token.as_str()),
+            &[StatusCode::OK],
+        );
+        let view =
+            self.handle_session_response(&association.summary.infrastructure_id, response)?;
+        validate_external_elements(&view, association)?;
+        ensure_current(generation, current_generation)?;
+        Ok(view)
+    }
+
     pub(crate) fn put_infrastructure(
         &mut self,
         association: &AssociationRecord,
@@ -474,6 +507,50 @@ impl NetworkState {
             || view.machine_id != machine_id
             || view.label != label
             || view.inventory_revision == 0
+        {
+            return Err(NetworkError::ResponseRefused);
+        }
+        ensure_current(generation, current_generation)?;
+        Ok(view)
+    }
+
+    /// Withdraws one declaration, and nothing else.
+    ///
+    /// It is a POST on its own route and never a DELETE on the element: the
+    /// product owns nothing here, so there is no resource of its own to delete.
+    /// The sentence a human reads before confirming — the thing keeps existing —
+    /// is written by this Console from the context of this route, because a
+    /// Controller that could send a user-facing text could send a reassuring one.
+    pub(crate) fn withdraw_external_element(
+        &mut self,
+        association: &AssociationRecord,
+        element_id: &str,
+        generation: u64,
+        current_generation: &AtomicU64,
+    ) -> Result<ExternalWithdrawalView, NetworkError> {
+        if !canonical_raw_url(element_id, 16) {
+            return Err(NetworkError::InvalidInput);
+        }
+        let client = association_client(association)?;
+        let token = self.session(association, &client, generation, current_generation)?;
+        let response = send_json::<ExternalWithdrawalView, _>(
+            &client,
+            "POST",
+            &format!(
+                "{}/v0/external-element-withdrawals",
+                association.summary.origin
+            ),
+            Some(token.as_str()),
+            &ExternalWithdrawalRequest {
+                schema_version: 1,
+                element_id,
+            },
+            RESPONSE_MAX_BYTES,
+            &[StatusCode::OK],
+        );
+        let view =
+            self.handle_session_response(&association.summary.infrastructure_id, response)?;
+        if view.schema_version != 1 || view.element_id != element_id || view.external_revision == 0
         {
             return Err(NetworkError::ResponseRefused);
         }
@@ -1032,6 +1109,15 @@ struct MachineMutationRequest<'a> {
     label: &'a str,
 }
 
+// The withdrawal names the one declaration to withdraw and carries nothing
+// else: no label, no machine, no port. A request that could restate the
+// declaration could withdraw one thing while describing another.
+#[derive(Serialize)]
+struct ExternalWithdrawalRequest<'a> {
+    schema_version: u8,
+    element_id: &'a str,
+}
+
 #[derive(Serialize)]
 struct DeviceRotationCore<'a> {
     schema_version: u8,
@@ -1168,6 +1254,56 @@ pub(crate) struct CapacityHealth {
     pub total_bytes: Option<u64>,
     pub available_bytes: Option<u64>,
     pub error: Option<String>,
+}
+
+/// The declared inventory as this Console reads it.
+///
+/// It carries no capability field, and `deny_unknown_fields` is what makes that
+/// a property rather than a habit. The four things the product cannot do to an
+/// external element — update it, restore it, delete it, guarantee its state —
+/// are properties of what an external element is, identical for every line, and
+/// this Console announces them from the context of the route. A Controller that
+/// sent one would be offering a management action, so it is an unknown field,
+/// and an unknown field refuses the whole view rather than one line of it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExternalElementsView {
+    pub schema_version: u8,
+    pub controller_id: String,
+    pub infrastructure_id: String,
+    pub external_revision: u64,
+    pub elements: Vec<ExternalElementView>,
+}
+
+/// One declaration, the last reading taken against it, and the age of that
+/// reading, held as three separate facts.
+///
+/// `state` is the contract's vocabulary and never a fourth value in disguise;
+/// `observation_status` is the independent ageing dimension, in the same three
+/// words the managed machines already use, because two meanings of "old" on one
+/// screen would leave the reader guessing which one a line is speaking.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExternalElementView {
+    pub element_id: String,
+    pub machine_id: String,
+    pub label: String,
+    pub kind: String,
+    pub probe_port: u16,
+    pub declared_at: String,
+    pub state: String,
+    pub reason: Option<String>,
+    pub observed_at: Option<String>,
+    pub observation_status: String,
+}
+
+/// What a withdrawal answers: which declaration is gone, and nothing more.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExternalWithdrawalView {
+    pub schema_version: u8,
+    pub external_revision: u64,
+    pub element_id: String,
 }
 
 #[derive(Deserialize)]
@@ -1374,6 +1510,10 @@ fn known_problem(status: StatusCode, code: &str) -> bool {
             | (401, "authentication_failed")
             | (403, "scope_forbidden")
             | (404, "route_not_found")
+            // A withdrawal aimed at a declaration nobody made is answered from
+            // the same closed list the business surface already publishes: this
+            // palier adds three routes and no error code.
+            | (404, "resource_not_found")
             | (405, "method_not_allowed")
             | (406, "not_acceptable")
             | (409, "state_conflict")
@@ -1624,6 +1764,95 @@ fn validate_observation(observation: &MachineObservation) -> Result<(), NetworkE
         {
             return Err(NetworkError::ResponseRefused);
         }
+    }
+    Ok(())
+}
+
+/// Holds the declared inventory to the exact shape the contract projects.
+///
+/// The list is bounded, the pair that must be unique is checked as an order —
+/// a machine and a probe port, strictly increasing — and every line is held to
+/// the closed vocabulary of the contract. Nothing here is rendered leniently: a
+/// projection this Console cannot read entirely is a projection it refuses
+/// entirely, because a Console that dropped the one line it could not parse
+/// would show a shorter inventory than the human declared.
+fn validate_external_elements(
+    view: &ExternalElementsView,
+    association: &AssociationRecord,
+) -> Result<(), NetworkError> {
+    if view.schema_version != 1
+        || view.controller_id != association.summary.controller_id
+        || view.infrastructure_id != association.summary.infrastructure_id
+        || view.elements.len() > MAX_EXTERNAL_ELEMENTS
+    {
+        return Err(NetworkError::ResponseRefused);
+    }
+    let mut identifiers = HashSet::with_capacity(view.elements.len());
+    let mut previous: Option<(&str, u16)> = None;
+    for element in &view.elements {
+        validate_external_element(element)?;
+        if !identifiers.insert(element.element_id.as_str()) {
+            return Err(NetworkError::ResponseRefused);
+        }
+        let key = (element.machine_id.as_str(), element.probe_port);
+        if previous.is_some_and(|earlier| earlier >= key) {
+            return Err(NetworkError::ResponseRefused);
+        }
+        previous = Some(key);
+    }
+    Ok(())
+}
+
+/// One line of the declared inventory.
+///
+/// A state or a reason this Console does not know is a refusal and never a
+/// fallback rendering: the vocabulary is what the human reads, so a Controller
+/// that invented a word would otherwise be choosing what an element looks like.
+/// The dated constat and its age travel together for the same reason — a state
+/// without its date could be presented as current forever.
+fn validate_external_element(element: &ExternalElementView) -> Result<(), NetworkError> {
+    if !canonical_raw_url(&element.element_id, 16)
+        || !valid_machine_id(&element.machine_id)
+        || !valid_external_label(&element.label)
+        || !matches!(
+            element.kind.as_str(),
+            "external_service" | "external_passage"
+        )
+        || element.probe_port == 0
+        || !canonical_timestamp(&element.declared_at)
+    {
+        return Err(NetworkError::ResponseRefused);
+    }
+    if !matches!(
+        (element.state.as_str(), element.reason.as_deref()),
+        ("declared" | "verified" | "contradicted", None)
+            | (
+                "unverifiable",
+                Some(
+                    "nothing_listening"
+                        | "response_too_large"
+                        | "machine_unreachable"
+                        | "port_is_managed"
+                )
+            )
+    ) {
+        return Err(NetworkError::ResponseRefused);
+    }
+    // `declared` is the state of an element nobody has read: it carries no date
+    // and no age, and a Controller that dated it would be dating a reading that
+    // never happened. Every other state carries both.
+    let read = element.state != "declared";
+    if read != element.observed_at.is_some()
+        || element
+            .observed_at
+            .as_deref()
+            .is_some_and(|observed_at| !canonical_timestamp(observed_at))
+        || !matches!(
+            (read, element.observation_status.as_str()),
+            (false, "absent") | (true, "recent") | (true, "old")
+        )
+    {
+        return Err(NetworkError::ResponseRefused);
     }
     Ok(())
 }
@@ -2079,6 +2308,20 @@ fn valid_label(value: &str) -> bool {
     true
 }
 
+/// The label of an external element does not borrow the managed label profile.
+///
+/// A managed label names a thing the product owns, so it is normalised and held
+/// to a positive Unicode list. This one is the human's own words about a thing
+/// the product does not own: the contract closes it on bytes — 1 to 64 printable
+/// ASCII characters — and it is kept exactly as written, never trimmed and never
+/// normalised. Refusing a byte outside that bound is not correcting a label; it
+/// is refusing a Controller that sent something the contract says cannot be one.
+/// What makes the label inert is where it is displayed, not a rewrite here.
+fn valid_external_label(value: &str) -> bool {
+    (1..=MAX_EXTERNAL_LABEL_BYTES).contains(&value.len())
+        && value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+}
+
 fn canonical_label(value: &str) -> Result<String, NetworkError> {
     if value.is_empty() || value.len() > 256 {
         return Err(NetworkError::InvalidInput);
@@ -2146,6 +2389,110 @@ mod tests {
             "3zCrQciXcAUbEKNsqhm4fsKoDeUbbqOAuiyKWATbFTs"
         );
         assert_ne!(first.to_bytes(), second.to_bytes());
+    }
+
+    fn declared_element() -> ExternalElementView {
+        ExternalElementView {
+            element_id: URL_SAFE_NO_PAD.encode([0x11_u8; 16]),
+            machine_id: "lab-machine-1".to_owned(),
+            label: "vaultwarden pose a la main".to_owned(),
+            kind: "external_service".to_owned(),
+            probe_port: 8080,
+            declared_at: "2026-08-07T10:00:00Z".to_owned(),
+            state: "declared".to_owned(),
+            reason: None,
+            observed_at: None,
+            observation_status: "absent".to_owned(),
+        }
+    }
+
+    #[test]
+    fn external_labels_are_bytes_and_never_the_managed_profile() {
+        assert!(valid_external_label("vaultwarden pose a la main"));
+        // Printable ASCII markup is a legitimate label: it is what the human
+        // typed about their own thing, and its inertness is obtained where it is
+        // displayed rather than by correcting it here.
+        assert!(valid_external_label("<script>alert(\"x\")</script>"));
+        assert!(valid_external_label("\" onmouseover=\"alert(1)"));
+        assert!(valid_external_label(&"<".repeat(MAX_EXTERNAL_LABEL_BYTES)));
+        // The rest of the hostile corpus cannot be a label at all: an override of
+        // the reading order, control bytes, an escape sequence, a line break, an
+        // empty string and one byte past the bound.
+        assert!(!valid_external_label("facture\u{202e}exe.gnp"));
+        assert!(!valid_external_label("vault\u{7}rouge"));
+        assert!(!valid_external_label("vault\u{1b}[31mrouge"));
+        assert!(!valid_external_label("ligne\nsuivante"));
+        assert!(!valid_external_label(""));
+        assert!(!valid_external_label(
+            &"<".repeat(MAX_EXTERNAL_LABEL_BYTES + 1)
+        ));
+        // The two profiles are deliberately different bounds on different things:
+        // a managed label the product owns passes its own list and not this one.
+        assert!(valid_label("Étiquette gérée"));
+        assert!(!valid_external_label("Étiquette gérée"));
+    }
+
+    #[test]
+    fn external_readings_refuse_a_word_this_console_does_not_know() {
+        assert!(validate_external_element(&declared_element()).is_ok());
+        let mut invented = declared_element();
+        invented.state = "probablement_la".to_owned();
+        assert!(validate_external_element(&invented).is_err());
+
+        // A verified reading past the announced limit keeps saying verified and
+        // stops saying recent: the age is a separate dimension and never a state.
+        let mut verified = declared_element();
+        verified.state = "verified".to_owned();
+        verified.observed_at = Some("2026-08-07T10:00:00Z".to_owned());
+        verified.observation_status = "old".to_owned();
+        assert!(validate_external_element(&verified).is_ok());
+        verified.reason = Some("nothing_listening".to_owned());
+        assert!(validate_external_element(&verified).is_err());
+
+        let mut unverifiable = declared_element();
+        unverifiable.state = "unverifiable".to_owned();
+        unverifiable.observed_at = Some("2026-08-07T10:00:00Z".to_owned());
+        unverifiable.observation_status = "recent".to_owned();
+        for reason in [
+            "nothing_listening",
+            "response_too_large",
+            "machine_unreachable",
+            "port_is_managed",
+        ] {
+            unverifiable.reason = Some(reason.to_owned());
+            assert!(validate_external_element(&unverifiable).is_ok());
+        }
+        unverifiable.reason = Some("port_is_busy".to_owned());
+        assert!(validate_external_element(&unverifiable).is_err());
+        unverifiable.reason = None;
+        assert!(validate_external_element(&unverifiable).is_err());
+
+        // A declaration nobody has read carries no date and no age. Neither half
+        // may arrive alone: a dated nothing and an undated freshness are both a
+        // reading that never happened.
+        let mut dated = declared_element();
+        dated.observed_at = Some("2026-08-07T10:00:00Z".to_owned());
+        assert!(validate_external_element(&dated).is_err());
+        let mut fresh = declared_element();
+        fresh.observation_status = "recent".to_owned();
+        assert!(validate_external_element(&fresh).is_err());
+    }
+
+    #[test]
+    fn a_capability_on_the_wire_is_an_unknown_field() {
+        let honest = serde_json::to_string(&declared_element()).unwrap();
+        assert!(serde_json::from_str::<ExternalElementView>(&honest).is_ok());
+        // The four absences are known from the route, never read from the wire.
+        // A Controller that offered one would be offering a management action.
+        for capability in [
+            r#""can_update":true,"#,
+            r#""can_restore":true,"#,
+            r#""can_delete":true,"#,
+            r#""guaranteed":true,"#,
+        ] {
+            let widened = honest.replacen('{', &format!("{{{capability}"), 1);
+            assert!(serde_json::from_str::<ExternalElementView>(&widened).is_err());
+        }
     }
 
     #[derive(Deserialize)]

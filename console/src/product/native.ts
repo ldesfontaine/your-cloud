@@ -4,6 +4,8 @@ import type {
   BootstrapSessionView,
   BootstrapStartInput,
   ConsoleStatus,
+  ExternalElementsView,
+  ExternalWithdrawalView,
   GeneratedLocalSecrets,
   InfrastructureView,
   MachineMutationView,
@@ -112,6 +114,13 @@ export const nativeConsole = {
     namedOperation<InfrastructureView>("read_infrastructure", { infrastructureId }),
   readMachines: (infrastructureId: string) =>
     namedOperation<MachinesView>("read_machines", { infrastructureId }),
+  readExternalElements: (infrastructureId: string) =>
+    namedOperation<ExternalElementsView>("read_external_elements", { infrastructureId }),
+  withdrawExternalElement: (infrastructureId: string, elementId: string) =>
+    namedOperation<ExternalWithdrawalView>("withdraw_external_element", {
+      infrastructureId,
+      elementId,
+    }),
   putInfrastructure: (infrastructureId: string, label: string) =>
     namedOperation<InfrastructureView>("put_infrastructure", { infrastructureId, label }),
   putMachine: (infrastructureId: string, machineId: string, label: string) =>

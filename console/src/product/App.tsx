@@ -5,16 +5,18 @@ import {
   ListTree,
   LockKeyhole,
   ShieldAlert,
+  Unplug,
   UserRound,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Banner, Button, LoadingBlock } from "../design/primitives";
 import { AssociationView, InfrastructuresView, LocalAccessView } from "./access-views";
 import { operationErrorMessage } from "./errors";
-import { FleetView, ObservationsView, SummaryView } from "./infrastructure-views";
+import { ExternalView, FleetView, ObservationsView, SummaryView } from "./infrastructure-views";
 import type {
   AssociationSummary,
   ConsoleStatus,
+  ExternalElementsView,
   InfrastructureView,
   MachinesView,
   PairingInput,
@@ -33,6 +35,7 @@ const authenticatedNavigation: ReadonlyArray<{
   { view: "summary", label: "Synthèse", icon: LayoutDashboard },
   { view: "fleet", label: "Parc", icon: Boxes },
   { view: "observations", label: "Observations", icon: ListTree },
+  { view: "external", label: "Éléments externes", icon: Unplug },
 ];
 
 export function App() {
@@ -41,6 +44,7 @@ export function App() {
   const [selectedInfrastructure, setSelectedInfrastructure] = useState<string | null>(null);
   const [infrastructure, setInfrastructure] = useState<InfrastructureView | null>(null);
   const [machines, setMachines] = useState<MachinesView | null>(null);
+  const [external, setExternal] = useState<ExternalElementsView | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [failure, setFailure] = useState<string | null>(null);
   const [associationMode, setAssociationMode] = useState<PairingInput["mode"]>("enrollment");
@@ -75,6 +79,7 @@ export function App() {
     requestGeneration.current += 1;
     setInfrastructure(null);
     setMachines(null);
+    setExternal(null);
     setFailure(null);
   }, []);
 
@@ -95,13 +100,18 @@ export function App() {
     setLoadState("loading");
     setFailure(null);
     try {
-      const [nextInfrastructure, nextMachines] = await Promise.all([
+      // Les deux inventaires sont lus ensemble parce qu'ils s'affichent
+      // ensemble : ce qui est géré et ce qui est externe se lisent sur le même
+      // écran, sous le même mot d'ancienneté.
+      const [nextInfrastructure, nextMachines, nextExternal] = await Promise.all([
         nativeConsole.readInfrastructure(selectedInfrastructure),
         nativeConsole.readMachines(selectedInfrastructure),
+        nativeConsole.readExternalElements(selectedInfrastructure),
       ]);
       if (generation !== requestGeneration.current) return;
       setInfrastructure(nextInfrastructure);
       setMachines(nextMachines);
+      setExternal(nextExternal);
       if (nextInfrastructure.label) {
         setStatus((current) =>
           current
@@ -173,6 +183,27 @@ export function App() {
     [loadSelected, selectedInfrastructure],
   );
 
+  // Retirer une déclaration ne retire que la déclaration. La phrase qui le dit
+  // est écrite près du bouton qui la confirme ; ici il ne reste qu'un appel et
+  // une relecture des deux inventaires.
+  const withdrawExternalElement = useCallback(
+    async (elementId: string) => {
+      if (!selectedInfrastructure) return false;
+      setLoadState("loading");
+      setFailure(null);
+      try {
+        await nativeConsole.withdrawExternalElement(selectedInfrastructure, elementId);
+        await loadSelected();
+        return true;
+      } catch (error: unknown) {
+        setFailure(operationErrorMessage(error));
+        setLoadState("error");
+        return false;
+      }
+    },
+    [loadSelected, selectedInfrastructure],
+  );
+
   const rotateSelectedDevice = useCallback(async () => {
     if (!selectedInfrastructure) return;
     setLoadState("loading");
@@ -197,7 +228,10 @@ export function App() {
   }, [selectedInfrastructure]);
 
   useEffect(() => {
-    if (selectedInfrastructure && ["summary", "fleet", "observations", "profile"].includes(view)) {
+    if (
+      selectedInfrastructure &&
+      ["summary", "fleet", "observations", "external", "profile"].includes(view)
+    ) {
       void loadSelected();
     }
   }, [selectedInfrastructure, view, loadSelected]);
@@ -323,6 +357,7 @@ export function App() {
               association={selectedAssociation}
               infrastructure={infrastructure}
               machines={machines}
+              external={external}
               loading={loadState === "loading"}
               onRefresh={() => void loadSelected()}
               onInitialize={initializeSelected}
@@ -341,6 +376,14 @@ export function App() {
               machines={machines}
               loading={loadState === "loading"}
               onRefresh={() => void loadSelected()}
+            />
+          ) : null}
+          {view === "external" && selectedAssociation ? (
+            <ExternalView
+              external={external}
+              loading={loadState === "loading"}
+              onRefresh={() => void loadSelected()}
+              onWithdraw={withdrawExternalElement}
             />
           ) : null}
           {view === "profile" ? (

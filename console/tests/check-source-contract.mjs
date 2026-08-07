@@ -416,8 +416,13 @@ const genericSourceGate = await readSourceText(
   join(consoleRoot, "..", "tests", "checks", "source-v0.0.1"),
 );
 const consoleRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "lib.rs"));
+const networkRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "network.rs"));
 const productModels = await readSourceText(join(consoleRoot, "src", "product", "models.ts"));
 const nativeOperations = await readSourceText(join(consoleRoot, "src", "product", "native.ts"));
+const infrastructureViews = await readSourceText(
+  join(consoleRoot, "src", "product", "infrastructure-views.tsx"),
+);
+const productScreens = await readSourceText(join(consoleRoot, "src", "product", "screens.css"));
 const cargoVersion = cargoManifest.match(/^version\s*=\s*"([^"]+)"$/mu)?.[1];
 
 if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(packageDocument.version)) {
@@ -1819,6 +1824,257 @@ if (!invokeHandler) {
   failures.push("lib.rs: une primitive SSH, agent ou signature générale est enregistrée");
 } else if (/\b\w*approv\w*\b/iu.test(invokeHandler)) {
   failures.push("lib.rs: une commande d’approbation est exposée sans sa fenêtre de confirmation");
+}
+
+// Ce qui est géré, ce qui est externe, ce qui est ancien.
+//
+// Un élément externe est une chose que ce produit n'a pas posée : la Console la
+// montre, ne la gère pas, et le dit. Les gardes qui suivent tiennent les quatre
+// propriétés dont dépend cette phrase — le vocabulaire fermé de l'état, les
+// quatre absences sues et non lues, l'inertie de tout octet venu d'un tiers, et
+// le fait qu'un retrait ne retire que la déclaration.
+const externalWireFields =
+  "element_id,machine_id,label,kind,probe_port,declared_at,state,reason,observed_at,observation_status";
+const externalElementView = networkRuntime.match(
+  /#\[serde\(deny_unknown_fields\)\]\npub\(crate\) struct ExternalElementView \{(?<body>[\s\S]*?)\n\}/u,
+)?.groups?.body;
+if (!externalElementView) {
+  failures.push("network.rs: la vue d’un élément externe est absente ou ouverte aux champs inconnus");
+} else {
+  const wireFields = [...externalElementView.matchAll(/^\s+pub (\w+):/gmu)].map((match) => match[1]);
+  if (wireFields.join(",") !== externalWireFields) {
+    failures.push("network.rs: ExternalElementView doit rester le schéma positif exact du fil");
+  }
+}
+for (const view of ["ExternalElementsView", "ExternalElementView", "ExternalWithdrawalView"]) {
+  if (
+    !new RegExp(`#\\[serde\\(deny_unknown_fields\\)\\]\\npub\\(crate\\) struct ${view} \\{`, "u").test(
+      networkRuntime,
+    )
+  ) {
+    failures.push(`network.rs: la vue externe ${view} accepterait un champ inconnu`);
+  }
+}
+// Aucune capacité ne traverse le fil : les quatre absences sont des propriétés
+// de ce qu'est un élément externe, et une Console qui les lirait offrirait une
+// action de gestion le jour où un Controller compromis dirait oui.
+const externalWireStructs = ["ExternalElementsView", "ExternalElementView", "ExternalWithdrawalView"]
+  .map(
+    (view) =>
+      networkRuntime.match(
+        new RegExp(`pub\\(crate\\) struct ${view} \\{(?<body>[\\s\\S]*?)\\n\\}`, "u"),
+      )?.groups?.body ?? "",
+  )
+  .join("\n");
+for (const [name, source] of [
+  ["network.rs", externalWireStructs],
+  ["models.ts", productModels],
+]) {
+  if (/\b(?:can_update|can_restore|can_delete|can_guarantee|guaranteed|capabilit\w*)\b/iu.test(source)) {
+    failures.push(`${name}: une capacité d’élément externe traverse le fil`);
+  }
+}
+// Un mot que cette Console ne connaît pas est un refus, jamais un rendu de
+// repli : l'état et le motif sont des listes fermées, la date accompagne tout
+// constat, et l'ancienneté reste une dimension séparée de l'état. La garde est
+// lue hors des tests, sinon un vocabulaire disparu du décodage passerait encore
+// pour être cité par la preuve qui devait le tenir.
+const externalContract = networkRuntime.replace(/#\[cfg\(test\)\][\s\S]*$/u, "");
+for (const bound of [
+  "fn validate_external_elements(",
+  "view.elements.len() > MAX_EXTERNAL_ELEMENTS",
+  "fn validate_external_element(element: &ExternalElementView) -> Result<(), NetworkError> {",
+  '("declared" | "verified" | "contradicted", None)',
+  '"nothing_listening"',
+  '"response_too_large"',
+  '"machine_unreachable"',
+  '"port_is_managed"',
+  "let read = element.state != \"declared\";",
+  "read != element.observed_at.is_some()",
+  '(false, "absent") | (true, "recent") | (true, "old")',
+  "fn valid_external_label(value: &str) -> bool {",
+  "(1..=MAX_EXTERNAL_LABEL_BYTES).contains(&value.len())",
+  "value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))",
+]) {
+  if (!externalContract.includes(bound)) {
+    failures.push(`network.rs: garde de l’inventaire déclaré absente (${bound})`);
+  }
+}
+// Le corpus hostile est exécuté là où le refus vit. Un libellé de balisage est
+// un libellé légitime — c'est à l'affichage qu'il devient inerte — tandis qu'un
+// renversement du sens de lecture, un octet de contrôle ou un octet de trop ne
+// peuvent pas être un libellé du tout.
+for (const expected of [
+  "fn external_labels_are_bytes_and_never_the_managed_profile()",
+  'valid_external_label("<script>alert(\\"x\\")</script>")',
+  'valid_external_label("facture\\u{202e}exe.gnp")',
+  'valid_external_label("vault\\u{7}rouge")',
+  'valid_external_label("vault\\u{1b}[31mrouge")',
+  'valid_external_label(&"<".repeat(MAX_EXTERNAL_LABEL_BYTES))',
+  '&"<".repeat(MAX_EXTERNAL_LABEL_BYTES + 1)',
+  "fn external_readings_refuse_a_word_this_console_does_not_know()",
+  "fn a_capability_on_the_wire_is_an_unknown_field()",
+]) {
+  if (!networkRuntime.includes(expected)) {
+    failures.push(`network.rs: preuve hostile de l’inventaire déclaré absente (${expected})`);
+  }
+}
+// Le retrait est un POST sur sa propre route, et le chemin d'un élément n'existe
+// sous aucune méthode : le produit ne possède rien ici, donc il n'a aucune
+// ressource à supprimer.
+if (!networkRuntime.includes("/v0/external-element-withdrawals")) {
+  failures.push("network.rs: le retrait n’emprunte plus sa route nommée");
+}
+if (networkRuntime.includes("/v0/external-elements/")) {
+  failures.push("network.rs: le chemin d’un élément déclaré ne doit exister sous aucune méthode");
+}
+if (/"DELETE"[\s\S]{0,240}?external/u.test(networkRuntime)) {
+  failures.push("network.rs: aucun DELETE ne vise l’inventaire déclaré");
+}
+const externalCommands = [
+  ...consoleRuntime.matchAll(/#\[tauri::command\]\nfn (?<name>\w*external\w*)\(/gu),
+].map((match) => match.groups.name);
+if (externalCommands.join(",") !== "read_external_elements,withdraw_external_element") {
+  failures.push(
+    `lib.rs: les seuls actes offerts sur une déclaration sont la lire et la retirer (${externalCommands.join(",")})`,
+  );
+}
+for (const command of ["read_external_elements", "withdraw_external_element"]) {
+  if (!nativeOperations.includes(`"${command}"`) || !consoleRuntime.includes(command)) {
+    failures.push(`IPC externe: commande nommée absente (${command})`);
+  }
+}
+// Le type dit ce que le contrat dit : « déclaré » est l'état d'un élément que
+// personne n'a lu, donc il n'a ni date ni ancienneté ; un invérifiable nomme
+// toujours son motif ; et le mot d'ancienneté est celui de l'inventaire géré,
+// pour qu'« ancien » n'ait qu'un seul sens sur un même écran.
+for (const expected of [
+  'export type ExternalState = "declared" | "verified" | "contradicted" | "unverifiable";',
+  'export type ExternalReason =\n  | "nothing_listening"\n  | "response_too_large"\n  | "machine_unreachable"\n  | "port_is_managed";',
+  'export type ExternalObservationStatus = Exclude<ObservationStatus, "untrusted" | null>;',
+  '      state: Extract<ExternalState, "declared">;\n      reason: null;\n      observed_at: null;\n      observation_status: Extract<ExternalObservationStatus, "absent">;',
+  '      state: Extract<ExternalState, "verified" | "contradicted">;\n      reason: null;\n      observed_at: string;',
+  '      state: Extract<ExternalState, "unverifiable">;\n      reason: ExternalReason;\n      observed_at: string;',
+]) {
+  if (!productModels.includes(expected)) {
+    failures.push(`models.ts: contrat d’élément externe manquant (${expected.split("\n")[0]})`);
+  }
+}
+// Les quatre absences sont annoncées mot pour mot depuis le contexte de la
+// route, et elles ne peuvent pas venir d'ailleurs : rien ne les projette.
+for (const absence of [
+  '{ capability: "Mettre à jour", refusal: "non — aucun plan ne décrit cet élément" },',
+  '{ capability: "Restaurer", refusal: "non — le produit ne détient aucune de ses données" },',
+  '{ capability: "Supprimer", refusal: "non — retirer la déclaration ne retire pas la chose" },',
+  '{ capability: "Garantir l’état", refusal: "non — seule une lecture datée est offerte" },',
+]) {
+  if (!infrastructureViews.includes(absence)) {
+    failures.push(`infrastructure-views.tsx: absence annoncée manquante (${absence})`);
+  }
+}
+const externalViewStart = infrastructureViews.indexOf("export function ExternalView(");
+const externalViewEnd = infrastructureViews.indexOf("function PageHeader(");
+const externalRegion =
+  externalViewStart >= 0 && externalViewStart < externalViewEnd
+    ? infrastructureViews.slice(externalViewStart, externalViewEnd)
+    : "";
+const externalProse = externalRegion.replace(/\s+/gu, " ");
+if (!externalRegion) {
+  failures.push("infrastructure-views.tsx: la vue des éléments externes est introuvable");
+}
+// Aucune action de gestion n'est offerte pour un élément externe. Le seul acte
+// que cette vue propose porte sur la déclaration, jamais sur la chose.
+const externalActions = [
+  ...externalRegion.matchAll(/<Button[^>]*>(?<label>[\s\S]*?)<\/Button>/gu),
+].map((match) => match.groups.label.trim());
+if (
+  externalActions.length === 0 ||
+  externalActions.some(
+    (label) => !["Retirer la déclaration", "Conserver la déclaration"].includes(label),
+  )
+) {
+  failures.push(
+    `infrastructure-views.tsx: un élément externe ne doit offrir aucune action de gestion (${externalActions.join("|")})`,
+  );
+}
+// Chaque motif d'invérifiable a sa propre phrase, et ce sont bien quatre
+// phrases : « rien n'écoute » et « la machine n'est pas joignable » sont des
+// faits différents, et un rendu qui les confondrait passerait une garde de
+// simple présence.
+const externalReasonSentences = [
+  "nothing_listening",
+  "response_too_large",
+  "machine_unreachable",
+  "port_is_managed",
+].map(
+  (reason) =>
+    externalRegion.match(new RegExp(`case "${reason}":\\n\\s+return "(?<sentence>[^"]+)";`, "u"))
+      ?.groups?.sentence,
+);
+if (
+  externalReasonSentences.some((sentence) => !sentence) ||
+  new Set(externalReasonSentences).size !== 4
+) {
+  failures.push("infrastructure-views.tsx: chaque motif d’invérifiable doit avoir sa propre phrase");
+}
+if (
+  !externalReasonSentences[3]?.includes("ce port est tenu par un service que ce produit gère")
+) {
+  failures.push("infrastructure-views.tsx: le port déjà géré doit dire pourquoi rien ne s’y connecte");
+}
+// « Contredit » veut dire ce que le contrat lui fait dire : un port qui
+// répondait n'accepte plus. Jamais que la chose aurait disparu.
+if (
+  !externalProse.includes(
+    "Contredit : le port qu’une lecture datée avait trouvé répondant n’accepte plus aucune connexion.",
+  )
+) {
+  failures.push("infrastructure-views.tsx: « contredit » ne dit plus ce que le contrat lui fait dire");
+}
+if (/(?:le service|la chose|l’élément|il)\s+(?:a disparu|n’existe plus|est supprimé|est parti)/iu.test(
+  infrastructureViews,
+)) {
+  failures.push("infrastructure-views.tsx: « contredit » ne doit jamais dire que la chose a disparu");
+}
+// Un constat vérifié dépassé continue de dire vérifié et cesse d'être présenté
+// comme actuel, et le retrait dit en propres termes ce qu'il ne retire pas.
+if (
+  !externalProse.includes(
+    "Il reste vérifié à sa date et cesse d’être présenté comme actuel.",
+  ) ||
+  !externalProse.includes(
+    "Le retrait retire la déclaration, et rien d’autre : la chose déclarée continue d’exister",
+  )
+) {
+  failures.push(
+    "infrastructure-views.tsx: l’ancienneté d’un constat ou la portée d’un retrait n’est plus dite",
+  );
+}
+// Le libellé est la parole d'un tiers : il n'est rendu que comme du texte,
+// jamais dans un attribut, et son cadre est ce qui l'empêche d'élargir la page.
+if (!externalRegion.includes("{element.label}")) {
+  failures.push("infrastructure-views.tsx: le libellé déclaré n’est plus affiché comme du texte");
+}
+if (/(?:href|src|style|title|alt|dangerouslySetInnerHTML)=\{[^}]*element\.label/u.test(
+  externalRegion,
+)) {
+  failures.push("infrastructure-views.tsx: le libellé déclaré atteint un attribut actif");
+}
+const externalLabelFrame = productScreens.match(
+  /\.yc-external__label,\n\.yc-external__origin \{(?<body>[\s\S]*?)\n\}/u,
+)?.groups?.body;
+if (
+  !externalLabelFrame ||
+  !["max-width: 100%;", "overflow-wrap: anywhere;", "unicode-bidi: isolate;"].every((bound) =>
+    externalLabelFrame.includes(bound),
+  )
+) {
+  failures.push("screens.css: le cadre inerte du libellé déclaré n’est plus borné ni isolé");
+}
+// L'âge affiché est celui que le Controller a calculé contre l'unique limite
+// annoncée : la Console n'a pas d'horloge d'autorité et n'en invente pas une.
+if (/Date\.now\(\)|new Date\(/u.test(infrastructureViews)) {
+  failures.push("infrastructure-views.tsx: l’ancienneté doit rester celle que le Controller calcule");
 }
 
 // L’approbation humaine ne doit jamais devenir un oracle de signature. La seule
