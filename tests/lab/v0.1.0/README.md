@@ -543,6 +543,76 @@ tests/lab/v0.1.0/oci-plan/prove remove
   identifiée en est une, et le rapport de la première est
   [`docs/lab/v0.1.0-oci-plan.md`](../../../docs/lab/v0.1.0-oci-plan.md).
 
+## [`console-reflow/`](console-reflow/) — reflow sans coupe au zoom texte 200 %
+
+Ce harnais ne monte aucun périmètre et ne prouve aucun comportement produit : il
+mesure une géométrie. Il répond à #56 pour sa moitié Linux, et à elle seule.
+
+- [`prove`](console-reflow/prove) est l'entrée unique, exécutée depuis le poste
+  de pilotage. Elle commence par la garde d'inventaire obligatoire, construit le
+  bundle de fixture depuis l'arbre de travail, le pose sur `lab-console`,
+  déclenche la mesure, rapatrie les captures et le résultat structuré, puis
+  retire le harnais de la machine — que le run soit vert ou rouge.
+- [`run`](console-reflow/run) ouvre l'écran virtuel avec l'invocation `xvfb-run`
+  exacte de la porte hébergée, `-noreset` compris, et passe la main.
+- [`inside`](console-reflow/inside) sert le bundle en boucle locale plutôt que
+  depuis `file://`, parce que la page porte la CSP du produit et qu'une origine
+  `file://` en relâcherait la moitié en silence, lance `WebKitWebDriver`, puis
+  exécute l'oracle.
+- [`reflow-oracle.py`](console-reflow/reflow-oracle.py) porte les deux oracles.
+
+**Ce qui est mesuré.** Le bundle frontend livré, un seul module remplacé : le
+pont IPC Tauri. Les composants React, les feuilles de style et les fontes sont
+ceux du produit ; le moteur est `libwebkit2gtk-4.1`, celui contre lequel le
+binaire Linux est lié. Neuf états — les sept vues contractuelles, l'affichage
+des deux secrets locaux et les éléments externes — à `1280 x 800` et
+`640 x 560`, texte à 100 % puis à 200 %, sur des libellés hostiles. Chaque état
+est atteint en cliquant le chemin qu'un humain suit.
+
+**L'oracle DOM** asserte, par cas : aucun cadre coupant ne retient de texte plus
+large que lui, aucun contrôle n'en chevauche un autre, aucun ne sort de la
+fenêtre ni n'est recouvert, `documentElement.scrollWidth` ne dépasse pas
+`clientWidth`, une page poussée vers la droite ne bouge pas, le clavier atteint
+chaque contrôle dans l'ordre du document avec `:focus-visible` et un anneau
+visible non rogné, et le seuil compact vaut ce que la taille de texte impose.
+
+**Le garde raster** décode le PNG, vérifie les trois bornes de santé de la
+preuve d'UI installée, puis cherche de l'encre pressée contre les bords latéraux
+de la fenêtre et de l'encre tranchée le long d'une frontière de découpe. Il
+existe parce que le DOM et la surface peinte ont déjà divergé sur ce projet sous
+WebKitGTK/Xvfb.
+
+### Usage
+
+```text
+tools/labctl topology create quick
+tools/provision-lab lab-console
+tests/lab/v0.1.0/console-reflow/prove            # setup, mesure, collecte, retrait
+tests/lab/v0.1.0/console-reflow/prove setup
+tests/lab/v0.1.0/console-reflow/prove run
+tests/lab/v0.1.0/console-reflow/prove collect
+tests/lab/v0.1.0/console-reflow/prove remove
+```
+
+### Limites et hygiène
+
+- **Ce n'est pas le paquet installé.** Six des neuf états ne sont atteignables
+  que derrière un coffre déverrouillé et un Controller vivant ; dresser cette
+  chaîne pour mesurer une feuille de style aurait fait dépendre la mesure de
+  tout sauf de la feuille de style. Le moteur, le bundle et les tailles de
+  fenêtre sont ceux du produit ; le processus qui les héberge ne l'est pas.
+- **Windows n'est pas mesuré.** La même mesure sous WebView2 sur `windows-eval`
+  est l'autre moitié de #56 et garde l'issue ouverte.
+- Le harnais restaure lui-même le focus X après chaque redimensionnement, avec
+  `xdotool`. Sans gestionnaire de fenêtres, un redimensionnement laisse la
+  fenêtre sans focus clavier, `:focus` cesse de correspondre et aucun anneau
+  n'est peint : une preuve qui lirait cela comme un anneau manquant rendrait
+  compte de son propre harnais.
+- Un contrôle plus haut que la fenêtre ne peut pas montrer les quatre côtés de
+  son anneau. L'oracle juge alors l'axe horizontal seul, et compte les cas.
+- Ce n'est pas une revendication de conformité WCAG 2.2 AA.
+- Les libellés sont hostiles par construction, pas exhaustifs.
+
 ## [`windows-helper/`](windows-helper/) — moitié Windows du helper natif
 
 Les suites de contrat propres à Windows n'ont pas d'équivalent Linux : le Job

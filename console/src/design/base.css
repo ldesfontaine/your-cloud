@@ -19,6 +19,17 @@ body {
   background: var(--color-canvas);
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
+  /* Le seuil compact est mesuré sur le corps et non sur la fenêtre. Une requête
+     de conteneur évalue ses `em` sur la police héritée, donc elle suit le zoom
+     texte ; une requête de média garde la taille initiale du navigateur et
+     laisserait la mise en page compacte hors d'atteinte à 200 %, exactement là
+     où elle est nécessaire. `46em` vaut `644px` à 100 % et `1288px` à 200 %. */
+  container-name: window;
+  container-type: inline-size;
+  /* Un libellé recopié depuis un tiers peut ne porter aucune espace. Sans
+     coupure de dernier recours, il fixerait la largeur minimale de son cadre et
+     imposerait un défilement horizontal à la page entière. */
+  overflow-wrap: anywhere;
 }
 
 button,

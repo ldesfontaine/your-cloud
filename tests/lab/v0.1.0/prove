@@ -85,6 +85,14 @@ usage: prove [guard | run [passe...] | close | all [passe...] | complete]
   machine lives outside labctl and outside this topology. It is reported as not
   run, never as passed.
 
+  `console-reflow` is never part of any sequence here either, `complete`
+  included, and for a different reason. It measures the frontend's geometry
+  (#56) in WebKitGTK on lab-console, not a product behaviour on a mounted
+  perimeter, and its own issue stays open until the same measurement is made
+  under WebView2 on a machine this file does not know. A green run of it closes
+  nothing here, so it is run by its own entry point and never reported as a pass
+  of this sequence.
+
   Outside `complete`, the five harnesses above are not part of the sequence, and
   each for its own reason:
 

@@ -1,6 +1,10 @@
 .yc-access {
   width: min(100%, 34rem);
   margin-inline: auto;
+  /* La marge horizontale est explicite : à 200 %, `34rem` dépasse la fenêtre et
+     la vue occupe toute sa largeur. Sans elle, la carte et son anneau de focus
+     viendraient s'appuyer sur le bord. */
+  padding-inline: var(--space-4);
   padding-block: var(--space-8);
 }
 
@@ -108,7 +112,7 @@
   resize: vertical;
 }
 
-@media (max-width: 40rem) {
+@container window (max-width: 46em) {
   .yc-access {
     padding-block: var(--space-4);
   }

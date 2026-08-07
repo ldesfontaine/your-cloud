@@ -103,7 +103,7 @@ provision_console() {
   # provisioned before the list grew passes the old guard and would silently
   # keep its old surface, which is exactly the drift this file exists to
   # prevent.
-  if remote lab-console "test -f /usr/lib/x86_64-linux-gnu/pkgconfig/webkit2gtk-4.1.pc"; then
+  if remote lab-console "test -x /usr/bin/WebKitWebDriver"; then
     note "build dependencies" "already installed"
   else
     # The WebKit and rsvg lines are what the console crate itself links
@@ -118,10 +118,17 @@ provision_console() {
     # so `xvfb-run` is not a runner's convenience here but the floor that proof
     # stands on. A topology alive for days had them from an earlier hand; the
     # first run from nothing stopped on `xvfb-run: command not found`.
+    #
+    # `webkit2gtk-driver` is the same WebDriver the hosted gate installs, and it
+    # brings the engine the Linux Console actually paints with. The reflow proof
+    # measures the frontend's geometry in that engine rather than in a second
+    # one, because a layout that reflows in Chromium and not in WebKitGTK would
+    # be a green that says nothing about the product.
     remote lab-console "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
       && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         build-essential pkg-config libgtk-3-dev gdb \
         libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+        webkit2gtk-driver \
         xvfb dbus-x11 xdotool imagemagick lsof \
         >/dev/null"
     note "build dependencies" "installed"
@@ -130,8 +137,9 @@ provision_console() {
   # once present by an accident of history and absent from this recipe: `gdb`
   # because the secret-crash suite runs `gcore`, `xvfb-run` because the
   # personal-access proof drives a real native window, `xdotool` and `import`
-  # because that proof probes and photographs it.
-  for tool in gdb xvfb-run xdotool import; do
+  # because that proof probes and photographs it, `WebKitWebDriver` because the
+  # reflow proof drives the frontend in the engine the product ships with.
+  for tool in gdb xvfb-run xdotool import WebKitWebDriver; do
     remote lab-console "command -v $tool >/dev/null" \
       || fail "$tool is absent after installation"
   done

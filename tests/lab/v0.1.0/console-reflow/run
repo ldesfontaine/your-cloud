@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Open the virtual screen the engine paints on, then hand over to `inside`.
+#
+# `-noreset` is not decoration. Without it the X server regenerates between two
+# short-lived clients and a driver that reconnects mid-run finds a different
+# display; the same string is used by the hosted gate and by the personal-access
+# proof, and it is kept identical on purpose.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+exec dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" \
+  env NO_AT_BRIDGE=1 "$here/inside" "$@"

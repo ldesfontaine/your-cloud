@@ -1415,12 +1415,20 @@ en page utilise `rem`, `%`, `fr`, `minmax()` et `clamp()` plutôt que des largeu
 d'écran figées.
 
 La Console ouvre une fenêtre standard de `1280 x 800` pixels logiques et refuse
-une taille inférieure à `640 x 560`. À partir de `64rem`, la synthèse peut
-présenter sa fiche de contexte à droite ; entre `40rem` et `64rem`, cette fiche
-passe sous le contenu ; à `40rem`, la navigation se compacte et les tableaux
-deviennent des listes de cartes sans défilement horizontal obligatoire. Ces
-seuils pourront évoluer après mesure sans changer l'architecture. Aucun
-composant, breakpoint ou geste propre au téléphone n'entre dans ce palier.
+une taille inférieure à `640 x 560`. Tant qu'elle tient à côté du contenu, la
+synthèse présente sa fiche de contexte à droite ; sinon cette fiche passe sous
+le contenu. Vers `40rem`, la navigation se compacte et les tableaux deviennent
+des listes de cartes sans défilement horizontal obligatoire.
+
+Ces seuils sont mesurés sur la taille du texte et non sur la seule largeur de
+fenêtre, parce qu'un seuil qui ne suit pas le zoom laisse la mise en page
+compacte hors d'atteinte au moment précis où elle est nécessaire : les unités
+relatives d'une requête de média sont évaluées sur la taille de texte initiale
+du navigateur et jamais sur celle de la page. Une requête de conteneur ou un
+seuil intrinsèque exprimé en unités relatives suit le texte ; une requête de
+média en largeur de fenêtre ne le suit pas. Les valeurs pourront évoluer après
+mesure sans changer l'architecture ; le fait qu'elles suivent le texte, non.
+Aucun composant, breakpoint ou geste propre au téléphone n'entre dans ce palier.
 
 Les icônes viennent uniquement du jeu cohérent **Lucide**, en contour, avec une
 taille visuelle normale de `1.25rem`. Seuls les glyphes réellement employés sont

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Leave the machine as the harness found it.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+pkill -f 'WebKitWebDriver --host=127.0.0.1 --port=4444' 2>/dev/null || true
+pkill -f 'http.server 8710' 2>/dev/null || true
+pkill -f 'Xvfb' 2>/dev/null || true
+
+cd /
+rm -rf "$here"
+echo "  harness removed"

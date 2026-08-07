@@ -256,7 +256,9 @@ smokes publient chacun un JSON et dix PNG, et le rapport Plumber vaut `A`,
 `100/100` sans finding. Les trois artefacts et leurs 23 fichiers sont inspectés
 sans secret, dump, paquet ni binaire. C'est le run que l'issue `#45` enregistre
 avant sa fermeture et la fusion par fast-forward de la PR #50. Cette porte ne
-couvre toujours pas la preuve responsive exhaustive à 200 %, suivie par #56.
+couvre toujours pas la preuve responsive exhaustive à 200 %, suivie par #56 :
+elle ne capture que trois vues, et sa moitié Linux est prouvée ailleurs, dans le
+LAB, par [`v0.1.0` — reflow sans coupe au zoom texte 200 %](../lab/v0.1.0-console-reflow-200.md).
 
 Plumber complète les contrôles du projet ; il ne remplace ni les tests Go, ni
 les scénarios hostiles, ni la preuve LAB. Son score n'est pas une attestation

@@ -73,11 +73,27 @@
   margin-block-end: 0;
 }
 
+/* La fiche de contexte passe sous le contenu dès qu'elle ne tient plus à côté de
+   lui. Le seuil est intrinsèque et exprimé en `rem` : il suit donc le zoom
+   texte, là où un `@media` en largeur de fenêtre gardait deux colonnes à 200 %
+   et écrasait la première jusqu'à faire déborder ses boutons. */
 .yc-dashboard {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--context-width);
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-6);
   align-items: start;
+}
+
+.yc-dashboard > * {
+  min-width: 0;
+}
+
+.yc-dashboard > :first-child {
+  flex: 999 1 22rem;
+}
+
+.yc-dashboard > :last-child {
+  flex: 1 1 var(--context-width);
 }
 
 .yc-card-grid {
@@ -110,13 +126,7 @@
   display: none;
 }
 
-@media (max-width: 64rem) {
-  .yc-dashboard {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 40rem) {
+@container window (max-width: 46em) {
   .yc-app {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
@@ -129,14 +139,19 @@
     border-block-end: var(--border-width) solid var(--color-border);
   }
 
+  /* La navigation compacte reflue au lieu de défiler. Un rang qui ne tient plus
+     passe à la ligne : aucun libellé n'est repoussé hors du cadre et aucune
+     entrée ne devient inatteignable sans faire glisser la barre. */
   .yc-sidebar__nav {
     display: flex;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    overflow-x: visible;
   }
 
   .yc-nav-button {
     width: auto;
-    flex: none;
+    min-width: 0;
+    flex: 0 1 auto;
   }
 
   .yc-main {

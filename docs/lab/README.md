@@ -415,6 +415,21 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.0` — reflow sans coupe au zoom texte 200 %](v0.1.0-console-reflow-200.md) :
+  passage `quick` du 7 août 2026 pour la moitié Linux de #56. Les neuf états du
+  frontend — les sept vues contractuelles, l'affichage des deux secrets locaux
+  et les éléments externes — sont mesurés à `1280 x 800` et `640 x 560`, texte à
+  100 % puis à 200 %, sur des libellés hostiles de 236 caractères dont 118 sans
+  une espace : 36 cas, 324 contrôles parcourus au clavier, 18 captures. Le
+  défaut enregistré par #45 est **rejoué avant d'être corrigé** — l'oracle
+  nomme la barre de navigation retenant `1799px` dans `576px` et le garde raster
+  voit l'encre tranchée sur sa frontière — puis une coupe introduite
+  volontairement fait rougir les deux gardes séparément. La cause était une
+  requête de média : ses unités relatives sont mesurées sur la taille de texte
+  initiale du navigateur, jamais sur celle de la page, donc le seuil compact ne
+  suivait pas le zoom. Limite qui commande la lecture du reste : **c'est le
+  bundle frontend dans WebKitGTK, pas le paquet installé sous Tauri**, et
+  Windows n'est pas mesuré.
 - [`v0.1.0` — audit d'endpoints déclarés, sans mutation et sans scan](v0.1.0-endpoint-audit.md) :
   passage `quick` du 6 août 2026 pour #36, à la révision `aac5d843`. La lecture
   seule est **prouvée et non affirmée** : l'empreinte de la machine auditée —
