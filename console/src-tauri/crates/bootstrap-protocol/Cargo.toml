@@ -1,6 +1,7 @@
 [package]
 name = "your-cloud-bootstrap-protocol"
 version = "0.0.3"
+license = "AGPL-3.0-only"
 description = "Contrats publics bornés entre la Console et l'Assistant d'amorçage Your Cloud"
 authors = ["Lucas Desfontaine"]
 edition = "2021"

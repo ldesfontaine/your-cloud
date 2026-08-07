@@ -2,6 +2,7 @@
   "name": "your-cloud-console",
   "private": true,
   "version": "0.0.3",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",

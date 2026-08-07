@@ -1,6 +1,7 @@
 [package]
 name = "your-cloud-console"
 version = "0.0.3"
+license = "AGPL-3.0-only"
 description = "Console cliente native de Your Cloud"
 authors = ["Lucas Desfontaine"]
 edition = "2021"

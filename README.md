@@ -42,3 +42,20 @@ Après toute modification d'une décision transverse, le contrôle statique est 
 ```text
 tools/check-docs
 ```
+
+## Licence
+
+Your Cloud est distribué sous licence
+[GNU Affero General Public License, version 3](LICENSE), et sous elle seule.
+
+Le copyleft réseau est un choix de destination plutôt qu'une préférence :
+ce produit sert à héberger soi-même, et l'AGPL est la licence qui garde ce
+sens quand quelqu'un d'autre en fait un service — celui qui propose Your
+Cloud à des tiers par un réseau doit leur en offrir la source, modifications
+comprises. Une licence permissive aurait laissé refermer ce que ce dépôt
+ouvre.
+
+Les profils de service que la `v0.1.0` prend en charge sont eux-mêmes sous
+AGPL — BentoPDF, Vaultwarden — et ne sont ni redistribués, ni modifiés, ni
+liés par ce dépôt : Your Cloud les déploie par leur image officielle
+épinglée, ce que le contrat de chaque profil écrit.
