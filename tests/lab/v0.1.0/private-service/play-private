@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# The private profile deployed on the machine of the LAN: the first service of
+# this product whose data outlives its container.
+#
+# The step opens with the one question the closures of `#102` and `#103` both
+# named as *the* risk of this LAB, and it is asked before anything depends on the
+# answer: **what does a real Vaultwarden answer to a plain GET on `/`?** The local
+# verification of a deployment requires a 200 and follows no redirection, and the
+# publication of a link route requires the same status through the tunnel. If the
+# image answers a redirection, every deployment of this profile is a controlled
+# failure and this palier does not hold — so the question is asked by hand, on
+# this machine, with an isolated container store that is deleted immediately, and
+# the answer is printed whatever it is.
+#
+# That pre-flight is a DIAGNOSTIC-ONLY act of the harness. It runs no product
+# code, it writes nothing the product reads, and it is undone in the same script.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+probe_store="$state/probe-store"
+probe_port=18289
+probe_name=lab-private-service-preflight
+
+# What the pre-flight is allowed to perturb, recorded before it runs so that
+# putting it back is a comparison rather than a hope. A rootful engine publishing
+# a port poses a table of its own and turns forwarding on for the whole host, and
+# both are facts a later step of this very proof asserts about this machine — so
+# they are read, restored and read again rather than left for the passage's own
+# constat to trip over.
+preflight_forwarding=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo unreadable)
+
+preflight_cleanup() {
+  podman --root "$probe_store/root" --runroot "$probe_store/run" \
+    rm --force --ignore "$probe_name" >/dev/null 2>&1 || true
+  podman --root "$probe_store/root" --runroot "$probe_store/run" \
+    system reset --force >/dev/null 2>&1 || true
+  # A rootful container publishing a port makes the engine pose its own nftables
+  # table, and that table lives in the kernel rather than in the store this
+  # pre-flight owns. It is the pre-flight's residue and nobody else's — every
+  # managed service of this product is rootless and reaches the network through a
+  # userspace stack that poses no table — so it is deleted here, by name, and the
+  # audit that read this machine holding no table at all is what says it was not
+  # there before.
+  /usr/sbin/nft delete table inet netavark >/dev/null 2>&1 || true
+  # And the host forwarding the same engine turns on. Every managed service of
+  # this product is rootless and asks for none, the passage asserts this machine
+  # relays nothing, and a proof that had turned it on itself would be measuring
+  # its own pre-flight.
+  [[ "$preflight_forwarding" == unreadable ]] \
+    || sysctl --write "net.ipv4.ip_forward=$preflight_forwarding" >/dev/null 2>&1 || true
+  rm -rf "$probe_store" 2>/dev/null || true
+}
+
+step "1. DIAGNOSTIC-ONLY: what the pinned image answers on / , before anything relies on it"
+
+trap preflight_cleanup EXIT
+install -d -m 0700 "$probe_store/root" "$probe_store/run"
+preflight=unanswered
+if podman --root "$probe_store/root" --runroot "$probe_store/run" \
+  pull "$pinned_vault" >/dev/null 2>&1 \
+  && podman --root "$probe_store/root" --runroot "$probe_store/run" \
+    run --detach --rm --name "$probe_name" \
+    --publish "127.0.0.1:$probe_port:80" \
+    --env DOMAIN="https://$vault_host" \
+    --env SIGNUPS_ALLOWED=false \
+    "$pinned_vault" >/dev/null 2>&1; then
+  for _ in $(seq 1 30); do
+    preflight=$(loopback_answer_line "$probe_port")
+    case "$preflight" in
+      000*| none*) sleep 2 ;;
+      *) break ;;
+    esac
+  done
+  report "a plain GET on / of the pinned image (status, media type, redirect)" "$preflight"
+  case "$preflight" in
+    200\ *)
+      report "the risk the closures of #102 and #103 named" \
+        "not realised: the image answers 200 on /, which is what both verifications require"
+      ;;
+    30[0-9]\ *)
+      defect "the pinned Vaultwarden image answers / with a redirection, which no verification of this palier follows" \
+"SystemExecutor.ProbeAnswers and SystemExecutor.LinkRouteAnswers both build an
+http.Client whose CheckRedirect returns http.ErrUseLastResponse, and both require
+http.StatusOK. A pinned image answering $preflight on / therefore makes every
+deploy_private_service a controlled failure and every publish_link_route a
+controlled failure, before any route is ever served.
+
+This is a mismatch between the profile's pinned image and the verification the
+product performs, and it is a product decision rather than a harness one: either
+the verification accepts the redirection the image gives, or the profile names
+the path the image serves. This proof reports it and stops the path it makes
+impossible."
+      ;;
+    *)
+      report "what the image answered" "$preflight — read on, the deployment below is the real constat"
+      ;;
+  esac
+else
+  report "the pre-flight" \
+    "not answerable on this machine: an isolated rootful store could not pull or run the image here"
+  limit "the pre-flight did not run" \
+    "the deployment below is then the first constat of what the image answers, and its own conclusion says so."
+fi
+preflight_cleanup
+trap - EXIT
+report "the isolated store the pre-flight used" \
+  "$(present "$probe_store") — it lives under this run's own state directory and the removal takes it away"
+expect "the host forwarding, put back exactly as the pre-flight found it" \
+  "$(sysctl_value net.ipv4.ip_forward)" "$preflight_forwarding"
+expect "the table a rootful engine poses, deleted by name" "$(table_loaded inet netavark)" absent
+
+step "2. one approved private service plan, and what a machine that holds data holds"
+
+before_uid=$(account_uid "$vault_account")
+expect "the account, before the plan" "$before_uid" none
+
+apply "deploy_private_service $vault_host on 127.0.0.1:$vault_port" '"changed":true' \
+  -operation deploy_private_service -profile vaultwarden \
+  -port "$vault_port" -origin-host "$vault_host"
+report "the durable directory the report names" "$(json_field data_path)"
+report "the state the report announces" "$(json_field service_state)"
+
+# --- the sheet, to the byte -------------------------------------------------
+expect "the sheet's owner and mode" "$(file_owner "$vault_unit")" "root:root 644"
+matches_bytes "the sheet of the private profile" "$vault_unit" "$(expected_vault_sheet)"
+report "the sheet's size" "$(wc -c <"$vault_unit" 2>/dev/null || echo 0) bytes"
+expect "the volume lines it carries" "$(grep -c '^Volume=' "$vault_unit" || true)" 1
+expect "the environment lines it carries" "$(grep -c '^Environment=' "$vault_unit" || true)" 4
+grep -qx "Environment=DOMAIN=https://$vault_host" "$vault_unit" \
+  && report "the one approved value in the environment" "DOMAIN=https://$vault_host" \
+  || red "the one approved value in the environment" "$(grep '^Environment=DOMAIN' "$vault_unit")"
+grep -qx 'Sysctl=net.ipv4.ip_unprivileged_port_start=0' "$vault_unit" \
+  && report "the namespace-scoped low-port sysctl" "present, as the image listens on 80" \
+  || red "the namespace-scoped low-port sysctl" "absent although the image listens below 1024"
+
+# --- the two directories, and the two owners the contract fixes -------------
+expect "the durable data directory" "$(file_owner "$vault_data")" "$vault_account:$vault_account 700"
+expect "the archive directory" "$(file_owner "$vault_snapshots")" "root:root 700"
+expect "the archives it holds" "$(archive_slots)" none
+
+# --- the confinement --------------------------------------------------------
+uid=$(account_uid "$vault_account")
+report "the identifier this machine gave the service account" "$uid"
+expect "the confinement rules' owner and mode" "$(file_owner "$egress_rules")" "root:root 644"
+matches_bytes "the confinement table on disk" "$egress_rules" "$(expected_egress_rules "$uid")"
+matches_bytes "the unit that poses it at boot" "$egress_unit" "$(expected_egress_unit)"
+expect "that unit's owner and mode" "$(file_owner "$egress_unit")" "root:root 644"
+expect "that unit's enablement" "$(unit_enabled "$egress_unit_name")" enabled
+expect "the confinement table in the kernel" "$(egress_table_loaded)" loaded
+
+rules=$(egress_table_rules)
+printf '%s\n' "$rules" >"$state/egress-loaded.txt"
+# Every rule of this table names the one account it is about, and the property is
+# read from the table the kernel actually parsed rather than from the file.
+unscoped=$(printf '%s\n' "$rules" | grep -vE '^(table|chain|type|\}|$)' | grep -v 'skuid' || true)
+expect "rules of this table without an account scope" \
+  "$(printf '%s' "$unscoped" | paste -sd'; ' -)" ""
+expect "base chains carrying a policy other than accept" \
+  "$(printf '%s\n' "$rules" | grep -c 'policy drop')" 0
+for pattern in \
+  "meta skuid $uid oifname \"lo\" accept" \
+  "meta skuid $uid ct state established accept" \
+  "meta skuid $uid drop"; do
+  grep -qF -- "$pattern" <<<"$rules" \
+    && report "the loaded table carries" "$pattern" \
+    || red "the loaded table carries" "$pattern is absent"
+done
+
+# --- what actually runs -----------------------------------------------------
+expect "the service" "$(service_state "$vault_account" "$vault_service")" active
+expect "the running container's image" "$(container_image "$vault_account" "$vault_container")" "$pinned_vault"
+report "what the service account holds" "uid $uid, home $vault_home"
+report "its subordinate ranges" "$(subordinate_range "$vault_account")"
+expect "the loopback port it publishes" "$(port_listening "$vault_port")" open
+
+answer=$(loopback_answer_line "$vault_port")
+report "a local GET on 127.0.0.1:$vault_port (status, media type, redirect)" "$answer"
+case "$answer" in
+  200\ *) report "the status a real Vaultwarden answers on /" "200 — the value both verifications of this palier require" ;;
+  *) red "the status a real Vaultwarden answers on /" "$answer" ;;
+esac
+
+# --- what a deployment is not -----------------------------------------------
+expect "the secure public port, on the machine of the LAN" "$(port_listening 443)" closed
+expect "the clear public port, on the machine of the LAN" "$(port_listening 80)" closed
+expect "this machine's own passage key, still" "$(present "$link_key")" absent
+expect "the interface, still" "$(interface_state)" absent
+
+printf '%s\n' "$uid" >"$state/vault-uid.txt"
+printf '%s\n' "$(file_digest "$vault_unit")" >"$state/vault-sheet-digest.txt"
+printf '%s\n' "$(service_property "$vault_account" "$vault_service" InvocationID)" \
+  >"$state/vault-invocation.txt"
+printf '%s\n' "$(container_id "$vault_account" "$vault_container")" >"$state/vault-container.txt"
+
+verdict "one approved plan put a data-bearing service on this machine's loopback: its sheet is the contract's bytes, its data belongs to its own account in 0700, its archives to root alone, and its account is confined by a table naming that account's real identifier"

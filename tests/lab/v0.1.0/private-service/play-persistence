@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# What each machine holds when the power comes back, and nobody did anything.
+#
+# The power cycle is real and it is of **both** machines, because the property
+# under proof spans them: a vault, its data, its confinement, its passage, an
+# entry, two fragments and a host policy all return unasked, and a process
+# restart exercises none of that.
+#
+# Two orderings are read here that no other step can read. The confinement's own
+# oneshot claims to run *before anything that could start the service*, and that
+# claim is a race if it is only asserted: it is read from the two monotonic
+# timestamps the manager kept, so "the table was in the kernel before the account
+# had a manager" is a comparison. The passage's bounds are read the same way they
+# were at `#98`, because a table loaded with `nft -f` lives in the kernel and not
+# on disk.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-persistence <peer-public-key> <peer-endpoint-host>}
+endpoint=${2:?usage: play-persistence <peer-public-key> <peer-endpoint-host>}
+
+cd /root
+
+step "13. after a real power cycle of both machines, with no action at all — role $role"
+
+report "how long this machine has been up" "$(uptime -p)"
+report "the consumed position, unchanged by a reboot" "$(consumed_sequence)"
+
+# --- the passage ------------------------------------------------------------
+expect "the interface" "$(interface_state)" up
+expect "the address it holds" "$(interface_address)" "$link_own_address/32"
+expect "the peer the kernel holds" "$(wg_peers)" "$peer_key"
+matches_bytes "the description, still" "$link_netdev" "$(expected_netdev "$peer_key" "$endpoint")"
+expect "the passage key's owner and mode" "$(file_owner "$link_key")" "root:systemd-network 640"
+expect "the unit that puts the bounds back" "$(unit_enabled "$link_unit_name")" enabled
+expect "that unit at this boot" "$(unit_state "$link_unit_name")" active
+expect "the bounding table, back in the kernel" "$(link_table_loaded)" loaded
+if grep -qF "tcp dport $vault_port" <<<"$(link_table_rules)"; then
+  report "the port the table bounds after the reboot" "$vault_port"
+else
+  red "the port the table bounds after the reboot" "$(link_table_rules | tr '\n' ' ')"
+fi
+if handshake=$(handshake_within 120); then
+  report "the handshake, re-established by nobody" "$handshake"
+else
+  red "the handshake, re-established by nobody" "$handshake"
+fi
+
+case "$role" in
+  lan)
+    step "13a. the vault, its data and its confinement"
+
+    waited=0
+    while [[ $waited -lt 180 ]]; do
+      [[ "$(service_state "$vault_account" "$vault_service")" == active ]] && break
+      sleep 3
+      waited=$((waited + 3))
+    done
+    expect "the vault's service" "$(service_state "$vault_account" "$vault_service")" active
+    report "how long it took to come back, unasked" "${waited}s"
+    report "lingering for its account" \
+      "$(loginctl show-user "$vault_account" --property=Linger --value 2>/dev/null || echo unreadable)"
+    if [[ "$(service_property "$vault_account" "$vault_service" InvocationID)" != "$(cat "$state/vault-invocation.txt")" ]]; then
+      report "the vault's invocation across the reboot" "new, as a real power cycle requires"
+    else
+      red "the vault's invocation across the reboot" "unchanged; this was not a power cycle"
+    fi
+    expect "its loopback port" "$(loopback_status_within "$vault_port" 90)" 200
+    expect "the sheet, unchanged" "$(file_digest "$vault_unit")" "$(cat "$state/vault-sheet-digest.txt")"
+
+    expect "the durable data directory" "$(file_owner "$vault_data")" "$vault_account:$vault_account 700"
+    expect "the synthetic secret" "$(file_digest "$secret_file")" "$(cat "$state/secret-digest.txt")"
+
+    uid=$(cat "$state/vault-uid.txt")
+    matches_bytes "the confinement rules on disk" "$egress_rules" "$(expected_egress_rules "$uid")"
+    expect "the confinement table, back in the kernel" "$(egress_table_loaded)" loaded
+    expect "the unit that put it back" "$(unit_enabled "$egress_unit_name")" enabled
+    expect "that unit at this boot" "$(unit_state "$egress_unit_name")" active
+    report "how it finished" \
+      "$(systemctl show "$egress_unit_name" --property=Result --value), status $(systemctl show "$egress_unit_name" --property=ExecMainStatus --value)"
+
+    # The ordering claim, read from the manager's own monotonic clock rather than
+    # asserted. `sysinit.target` wants the confinement before `network-pre.target`,
+    # and logind starts the lingering user manager far later; a confinement that
+    # came back after the thing it confines would be a window nobody could see.
+    confinement_at=$(systemctl show "$egress_unit_name" --property=ExecMainStartTimestampMonotonic --value)
+    manager_at=$(systemctl show "user@$uid.service" --property=ActiveEnterTimestampMonotonic --value)
+    report "when the confinement was applied at this boot" "${confinement_at:-unreadable} us after boot"
+    report "when the account's user manager entered active" "${manager_at:-unreadable} us after boot"
+    if [[ -n "$confinement_at" && -n "$manager_at" && "$confinement_at" -gt 0 && "$manager_at" -gt 0 ]]; then
+      if [[ "$confinement_at" -lt "$manager_at" ]]; then
+        report "the ordering the unit claims" \
+          "held: the table was in the kernel $(( (manager_at - confinement_at) / 1000 )) ms before the manager that starts the service"
+      else
+        defect "the confinement of a private service is applied after the manager that starts it" \
+"renderEgressRulesUnit orders your-cloud-egress-rules.service with
+DefaultDependencies=no, Wants/Before=network-pre.target and
+WantedBy=sysinit.target, so that the table is in the kernel before anything that
+could start the confined service. At this boot the manager of the service account
+entered active at ${manager_at} us and the confinement was applied at
+${confinement_at} us, which is a window in which this machine held a running,
+unconfined service and nothing said so."
+      fi
+    else
+      limit "the two timestamps could not both be read" \
+        "the ordering is then asserted by the unit's own declarations and not observed on this boot."
+    fi
+    ;;
+
+  vps)
+    step "13a. the entry, both fragments and both names"
+
+    waited=0
+    while [[ $waited -lt 180 ]]; do
+      [[ "$(service_state "$pdf_account" "$pdf_service")" == active \
+        && "$(service_state "$entry_account" "$entry_service")" == active ]] && break
+      sleep 3
+      waited=$((waited + 3))
+    done
+    expect "the public profile's service" "$(service_state "$pdf_account" "$pdf_service")" active
+    expect "the entry's service" "$(service_state "$entry_account" "$entry_service")" active
+    report "how long they took to come back, unasked" "${waited}s"
+    expect "the host ports policy file" "$(present "$host_ports_policy")" present
+    expect "the running kernel setting" "$(host_ports_value)" 80
+    expect "the secure public port" "$(port_listening 443)" open
+    expect "the clear public port" "$(port_listening 80)" open
+    expect "the public fragment" "$(file_digest "$entry_fragments/$pdf_host.yaml")" \
+      "$(cat "$state/pdf-fragment-digest.txt")"
+    expect "the link fragment" "$(file_digest "$entry_fragments/$vault_host.yaml")" \
+      "$(cat "$state/vault-fragment-digest.txt")"
+    expect "the certificates the harness placed" \
+      "$(ls -1 "$entry_certificates" | paste -sd, -)" \
+      "$pdf_host.crt,$pdf_host.key,$vault_host.crt,$vault_host.key"
+    ;;
+esac
+
+verdict "this machine brought back everything an approved plan had put on it — service, data, confinement, passage, bounds, entry, fragments and host policy — with nobody doing anything"

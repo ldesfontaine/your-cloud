@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# The public name published, on the VPS: one approved route plan, one fragment.
+#
+# It is `#15`'s own step and it is here for one reason of this palier: the
+# fragment it writes is the *other* kind, and every claim this proof makes about
+# the link route is a difference from it — a backend at this machine's own
+# loopback rather than at the tunnel's peer, and a middleware of two isolation
+# headers a vault's fragment must not carry.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "4. one approved route plan publishes the public name"
+
+pdf_invocation=$(service_property "$pdf_account" "$pdf_service" InvocationID)
+entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+
+apply "publishing $pdf_host towards 127.0.0.1:$pdf_port" '"changed":true' \
+  -operation publish_route -route-host "$pdf_host" -backend-port "$pdf_port"
+
+fragment="$entry_fragments/$pdf_host.yaml"
+expect "the fragment's owner and mode" "$(file_owner "$fragment")" "root:root 644"
+expect "the fragments this machine holds" "$(published_fragments)" "$pdf_host.yaml"
+grep -q "http://$entry_loopback:$pdf_port" "$fragment" \
+  && report "the backend the public fragment names" "http://$entry_loopback:$pdf_port, the host loopback through slirp4netns" \
+  || red "the backend the public fragment names" "$(grep -A2 'servers:' "$fragment" | tr '\n' ' ')"
+grep -q 'Cross-Origin-Opener-Policy: "same-origin"' "$fragment" \
+  && grep -q 'Cross-Origin-Embedder-Policy: "require-corp"' "$fragment" \
+  && report "the isolation headers the public fragment declares" "same-origin and require-corp" \
+  || red "the isolation headers the public fragment declares" "$(grep -i cross-origin "$fragment" | tr '\n' ' ')"
+grep -q "certFile: \"$entry_certificates/$pdf_host.crt\"" "$fragment" \
+  && report "the certificate it points at" "$entry_certificates/$pdf_host.crt" \
+  || red "the certificate it points at" "$(grep certFile "$fragment")"
+
+expect "the service was not restarted" \
+  "$(service_property "$pdf_account" "$pdf_service" InvocationID)" "$pdf_invocation"
+expect "the entry was not restarted" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+
+printf '%s\n' "$(file_digest "$fragment")" >"$state/pdf-fragment-digest.txt"
+report "the public fragment" "$(cat "$state/pdf-fragment-digest.txt")"
+
+verdict "the public name is one fragment towards this machine's own loopback, carrying the two isolation headers of its profile"

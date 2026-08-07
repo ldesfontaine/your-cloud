@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# The public half of the reference scenario, on the VPS: the stateless profile of
+# `#15` on its loopback port, and the entrypoint that will hold the one public
+# address and the one public port both declared names are served from.
+#
+# Nothing here is new. It is the flow `#92` proved, replayed because this palier's
+# central claim needs it standing: `vault.` and `pdf.` answer on the *same* public
+# IP and the *same* 443, and a proof that only ever published one name could not
+# say that. What is asserted below is therefore the minimum that makes the
+# composition trustworthy — the sheet's controls, the pinned images, the host
+# policy as a file and as a running setting, and the two ports — with the whole of
+# `#15` left where it was proven.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+# The Auxiliary is deliberately started from root's home — the exact directory a
+# forced SSH command inherits and no service account can enter. `#86` fixed the
+# defect this exposes; starting from the hostile directory is what keeps that fix
+# proven rather than assumed.
+cd /root
+
+step "1. one approved web service plan, on the machine that faces the world"
+
+apply "the BentoPDF profile of #15 on 127.0.0.1:$pdf_port" '"changed":true' \
+  -operation deploy_web_service -profile bentopdf -port "$pdf_port"
+
+expect "the sheet's owner and mode" "$(file_owner "$pdf_unit")" "root:root 644"
+if [[ ! -f "$pdf_unit" ]]; then
+  red "the sheet's own content" "there is no sheet to read"
+  echo "FAILED: $failures assertions" >&2
+  exit 1
+fi
+for control in 'Pull=never' 'ReadOnly=true' 'NoNewPrivileges=true' 'DropCapability=ALL'; do
+  grep -qx "$control" "$pdf_unit" \
+    && report "the sheet's control $control" "present" \
+    || red "the sheet's control $control" "absent"
+done
+grep -q '^Volume=' "$pdf_unit" \
+  && red "the stateless sheet's mounts" "it carries a Volume= line" \
+  || report "the stateless sheet's mounts" "none, as a profile without data may have none"
+grep -q '^Environment=' "$pdf_unit" \
+  && red "the stateless sheet's environment" "it carries an Environment= line" \
+  || report "the stateless sheet's environment" "none, as a profile without an origin may have none"
+grep -qx "PublishPort=127.0.0.1:$pdf_port:8080" "$pdf_unit" \
+  && report "the sheet's publication" "127.0.0.1:$pdf_port only, towards the image's own 8080" \
+  || red "the sheet's publication" "$(grep '^PublishPort=' "$pdf_unit" | tr '\n' ' ')"
+expect "the service" "$(service_state "$pdf_account" "$pdf_service")" active
+expect "the running container's image" "$(container_image "$pdf_account" "$pdf_container")" "$pinned_pdf"
+report "a local GET on 127.0.0.1:$pdf_port" "$(loopback_answer_line "$pdf_port")"
+
+step "2. one approved entrypoint plan, and the two public ports"
+
+apply "the entrypoint of #15" '"changed":true' -operation deploy_entrypoint
+
+case "$(file_owner "$host_ports_policy")" in
+  "root:root 644") report "the host policy's owner and mode" "root:root 644" ;;
+  *) red "the host policy's owner and mode" "$(file_owner "$host_ports_policy")" ;;
+esac
+grep -qx "$host_ports_setting=80" "$host_ports_policy" \
+  && report "the host policy's content" "$host_ports_setting=80" \
+  || red "the host policy's content" "$(grep -v '^#' "$host_ports_policy" | tr '\n' ' ')"
+expect "the running kernel setting" "$(host_ports_value)" 80
+expect "the entry service" "$(service_state "$entry_account" "$entry_service")" active
+expect "the running entry image" "$(container_image "$entry_account" "$entry_container")" "$pinned_entry"
+expect "the secure public port" "$(port_listening 443)" open
+expect "the clear public port" "$(port_listening 80)" open
+expect "the certificate directory the entry reads" "$(file_owner "$entry_certificates")" "root:root 755"
+expect "what it holds before the harness signs anything" \
+  "$(ls -A "$entry_certificates" 2>/dev/null | paste -sd, -)" ""
+expect "the routes this machine publishes" "$(published_fragments)" none
+
+# Three accounts on one machine were never exercised before this palier: the two
+# of the public half here, and the vault's on the other machine. Their ranges are
+# read because two accounts sharing one range would be two services sharing one
+# identity outside their namespaces.
+pdf_range=$(subordinate_range "$pdf_account")
+entry_range=$(subordinate_range "$entry_account")
+report "the public profile's subordinate range" "$pdf_range"
+report "the entry's subordinate range" "$entry_range"
+if [[ "$pdf_range" == none || "$entry_range" == none || "$pdf_range" == "$entry_range" ]]; then
+  red "the two ranges" "absent or identical: $pdf_range / $entry_range"
+else
+  report "the two ranges" "disjoint, allocated one after the other by the product itself"
+fi
+
+printf '%s\n' "$(service_property "$pdf_account" "$pdf_service" InvocationID)" \
+  >"$state/pdf-invocation.txt"
+printf '%s\n' "$(service_property "$entry_account" "$entry_service" InvocationID)" \
+  >"$state/entry-invocation.txt"
+
+verdict "the VPS holds one stateless managed service on its loopback and one entrypoint holding both public ports, and serves no declared name yet"

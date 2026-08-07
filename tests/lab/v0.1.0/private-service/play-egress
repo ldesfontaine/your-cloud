@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# The confinement, asked of the machine rather than of the table.
+#
+# The contract's sentence is "tout trafic sortant émis par le compte du service
+# est refusé", and what makes it constatable is a neighbour that really exists: a
+# listener the harness runs on a third machine of this LAB, on the same flat
+# subnet, reachable from this one. Three readings are taken of the same
+# destination and the difference between them is the whole claim:
+#
+#   root                 reaches it — so the neighbour is up, the network carries
+#                        the packets, and nothing but the account's own scope is
+#                        deciding;
+#   the service account  does not — the table's `meta skuid` line is what refuses;
+#   the container        does not either — and that is the reading the closure of
+#                        `#102` asked for by name, because a rootless container's
+#                        packets leave this host through a userspace stack running
+#                        as that same account, and whether `meta skuid` sees them
+#                        is a fact about this machine and not about a rule.
+#
+# One harness-owned table takes part, and it is named as such. It counts what the
+# account emits, at a priority ahead of the product's own, so that "the packets
+# leave with the account's identifier" is a number read from the kernel rather
+# than a property inferred from a rule that dropped them. The product must delete
+# its own table by name and leave this one exactly where it is, which is what the
+# removal step reads it again for.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+neighbour=${1:?usage: play-egress <neighbour-address> <neighbour-port>}
+neighbour_port=${2:?usage: play-egress <neighbour-address> <neighbour-port>}
+
+cd /root
+
+uid=$(cat "$state/vault-uid.txt")
+observer_table=lab-egress-observer
+
+pose_observer() {
+  /usr/sbin/nft -f - <<EOF
+add table inet $observer_table
+delete table inet $observer_table
+table inet $observer_table {
+	chain output {
+		type filter hook output priority -10; policy accept;
+		meta skuid $uid counter
+	}
+}
+EOF
+}
+
+observer_packets() {
+  /usr/sbin/nft --handle list table inet "$observer_table" 2>/dev/null \
+    | sed -n 's/.*counter packets \([0-9]*\).*/\1/p' | head -1
+}
+
+reaches() {
+  local who=$1
+  shift
+  if "$@" >/dev/null 2>&1; then
+    echo reachable
+  else
+    echo refused
+  fi
+}
+
+step "5. a synthetic neighbour of the LAN, and who may reach it"
+
+report "the neighbour this proof runs" "$neighbour:$neighbour_port, on a third machine of the flat LAB subnet"
+report "the account under confinement" "$vault_account, identifier $uid"
+
+# The harness's own observer, posed before anything is measured and named where
+# it is posed. It grants nothing: its chain has an accept policy and its one rule
+# has no verdict at all.
+pose_observer
+expect "the observer table this harness poses" "$(table_loaded inet "$observer_table")" loaded
+before_packets=$(observer_packets)
+report "what it has counted so far" "${before_packets:-unreadable} packets from uid $uid"
+
+# --- root reaches the neighbour: the positive control -----------------------
+root_answer=$(reaches root curl --silent --max-time 8 --output /dev/null "http://$neighbour:$neighbour_port/")
+expect "the neighbour, from root of this machine" "$root_answer" reachable
+
+# --- the account does not ---------------------------------------------------
+account_answer=$(reaches account runuser -u "$vault_account" -- \
+  curl --silent --max-time 8 --output /dev/null "http://$neighbour:$neighbour_port/")
+expect "the neighbour, from the service's own account" "$account_answer" refused
+
+# A second destination that is not a neighbour at all: the open internet. The two
+# together are the contract's "no LAN neighbour and no outside".
+outside_answer=$(reaches account runuser -u "$vault_account" -- \
+  curl --silent --max-time 8 --output /dev/null "http://1.1.1.1/")
+expect "an address outside this LAB, from the service's own account" "$outside_answer" refused
+
+# --- the loopback is not a permission, and it still answers ------------------
+loopback_answer=$(runuser -u "$vault_account" -- curl --silent --max-time 8 \
+  --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$vault_port/" 2>/dev/null || echo none)
+expect "its own loopback port, from the service's own account" "$loopback_answer" 200
+
+after_packets=$(observer_packets)
+report "what the observer counted after those four attempts" \
+  "${after_packets:-unreadable} packets from uid $uid (was ${before_packets:-unreadable})"
+if [[ -n "$after_packets" && -n "$before_packets" && "$after_packets" -gt "$before_packets" ]]; then
+  report "the identifier the packets of this account leave with" \
+    "$uid — counted in the kernel, ahead of the drop that refuses them"
+else
+  red "the identifier the packets of this account leave with" \
+    "the observer counted nothing: before ${before_packets:-unreadable}, after ${after_packets:-unreadable}"
+fi
+
+step "5b. the container's own egress, through the rootless stack it runs behind"
+
+# The stack a rootless container's packets leave this host through. It is a
+# userspace process of the service's own account, which is the whole reason
+# `meta skuid` can see container traffic at all.
+stack=$(pgrep -u "$vault_account" -a -f 'pasta|slirp4netns' 2>/dev/null | head -1 || true)
+if [[ -n "$stack" ]]; then
+  report "the rootless network stack of this container" "$(printf '%s' "$stack" | cut -c1-120)"
+  report "the account it runs as" \
+    "$vault_account (uid $uid) — so every packet the container emits leaves this host with that identifier"
+else
+  report "the rootless network stack of this container" \
+    "no pasta or slirp4netns process belongs to $vault_account"
+  limit "the stack could not be named" \
+    "the container's egress is still measured below; what is not established here is which userspace process carries it."
+fi
+
+before_packets=$(observer_packets)
+if as_account "$vault_account" podman exec "$vault_container" \
+  curl --version >/dev/null 2>&1; then
+  container_answer=refused
+  as_account "$vault_account" podman exec "$vault_container" \
+    curl --silent --max-time 8 --output /dev/null "http://$neighbour:$neighbour_port/" >/dev/null 2>&1 \
+    && container_answer=reachable
+  expect "the neighbour, from inside the running container" "$container_answer" refused
+  after_packets=$(observer_packets)
+  report "what the observer counted across that attempt" \
+    "${after_packets:-unreadable} packets from uid $uid (was ${before_packets:-unreadable})"
+  if [[ -n "$after_packets" && -n "$before_packets" && "$after_packets" -gt "$before_packets" ]]; then
+    report "the container's packets and the account's identifier" \
+      "counted under uid $uid: the account scope really sees what a rootless container emits"
+  else
+    limit "the container's own packets were not counted under that identifier" \
+      "the attempt was refused, which is the claim of the contract; what is not established is that the refusal was decided by the account scope rather than by the stack failing earlier."
+  fi
+else
+  report "a client inside the pinned image" \
+    "the image ships none this harness can call, so the container's own egress is not exercised"
+  limit "the container's own egress is not exercised" \
+    "what is established is that the account is refused and that the stack carrying container packets runs as that account; that the container itself is refused is inferred from those two rather than observed."
+fi
+
+step "5c. what the confinement has not changed"
+
+expect "the service, after all of this" "$(service_state "$vault_account" "$vault_service")" active
+expect "its loopback port" "$(port_listening "$vault_port")" open
+expect "the confinement table" "$(egress_table_loaded)" loaded
+expect "the observer table this harness posed" "$(table_loaded inet "$observer_table")" loaded
+report "the tables this machine holds" "$(nft_tables)"
+
+verdict "the service's account reaches neither a neighbour of this LAN nor the outside while root reaches both, its own loopback still answers, and the packets it emits are counted in the kernel under the identifier the table names"

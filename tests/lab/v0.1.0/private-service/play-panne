@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# The failure of the passage: an honest state, a refusal over it, and a reprise
+# that is a junction and nothing else.
+#
+# The contract's sentence is that the entry keeps answering and the declared name
+# renders the entry's gateway error — "jamais un faux succès, jamais une route de
+# repli" — and that the state is observable rather than inferred from a name that
+# stopped working. This step produces the failure with approved plans on both
+# sides, in that order, and reads all three moments the contract names: the
+# failure, the honest state, the reprise.
+#
+# It is also the one step of this harness that produces a real host condition on
+# purpose, and it says so where it does it: to reach the one word this palier's
+# vocabulary gained — a fragment that is `unbacked` — a *removal* has to fail
+# after it changed the machine and its rollback has to fail in its turn. The
+# condition is `chattr +i` on the one fragment file, exactly the mechanism the
+# proof of `#16` used on a directory, and it is taken back in the same script.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+stage=${1:?usage: play-panne <leave|observe|rejoin> [peer-key] [endpoint]}
+peer_key=${2:-}
+endpoint=${3:-}
+
+cd /root
+
+# The bound is long on purpose. A passage that has fallen does not refuse the
+# entry's connection: the far end stopped answering and the packets are dropped,
+# so the entry learns of it by its own dial timeout — thirty seconds — and only
+# then renders its gateway error. A reading bounded shorter would record the
+# entry's honest error as this script's own timeout.
+observe_https() {
+  curl --silent --insecure --max-time 75 --output /dev/null \
+    --resolve "$1:443:127.0.0.1" --write-out '%{http_code}' "https://$1/" 2>/dev/null || true
+}
+
+case "$stage" in
+  leave)
+    step "28. the passage falls, by an approved plan on the machine of the LAN"
+
+    apply "leave_link_peer on the initiator" '"changed":true' \
+      -operation leave_link_peer -link-role initiator \
+      -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" -service-port "$vault_port"
+
+    expect "the peer, in the kernel" "$(wg_peers)" none
+    expect "the bounding table" "$(link_table_loaded)" absent
+    expect "the host relaxation" "$(present "$link_policy")" absent
+    expect "route_localnet, put back by name" "$(sysctl_value "$route_localnet_key")" 0
+    expect "the interface, which a departure leaves standing" "$(interface_state)" up
+
+    # The service the passage carried is untouched: what fell is the way to it.
+    expect "the vault's service" "$(service_state "$vault_account" "$vault_service")" active
+    expect "its loopback port, from this machine" "$(loopback_status_within "$vault_port" 90)" 200
+    expect "the synthetic secret" "$(file_digest "$secret_file")" "$(cat "$state/secret-digest.txt")"
+    expect "its confinement" "$(egress_table_loaded)" loaded
+
+    verdict "the junction of the machine of the LAN is gone with its bounds, and the service it carried is exactly where it was"
+    ;;
+
+  observe)
+    step "29. the entry keeps answering, and the name the passage carried does not"
+
+    vault_status=$(observe_https "$vault_host")
+    pdf_status=$(observe_https "$pdf_host")
+    case "$vault_status" in
+      502 | 503 | 504) report "https to $vault_host, from this machine" "$vault_status, the entry's own gateway error" ;;
+      *) red "https to $vault_host, from this machine" "$vault_status" ;;
+    esac
+    expect "https to $pdf_host, from this machine" "$pdf_status" 200
+    expect "the fragment of the fallen name, still on disk" \
+      "$(file_digest "$entry_fragments/$vault_host.yaml")" "$(cat "$state/vault-fragment-digest.txt")"
+
+    step "29b. what this machine still says of its own side of the passage"
+
+    # This machine's junction is untouched: the far end left, not this one. So a
+    # republication of the very same fragment is not an action and reports the
+    # passage active — which is truthful and worth reading carefully, because
+    # what `passage_state` answers for is *this machine's* junction and never the
+    # far end of the tunnel. The name is unreachable and the machine does not
+    # claim otherwise; it claims that it still holds a peer.
+    apply "the same link route plan, over a fallen far end" '"changed":false' \
+      -operation publish_link_route -route-host "$vault_host" -backend-port "$vault_port"
+    report "the passage state this machine reports" "$(json_field passage_state)"
+    report "what that state answers for" \
+      "this machine's own junction, which is still attached; the far end of a tunnel is not something a machine can be asked about"
+
+    step "30. this side leaves too, and the machine holds a name nothing carries"
+
+    apply "detach_link_peer on the listener" '"changed":true' \
+      -operation detach_link_peer -link-role listener \
+      -peer-public-key "$peer_key" -service-port "$vault_port"
+    expect "the peer, in the kernel" "$(wg_peers)" none
+    expect "the bounding table" "$(link_table_loaded)" absent
+    expect "the fragment, still published" "$(present "$entry_fragments/$vault_host.yaml")" present
+
+    refuses "publishing over a passage that is not there" \
+      "holds no junction on $link_interface" \
+      -operation publish_link_route -route-host "$vault_host" -backend-port "$vault_port"
+
+    # Retiring is licit on a fallen passage — it is how a name stops answering
+    # instead of answering an error — and the report names what it found. It is
+    # asked here of a name this machine never published, so that the reading is
+    # taken with zero effect on the fragment the reprise below needs.
+    apply "retiring a name this machine does not publish, while the passage is down" '"changed":false' \
+      -operation retire_link_route -route-host "$unknown_host" -backend-port "$vault_port"
+    expect "the passage state the report names" "$(json_field passage_state)" absent
+    report "why that matters" \
+      "a human retiring a name on a machine whose tunnel has fallen reads the fall from the answer, instead of inferring it from a name that had stopped working"
+
+    step "31. HARNESS ACT: the one state this vocabulary gained a word for"
+
+    # `unbacked` is a fragment this machine publishes that nothing carries, and it
+    # is only ever reported in an *observation* — what could still be read after a
+    # rollback had itself failed. Producing one honestly needs a removal that
+    # changes the machine and then cannot finish, and a rollback that is refused
+    # in its turn. The refusal above is the second half already; the first is a
+    # real host condition on the one file the removal has to unlink.
+    fragment="$entry_fragments/$vault_host.yaml"
+    restore_fragment() { chattr -i "$fragment" 2>/dev/null || true; }
+    trap restore_fragment EXIT
+    if chattr +i "$fragment" 2>/dev/null; then
+      report "the fragment file" "made immutable for the duration of this step"
+      before=$(fingerprint)
+      status=0
+      output=$(fixture -operation retire_link_route -route-host "$vault_host" \
+        -backend-port "$vault_port" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+      printf '%s\n' "$output" >"$state/last-report.json"
+      report "what the machine concluded" "$(echo "$output" | tr '\n' ' ' | cut -c1-260)"
+      case "$output" in
+        *'"fragment":"unbacked"'*)
+          report "the word the observation carries" \
+            "unbacked: this machine publishes a name nothing carries, and it says so rather than leaving it to be inferred"
+          ;;
+        *'"observed"'*)
+          red "the word the observation carries" \
+            "$(echo "$output" | grep -o '"observed":{[^}]*}' | tr '\n' ' ')"
+          ;;
+        *)
+          red "the observation" "no observation was rendered: $(echo "$output" | tr '\n' ' ' | cut -c1-200)"
+          ;;
+      esac
+      [[ $status -ne 0 ]] \
+        && report "the exit status" "$status, non-zero as a failed rollback must be" \
+        || red "the exit status" "0"
+      restore_fragment
+      trap - EXIT
+      report "the fragment file" "immutable bit removed"
+      expect "the fragment, still exactly what was published" \
+        "$(file_digest "$fragment")" "$(cat "$state/vault-fragment-digest.txt")"
+    else
+      restore_fragment
+      trap - EXIT
+      limit "the immutable bit could not be set on this filesystem" \
+        "the observation word 'unbacked' is then not produced on this machine; it is held by the unit suite (internal/auxiliary/linkroute_test.go)."
+    fi
+
+    step "32. this side of the passage is joined again, by an approved plan"
+
+    apply "attach_link_peer on the listener" '"changed":true' \
+      -operation attach_link_peer -link-role listener \
+      -peer-public-key "$peer_key" -service-port "$vault_port"
+    expect "the peer, in the kernel" "$(wg_peers)" "$peer_key"
+    expect "the bounding table" "$(link_table_loaded)" loaded
+
+    verdict "the entry kept both ports and answered a gateway error for the name it could not reach, publishing over the fall was refused before any effect, the machine named the fall in its own report and named a fragment nothing carried, and one approved junction put this side back"
+    ;;
+
+  rejoin)
+    step "33. the machine of the LAN joins again, and nothing else is done"
+
+    apply "join_link_peer on the initiator" '"changed":true' \
+      -operation join_link_peer -link-role initiator \
+      -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" -service-port "$vault_port"
+    expect "the peer, in the kernel" "$(wg_peers)" "$peer_key"
+    expect "the bounding table" "$(link_table_loaded)" loaded
+    expect "route_localnet on the passage's interface" "$(sysctl_value "$route_localnet_key")" 1
+    if handshake=$(handshake_within 90); then
+      report "the handshake" "$handshake"
+    else
+      red "the handshake" "$handshake"
+    fi
+    report "what was done to the route, the entry, the service or its data" "nothing"
+
+    verdict "one approved junction is the whole of the reprise"
+    ;;
+
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 2
+    ;;
+esac

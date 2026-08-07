@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Everything this machine refuses while it holds this state, and everything it
+# declines to do twice.
+#
+# A refusal is followed by a comparison against a fingerprint taken before it,
+# because "refused" and "refused without effect" are two different claims. An
+# idempotent application is followed by the same comparison for the opposite
+# reason: a plan that demanded what was already true and then rewrote a file
+# would be an action reported as none.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-refusals <peer-public-key> <peer-endpoint-host>}
+endpoint=${2:?usage: play-refusals <peer-public-key> <peer-endpoint-host>}
+
+cd /root
+
+link_operation=attach_link_peer
+[[ "$link_role" == initiator ]] && link_operation=join_link_peer
+
+step "25. the second passage of every plan this machine holds — role $role"
+
+before=$(fingerprint)
+
+case "$role" in
+  lan)
+    apply "the same private service plan" '"changed":false' \
+      -operation deploy_private_service -profile vaultwarden \
+      -port "$vault_port" -origin-host "$vault_host"
+    ;;
+  vps)
+    apply "the same web service plan" '"changed":false' \
+      -operation deploy_web_service -profile bentopdf -port "$pdf_port"
+    apply "the same entrypoint plan" '"changed":false' -operation deploy_entrypoint
+    apply "the same public route plan" '"changed":false' \
+      -operation publish_route -route-host "$pdf_host" -backend-port "$pdf_port"
+    apply "the same link route plan" '"changed":false' \
+      -operation publish_link_route -route-host "$vault_host" -backend-port "$vault_port"
+    ;;
+esac
+apply "the same preparation of the passage" '"changed":false' \
+  -operation prepare_link -link-role "$link_role"
+apply "the same junction" '"changed":false' \
+  -operation "$link_operation" -link-role "$link_role" \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" -service-port "$vault_port"
+
+unchanged "every plan of this machine, replayed together" "$before"
+
+step "26. the refusals of this machine's own state"
+
+case "$role" in
+  lan)
+    # The digest of the private door. A Controller that named another image is
+    # refused by the pin and not by a policy, and the document it carries is
+    # honest all the way down: its transcript hashes to the digest the envelope
+    # names, so every check upstream of the plan's own validation passes.
+    refuses "a private service plan naming an image nobody pinned for this profile" \
+      "image_digest is not the pinned image of this palier" \
+      -operation deploy_private_service -profile vaultwarden \
+      -port "$vault_port" -origin-host "$vault_host" -hostile unpinned-image
+    report "why a floating tag has no refusal of its own" \
+      "a plan transcript decodes exactly 32 bytes out of the digest field, so a document naming a tag has no transcript, no digest and therefore no envelope: it is not a plan that is refused late, it is one nobody can carry"
+
+    # A public route naming the vault's own loopback port. On this machine the
+    # refusal that fires first is the entry's, and that is said rather than
+    # dressed up: see the note printed below it.
+    before=$(fingerprint)
+    if output=$(fixture -operation publish_route -route-host "$vault_host" \
+      -backend-port "$vault_port" | your-cloud auxiliary approve 2>&1); then
+      red "a public route naming the vault's loopback port" "accepted"
+    else
+      case "$output" in
+        *"holds no entrypoint"*)
+          report "a public route naming the vault's loopback port" \
+            "refused: this machine holds no entrypoint"
+          ;;
+        *"lives behind the private door"*)
+          report "a public route naming the vault's loopback port" \
+            "refused: a private service is published by the passage, not by a local route"
+          ;;
+        *) red "a public route naming the vault's loopback port" \
+            "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+      esac
+    fi
+    unchanged "that refusal, zero effect" "$before"
+    limit "the private-door refusal of a public route is not exercised on this LAB" \
+      "requireManagedBackend runs after requireEntrypointPresent, so the refusal 'a private service is published by the passage, not by a local route' is only reachable on a machine that holds both an entrypoint and the vault. That machine would be lab-machine-1, and this topology does not give it the network stack the entrypoint's sheet names by hand (tools/provision-lab installs slirp4netns on lab-vps alone), so deploying an entry there to draw one refusal would be provisioning drift rather than a constat. The refusal is held by the unit suite — internal/auxiliary/route_test.go, the case naming the vaultwarden profile and the sentence 'a private service is published by the passage, not by a local route' — and it is reported here as unit-proven and not machine-proven."
+    ;;
+
+  vps)
+    # A link route towards a port the junction does not bound. The name is one
+    # nobody has published, so what refuses is the presence rule and not the
+    # namespace the two kinds share.
+    refuses "a link route towards a port the junction does not bound" \
+      "and the approved plan publishes $unmanaged_port" \
+      -operation publish_link_route -route-host "$unknown_host" -backend-port "$unmanaged_port"
+
+    # One name is one claim, and the two kinds share one namespace. Both
+    # directions are asked, because a rule that only held one way would let a
+    # name change what serves it as long as it changed in the right direction.
+    refuses "a public route over the name the passage carries" \
+      "a route through the private passage and the approved plan publishes it as a route towards a service of this machine" \
+      -operation publish_route -route-host "$vault_host" -backend-port "$pdf_port"
+    refuses "a link route over the name a local service carries" \
+      "a route towards a service of this machine and the approved plan publishes it as a route through the private passage" \
+      -operation publish_link_route -route-host "$pdf_host" -backend-port "$vault_port"
+
+    refuses "removing the entry while two routes are published" \
+      "still publishes" \
+      -operation remove_entrypoint
+    ;;
+esac
+
+step "26b. one envelope, accepted once and never twice"
+
+# An honest approval of a state this machine already holds: accepted, changing
+# nothing, and spending its position. Presented again it is the same bytes at a
+# position the machine has consumed, which is the one thing anti-replay is for.
+fixture -operation prepare_link -link-role "$link_role" >"$state/replayable.json"
+output=$(your-cloud auxiliary approve --format=json <"$state/replayable.json" 2>&1) || true
+case "$output" in
+  *'"changed":false'*) report "the envelope, the first time" "accepted, changed=false" ;;
+  *) red "the envelope, the first time" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+before=$(fingerprint)
+if output=$(your-cloud auxiliary approve <"$state/replayable.json" 2>&1); then
+  red "the same envelope, replayed" "accepted: $(echo "$output" | tr '\n' ' ')"
+else
+  case "$output" in
+    *"is not the exact successor of"*) report "the same envelope, replayed" "refused by anti-replay" ;;
+    *) red "the same envelope, replayed" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+fi
+unchanged "that replay, zero effect" "$before"
+
+step "27. the refusals every document of this product carries"
+
+refuses "one byte of the transported plan changed" \
+  "is not the document the approval signed" \
+  -operation prepare_link -link-role "$link_role" -hostile altered-plan
+refuses "a signed rollback that undoes another instance" \
+  "does not undo exactly the approved plan" \
+  -operation "$link_operation" -link-role "$link_role" \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$vault_port" -hostile mismatched-rollback
+refuses "an approval whose window has closed" \
+  "has expired" \
+  -operation prepare_link -link-role "$link_role" -lifetime 300 -age 400
+refuses "an approval aimed at the other machine of this scenario" \
+  "names another machine than this one" \
+  -operation prepare_link -link-role "$link_role" -machine "$other_machine"
+
+report "the consumed position at the end of this step" "$(consumed_sequence)"
+
+verdict "every plan this machine holds was asked for again and changed nothing, and every document it must refuse was refused by its own reason and without effect"

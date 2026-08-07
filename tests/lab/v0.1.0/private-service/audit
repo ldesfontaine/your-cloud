@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Nothing of this scenario exists before an approval, and the machine says so
+# itself.
+#
+# This is the first constat of the palier and it is worth a script of its own:
+# every claim made after the plans is a difference from what is read here, so a
+# proof that skipped it would be comparing an approved state against nothing.
+#
+# It is also where the two earlier paliers are held against this LAB rather than
+# assumed away: `#92` and `#98` mounted accounts, sheets, trees and tables on
+# these very machines and removed them again, and the point of reading each of
+# them absent by name is that a leftover of a previous proof would otherwise be
+# measured as this one's result.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "0. the machine before any approval — role $role"
+
+report "the machine this anchor names" "$(machine_id)"
+report "the consumed position" "$(consumed_sequence)"
+report "systemd" "$([[ -d /run/systemd/system ]] && echo present || echo absent)"
+report "cgroup v2 unified hierarchy" "$(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null || echo absent)"
+report "Podman" "$(podman --version)"
+report "the kernel's WireGuard" "$(modinfo -F filename wireguard 2>/dev/null || echo absent)"
+
+step "0a. no account, no home and no subordinate range of this scenario"
+
+# All five accounts of the reference scenario are named on both machines. Four of
+# them belong to the other machine or to an earlier palier, and reading them
+# absent here is what says this run is not standing on somebody else's leftover.
+for account in your-cloud-probe your-cloud-svc-bentopdf your-cloud-entrypoint your-cloud-svc-vaultwarden; do
+  expect "the account $account" "$(account_state "$account")" absent
+  expect "the home of $account" "$(present "/var/lib/$account")" absent
+  expect "the subordinate ranges of $account" \
+    "$({ grep -h "^$account:" /etc/subuid /etc/subgid || true; } | wc -l)" 0
+done
+
+step "0b. no data, no archive, no confinement"
+
+expect "the durable data of a private service" "$(present "$vault_data")" absent
+expect "the archives of a private service" "$(present "$vault_snapshots")" absent
+expect "the confinement rules on disk" "$(present "$egress_rules")" absent
+expect "the unit that poses a confinement at boot" "$(present "$egress_unit")" absent
+expect "that unit's enablement" "$(unit_enabled "$egress_unit_name")" not-found
+expect "the confinement table in the kernel" "$(egress_table_loaded)" absent
+
+step "0c. no entry, no route, no public port"
+
+expect "the entrypoint tree" "$(present "$entry_root")" absent
+expect "the entrypoint sheet" "$(present "$entry_unit")" absent
+expect "the host ports policy file" "$(present "$host_ports_policy")" absent
+expect "the running host ports floor" "$(host_ports_value)" 1024
+expect "the secure public port" "$(port_listening 443)" closed
+expect "the clear public port" "$(port_listening 80)" closed
+expect "the loopback port of the private profile" "$(port_listening "$vault_port")" closed
+expect "the loopback port of the public profile" "$(port_listening "$pdf_port")" closed
+
+step "0d. no passage"
+
+expect "this machine's own passage key" "$(present "$link_key")" absent
+expect "the passage tree" "$(present "$link_root")" absent
+expect "the description of $link_interface" "$(present "$link_netdev")" absent
+expect "the addressing of $link_interface" "$(present "$link_network")" absent
+expect "the interface itself" "$(interface_state)" absent
+expect "the bounding rules on disk" "$(present "$link_rules")" absent
+expect "the unit that puts the bounds back at boot" "$(present "$link_unit")" absent
+expect "the host relaxation of a junction" "$(present "$link_policy")" absent
+expect "the bounding table in the kernel" "$(link_table_loaded)" absent
+expect "the tunnel's UDP port" "$(udp_port_bound "$link_listen_port")" unbound
+expect "route_localnet on every interface at once" "$(sysctl_value net.ipv4.conf.all.route_localnet)" 0
+
+step "0e. the tables this machine holds of its own"
+
+# Every table this machine carries, printed rather than judged: what this proof
+# is answerable for is that it adds exactly two named tables and takes exactly
+# those two away, and a machine holding a firewall of its own is entitled to it.
+tables=$(nft_tables)
+report "the tables this machine holds" "${tables:-none}"
+report "the network manager" \
+  "$(systemctl is-enabled systemd-networkd)/$(systemctl is-active systemd-networkd)"
+report "the real interfaces" "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+
+verdict "the machine holds no account, no data, no archive, no confinement, no entry, no route and no passage of this scenario"

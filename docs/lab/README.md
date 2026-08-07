@@ -216,6 +216,37 @@ plus** ; et un poste pilote peut lui-même porter une adresse de `10.66.66.0/24`
 pour des raisons étrangères au LAB, auquel cas il le dit et laisse
 `lab-console` faire l'observation à sa place.
 
+Pour le palier du profil privé (`#17`),
+[`tests/lab/v0.1.0/private-service/prove`](../../tests/lab/v0.1.0/private-service/prove)
+est l'entrée d'orchestration, et c'est la première preuve qui joue le **scénario
+de référence entier d'un seul tenant** : `lab-machine-1` tient le service à
+données, son volume, ses archives et son confinement de sortie ; `lab-vps` tient
+le point d'entrée, le profil sans état du palier précédent, les deux noms
+déclarés et l'écouteur du passage ; `lab-console` sert à la fois d'observateur
+hostile et de **voisin synthétique du LAN** — un vrai serveur HTTP que la preuve
+démarre et arrête, sans quoi « le service confiné ne joint aucun voisin » ne se
+distinguerait pas d'une adresse morte. Le poste pilote épingle l'autorité
+synthétique de la course et lit de l'extérieur ce que le palier revendique :
+`vault.` et `pdf.` répondent 200 sur **la même IP publique et le même 443**, le
+coffre sans en-tête d'isolation et le PDF avec les deux. Les deux machines sont
+réellement redémarrées, aucune topologie n'est créée ni détruite, et tout est
+retiré même quand une étape échoue.
+
+Quatre actes du harnais sortent d'un plan approuvé et se nomment eux-mêmes :
+poser les certificats qu'aucun plan ne décrit ; **planter les secrets
+synthétiques** — la fiche du profil ferme les inscriptions, donc ce palier n'a
+aucun chemin d'API vers une ligne de coffre, et ce qui est suivi de bout en bout
+est l'octet exact du répertoire durable, base de données du service comprise ;
+produire deux conditions d'hôte réelles pendant la panne du passage et les
+reprendre ; et détruire, à la fin, les données que le produit a délibérément
+conservées. Le rapport de la preuve porte ces limites plutôt qu'une note de bas
+de page, avec deux autres : le refus d'une route *publique* visant le port d'un
+service privé est prouvé par la suite unitaire et non par la machine — il ne
+s'atteint que sur une machine tenant à la fois une entrée et le coffre, et la
+topologie ne donne pas à `lab-machine-1` la pile réseau que la fiche de l'entrée
+nomme —, et `retire_route` du genre public peut encore éteindre un fragment du
+genre lien, ce que le contrat n'interdit pas et que cette preuve n'exerce pas.
+
 Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
 sur les sources et contrats réutilisables. La **preuve LAB** sous
 [`tests/lab/`](../../tests/lab/) ajoute le placement réel, les processus,

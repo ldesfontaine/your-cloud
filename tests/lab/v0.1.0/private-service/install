@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Mount the private service perimeter on one machine of the reference scenario.
+#
+# Everything installed here is synthetic and root-owned: one approval anchor
+# minted from a synthetic seed and naming this machine, one empty anti-replay
+# position, the product binary, the fixture that stands in for the Controller and
+# the Console, and — on the VPS alone — the certificate authority of the two
+# declared names. No account, no sheet, no data, no archive, no entrypoint, no
+# route, no key of the passage, no interface and no table: those are what the
+# proof asks the product to create.
+#
+# The perimeter always starts from a machine that holds none of them, because a
+# proof that began from a leftover would be measuring the leftover. The refusals
+# below are hard stops rather than cleanups for the same reason: a machine
+# carrying a vault, an entry or a tunnel that nobody in this run created is a
+# machine whose state nobody can attribute, and this harness will not silently
+# take somebody else's service away.
+set -euo pipefail
+
+sources=${1:?usage: install <go-sources> <lan|vps> <machine-id>}
+role=${2:?usage: install <go-sources> <lan|vps> <machine-id>}
+machine=${3:?usage: install <go-sources> <lan|vps> <machine-id>}
+export LC_ALL=C.UTF-8
+
+state=/root/lab-private-service
+anchor_directory=/etc/your-cloud
+replay_directory=/var/lib/your-cloud-auxiliary
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+note() { printf '  %-46s %s\n' "$1" "$2"; }
+
+case "$role" in
+  lan | vps) ;;
+  *) fail "this scenario has two machines and $role is not one of them" ;;
+esac
+
+command -v go >/dev/null || fail "the target has no Go toolchain"
+command -v podman >/dev/null || fail "the target has no Podman: run tools/provision-lab"
+command -v newuidmap >/dev/null || fail "the target has no newuidmap: run tools/provision-lab"
+# The three the passage itself needs. `nft` and `sysctl` are named by their
+# absolute paths because the two oneshot units this palier writes name them that
+# way and a systemd unit takes nothing else; `wg` is the harness's own, because
+# the kernel's view of a peer is what this proof reads rather than the file the
+# product wrote.
+[[ -x /usr/sbin/nft ]] || fail "the target has no /usr/sbin/nft: run tools/provision-lab"
+[[ -x /usr/sbin/sysctl ]] || fail "the target has no /usr/sbin/sysctl: run tools/provision-lab"
+command -v wg >/dev/null || fail "the target has no wg: run tools/provision-lab"
+getent group systemd-network >/dev/null \
+  || fail "the target has no systemd-network group: the passage key would stay 0600 and the interface would never come up"
+modinfo wireguard >/dev/null 2>&1 || fail "this kernel carries no WireGuard module"
+
+# The clock of this machine has to be settled before any approval is issued on
+# it, and this guard exists because a run once said the wrong thing without it.
+#
+# Every envelope of this proof is issued by the fixture on the very machine that
+# verifies it, so the two share one clock and no skew against the pilot can
+# matter. What does matter is a clock that *moves* mid-run: a machine whose time
+# daemon steps it backwards between the moment an envelope is issued and the
+# moment it is presented answers "not valid yet on this machine's clock" — and
+# that sentence, landing on the anti-replay assertion, reads exactly like a
+# refusal that came for the wrong reason. It happened after the pilot host
+# suspended: the guests' clocks drifted, then were corrected under a running
+# proof. A synchronised daemon does not step by seconds, so requiring one here
+# turns a confusing red into a precondition named before anything starts.
+[[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]] \
+  || fail "this machine's clock is not synchronised: an approval issued and verified on it could be refused as not yet valid, which would read as a defect it is not"
+clock_before=$(date -u +%s)
+sleep 2
+clock_drift=$(( $(date -u +%s) - clock_before - 2 ))
+[[ ${clock_drift#-} -le 1 ]] \
+  || fail "this machine's clock moved ${clock_drift}s in two seconds: it is being stepped, and no proof issued against it would mean anything"
+if [[ "$role" == vps ]]; then
+  # The entrypoint's sheet names slirp4netns by hand rather than accepting the
+  # engine's default, so the stack has to be on the machine as a package and not
+  # as an assumption.
+  command -v slirp4netns >/dev/null || fail "the target has no slirp4netns: run tools/provision-lab lab-vps"
+fi
+
+# The product binary and the fixture, both built from the sources this run
+# synchronised and from nothing already present on the machine. The fixture is
+# built inside the product module because it asks internal/plan for the canonical
+# plan documents; it lives only in this copy and is never a package of the
+# product.
+(cd "$sources" && go build -o /usr/local/bin/your-cloud ./cmd/your-cloud)
+(cd "$sources" && go build -o /usr/local/bin/lab-private-service-fixture ./labfixture)
+note "product binary" "$(sha256sum /usr/local/bin/your-cloud | cut -d' ' -f1)"
+
+install -d -m 0700 -o root -g root "$state"
+install -d -m 0755 -o root -g root "$anchor_directory"
+install -d -m 0700 -o root -g root "$replay_directory"
+rm -f "$replay_directory/approval-state.json" "$replay_directory/approval-state.lock"
+rm -f "$state"/*.json "$state"/*.txt
+
+printf '%s\n' "$role" >"$state/role"
+
+lab-private-service-fixture -anchor -epoch 1 -seed 1 -machine "$machine" \
+  >"$anchor_directory/approval-anchor.json"
+chmod 0600 "$anchor_directory/approval-anchor.json"
+note anchor "epoch 1, synthetic seed, machine $machine, role $role"
+
+# Nothing of the passage, on either machine. Each is named separately rather than
+# swept, so that a machine failing this check says which leftover it is.
+[[ ! -e /etc/your-cloud/link ]] || fail "the machine already holds the passage tree /etc/your-cloud/link"
+[[ ! -e /etc/systemd/network/yc-link0.netdev ]] || fail "the machine already describes yc-link0"
+[[ ! -e /etc/systemd/network/yc-link0.network ]] || fail "the machine already addresses yc-link0"
+[[ ! -d /sys/class/net/yc-link0 ]] || fail "the machine already holds the interface yc-link0"
+[[ ! -e /etc/systemd/system/your-cloud-link-rules.service ]] \
+  || fail "the machine already holds the unit that puts a passage's bounds back"
+[[ ! -e /etc/sysctl.d/your-cloud-link.conf ]] || fail "the machine already holds a passage's host relaxation"
+/usr/sbin/nft list table inet your-cloud-link >/dev/null 2>&1 \
+  && fail "the machine already holds the bounding table of a passage"
+
+case "$role" in
+  lan)
+    accounts=(your-cloud-svc-vaultwarden)
+    [[ ! -e /etc/your-cloud/egress ]] || fail "the machine already holds a service confinement tree"
+    [[ ! -e /etc/systemd/system/your-cloud-egress-rules.service ]] \
+      || fail "the machine already holds the unit that poses a confinement at boot"
+    /usr/sbin/nft list table inet your-cloud-egress >/dev/null 2>&1 \
+      && fail "the machine already holds the confinement table of a private service"
+    ;;
+  vps)
+    accounts=(your-cloud-svc-bentopdf your-cloud-entrypoint)
+    [[ ! -e /etc/your-cloud/entrypoint ]] || fail "the machine already holds the entrypoint tree"
+    [[ ! -e /etc/sysctl.d/your-cloud-entrypoint.conf ]] || fail "the machine already holds the host ports policy"
+    ;;
+esac
+
+# No subordinate identifier range is seeded here, for any account. The product
+# allocates its own when it creates one.
+for account in "${accounts[@]}"; do
+  id -u "$account" >/dev/null 2>&1 && fail "the machine already holds the account $account"
+  [[ ! -e "/var/lib/$account" ]] || fail "the machine already holds the home of $account"
+  for file in /etc/subuid /etc/subgid; do
+    if grep -q "^$account:" "$file" 2>/dev/null; then
+      fail "$file already carries a range for $account — the machine is not stock"
+    fi
+  done
+done
+note "accounts this machine must not hold yet" "${accounts[*]}"
+
+if [[ "$role" == vps ]]; then
+  # The synthetic authority of the two declared names is minted now, before
+  # anything is deployed, and lives under the run's own state directory. It is
+  # not placed anywhere the entry can read yet: `certify` does that, after an
+  # approved entrypoint plan has created the directory it reads from.
+  lab-private-service-fixture -authority -authority-directory "$state/authority"
+  chmod 0700 "$state/authority"
+  note "synthetic authority" "$(sha256sum "$state/authority/authority.crt" | cut -d' ' -f1)"
+fi
+
+# What manages this machine's real interfaces, read *before* the product is asked
+# to enable a network manager. It is printed rather than judged, because what is
+# correct here is a fact about this LAB image and not a claim of the product.
+note "the primary interface" "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+note "systemd-networkd, before any plan" \
+  "$(systemctl is-enabled systemd-networkd 2>&1)/$(systemctl is-active systemd-networkd 2>&1)"
+
+printf 'ANCHOR=%s\n' "$anchor_directory/approval-anchor.json"
+printf 'REPLAY=%s\n' "$replay_directory/approval-state.json"
+printf 'STATE=%s\n' "$state"
+printf 'ROLE=%s\n' "$role"

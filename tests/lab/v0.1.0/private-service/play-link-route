@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# The name the passage carries, published on the VPS.
+#
+# This is the step the whole palier converges on, and the order it comes in is
+# the contract's rather than a convenience: the service exists, then the two
+# junctions, then the route that names them. The presence rule of `#103` is held
+# against what this machine itself holds — the listener's side, an attached peer,
+# and a table naming exactly the port the plan publishes — and the publication is
+# verified by a request that traverses the tunnel and reaches the other machine.
+#
+# What is asserted here is the file and what the machine did with it. What the
+# palier actually claims — two names on one public address and one 443, the vault
+# without isolation headers and the pdf with them — is read from outside by
+# `outside`, because a machine asserting that it serves itself proves nothing
+# about a client.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "10. one approved link route plan publishes the vault through the passage"
+
+entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+pdf_fragment_digest=$(cat "$state/pdf-fragment-digest.txt")
+
+apply "publishing $vault_host through the passage" '"changed":true' \
+  -operation publish_link_route -route-host "$vault_host" -backend-port "$vault_port"
+report "the name the report announces" "$(json_field route_host)"
+report "the state of the passage the report names" "$(json_field passage_state)"
+expect "the passage state a publication reports" "$(json_field passage_state)" active
+
+fragment="$entry_fragments/$vault_host.yaml"
+expect "the fragment's owner and mode" "$(file_owner "$fragment")" "root:root 644"
+matches_bytes "the fragment of a name the passage carries" "$fragment" \
+  "$(expected_link_fragment "$vault_host" "$vault_port")"
+
+# The two differences from the public fragment beside it, each read by its own
+# name rather than inside one byte comparison.
+grep -q "url: \"http://$link_initiator_address:$vault_port\"" "$fragment" \
+  && report "the backend it names" "$link_initiator_address:$vault_port, the tunnel's peer constant" \
+  || red "the backend it names" "$(grep -A2 'servers:' "$fragment" | tr '\n' ' ')"
+grep -q "$entry_loopback" "$fragment" \
+  && red "this machine's own loopback in the fragment" "present" \
+  || report "this machine's own loopback in the fragment" "absent: a link route never names it"
+grep -qi 'middlewares' "$fragment" \
+  && red "the middlewares section" "$(grep -i -A3 middlewares "$fragment" | tr '\n' ' ')" \
+  || report "the middlewares section" "absent, as a control that grants nothing must be"
+grep -qi 'cross-origin' "$fragment" \
+  && red "the isolation headers of the other profile" "declared on a vault" \
+  || report "the isolation headers of the other profile" "absent: they belong to the public profile"
+grep -q "certFile: \"$entry_certificates/$vault_host.crt\"" "$fragment" \
+  && report "the certificate it points at" "$entry_certificates/$vault_host.crt" \
+  || red "the certificate it points at" "$(grep certFile "$fragment")"
+
+step "11. two names, one entry, one file each"
+
+expect "the fragments this machine now holds" "$(published_fragments)" "$pdf_host.yaml,$vault_host.yaml"
+expect "the public fragment, untouched by this publication" \
+  "$(file_digest "$entry_fragments/$pdf_host.yaml")" "$pdf_fragment_digest"
+expect "the entry was not restarted" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+expect "the secure public port" "$(port_listening 443)" open
+expect "any new port this publication opened" "$(port_listening "$vault_port")" closed
+
+# The machine reading itself, which is the weaker half of the claim and is kept
+# because a difference between it and what `outside` sees would be a fact about
+# the network rather than about the entry.
+observe() {
+  curl --silent --insecure --max-time 10 --output /dev/null \
+    --resolve "$1:443:127.0.0.1" --write-out '%{http_code}' "https://$1/" 2>/dev/null || echo none
+}
+expect "https to the vault, from the machine" "$(observe "$vault_host")" 200
+expect "https to the pdf, from the machine" "$(observe "$pdf_host")" 200
+expect "https to a name nobody declared, from the machine" "$(observe "$unknown_host")" 404
+
+printf '%s\n' "$(file_digest "$fragment")" >"$state/vault-fragment-digest.txt"
+report "the link fragment" "$(cat "$state/vault-fragment-digest.txt")"
+
+verdict "one approved plan published the vault as one fragment towards the tunnel's peer, carrying no middleware at all, verified by a request that crossed the passage, beside the public name it did not touch"

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# The controlled recreation: a removal followed by a deployment, and the same
+# data on the other side of it.
+#
+# The contract makes this the whole of what "recréation contrôlée du conteneur"
+# means — "mêmes données, nouveau conteneur, deux plans lus" — and the property
+# that makes it true is the one decision `#102` wrote down: a removal takes away
+# what runs and keeps what was written. So this step is not a feature of its own;
+# it is two ordinary plans, and what it constates is that nothing in between
+# restored anything. Zero archives are read, zero archives are written, and the
+# digest of the planted secret on the far side is the digest recorded before.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+secret_digest=$(cat "$state/secret-digest.txt")
+before_container=$(cat "$state/vault-container.txt")
+before_uid=$(cat "$state/vault-uid.txt")
+
+step "14. the service is removed, and the data is deliberately not"
+
+apply "remove_private_service" '"changed":true' \
+  -operation remove_private_service -profile vaultwarden \
+  -port "$vault_port" -origin-host "$vault_host"
+report "the durable directory the report names as kept" "$(json_field data_path)"
+report "the state the report announces" "$(json_field service_state)"
+
+expect "the sheet" "$(present "$vault_unit")" absent
+expect "the service" "$(service_state "$vault_account" "$vault_service")" inactive
+expect "the container" "$(container_image "$vault_account" "$vault_container")" none
+expect "the images the account's storage holds" "$(stored_images "$vault_account")" 0
+expect "the loopback port" "$(port_listening "$vault_port")" closed
+expect "the confinement rules on disk" "$(present "$egress_rules")" absent
+expect "the unit that posed it at boot" "$(present "$egress_unit")" absent
+expect "the confinement table in the kernel" "$(egress_table_loaded)" absent
+
+# What a removal keeps, which is the whole point of this step.
+expect "the account, which no plan of this product describes" "$(account_state "$vault_account")" present
+expect "the durable data directory" "$(file_owner "$vault_data")" "$vault_account:$vault_account 700"
+expect "the synthetic secret, after the removal" "$(file_digest "$secret_file")" "$secret_digest"
+expect "the archive directory" "$(present "$vault_snapshots")" present
+
+step "15. the same profile deployed again, and the same data behind it"
+
+apply "deploy_private_service, the second plan of the recreation" '"changed":true' \
+  -operation deploy_private_service -profile vaultwarden \
+  -port "$vault_port" -origin-host "$vault_host"
+
+expect "the service" "$(service_state "$vault_account" "$vault_service")" active
+expect "its loopback port" "$(loopback_status_within "$vault_port" 90)" 200
+matches_bytes "the sheet, written again from the same plan" "$vault_unit" "$(expected_vault_sheet)"
+expect "the account's identifier, unchanged" "$(account_uid "$vault_account")" "$before_uid"
+matches_bytes "the confinement, posed again for the same identifier" "$egress_rules" \
+  "$(expected_egress_rules "$before_uid")"
+expect "the confinement table in the kernel" "$(egress_table_loaded)" loaded
+
+after_container=$(container_id "$vault_account" "$vault_container")
+if [[ -n "$after_container" && "$after_container" != "$before_container" ]]; then
+  report "the container" "a new one: ${after_container:0:12} rather than ${before_container:0:12}"
+else
+  red "the container" "the engine reports the same container identifier: $after_container"
+fi
+expect "the synthetic secret, after the recreation" "$(file_digest "$secret_file")" "$secret_digest"
+
+data_state() {
+  { cd "$vault_data" && find . -type f -printf '%P\n' | sort | while read -r file; do
+      printf '%s:%s ' "$file" "$(sha256sum "$file" | cut -d' ' -f1)"
+    done; } 2>/dev/null
+  printf '\n'
+}
+report "the durable state, after the recreation" "$(data_state | cut -c1-140)"
+
+step "16. and nothing was restored to make that true"
+
+# The report of a deployment names no archive at all, and the directory holds
+# none: the criterion is "mêmes données, nouveau conteneur, zéro restauration",
+# and the way to see the zero is that there was never an archive to read.
+expect "the archives this machine holds" "$(archive_slots)" none
+expect "the reserved slot the return mechanism owns" "$(present "$vault_snapshots/$reserved_slot.tar.gz")" absent
+grep -q 'snapshot_slot' "$state/last-report.json" \
+  && red "the report of a deployment" "it names an archive slot" \
+  || report "the report of a deployment" "names no archive: a deployment is not an operation about archives"
+
+printf '%s\n' "$after_container" >"$state/vault-container.txt"
+printf '%s\n' "$(service_property "$vault_account" "$vault_service" InvocationID)" \
+  >"$state/vault-invocation.txt"
+
+verdict "a removal kept the data and the account and took away everything that runs, a second plan put a new container in front of the very same bytes, and no archive was read or written between the two"

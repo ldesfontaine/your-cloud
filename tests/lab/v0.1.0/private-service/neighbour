@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# The synthetic neighbour of the LAN, run on the hostile observer.
+#
+# The palier asks for "aucun autre port ni voisin synthétique du LAN n'est
+# joignable" from the confined service. A neighbour that does not exist proves
+# nothing: a connection to a dead address fails for the same reason on a confined
+# machine and on an open one. So this is a real listener, on a real third machine
+# of the same flat subnet, reachable from the machine of the LAN — and the whole
+# claim of the confinement step is the difference between root reaching it and
+# the service's account not.
+#
+# Nothing of the product is installed here and nothing of this survives the run:
+# it is a Python standard-library HTTP server serving an empty directory, started
+# in its own session so that the SSH channel closing does not take it with it.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+command=${1:?usage: neighbour <start|stop|status> [port]}
+port=${2:-19999}
+root=/root/lab-private-service-neighbour
+
+case "$command" in
+  start)
+    rm -rf "$root"
+    install -d -m 0755 "$root"
+    printf 'your-cloud LAB synthetic neighbour\n' >"$root/index.html"
+    pkill -f "http.server $port" >/dev/null 2>&1 || true
+    sleep 1
+    setsid nohup python3 -m http.server "$port" --bind 0.0.0.0 --directory "$root" \
+      >"$root/log" 2>&1 &
+    for _ in $(seq 1 15); do
+      ss -Hltn "sport = :$port" 2>/dev/null | grep -q . && break
+      sleep 1
+    done
+    if ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
+      echo "NEIGHBOUR=listening on $port"
+    else
+      echo "NEIGHBOUR=silent" >&2
+      exit 1
+    fi
+    ;;
+  stop)
+    pkill -f "http.server $port" >/dev/null 2>&1 || true
+    sleep 1
+    rm -rf "$root"
+    if ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
+      echo "NEIGHBOUR=still listening on $port" >&2
+      exit 1
+    fi
+    echo "NEIGHBOUR=stopped, and its directory is gone"
+    ;;
+  status)
+    ss -Hltn "sport = :$port" 2>/dev/null | grep -q . \
+      && echo "NEIGHBOUR=listening on $port" \
+      || echo "NEIGHBOUR=silent"
+    ;;
+  *)
+    echo "usage: neighbour <start|stop|status> [port]" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# Everything this palier actually claims, read from outside both machines.
+#
+# This script never runs on lab-vps and never on lab-machine-1. It runs on the
+# pilot's own host and, for the readings that want a third machine with root, it
+# drives lab-console — the hostile observer the palier names. It speaks to the two
+# machines only over the addresses and ports a client of the real world would use,
+# and it pins the synthetic authority `install` created and nothing else.
+#
+# **The honesty this proof owes its reader is written here rather than in a
+# footnote.** The `quick` topology is one flat network: the pilot and lab-console
+# sit on the same subnet as lab-machine-1, so they can reach that machine's own
+# address directly, and they could before any of this existed. That is a property
+# of the LAB and not of the product — the reference topology puts the machine of
+# the LAN behind a NAT nothing here reproduces. What is constated instead, and
+# what the composition is answerable for, is that the vault's application port is
+# reachable from nowhere but the passage, that both declared names are served by
+# one address on one port, and that nothing else is.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$here/../../../.." && pwd)
+labctl="$root/tools/labctl"
+
+stage=${1:?usage: outside <stage> <lan-address> <vps-address> <authority-certificate>}
+lan=${2:?usage: outside <stage> <lan-address> <vps-address> <authority-certificate>}
+vps=${3:?usage: outside <stage> <lan-address> <vps-address> <authority-certificate>}
+ca=${4:?usage: outside <stage> <lan-address> <vps-address> <authority-certificate>}
+
+export LC_ALL=C.UTF-8
+vault_port=18280
+pdf_port=18800
+vault_host=vault.lab.your-cloud.test
+pdf_host=pdf.lab.your-cloud.test
+unknown_host=inconnu.lab.your-cloud.test
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+failures=0
+report() { printf '%-70s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+step() { printf '\n== %s ==\n' "$*"; }
+expect() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    red "$label" "expected [$expected], observed [$observed]"
+  fi
+}
+verdict() {
+  [[ $failures -eq 0 ]] || {
+    echo "FAILED: $failures assertions" >&2
+    exit 1
+  }
+  echo "PASS: $1"
+}
+
+# reach says whether a TCP connection to one port of one machine is accepted at
+# all. It is the only question worth asking about a port that must not be public:
+# a service refusing to answer HTTP on a port it accepted is a weaker claim.
+reach() {
+  local address=$1 port=$2
+  if timeout 5 bash -c "exec 3<>/dev/tcp/$address/$port" 2>/dev/null; then
+    echo reachable
+  else
+    echo refused
+  fi
+}
+
+# hostile_reach asks the same question from lab-console, which is a third machine
+# with root and nothing of this product on it.
+hostile_reach() {
+  local address=$1 port=$2
+  "$labctl" ssh lab-console -- \
+    "timeout 5 bash -c 'exec 3<>/dev/tcp/$address/$port' 2>/dev/null && echo reachable || echo refused" \
+    2>/dev/null | tr -d '\r' | tail -1
+}
+
+# pinned_get performs one request as a client that trusts the proof's authority
+# and nothing else, resolving the declared name to the published address itself
+# so that the name travels in the SNI and in the Host header while the connection
+# goes exactly where this proof means it to go.
+pinned_get() {
+  local host=$1 path=$2 out=$3
+  curl --silent --show-error --max-time 20 \
+    --cacert "$ca" --resolve "$host:443:$vps" \
+    --dump-header "$workdir/headers.txt" --output "$out" \
+    --write-out '%{http_code}' "https://$host$path" 2>"$workdir/curl.err" \
+    || { printf 'none(%s)' "$(tr -d '\n' <"$workdir/curl.err" | cut -c1-120)"; return 0; }
+}
+
+unpinned_get() {
+  curl --silent --insecure --max-time 20 --output /dev/null \
+    --resolve "$1:443:$vps" --write-out '%{http_code}' "https://$1/" 2>/dev/null || echo none
+}
+
+header_value() {
+  grep -i "^$1:" "$workdir/headers.txt" | tail -1 | cut -d' ' -f2- | tr -d '\r' || true
+}
+
+# served_address is what the client's own connection says about where the answer
+# came from. It is what makes "the same public IP and the same port" a reading
+# rather than a claim about a resolver the proof wrote itself.
+served_address() {
+  curl --silent --max-time 20 --output /dev/null --cacert "$ca" \
+    --resolve "$1:443:$vps" --write-out '%{remote_ip}:%{remote_port}' \
+    "https://$1/" 2>/dev/null || echo none
+}
+
+presented_subject() {
+  openssl s_client -connect "$vps:443" -servername "$1" </dev/null 2>/dev/null \
+    | openssl x509 -noout -subject 2>/dev/null || echo unreadable
+}
+
+case "$stage" in
+  before)
+    step "A. from outside, before any plan"
+    for port in 443 80 "$vault_port" "$pdf_port"; do
+      expect "lab-vps:$port, from the pilot" "$(reach "$vps" "$port")" refused
+      expect "lab-machine-1:$port, from the pilot" "$(reach "$lan" "$port")" refused
+    done
+    report "what this flat topology already grants a hostile host" \
+      "lab-machine-1:22 is $(reach "$lan" 22) from here, before anything of this proof exists"
+    verdict "neither machine offers this proof's client anything of the scenario"
+    ;;
+
+  after-private)
+    step "B. from outside, once the vault runs on the machine of the LAN"
+    expect "the vault's application port, from the pilot" "$(reach "$lan" "$vault_port")" refused
+    expect "the vault's application port, from lab-console" "$(hostile_reach "$lan" "$vault_port")" refused
+    expect "the vault's application port on the VPS's own address" "$(reach "$vps" "$vault_port")" refused
+    expect "the secure public port of the machine of the LAN" "$(reach "$lan" 443)" refused
+    expect "the clear public port of the machine of the LAN" "$(reach "$lan" 80)" refused
+    verdict "a private service publishes on its machine's loopback and is reachable from nowhere else — not from the pilot, not from a third machine with root, and not from the VPS's own address"
+    ;;
+
+  after-public)
+    step "C. from outside, the public name on the entry that will carry both"
+    status=$(pinned_get "$pdf_host" / "$workdir/pdf.html")
+    expect "https to $pdf_host, verified against the pinned authority" "$status" 200
+    expect "Cross-Origin-Opener-Policy" "$(header_value cross-origin-opener-policy)" "same-origin"
+    expect "Cross-Origin-Embedder-Policy" "$(header_value cross-origin-embedder-policy)" "require-corp"
+    report "the bytes served" "$(wc -c <"$workdir/pdf.html") bytes"
+    expect "https to the vault's name, not published yet" "$(unpinned_get "$vault_host")" 404
+    expect "the vault's application port, from the pilot" "$(reach "$lan" "$vault_port")" refused
+    verdict "the public name is served with both isolation headers and the vault's name is not served at all"
+    ;;
+
+  after-link)
+    step "D. two declared names, one public address, one public port"
+    vault_status=$(pinned_get "$vault_host" / "$workdir/vault.html")
+    vault_opener=$(header_value cross-origin-opener-policy)
+    vault_embedder=$(header_value cross-origin-embedder-policy)
+    vault_type=$(header_value content-type)
+    pdf_status=$(pinned_get "$pdf_host" / "$workdir/pdf.html")
+    pdf_opener=$(header_value cross-origin-opener-policy)
+    pdf_embedder=$(header_value cross-origin-embedder-policy)
+
+    expect "https to $vault_host, verified against the pinned authority" "$vault_status" 200
+    expect "https to $pdf_host, verified against the pinned authority" "$pdf_status" 200
+    report "the media type the vault answers a client with" "${vault_type:-none}"
+    report "the bytes the vault served" "$(wc -c <"$workdir/vault.html") bytes"
+
+    vault_at=$(served_address "$vault_host")
+    pdf_at=$(served_address "$pdf_host")
+    report "where $vault_host was served from" "$vault_at"
+    report "where $pdf_host was served from" "$pdf_at"
+    expect "the two names are served by one address and one port" "$vault_at" "$pdf_at"
+    expect "and that address and port are the VPS's 443" "$vault_at" "$vps:443"
+
+    step "E. the two names differ in exactly what the two contracts say"
+    expect "Cross-Origin-Opener-Policy on the vault" "${vault_opener:-none}" none
+    expect "Cross-Origin-Embedder-Policy on the vault" "${vault_embedder:-none}" none
+    expect "Cross-Origin-Opener-Policy on the pdf" "$pdf_opener" "same-origin"
+    expect "Cross-Origin-Embedder-Policy on the pdf" "$pdf_embedder" "require-corp"
+
+    for host in "$vault_host" "$pdf_host"; do
+      subject=$(presented_subject "$host")
+      case "$subject" in
+        *"$host"*) report "the certificate presented for $host" "$subject" ;;
+        *) red "the certificate presented for $host" "$subject" ;;
+      esac
+    done
+
+    step "F. and nothing else is served at all"
+    expect "https to a name nobody declared" "$(unpinned_get "$unknown_host")" 404
+    expect "https to the address itself" "$(unpinned_get "$vps")" 404
+    for name in "$unknown_host" "$vps"; do
+      subject=$(presented_subject "$name")
+      case "$subject" in
+        *"$vault_host"* | *"$pdf_host"*) red "the certificate presented for $name" "it names a declared host: $subject" ;;
+        *) report "the certificate presented for $name" "$subject" ;;
+      esac
+    done
+    expect "the vault's application port on the machine of the LAN" "$(reach "$lan" "$vault_port")" refused
+    expect "the vault's application port, from lab-console" "$(hostile_reach "$lan" "$vault_port")" refused
+    expect "the pdf's application port on the VPS" "$(reach "$vps" "$pdf_port")" refused
+    verdict "vault and pdf answer 200 on the same public address and the same 443 under certificates of their own names, the vault carries no isolation header and the pdf carries both, and no other name, no direct address and no application port is served"
+    ;;
+
+  after-reboot)
+    step "G. from outside, after a real power cycle of both machines"
+    expect "https to $vault_host" "$(pinned_get "$vault_host" / "$workdir/vault.html")" 200
+    expect "https to $pdf_host" "$(pinned_get "$pdf_host" / "$workdir/pdf.html")" 200
+    expect "the vault's application port, still muted" "$(reach "$lan" "$vault_port")" refused
+    verdict "both names answer a client again after a power cycle of both machines that nobody followed with an action"
+    ;;
+
+  panne)
+    step "H. from outside, while the passage is down"
+    # The wait is long on purpose and the time it took is reported rather than
+    # hidden. A passage that has fallen does not *refuse* the entry's connection:
+    # the far end stopped answering and the packets are dropped, so the entry
+    # learns of it by its own dial timeout and only then renders its gateway
+    # error. A client bounded shorter than that timeout would read the entry's
+    # honest error as a client timeout, which is a fact about the client.
+    began=$(date +%s)
+    status=$(curl --silent --max-time 90 --output /dev/null \
+      --cacert "$ca" --resolve "$vault_host:443:$vps" \
+      --write-out '%{http_code}' "https://$vault_host/" 2>/dev/null || echo none)
+    report "how long the entry took to conclude" "$(( $(date +%s) - began ))s, which is its own dial timeout"
+    case "$status" in
+      502 | 503 | 504)
+        report "https to $vault_host, with the junction gone" "$status, the entry's own gateway error"
+        ;;
+      *)
+        red "https to $vault_host, with the junction gone" \
+          "$status — a name whose backend is unreachable must render the entry's gateway error and never a success or a fallback"
+        # A red here is expensive to diagnose after the fact, because the state
+        # that explains it is torn down minutes later. What the entry itself saw
+        # is therefore read now, from the machine, and printed beside the red.
+        report "the entry's own last words" \
+          "$("$labctl" ssh lab-vps -- \
+            'runuser -u your-cloud-entrypoint -- env XDG_RUNTIME_DIR=/run/user/$(id -u your-cloud-entrypoint) \
+               podman logs --tail 5 your-cloud-entrypoint 2>&1 | tr "\n" " | "' 2>&1 | tail -1)"
+        report "what that machine routes towards the fallen backend" \
+          "$("$labctl" ssh lab-vps -- 'ip route get 10.66.66.2 2>&1 | head -1' 2>&1 | tail -1)"
+        report "the same name, asked from the machine that holds the entry" \
+          "$("$labctl" ssh lab-vps -- \
+            "curl --silent --insecure --max-time 75 --output /dev/null --resolve $vault_host:443:127.0.0.1 \
+               --write-out 'code=%{http_code} after=%{time_total}s' https://$vault_host/ 2>&1" 2>&1 | tail -1)"
+        ;;
+    esac
+    expect "https to $pdf_host, unaffected" "$(pinned_get "$pdf_host" / "$workdir/pdf.html")" 200
+    expect "the secure public port, still held" "$(reach "$vps" 443)" reachable
+    verdict "the name the passage carried renders the entry's honest gateway error while the other name on the same entry is untouched"
+    ;;
+
+  reprise)
+    step "I. from outside, after a new approved junction and nothing else"
+    expect "https to $vault_host" "$(pinned_get "$vault_host" / "$workdir/vault.html")" 200
+    expect "https to $pdf_host" "$(pinned_get "$pdf_host" / "$workdir/pdf.html")" 200
+    verdict "the vault answers again because a junction was approved, and because of nothing else"
+    ;;
+
+  after-retire-link)
+    step "J. from outside, once the vault's route is retired"
+    expect "https to the name that was published" "$(unpinned_get "$vault_host")" 404
+    subject=$(presented_subject "$vault_host")
+    case "$subject" in
+      *"$vault_host"*) red "the certificate presented for it" "still its own: $subject" ;;
+      *) report "the certificate presented for it" "$subject" ;;
+    esac
+    expect "https to $pdf_host, untouched" "$(pinned_get "$pdf_host" / "$workdir/pdf.html")" 200
+    expect "the vault's application port on the machine of the LAN" "$(reach "$lan" "$vault_port")" refused
+    verdict "the retired name obtains the entry's generic refusal and no certificate of its own, while the other name keeps being served"
+    ;;
+
+  removed)
+    step "K. from outside, once nothing of this proof remains"
+    for port in 443 80 "$vault_port" "$pdf_port"; do
+      expect "lab-vps:$port" "$(reach "$vps" "$port")" refused
+      expect "lab-machine-1:$port" "$(reach "$lan" "$port")" refused
+    done
+    expect "the vault's application port, from lab-console" "$(hostile_reach "$lan" "$vault_port")" refused
+    verdict "both machines offer this proof's client nothing at all"
+    ;;
+
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 2
+    ;;
+esac

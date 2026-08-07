@@ -1,0 +1,510 @@
+#!/usr/bin/env bash
+# Drive the private service proof: the whole reference scenario of v0.1.0, played
+# once, across the three machines the topology `quick` gives, and read from
+# outside them wherever that is where the claim lives.
+#
+# Three machines take part and none of them is interchangeable.
+#
+#   lab-machine-1  the machine of the LAN. It holds the private service, its data,
+#                  its archives and its confinement, and it is the initiator of
+#                  the passage. It gains no public port at all;
+#   lab-vps        the public machine. It holds the entrypoint, the stateless
+#                  profile of `#15`, both declared names and the listener's side
+#                  of the passage;
+#   lab-console    a third machine with root, used as a hostile observer and as
+#                  the synthetic neighbour of the LAN. Nothing of the product is
+#                  ever installed on it, and the one thing this harness runs there
+#                  — a Python HTTP server — is stopped and removed.
+#
+# The pilot's own host is the fourth party and the one that judges from outside:
+# it pins the run's synthetic authority, it speaks TCP and TLS to the two machines
+# like any other client, and it never runs a command on either of them for a
+# constat that is about what those machines serve.
+#
+# One VM plays every authority this palier separates, and that is honest rather
+# than convenient: the Controller, the Console and the certificate authority are a
+# synthetic fixture — the Console window is not wired to this proof — while the
+# Auxiliary is the real product binary, built from the synchronised sources,
+# running as root against a real systemd, a real rootless Podman, a real registry,
+# a real Traefik, a real kernel WireGuard and real nftables.
+#
+# The reboot is a real power cycle of **both** machines through the LAB
+# controller, because the properties under proof — a vault, its data, its
+# confinement, its passage, an entry and two names all returning unasked — are not
+# exercised by a process restart.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [setup | run | reboot | verify | dismantle | remove | all]
+
+  setup      synchronise the sources, build the binary and the fixture on both
+             machines, mount the anchors, the empty anti-replay positions and the
+             synthetic authority, and audit both machines before anything exists
+  run        the palier up to the power cycle: the public half, the private
+             service and its confinement, the passage, the link route, the two
+             names read from outside, and the synthetic data planted
+  reboot     really stop and start both machines through the LAB controller
+  verify     what the reboot carried, the controlled recreation, the whole archive
+             cycle, the refusals, the idempotence, and the failure of the passage
+             with its reprise
+  dismantle  the removals, in the order the contracts fix, each read from outside
+  remove     remove both perimeters and prove their absence
+  all        the six above in order, removing even when a step fails (default)
+
+This harness belongs to the palier of the private Vaultwarden profile (#17, proof
+#104) and is deliberately not one of the passes of tests/lab/v0.1.0/prove, whose
+sequence is the bootstrap and replacement palier (#13, proof #41). It mounts and
+removes its own perimeter on lab-machine-1 and lab-vps, borrows lab-console as a
+hostile observer and as a synthetic neighbour without installing anything of the
+product on it, and creates no topology.
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  setup | run | reboot | verify | dismantle | remove | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.0/private-service"
+lan_vm=lab-machine-1
+vps_vm=lab-vps
+hostile_vm=lab-console
+expected_origin=your-cloud/labctl
+remote_harness=/root/your-cloud-lab-private-service
+remote_sources=/root/lab-private-service-sources
+remote_authority=/root/lab-private-service/authority/authority.crt
+neighbour_port=19999
+result_root="$root/tests/artifacts/proofs/private-service"
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+workdir=$(mktemp -d)
+# The values `run` observes and the later phases need live outside the run's
+# temporary directory on purpose: the subcommands of this harness are meant to be
+# usable one at a time while the perimeter stays mounted. Not one of them is a
+# secret — two public keys and one public certificate — and `remove` takes them
+# away.
+carried="${TMPDIR:-/tmp}/your-cloud-lab-private-service"
+mkdir -p "$carried"
+authority="$carried/authority.crt"
+trap 'rm -rf "$workdir"' EXIT
+
+scripts=(common install audit certify neighbour outside play-public play-route
+  play-private play-egress play-prepare play-junction play-tunnel play-link-route
+  play-secrets play-persistence play-recreation play-backup play-refusals
+  play-panne play-removal remove)
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+
+refuse() {
+  echo "FAILED: $*" >&2
+  return 1
+}
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+# The revision is named once and honestly. A modified tree is announced as such,
+# because a report built on a state nobody can fetch closes no line of a palier.
+revision() {
+  local sha
+  sha=$(git -C "$root" rev-parse HEAD)
+  if ! git -C "$root" diff --quiet \
+    || ! git -C "$root" diff --cached --quiet \
+    || [[ -n $(git -C "$root" ls-files --others --exclude-standard) ]]; then
+    sha="$sha+worktree"
+  fi
+  echo "$sha"
+}
+
+lan_address=
+vps_address=
+hostile_address=
+
+locate() {
+  lan_address=$(inventory "$lan_vm")
+  vps_address=$(inventory "$vps_vm")
+  hostile_address=$(inventory "$hostile_vm")
+}
+
+on() {
+  local vm=$1
+  shift
+  "$labctl" ssh "$vm" -- "$remote_harness/$*"
+}
+
+# ask runs one script on one machine and returns the value it printed as
+# NAME=value, so that an observation of one machine can enter the plan of the
+# other exactly as a Controller would carry it. The whole stream is still shown,
+# because a value read out of a step whose assertions nobody saw would be a value
+# nobody can trust.
+ask() {
+  local vm=$1 name=$2
+  shift 2
+  local log="$workdir/ask-$vm-$name.log" status=0
+  set +e
+  "$labctl" ssh "$vm" -- "$remote_harness/$*" 2>&1 | tee "$log" >&2
+  status=${PIPESTATUS[0]}
+  set -e
+  [[ $status -eq 0 ]] || return "$status"
+  sed -n "s/^$name=//p" "$log" | tail -1
+}
+
+from_outside() { "$harness/outside" "$1" "$lan_address" "$vps_address" "$authority"; }
+
+mount_perimeter() {
+  local vm=$1 role=$2 script
+  "$labctl" ssh "$vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  for script in "${scripts[@]}"; do
+    "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$script"
+  done
+
+  # The product sources this run proves, and the synthetic fixture that stands in
+  # for the Controller, the Console and the certificate authority. The fixture is
+  # placed *inside* the module because it asks internal/plan for the canonical
+  # plan documents; it exists only in this copy and is never a package of the
+  # product.
+  "$labctl" copy-to "$vm" "$workdir/sources.tgz" /root/lab-private-service-sources.tgz >/dev/null
+  "$labctl" copy-to "$vm" "$harness/_fixture/main.go" /root/lab-private-service-fixture-main.go >/dev/null
+  "$labctl" ssh "$vm" -- \
+    "rm -rf $remote_sources && install -d -m 0700 $remote_sources \
+     && tar xzf /root/lab-private-service-sources.tgz -C $remote_sources \
+     && install -d -m 0700 $remote_sources/labfixture \
+     && mv /root/lab-private-service-fixture-main.go $remote_sources/labfixture/main.go \
+     && rm -f /root/lab-private-service-sources.tgz"
+
+  "$labctl" ssh "$vm" -- \
+    "export PATH=\$PATH:/usr/local/go/bin && $remote_harness/install $remote_sources $role $vm"
+}
+
+setup() {
+  locate
+  echo "perimeter: the machine of the LAN $lan_vm at $lan_address, the public machine $vps_vm at $vps_address"
+  echo "hostile observer and synthetic neighbour: $hostile_vm at $hostile_address"
+  echo "the client that judges from outside: the pilot host"
+  echo "revision: $(revision)"
+
+  tar czf "$workdir/sources.tgz" -C "$root" go.mod go.sum cmd internal
+  mount_perimeter "$vps_vm" vps
+  mount_perimeter "$lan_vm" lan
+
+  # The hostile observer receives one script and nothing else, and it is not the
+  # product: a Python HTTP server it starts and stops on demand.
+  "$labctl" ssh "$hostile_vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  "$labctl" copy-to "$hostile_vm" "$harness/neighbour" "$remote_harness/neighbour" >/dev/null
+  "$labctl" ssh "$hostile_vm" -- "chmod 0700 $remote_harness/neighbour"
+
+  # The authority the client pins travels once, here, and only its public half.
+  "$labctl" copy-from "$vps_vm" "$remote_authority" "$authority" >/dev/null
+  [[ -s "$authority" ]] || fail "the synthetic authority did not reach this host"
+  echo "the client pins $(openssl x509 -noout -subject -in "$authority")"
+
+  on "$vps_vm" audit
+  on "$lan_vm" audit
+}
+
+listener_key=
+initiator_key=
+
+remember() {
+  printf '%s\n' "$listener_key" >"$carried/listener-key"
+  printf '%s\n' "$initiator_key" >"$carried/initiator-key"
+}
+
+recall() {
+  listener_key=$(cat "$carried/listener-key" 2>/dev/null || true)
+  initiator_key=$(cat "$carried/initiator-key" 2>/dev/null || true)
+  [[ ${#listener_key} -eq 44 && ${#initiator_key} -eq 44 ]] \
+    || refuse "this phase needs the two public keys that run recorded" || return 1
+}
+
+run() {
+  locate || return 1
+  from_outside before || return 1
+
+  # The public half first, because the composition this palier claims is that a
+  # second name joins an entry that was already serving one.
+  on "$vps_vm" play-public || return 1
+  on "$vps_vm" certify || return 1
+  on "$vps_vm" play-route || return 1
+  from_outside after-public || return 1
+
+  # The private half, on the other machine, with the risk of the whole LAB asked
+  # first and by hand.
+  on "$lan_vm" play-private || return 1
+  from_outside after-private || return 1
+
+  # The confinement, against a neighbour that really exists.
+  "$labctl" ssh "$hostile_vm" -- "$remote_harness/neighbour start $neighbour_port" || return 1
+  local egress_status=0
+  on "$lan_vm" play-egress "$hostile_address" "$neighbour_port" || egress_status=$?
+  "$labctl" ssh "$hostile_vm" -- "$remote_harness/neighbour stop $neighbour_port" || true
+  [[ $egress_status -eq 0 ]] || return "$egress_status"
+
+  # The passage, in the contract's order: the two preparations, then the two
+  # junctions, with one public key travelling between them and nothing else.
+  listener_key=$(ask "$vps_vm" LINK_PUBLIC_KEY play-prepare) || return 1
+  [[ ${#listener_key} -eq 44 ]] || refuse "the listener reported no public key" || return 1
+  initiator_key=$(ask "$lan_vm" LINK_PUBLIC_KEY play-prepare) || return 1
+  [[ ${#initiator_key} -eq 44 ]] || refuse "the initiator reported no public key" || return 1
+  remember
+  echo "the Controller now holds two observations: listener $listener_key, initiator $initiator_key"
+
+  on "$vps_vm" play-junction "$initiator_key" "$lan_address" || return 1
+  on "$lan_vm" play-junction "$listener_key" "$vps_address" || return 1
+  on "$vps_vm" play-tunnel || return 1
+
+  # And only then the route that names them both.
+  on "$vps_vm" play-link-route || return 1
+  from_outside after-link || return 1
+
+  on "$lan_vm" play-secrets || return 1
+}
+
+reboot_both() {
+  local vm attempt
+  echo "== real power cycle of $lan_vm and $vps_vm =="
+  for vm in "$lan_vm" "$vps_vm"; do
+    "$labctl" stop "$vm"
+  done
+  for vm in "$lan_vm" "$vps_vm"; do
+    "$labctl" start "$vm"
+  done
+  locate
+  for vm in "$lan_vm" "$vps_vm"; do
+    for attempt in $(seq 1 180); do
+      if "$labctl" ssh "$vm" -- true >/dev/null 2>&1; then
+        echo "$vm answers again after ${attempt}s"
+        break
+      fi
+      sleep 1
+      [[ $attempt -lt 180 ]] || refuse "$vm never answered after its power cycle" || return 1
+    done
+  done
+}
+
+verify() {
+  locate || return 1
+  recall || return 1
+
+  on "$lan_vm" play-persistence "$listener_key" "$vps_address" || return 1
+  on "$vps_vm" play-persistence "$initiator_key" "$lan_address" || return 1
+  from_outside after-reboot || return 1
+
+  on "$lan_vm" play-recreation || return 1
+  from_outside after-link || return 1
+
+  on "$lan_vm" play-backup || return 1
+  from_outside after-link || return 1
+
+  on "$lan_vm" play-refusals "$listener_key" "$vps_address" || return 1
+  on "$vps_vm" play-refusals "$initiator_key" "$lan_address" || return 1
+
+  # The failure of the passage, its honest state, and a reprise that is one
+  # approved junction and nothing else.
+  # The machine that holds the entry is asked before the client outside it, and
+  # the order is the lesson of a run that failed here: the client read nothing at
+  # all for ninety seconds, and because the machine had not been asked yet, the
+  # report could not say whether the entry had rendered its error and the client
+  # missed it, or the entry had rendered nothing. A constat that cannot be
+  # localised is a constat that costs another run.
+  on "$lan_vm" play-panne leave "$listener_key" "$vps_address" || return 1
+  on "$vps_vm" play-panne observe "$initiator_key" "$lan_address" || return 1
+  from_outside panne || return 1
+  on "$lan_vm" play-panne rejoin "$listener_key" "$vps_address" || return 1
+  from_outside reprise || return 1
+}
+
+dismantle() {
+  locate || return 1
+  recall || return 1
+
+  on "$vps_vm" play-removal retire-link "$initiator_key" "$lan_address" || return 1
+  from_outside after-retire-link || return 1
+
+  on "$lan_vm" play-removal depart "$listener_key" "$vps_address" || return 1
+  on "$vps_vm" play-removal depart "$initiator_key" "$lan_address" || return 1
+
+  on "$lan_vm" play-removal remove-service || return 1
+  on "$vps_vm" play-removal remove-public || return 1
+}
+
+remove_perimeters() {
+  local status=0
+  on "$lan_vm" remove || status=$?
+  on "$vps_vm" remove || status=$?
+  "$labctl" ssh "$hostile_vm" -- "$remote_harness/neighbour stop $neighbour_port" >/dev/null 2>&1 || true
+  "$labctl" ssh "$lan_vm" -- "rm -rf $remote_harness $remote_sources" || true
+  "$labctl" ssh "$vps_vm" -- "rm -rf $remote_harness $remote_sources" || true
+  "$labctl" ssh "$hostile_vm" -- "rm -rf $remote_harness /root/lab-private-service-neighbour" || true
+  rm -f "$carried/listener-key" "$carried/initiator-key" "$authority"
+  return "$status"
+}
+
+# play is the whole sequence, in order, first red kept. It never stops before the
+# removal: two machines left holding a vault, an entry, two public ports, a tunnel
+# and three loaded tables are not a clean LAB, whatever failed above.
+play() {
+  local status=0
+  setup || status=$?
+  if [[ $status -eq 0 ]]; then run || status=$?; fi
+  if [[ $status -eq 0 ]]; then reboot_both || status=$?; fi
+  if [[ $status -eq 0 ]]; then verify || status=$?; fi
+  if [[ $status -eq 0 ]]; then dismantle || status=$?; fi
+  remove_perimeters || status=$?
+  # The last reading of all is taken from outside, once nothing of this proof is
+  # mounted anywhere: two machines back to the surface they had before.
+  if [[ -n "$lan_address" && -n "$vps_address" ]]; then
+    from_outside removed || status=$?
+  fi
+  return "$status"
+}
+
+# publish writes the run's report where a proof output belongs, naming the exact
+# tree it judged. It carries no address of the pilot, no key of the LAB and no
+# secret: the material is synthetic by construction and the pilot's own paths are
+# removed.
+publish() {
+  local status=$1 log=$2 directory="$result_root/$run_id"
+  install -d -m 0755 "$directory"
+  {
+    printf 'proof: your-cloud private Vaultwarden profile, end to end (palier #17, issue #104)\n'
+    printf 'run: %s\n' "$run_id"
+    printf 'revision: %s\n' "$(revision)"
+    printf 'machine of the LAN: %s (topology quick) — private service, data, archives, confinement, initiator\n' "$lan_vm"
+    printf 'public machine: %s (topology quick) — entrypoint, public profile, both declared names, listener\n' "$vps_vm"
+    printf 'hostile observer and synthetic neighbour: %s\n' "$hostile_vm"
+    printf 'client that judges from outside: the pilot host, pinning this run synthetic authority\n'
+    # A run whose assertions all held and which found a product defect has not
+    # passed: the defect is the finding, and a report saying `passed` beside it
+    # would be a report nobody could act on.
+    if [[ $status -eq 0 ]] && ! grep -q '^!! PRODUCT DEFECT' "$log"; then
+      printf 'outcome: passed\n'
+    elif [[ $status -eq 0 ]]; then
+      printf 'outcome: failed (every assertion held; the failure is the product defects below)\n'
+    else
+      printf 'outcome: failed\n'
+    fi
+    printf 'finished_at: %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    if grep -q '^!! PRODUCT DEFECT' "$log"; then
+      printf 'product defects this run found, reported and deliberately not repaired by it:\n\n'
+      # A defect block is its marker line plus everything indented under it, and
+      # the same defect is reported once per machine that meets it — so blocks are
+      # collected whole and printed once each.
+      awk '''
+        function emit(   key) {
+          key = block
+          if (!(key in seen)) { seen[key] = 1; printf "%s", block }
+          collecting = 0; block = ""
+        }
+        /^!! PRODUCT DEFECT/ { if (collecting) emit(); block = $0 "\n"; collecting = 1; next }
+        collecting && ($0 ~ /^   / || $0 ~ /^[[:space:]]*$/) { block = block $0 "\n"; next }
+        collecting { emit() }
+        END { if (collecting) emit() }
+      ''' "$log" | sed -e '''s/^\(.\)/  \1/'''
+      printf '\n'
+    fi
+    if grep -q '^!! DIVERGENCE' "$log"; then
+      printf 'divergences between a written contract and the code, found by this run:\n\n'
+      grep -A2 '^!! DIVERGENCE' "$log" | sed -e 's/^/  /' -e 's/^  --$//'
+      printf '\n'
+    fi
+    if grep -q '^!! LIMIT' "$log"; then
+      printf 'limits this run named where they applied:\n\n'
+      grep -A2 '^!! LIMIT' "$log" | sed -e 's/^/  /' -e 's/^  --$//'
+      printf '\n'
+    fi
+
+    # What a green run of this harness still does not establish. It is written
+    # into every report rather than left in an issue, because a report that names
+    # only what it proved invites the reader to assume the rest.
+    cat <<'DEBTS'
+what this proof does not claim, whatever its outcome:
+
+  - the synthetic secrets are planted, not written through the service's API.
+    The profile's own sheet closes signups and invitations, so this palier has no
+    approved path to a vault row. What is followed through the reboot, the
+    controlled recreation, the archive, the corruption and the return is the exact
+    bytes of the durable directory — the service's own database file included —
+    and Your Cloud never claims more: it archives bytes and reports a digest.
+  - the Console window is not wired to this run. The Controller, the Console and
+    the certificate authority are a fixture: what the machines are proven to do is
+    what they do with documents they did not write, and interoperability with the
+    real Console is held by the pinned cross-language vector and not by this
+    proof.
+  - the certificates are synthetic and so is their authority. ACME and publicly
+    resolvable names belong to the real infrastructure; what is proven here is the
+    route and TLS mechanism, which does not change when a certificate changes
+    source.
+  - the topology is flat, and the reference scenario is not. `quick` puts
+    lab-console, lab-vps and lab-machine-1 on one subnet, so a hostile host can
+    reach lab-machine-1's own address directly — it could before this proof
+    mounted anything and it can afterwards. What the product is answerable for,
+    and what is constated instead, is that the vault's application port answers
+    nobody but the passage and that the machine of the LAN gains no public port.
+  - no NAT is traversed, so the initiator's keepalive is observed and the property
+    it exists for is not exercised.
+  - the refusal of a *public* route naming a private service's loopback port is
+    unit-proven and not machine-proven. It fires after the entrypoint check, so it
+    needs a machine holding both an entry and the vault; that machine would be
+    lab-machine-1, and this topology deliberately does not give it the network
+    stack the entry's sheet names.
+  - `retire_route` of the public kind can still silence a fragment of the link
+    kind. The contract requires no symmetry of retirement and this run does not
+    exercise it as a feature; it is named as a follow-up rather than proven away.
+  - the hosted gate does not run this harness. It needs libvirt, a LAB and the
+    better part of an hour; the quota debt of the September candidate covers it.
+
+DEBTS
+    sed -e "s#$root#<repo>#g" -e "s#$HOME#<home>#g" -e "s#$(id -un)#<user>#g" "$log"
+  } >"$directory/report.txt"
+  chmod 0644 "$directory/report.txt"
+  printf '\nreport=%s\n' "$directory/report.txt"
+}
+
+case "$command" in
+  setup) setup ;;
+  run) locate && run ;;
+  reboot) reboot_both ;;
+  verify) locate && verify ;;
+  dismantle) locate && dismantle ;;
+  remove)
+    locate
+    remove_perimeters
+    ;;
+  all)
+    # The raw stream is kept live so a long run can be watched, then published.
+    # The status is read from PIPESTATUS rather than from the pipeline, because
+    # the left-hand side of a pipe runs in a subshell and no assignment made there
+    # survives it — a proof whose verdict is lost to a pipe is a proof that always
+    # passes.
+    set +e
+    play 2>&1 | tee "$workdir/run.log"
+    status=${PIPESTATUS[0]}
+    set -e
+    publish "$status" "$workdir/run.log"
+    exit "$status"
+    ;;
+esac

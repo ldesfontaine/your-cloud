@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Place the certificate of each declared name where the entry reads it.
+#
+# This is one of the four scripts of the harness allowed to change a machine
+# outside an approved plan, and it is named as such rather than folded into a
+# step. The contract is explicit: no plan describes a certificate, the Auxiliary
+# never writes into `certificates/`, and a removed entrypoint therefore does not
+# take the directory away. The authority that signs here is synthetic, created by
+# `install` before anything was deployed, and the proof's own client outside this
+# machine pins it — which is the whole of the TLS this palier claims.
+#
+# Both names are signed by one authority, and that is the composition this palier
+# adds: a client that pins one certificate authority reaches `pdf.` and `vault.`
+# at the same address and the same port, and the two names differ in nothing a
+# client can see except which backend answers.
+#
+#   <name>.crt  root:root 0644              a certificate is public
+#   <name>.key  root:your-cloud-entrypoint 0640
+#
+# The key is readable by the account that runs the entry and by nobody else: a
+# rootless container maps its own UID 0 to that account's identifier on the host,
+# so Traefik reads the file as `root` inside the namespace, and that root is this
+# account outside it.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+step "3. the synthetic authority signs both declared names, and the harness places them"
+
+[[ -d "$entry_certificates" ]] \
+  || { echo "FAILED: the entrypoint has not created $entry_certificates" >&2; exit 1; }
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+
+for host in "$pdf_host" "$vault_host"; do
+  lab-private-service-fixture -issue -authority-directory "$authority" -out "$workdir" -route-host "$host"
+  install -m 0644 -o root -g root "$workdir/$host.crt" "$entry_certificates/$host.crt"
+  install -m 0640 -o root -g "$entry_account" "$workdir/$host.key" "$entry_certificates/$host.key"
+  expect "the certificate of $host" "$(file_owner "$entry_certificates/$host.crt")" "root:root 644"
+  expect "the key of $host" "$(file_owner "$entry_certificates/$host.key")" "root:$entry_account 640"
+  report "the subject it carries" \
+    "$(openssl x509 -noout -subject -in "$entry_certificates/$host.crt")"
+done
+
+report "the authority that signed both" \
+  "$(openssl x509 -noout -subject -in "$authority/authority.crt" 2>/dev/null || echo unreadable)"
+report "what the entry now reads" "$(ls -1 "$entry_certificates" | paste -sd, -)"
+
+# The entry is not restarted and not reloaded: nothing here is an approved plan,
+# and Traefik reads a certificate when a fragment names it.
+expect "the entry was not restarted by this act" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+expect "the routes this machine publishes, still" "$(published_fragments)" none
+
+verdict "both declared names hold a certificate signed by the proof's own authority, in a directory no plan writes into and no plan removes"

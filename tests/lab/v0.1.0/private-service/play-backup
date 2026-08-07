@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# The whole archive cycle of a data-bearing profile, on a machine holding real
+# data: write a named archive, refuse to replace it, break the data on purpose,
+# return to the archive, read what the reserved slot was left holding, and make
+# the product perform the one return of a return it is able to perform.
+#
+# The last of those is the criterion "le retour du retour reste possible", and
+# reaching it honestly required reading the contract twice. A human cannot submit
+# a `restore_service` naming `previous`: the plan validation accepts the reserved
+# slot in a restore document, but `BuildRestorePair` refuses it as a forward
+# direction and `buildV2Pair` refuses to freeze a pair whose two halves are one
+# document — so the Controller cannot freeze that pair at all. The reserved slot
+# is therefore reachable through exactly one path in the whole product: the
+# **signed rollback** the Auxiliary applies when a restore fails after its
+# exchange. This step produces that failure with a real broken state rather than
+# a faked one, and the return of the return is what the machine then does.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+secret_digest=$(cat "$state/secret-digest.txt")
+
+data_state() {
+  { cd "$vault_data" && find . -type f -printf '%P\n' | sort | while read -r file; do
+      printf '%s:%s ' "$file" "$(sha256sum "$file" | cut -d' ' -f1)"
+    done; } 2>/dev/null
+  printf '\n'
+}
+
+start_by_hand() {
+  as_account "$vault_account" systemctl --user start "$vault_service" >/dev/null 2>&1 || true
+  local waited=0
+  while [[ $waited -lt 60 ]]; do
+    [[ "$(loopback_status "$vault_port")" == 200 ]] && return 0
+    sleep 2
+    waited=$((waited + 2))
+  done
+  return 1
+}
+
+step "17. one approved snapshot writes one named archive, and the report carries its digest"
+
+before_invocation=$(service_property "$vault_account" "$vault_service" InvocationID)
+apply "snapshot_service into the slot $nightly_slot" '"changed":true' \
+  -operation snapshot_service -profile vaultwarden -snapshot-slot "$nightly_slot"
+
+reported_digest=$(json_field archive_sha256)
+report "the digest the report carries" "$reported_digest"
+report "the instant the report carries" "$(json_field archived_at)"
+report "the slot the report names" "$(json_field snapshot_slot)"
+on_disk=$(archive_digest "$nightly_slot")
+report "the digest of the archive on disk" "$on_disk"
+expect "the report's digest and the file's" "$reported_digest" "$on_disk"
+expect "the archive's owner and mode" "$(file_owner "$vault_snapshots/$nightly_slot.tar.gz")" "root:root 600"
+expect "the archives this machine holds" "$(archive_slots)" "$nightly_slot"
+expect "the service, put back as the archive found it" "$(service_state "$vault_account" "$vault_service")" active
+expect "its loopback port" "$(loopback_status_within "$vault_port" 90)" 200
+if [[ "$(service_property "$vault_account" "$vault_service" InvocationID)" != "$before_invocation" ]]; then
+  report "the service's invocation across the archive" "new: it was really stopped and started"
+else
+  red "the service's invocation across the archive" "unchanged; the data was archived under a running service"
+fi
+expect "the synthetic secret, untouched by archiving it" "$(file_digest "$secret_file")" "$secret_digest"
+printf '%s\n' "$reported_digest" >"$state/nightly-digest.txt"
+
+step "18. an archive is immutable, and replacing one is two plans"
+
+refuses "a second snapshot into the slot $nightly_slot" \
+  "already holds an archive of this service" \
+  -operation snapshot_service -profile vaultwarden -snapshot-slot "$nightly_slot"
+expect "the archive on disk, after that refusal" "$(archive_digest "$nightly_slot")" "$reported_digest"
+
+step "19. HARNESS ACT: the data is broken on purpose"
+
+printf '%s\n' "$corrupt_plain" >"$secret_file"
+chown "$vault_account:$vault_account" "$secret_file"
+corrupt_digest=$(file_digest "$secret_file")
+printf '%s\n' "$corrupt_digest" >"$state/corrupt-digest.txt"
+report "the synthetic secret, deliberately damaged" "$corrupt_digest"
+expect "it is no longer what was archived" \
+  "$([[ "$corrupt_digest" != "$secret_digest" ]] && echo different || echo identical)" different
+
+step "20. one approved return, and the state it replaced is kept"
+
+apply "restore_service from the slot $nightly_slot" '"changed":true' \
+  -operation restore_service -profile vaultwarden -snapshot-slot "$nightly_slot"
+report "the slot the report says it read" "$(json_field snapshot_slot)"
+report "the slot the report says it wrote" "$(json_field previous_slot)"
+expect "the reserved slot a return names" "$(json_field previous_slot)" "$reserved_slot"
+reported_previous=$(json_field archive_sha256)
+report "the digest of what the return kept" "$reported_previous"
+expect "that digest and the reserved archive on disk" \
+  "$reported_previous" "$(archive_digest "$reserved_slot")"
+
+expect "the synthetic secret, back" "$(file_digest "$secret_file")" "$secret_digest"
+expect "the durable data directory" "$(file_owner "$vault_data")" "$vault_account:$vault_account 700"
+expect "the service" "$(service_state "$vault_account" "$vault_service")" active
+expect "its loopback port" "$(loopback_status_within "$vault_port" 90)" 200
+expect "the archives a human's own list holds" "$(archive_slots)" "$nightly_slot,$reserved_slot"
+grep -q "\"snapshot_slots\":\[\"$nightly_slot\"\]" "$state/last-report.json" \
+  && report "the archives the report lists" "$nightly_slot alone: the reserved slot is never a human's name" \
+  || red "the archives the report lists" "$(grep -o '"snapshot_slots":\[[^]]*\]' "$state/last-report.json")"
+
+step "21. what the reserved slot was left holding, read without touching it"
+
+# The archive is opened into a scratch directory of the harness and never back
+# into the service's own: what is asked is what the return kept, and asking it by
+# performing another return would be asking a different question.
+inspect=$(mktemp -d)
+tar --extract --gzip --file "$vault_snapshots/$reserved_slot.tar.gz" --directory "$inspect"
+kept_digest=$(file_digest "$inspect/lab-synthetic-secret.txt")
+report "the synthetic secret inside the reserved archive" "$kept_digest"
+expect "it is the damaged state the return replaced" "$kept_digest" "$corrupt_digest"
+report "what else the reserved archive carries" \
+  "$(cd "$inspect" && find . -type f -printf '%P\n' | sort | paste -sd, - | cut -c1-120)"
+# The owners the archive recorded, which is what `tar --same-owner` puts back.
+report "the owner tar recorded for the planted secret" \
+  "$(tar --list --verbose --gzip --file "$vault_snapshots/$reserved_slot.tar.gz" \
+    ./lab-synthetic-secret.txt 2>/dev/null | awk '{print $2}')"
+rm -rf "$inspect"
+
+step "22. the return of the return, by the one path the product offers"
+
+report "why it is reached this way" \
+  "BuildRestorePair refuses the reserved slot as a forward direction and buildV2Pair refuses a pair whose two halves are one document, so no Controller can freeze restore_service(previous): it exists only as the signed rollback of a restore"
+
+# A broken state, archived while the service is stopped so that archiving it is
+# not itself a failure, and restored while the service is running so that the
+# verification of the return is the thing that fails.
+as_account "$vault_account" systemctl --user stop "$vault_service" >/dev/null 2>&1 || true
+expect "the service, for the duration of this harness act" \
+  "$(service_state "$vault_account" "$vault_service")" inactive
+rm -rf "$vault_data/db.sqlite3"
+install -d -m 0700 -o "$vault_account" -g "$vault_account" "$vault_data/db.sqlite3"
+printf '%s\n' "$corrupt_plain" >"$secret_file"
+chown "$vault_account:$vault_account" "$secret_file"
+report "the state the harness broke" "db.sqlite3 replaced by a directory the service cannot open"
+
+apply "snapshot_service into the slot $scratch_slot, of that broken state" '"changed":true' \
+  -operation snapshot_service -profile vaultwarden -snapshot-slot "$scratch_slot"
+expect "the service, which the archive found stopped and left stopped" \
+  "$(service_state "$vault_account" "$vault_service")" inactive
+
+apply "restore_service from $nightly_slot, on a stopped service" '"changed":true' \
+  -operation restore_service -profile vaultwarden -snapshot-slot "$nightly_slot"
+expect "the synthetic secret, clean again" "$(file_digest "$secret_file")" "$secret_digest"
+expect "the service, still stopped as the return found it" \
+  "$(service_state "$vault_account" "$vault_service")" inactive
+start_by_hand \
+  && report "the service, started by the harness" "answering 200 on its loopback port" \
+  || red "the service, started by the harness" "$(loopback_status "$vault_port")"
+
+# One clean return with the service running, so that the reserved slot holds a
+# state the rollback of the next one can honestly go back to.
+apply "restore_service from $nightly_slot, on a running service" '"changed":true' \
+  -operation restore_service -profile vaultwarden -snapshot-slot "$nightly_slot"
+expect "the synthetic secret" "$(file_digest "$secret_file")" "$secret_digest"
+expect "the service" "$(service_state "$vault_account" "$vault_service")" active
+
+status=0
+output=$(fixture -operation restore_service -profile vaultwarden -snapshot-slot "$scratch_slot" \
+  | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+printf '%s\n' "$output" >"$state/last-report.json"
+report "what the machine concluded of a return to a state it cannot serve" \
+  "$(echo "$output" | tr '\n' ' ' | cut -c1-260)"
+
+case "$output" in
+  *'"outcome":"rolled_back_after_controlled_failure"'*)
+    report "the conclusion" "rolled_back_after_controlled_failure"
+    case "$output" in
+      *'"rollback_attempted":true'*) report "the rollback" "attempted, once, through the ordinary path" ;;
+      *) red "the rollback" "not stated as attempted" ;;
+    esac
+    [[ $status -ne 0 ]] \
+      && report "the exit status" "$status, non-zero as a controlled failure must be" \
+      || red "the exit status" "a controlled failure exited zero"
+    # The rollback is `restore_service` naming the reserved slot. What it had to
+    # put back is the state the failed forward direction had just displaced, and
+    # the digest of the planted secret is how a reader sees that it did.
+    expect "the synthetic secret, after the return of the return" \
+      "$(file_digest "$secret_file")" "$secret_digest"
+    if [[ -f "$vault_data/db.sqlite3" ]]; then
+      db_kind=file
+    elif [[ -d "$vault_data/db.sqlite3" ]]; then
+      db_kind=directory
+    else
+      db_kind=absent
+    fi
+    expect "the database the service needs, back as a file" "$db_kind" file
+    if [[ "$(service_state "$vault_account" "$vault_service")" != active ]]; then
+      report "the service after the rollback" \
+        "$(service_state "$vault_account" "$vault_service")"
+      report "why that is licit" \
+        "the rollback is a return in its own right, and a return puts a service back as it found it — the forward failure had left it stopped"
+      start_by_hand \
+        && report "the service, started by the harness after the rollback" "answering 200" \
+        || red "the service, started by the harness after the rollback" "$(loopback_status "$vault_port")"
+    else
+      expect "the service after the rollback" "$(loopback_status "$vault_port")" 200
+    fi
+    # And the reserved slot now holds what the failed forward direction left: the
+    # broken state. Applying the return twice permutes rather than losing.
+    inspect=$(mktemp -d)
+    tar --extract --gzip --file "$vault_snapshots/$reserved_slot.tar.gz" --directory "$inspect" 2>/dev/null || true
+    if [[ -d "$inspect/db.sqlite3" ]]; then
+      report "the reserved slot, after the return of the return" \
+        "it holds the broken state the forward return had put in place: the exchange permuted rather than destroyed"
+    else
+      red "the reserved slot, after the return of the return" \
+        "it does not hold the state the failed return had left: $(cd "$inspect" && ls -1A | paste -sd, -)"
+    fi
+    rm -rf "$inspect"
+    ;;
+  *'"outcome":"applied"'*)
+    limit "the return of the return was not exercised on this machine" \
+      "the pinned image served a 200 with a database directory in place of its database file, so returning to the broken archive succeeded and no rollback ran. What the archive cycle above proves is unaffected; what is not established here is the product performing restore_service(previous), and the unit suite is what holds it (internal/auxiliary/snapshot_test.go, the double-turn case)."
+    apply "restore_service from $nightly_slot, to leave this machine clean" '"changed":true' \
+      -operation restore_service -profile vaultwarden -snapshot-slot "$nightly_slot"
+    expect "the synthetic secret" "$(file_digest "$secret_file")" "$secret_digest"
+    ;;
+  *)
+    red "the conclusion of a return to a state the service cannot serve" \
+      "$(echo "$output" | tr '\n' ' ' | cut -c1-200)"
+    ;;
+esac
+
+step "23. an archive is destroyed by its own plan, and by nothing else"
+
+apply "discard_snapshot of the slot $scratch_slot" '"changed":true' \
+  -operation discard_snapshot -profile vaultwarden -snapshot-slot "$scratch_slot"
+expect "that archive" "$(present "$vault_snapshots/$scratch_slot.tar.gz")" absent
+expect "the archive the proof keeps" "$(archive_digest "$nightly_slot")" "$(cat "$state/nightly-digest.txt")"
+apply "discard_snapshot of the same slot, again" '"changed":false' \
+  -operation discard_snapshot -profile vaultwarden -snapshot-slot "$scratch_slot"
+
+step "24. what the archive door refuses"
+
+refuses "a return from a slot this machine holds nothing in" \
+  "holds no archive of this service" \
+  -operation restore_service -profile vaultwarden -snapshot-slot "$scratch_slot"
+
+# The reserved slot as a forward direction never reaches this machine at all: the
+# Controller refuses to build the document. It is constated where the refusal
+# really lives rather than asserted against a machine that never sees it.
+if fixture -operation restore_service -profile vaultwarden -snapshot-slot "$reserved_slot" >/dev/null 2>&1; then
+  red "a plan naming the reserved slot" "the Controller froze one"
+else
+  report "a plan naming the reserved slot" \
+    "the Controller refuses to build it: the reserved slot belongs to the return mechanism and no plan may name it"
+fi
+if fixture -operation snapshot_service -profile vaultwarden -snapshot-slot "$reserved_slot" >/dev/null 2>&1; then
+  red "an archive plan naming the reserved slot" "the Controller froze one"
+else
+  report "an archive plan naming the reserved slot" "the Controller refuses to build it as well"
+fi
+
+report "the durable state this machine ends this step with" "$(data_state | cut -c1-140)"
+report "the archives it holds" "$(archive_slots)"
+
+verdict "an archive was written and its digest matched the file, a second one into the same slot was refused, a deliberate corruption was returned from, the reserved slot held exactly the state that was replaced, and the one path the product offers to return from a return was exercised"

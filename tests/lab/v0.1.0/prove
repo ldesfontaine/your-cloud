@@ -49,6 +49,12 @@ usage: prove [guard | run [passe...] | close | all [passe...]]
   renders the public BentoPDF profile palier (#15, proof #92). Its machine is
   `lab-vps`, which this sequence never touches, and it is run by its own entry
   point.
+
+  `private-passage` and `private-service` are not part of it either, and for the
+  same reason: they render the private passage palier (#16, machine proof #98)
+  and the private Vaultwarden profile palier (#17, proof #104). Both need
+  `lab-machine-1` and `lab-vps` at once and power cycle them, so neither ever
+  runs beside these passes; each is run by its own entry point.
 EOF
   exit 2
 }
@@ -249,7 +255,8 @@ write_result() {
     printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"},\n'
     printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"},\n'
     printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"},\n'
-    printf '    {"pass": "private-passage", "reason": "it renders the private WireGuard passage palier (#16, proofs #96 and #97, machine proof #98) across lab-machine-1 and lab-vps, not the bootstrap and replacement this sequence proves"}\n'
+    printf '    {"pass": "private-passage", "reason": "it renders the private WireGuard passage palier (#16, proofs #96 and #97, machine proof #98) across lab-machine-1 and lab-vps, not the bootstrap and replacement this sequence proves"},\n'
+    printf '    {"pass": "private-service", "reason": "it renders the private Vaultwarden profile palier (#17, proof #104) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"}\n'
     printf '  ],\n'
     printf '  "passes": [\n'
     for index in "${!pass_results[@]}"; do
@@ -504,6 +511,15 @@ do_run() {
   printf 'cycles both of them, and borrows lab-console as a hostile observer, so it\n'
   printf 'shares machines with these passes and never runs beside them. A verdict of\n'
   printf 'its own belongs to its own palier and is recorded as not run here.\n'
+
+  announce "private-service is not run here either"
+  printf 'It renders the private Vaultwarden profile palier (#17, proof #104): the\n'
+  printf 'whole reference scenario at once — a data-bearing service on lab-machine-1,\n'
+  printf 'an entrypoint serving two declared names on lab-vps, the passage between\n'
+  printf 'them, the archives and lab-console as both hostile observer and synthetic\n'
+  printf 'neighbour. It needs the three machines of this topology and power cycles two\n'
+  printf 'of them, so it never runs beside these passes. A verdict of its own belongs\n'
+  printf 'to its own palier and is recorded as not run here.\n'
 }
 
 # ---------------------------------------------------------------------------
