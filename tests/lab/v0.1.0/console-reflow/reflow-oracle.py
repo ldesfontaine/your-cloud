@@ -51,8 +51,10 @@ INK_RUN = 4
 CONTROL_SELECTOR = 'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
 
 # The seven contractual views of `docs/objectifs/v1/CONTRAT-V0.0.3.md`, plus the
-# state of the first one that displays the two local secrets, plus the external
-# elements view the frontend gained after that contract was written. Each case
+# state of the first one that displays the two local secrets, plus the eighth
+# view `docs/architecture/RESPONSABILITE-EXTERNE.md` adds — named there rather
+# than in the older contract, because an increment that rewrote another's
+# contract would erase what that one had proven. Each case
 # names the path a human takes to reach it, because a view reached by setting a
 # variable proves nothing about the navigation that leads to it.
 VIEWS = (
@@ -115,7 +117,7 @@ VIEWS = (
     },
     {
         "id": "external",
-        "contract_view": None,
+        "contract_view": 8,
         "state": "unlocked",
         "clicks": ("Ouvrir", "Éléments externes"),
         "heading": "Éléments externes",

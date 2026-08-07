@@ -223,6 +223,28 @@ l'Auxiliaire qui connaît son propre état appliqué, et c'est l'adaptateur de
 en réalité pour un service que le produit a posé. Tant que ce constat n'existe
 pas, l'App dit ce qu'elle sait et rien de plus.
 
+## Une huitième vue, nommée ici et non ailleurs
+
+`CONTRAT-V0.0.3.md` dit que **le premier** frontend comporte exactement sept
+vues, et cette phrase reste vraie : elle décrit un incrément clos et prouvé.
+Le présent palier en ajoute une huitième, et il la nomme ici pour la même
+raison que les contrats précédents nomment les routes qu'ils ajoutent — un
+incrément qui réécrirait le contrat d'un autre effacerait ce que celui-ci
+avait prouvé.
+
+| Vue | Ce qu'elle montre |
+|---|---|
+| `Éléments externes` | l'inventaire déclaré, chaque élément avec son dernier constat daté, son ancienneté et les quatre capacités que l'App annonce ne pas avoir |
+
+Elle obéit à tout ce que les sept autres doivent : les deux tailles de
+fenêtre, le texte agrandi au double, le reflow sans coupe ni défilement
+horizontal imposé, la navigation au clavier et un focus visible. Elle n'est
+pas une page de plus au sens du contrat d'origine — ses variantes vides,
+chargées, refusées et hostiles restent des états d'elle-même.
+
+Ce qu'elle n'a pas, et qui la distingue des sept : aucune action de gestion.
+La navigation y mène, la lecture s'y arrête.
+
 ## Ce que la preuve devra constater
 
 1. un service posé à la main, qu'aucun plan ne décrit, est déclaré externe :
