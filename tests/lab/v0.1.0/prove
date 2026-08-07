@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Orchestrate the complete v0.1.0 bootstrap-and-replacement proof (#41).
+# Orchestrate the v0.1.0 LAB proofs: the bootstrap-and-replacement palier (#41)
+# and, under `complete`, the whole v0.1.0 proof of `#19` / `#112`.
 #
-# This file proves nothing by itself. Every verdict of the palier is rendered by
-# one of the six passes under this directory, each of which mounts its own
-# perimeter, judges through the compiled product and removes what it mounted.
-# What this orchestrator adds is the three things the global proof needs and no
-# single pass can give:
+# This file proves nothing by itself. Every verdict is rendered by one of the
+# harnesses under this directory, each of which mounts its own perimeter, judges
+# through the compiled product and removes what it mounted. What this
+# orchestrator adds is the three things a global proof needs and no single
+# harness can give:
 #
 #   a revision   every pass runs against the same tree, named once and recorded
 #   an order     the passes run one after another on shared VM, never together
@@ -16,17 +17,47 @@
 # retained whole, and the closure still runs. A pass killed on its bound is
 # forced through its own `remove` before the next thing happens, because a bound
 # that leaves a perimeter mounted is worse than no bound at all.
+#
+# `complete` is the mode `#112` adds, and it is a mode of *this* orchestrator
+# rather than a second one, because the contract of `#19` asks for one order and
+# one report. What it adds to `all` is the four things the complete proof needs:
+#
+#   a real base    the topology is destroyed, created and provisioned before the
+#                  first pass, so no pass inherits anything from an earlier run
+#   every palier   the five palier harnesses run after the #13 passes, each one
+#                  replayed AS IS — a harness edited for this occasion would
+#                  prove something other than what its palier closed
+#   the artifacts  `tools/release-artifacts` writes the four deterministic files
+#                  of the closed list, and their determinism is a command here
+#   one report     `report.txt`, sealed by its own `proof-checksum.txt` beside
+#                  it, in the exact format of `checksums.txt` (the #111 decision)
+#
+# Two orderings of `complete` are decisions rather than accidents, and both are
+# written into the report they govern:
+#
+#   the artifacts are produced only when every harness passed. A failing harness
+#   stops the sequence, and release artifacts cut from a red run would read as a
+#   release candidate that no run supports;
+#
+#   the report is written after the closure, not before it. `labctl assert-clean`
+#   is the run's last constat on machines, and a report that omitted its own
+#   closure would be a report with a hole. Its seal is therefore taken once,
+#   over a whole document, and never reopened.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
 usage() {
   cat >&2 <<'EOF'
-usage: prove [guard | run [passe...] | close | all [passe...]]
+usage: prove [guard | run [passe...] | close | all [passe...] | complete]
 
-  guard  read the LAB, prove the topology is the approved one, name the revision
-  run    run the passes in dependency order, keeping the topology mounted
-  close  destroy the topology this run owns and read `labctl assert-clean`
-  all    the three above in order, closing even when a pass fails (default)
+  guard     read the LAB, prove the topology is the approved one, name the revision
+  run       run the passes in dependency order, keeping the topology mounted
+  close     destroy the topology this run owns and read `labctl assert-clean`
+  all       the three above in order, closing even when a pass fails (default)
+  complete  the whole v0.1.0 proof of #19 / #112, from a topology really
+            destroyed then created then provisioned: the #13 passes, then the
+            five palier harnesses in the product's order, then the release
+            artifacts, then the closure, then the single sealed report
 
   Passes, in the order they run:
 
@@ -37,24 +68,41 @@ usage: prove [guard | run [passe...] | close | all [passe...]]
     enrolment-bounds        #41       an estate of sixty-four, and the sixty-fifth refused
     controller-replacement  #40       a Controller replaced, authorities withdrawn
 
-  `windows-helper` is not part of this sequence: its machine lives outside
-  labctl and outside this topology. It is reported as not run, never as passed.
+  Under `complete`, and only there, five more harnesses run after those six,
+  in the order the product establishes them:
 
-  `oci-plan` is not part of it either, and for a different reason: it proves
-  the controlled OCI plan palier (#14, proof #86), not the bootstrap and
-  replacement palier this sequence renders. It mounts and removes its own
-  perimeter on lab-machine-1 and is run by its own entry point.
+    oci-plan                #14       the controlled plan and its OCI probe
+    public-profile          #15       the public profile, HTTPS read from outside
+    private-passage         #16       the bounded tunnel and its refusals
+    private-service         #17       the private profile, its data, its archives
+    external-element        #18       representing without owning
+
+  Each is invoked through its own entry point with its own `all`, so it does its
+  own setup, its own reboots and its own teardown, in its own order. Nothing of
+  a harness is reordered, skipped or edited by this file.
+
+  `windows-helper` is never part of any sequence here, `complete` included: its
+  machine lives outside labctl and outside this topology. It is reported as not
+  run, never as passed.
+
+  Outside `complete`, the five harnesses above are not part of the sequence, and
+  each for its own reason:
+
+  `oci-plan` renders the controlled OCI plan palier (#14, proof #86), not the
+  bootstrap and replacement palier this sequence renders. It mounts and removes
+  its own perimeter on lab-machine-1 and is run by its own entry point.
 
   `public-profile` is not part of it for the same reason as `oci-plan`: it
   renders the public BentoPDF profile palier (#15, proof #92). Its machine is
   `lab-vps`, which this sequence never touches, and it is run by its own entry
   point.
 
-  `private-passage` and `private-service` are not part of it either, and for the
-  same reason: they render the private passage palier (#16, machine proof #98)
-  and the private Vaultwarden profile palier (#17, proof #104). Both need
-  `lab-machine-1` and `lab-vps` at once and power cycle them, so neither ever
-  runs beside these passes; each is run by its own entry point.
+  `private-passage`, `private-service` and `external-element` are not part of it
+  either, and for the same reason: they render the private passage palier (#16,
+  machine proof #98), the private Vaultwarden profile palier (#17, proof #104)
+  and the external responsibility palier (#18, proof #109). Each needs several
+  machines of this topology at once and two of them power cycle machines, so
+  none ever runs beside these passes; each is run by its own entry point.
 EOF
   exit 2
 }
@@ -62,7 +110,7 @@ EOF
 command=${1:-all}
 [[ $# -eq 0 ]] || shift
 case "$command" in
-  guard | close) [[ $# -eq 0 ]] || usage ;;
+  guard | close | complete) [[ $# -eq 0 ]] || usage ;;
   run | all) ;;
   *) usage ;;
 esac
@@ -74,10 +122,12 @@ topology=quick
 expected_origin=your-cloud/labctl
 forbidden_addresses=(192.168.122.123 10.66.66.1)
 
-# Every pass of the palier, in dependency order, with the bound it may not
-# exceed. The bounds are wall-clock ceilings, not expectations: they exist so a
-# hung pass ends as a named failure instead of an unattended night.
-pass_names=(
+# Every pass, in dependency order, with the bound it may not exceed. The bounds
+# are wall-clock ceilings, not expectations: they exist so a hung pass ends as a
+# named failure instead of an unattended night. They are generous because these
+# harnesses build Rust and Go on the machines and power cycle them, and a bound
+# that a healthy run can reach would turn a slow build into a false red.
+bootstrap_passes=(
   personal-access
   signed-approval
   controller-install
@@ -85,6 +135,19 @@ pass_names=(
   enrolment-bounds
   controller-replacement
 )
+# The five palier harnesses, in the order of the product rather than in the
+# order they were written: the mechanism before any load, the public entry
+# before the private passage, the passage before the service that travels it,
+# and the external element last because it is about what the product never
+# installed. `#19` fixes this order and this file does not choose it.
+palier_passes=(
+  oci-plan
+  public-profile
+  private-passage
+  private-service
+  external-element
+)
+pass_names=("${bootstrap_passes[@]}")
 declare -A pass_bound=(
   [personal-access]=5400
   [signed-approval]=1800
@@ -92,6 +155,11 @@ declare -A pass_bound=(
   [machine-identity]=2700
   [enrolment-bounds]=2700
   [controller-replacement]=3600
+  [oci-plan]=5400
+  [public-profile]=5400
+  [private-passage]=7200
+  [private-service]=9000
+  [external-element]=7200
 )
 declare -A pass_issue=(
   [personal-access]="#51 #52"
@@ -100,12 +168,29 @@ declare -A pass_issue=(
   [machine-identity]="#39"
   [enrolment-bounds]="#41"
   [controller-replacement]="#40"
+  [oci-plan]="#14 #86"
+  [public-profile]="#15 #92"
+  [private-passage]="#16 #98"
+  [private-service]="#17 #104"
+  [external-element]="#18 #109"
 )
 declare -A vm_template=(
   [lab-console]=console
   [lab-machine-1]=machine
+  [lab-vps]=machine
 )
 vm_names=(lab-console lab-machine-1)
+
+# `complete` is the only mode that speaks to lab-vps, that creates a topology
+# and that produces artifacts. Everything else about it is the same code, which
+# is the point: the per-palier proofs stay individually runnable and behave
+# exactly as they did.
+complete_mode=0
+if [[ "$command" == complete ]]; then
+  complete_mode=1
+  vm_names=(lab-console lab-machine-1 lab-vps)
+  pass_names=("${bootstrap_passes[@]}" "${palier_passes[@]}")
+fi
 
 selected=()
 if [[ $# -gt 0 ]]; then
@@ -125,9 +210,20 @@ workdir=$(mktemp -d)
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 [[ "$run_id" =~ ^[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*$ ]] \
   || { echo "invalid v0.1.0 proof run identifier" >&2; /bin/rm -rf "$workdir"; exit 1; }
-result_root="$root/tests/artifacts/proofs/v0.1.0"
+# The complete proof is a different `<preuve>` of the artifact convention than
+# the bootstrap palier, and it gets its own directory rather than sharing one:
+# a reader who opens `v0.1.0/<run>` must not have to guess whether the run he
+# is reading judged six passes or eleven.
+if [[ $complete_mode -eq 1 ]]; then
+  result_root="$root/tests/artifacts/proofs/v0.1.0-complete"
+else
+  result_root="$root/tests/artifacts/proofs/v0.1.0"
+fi
 result_dir="$result_root/$run_id"
 result_file="$result_dir/result.json"
+artifact_dir="$result_dir/artifacts"
+report_file="$artifact_dir/report.txt"
+proof_checksum_file="$artifact_dir/proof-checksum.txt"
 mkdir -p "$result_root"
 [[ ! -e "$result_dir" && ! -L "$result_dir" ]] \
   || { echo "v0.1.0 proof result path already exists" >&2; /bin/rm -rf "$workdir"; exit 1; }
@@ -146,7 +242,25 @@ close_status=not_run
 assert_clean_status=not_run
 declare -a assert_clean_residue=()
 declare -a pass_results=()
+declare -A vm_address=()
+declare -A pass_report=()
 current_pass=
+
+# The complete run's own state. Every one of these is written into the report,
+# and none of them is inferred: a rebuild that did not happen says `not_run`.
+rebuild_status=not_run
+rebuild_started_at=
+rebuild_finished_at=
+rebuild_seconds=0
+declare -A rebuild_step_seconds=()
+declare -A rebuild_step_status=()
+rebuild_steps=(destroy create provision)
+artifacts_status=not_run
+artifacts_reason=
+determinism_status=not_run
+third_party_status=not_run
+report_status=not_run
+declare -a artifact_digests=()
 
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
@@ -232,12 +346,18 @@ write_result() {
   {
     printf '{\n'
     printf '  "schema": 1,\n'
-    printf '  "proof": "your-cloud-v0.1.0-bootstrap-and-replacement",\n'
-    printf '  "issue": "#41",\n'
+    if [[ $complete_mode -eq 1 ]]; then
+      printf '  "proof": "your-cloud-v0.1.0-complete",\n'
+      printf '  "issue": "#112",\n'
+      printf '  "contract": "docs/objectifs/v1/PREUVE-COMPLETE.md (#19, addendum #111)",\n'
+    else
+      printf '  "proof": "your-cloud-v0.1.0-bootstrap-and-replacement",\n'
+      printf '  "issue": "#41",\n'
+    fi
     printf '  "run_id": "%s",\n' "$run_id"
     printf '  "phase": "%s",\n' "$command"
     printf '  "complete": %s,\n' \
-      "$([[ "$command" == all && ${#selected[@]} -eq ${#pass_names[@]} ]] && echo true || echo false)"
+      "$([[ ( "$command" == all || "$command" == complete ) && ${#selected[@]} -eq ${#pass_names[@]} ]] && echo true || echo false)"
     printf '  "passes_declared": %d,\n' "${#pass_names[@]}"
     printf '  "passes_selected": %d,\n' "${#selected[@]}"
     printf '  "outcome": "%s",\n' "$proof_outcome"
@@ -251,13 +371,44 @@ write_result() {
     printf '  "closure": {"status": "%s", "assert_clean": "%s", "retained_outside_this_run": ' \
       "$close_status" "$assert_clean_status"
     json_array "${assert_clean_residue[@]}"; printf '},\n'
+    if [[ $complete_mode -eq 1 ]]; then
+      printf '  "clean_base": {"status": "%s", "started_at": ' "$rebuild_status"
+      json_value "$rebuild_started_at"; printf ', "finished_at": '
+      json_value "$rebuild_finished_at"
+      printf ', "duration_seconds": %d, "steps": [' "$rebuild_seconds"
+      for index in "${!rebuild_steps[@]}"; do
+        printf '{"step": "%s", "command": "%s", "status": "%s", "duration_seconds": %d}' \
+          "${rebuild_steps[$index]}" \
+          "$(case "${rebuild_steps[$index]}" in
+              destroy) echo "tools/labctl topology destroy $topology" ;;
+              create) echo "tools/labctl topology create $topology" ;;
+              provision) echo "tools/provision-lab all" ;;
+            esac)" \
+          "${rebuild_step_status[${rebuild_steps[$index]}]:-not_run}" \
+          "${rebuild_step_seconds[${rebuild_steps[$index]}]:-0}"
+        [[ $index -eq $((${#rebuild_steps[@]} - 1)) ]] || printf ', '
+      done
+      printf ']},\n'
+      printf '  "artifacts": {"status": "%s", "reason": ' "$artifacts_status"
+      json_value "$artifacts_reason"
+      printf ', "determinism": "%s", "third_party_check": "%s", "report": "%s", "directory": ' \
+        "$determinism_status" "$third_party_status" "$report_status"
+      json_value "$([[ $artifacts_status == passed ]] && echo "artifacts")"
+      printf ', "files": '
+      json_array "${artifact_digests[@]}"; printf '},\n'
+    fi
     printf '  "not_run": [\n'
-    printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"},\n'
-    printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"},\n'
-    printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"},\n'
-    printf '    {"pass": "private-passage", "reason": "it renders the private WireGuard passage palier (#16, proofs #96 and #97, machine proof #98) across lab-machine-1 and lab-vps, not the bootstrap and replacement this sequence proves"},\n'
-    printf '    {"pass": "private-service", "reason": "it renders the private Vaultwarden profile palier (#17, proof #104) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"},\n'
-    printf '    {"pass": "external-element", "reason": "it renders the external responsibility palier (#18, proof #109) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"}\n'
+    printf '    {"pass": "windows-helper", "reason": "its evaluation machine lives outside labctl and outside this topology"}'
+    if [[ $complete_mode -eq 1 ]]; then
+      printf '\n'
+    else
+      printf ',\n'
+      printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"},\n'
+      printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"},\n'
+      printf '    {"pass": "private-passage", "reason": "it renders the private WireGuard passage palier (#16, proofs #96 and #97, machine proof #98) across lab-machine-1 and lab-vps, not the bootstrap and replacement this sequence proves"},\n'
+      printf '    {"pass": "private-service", "reason": "it renders the private Vaultwarden profile palier (#17, proof #104) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"},\n'
+      printf '    {"pass": "external-element", "reason": "it renders the external responsibility palier (#18, proof #109) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"}\n'
+    fi
     printf '  ],\n'
     printf '  "passes": [\n'
     for index in "${!pass_results[@]}"; do
@@ -300,7 +451,11 @@ finish() {
     # that guarded, played every pass and closed may say so; anything else says
     # what it actually did. The palier forbids a false global success, and the
     # cheapest way to produce one is a green word printed by a partial run.
-    if [[ "$command" != all ]]; then
+    if [[ "$command" == complete ]]; then
+      printf 'PROVE_V0_1_0_COMPLETE_OK revision=%s base=%s passes=%d artifacts=%s determinism=%s report=%s closure=%s assert-clean=%s\n' \
+        "$revision" "$rebuild_status" "${#pass_results[@]}" "$artifacts_status" \
+        "$determinism_status" "$report_status" "$close_status" "$assert_clean_status"
+    elif [[ "$command" != all ]]; then
       printf 'PROVE_V0_1_0_PHASE_OK phase=%s revision=%s\n' "$command" "$revision"
     elif [[ ${#selected[@]} -ne ${#pass_names[@]} ]]; then
       printf 'PROVE_V0_1_0_PARTIAL_OK passes=%d/%d revision=%s\n' \
@@ -316,6 +471,87 @@ finish() {
   exit 1
 }
 trap finish EXIT
+
+# ---------------------------------------------------------------------------
+# rebuild — `complete` only: the topology really ceases to exist, is created
+# from the base image and is provisioned by the recipe
+# ---------------------------------------------------------------------------
+#
+# `Propre` is not "the harnesses cleaned up after themselves". The contract of
+# `#19` spells it as three commands, and this function is those three commands
+# and nothing else. It runs once, before the first pass, and it is what makes
+# every later constat a constat about machines that kept nothing.
+#
+# The destruction is not conditional on the topology existing: `topology
+# destroy` is idempotent over an absent topology, and a run that skipped it
+# because a listing looked empty would be trusting exactly the listing this
+# stage exists to distrust.
+
+do_rebuild() {
+  local step status started ended seconds label
+  announce "Rebuilding the topology '$topology' from nothing"
+  printf 'This is what the contract of #19 calls a clean base: destroy, create,\n'
+  printf 'provision. It costs twenty to thirty minutes, most of it the Rust\n'
+  printf 'toolchain on lab-console, and it happens exactly once.\n'
+
+  rebuild_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local rebuild_began
+  rebuild_began=$(date -u +%s)
+  for step in "${rebuild_steps[@]}"; do
+    rebuild_step_status[$step]=not_run
+    rebuild_step_seconds[$step]=0
+  done
+
+  for step in "${rebuild_steps[@]}"; do
+    status=0
+    started=$(date -u +%s)
+    case "$step" in
+      destroy)
+        label="tools/labctl topology destroy $topology"
+        announce "$label"
+        timeout --signal=TERM --kill-after=60s 1200 \
+          "$labctl" topology destroy "$topology" || status=$?
+        ;;
+      create)
+        label="tools/labctl topology create $topology"
+        announce "$label"
+        timeout --signal=TERM --kill-after=60s 2400 \
+          "$labctl" topology create "$topology" || status=$?
+        ;;
+      provision)
+        label="tools/provision-lab all"
+        announce "$label"
+        timeout --signal=TERM --kill-after=60s 7200 \
+          "$root/tools/provision-lab" all || status=$?
+        ;;
+    esac
+    ended=$(date -u +%s)
+    seconds=$((ended - started))
+    rebuild_step_seconds[$step]=$seconds
+    if [[ $status -eq 0 ]]; then
+      rebuild_step_status[$step]=passed
+      printf 'REBUILT %s in %d s\n' "$step" "$seconds"
+      # The topology is this run's from the moment its creation succeeded, and
+      # not one step later: a provisioning that fails must still be closed.
+      [[ "$step" == create ]] && topology_owned=1
+    else
+      rebuild_step_status[$step]=failed
+      rebuild_finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      rebuild_seconds=$(($(date -u +%s) - rebuild_began))
+      rebuild_status=failed
+      failure_class=infrastructure_failure
+      first_red="rebuild:$step"
+      echo "FAILED: $label ended with status $status" >&2
+      return 1
+    fi
+  done
+
+  rebuild_finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  rebuild_seconds=$(($(date -u +%s) - rebuild_began))
+  rebuild_status=passed
+  announce "The topology was destroyed, created and provisioned in $rebuild_seconds s"
+  return 0
+}
 
 # ---------------------------------------------------------------------------
 # guard — read the LAB before mutating any of it, and name the revision once
@@ -373,7 +609,8 @@ do_guard() {
     done
     lab_ssh "$vm" true || fail "$vm does not answer on the managed channel"
     restore_swap "$vm" || fail "$vm has a swapfile that could not be re-enabled"
-    printf '  %-16s %s\n' "$vm" "running, one address, answering"
+    vm_address[$vm]=$address
+    printf '  %-16s %s\n' "$vm" "running, one address ($address), answering"
   done
 
   revision=$(git -C "$root" rev-parse HEAD) || fail "cannot read the repository revision"
@@ -385,9 +622,9 @@ do_guard() {
   printf '  %-16s %s\n' revision "$revision"
   case "$revision" in
     *+worktree)
-      printf '\nLIMIT: this run judges an unpublished tree. #41 asks for an exact\n'
-      printf 'SHA; a report built on "+worktree" names a state no one else can\n'
-      printf 'fetch, and closes no line of the palier.\n'
+      printf '\nLIMIT: this run judges an unpublished tree. The palier asks for an\n'
+      printf 'exact SHA; a report built on "+worktree" names a state no one else\n'
+      printf 'can fetch, and closes no line of the palier.\n'
       ;;
   esac
   guard_passed=1
@@ -454,6 +691,14 @@ do_run() {
     ended=$(date -u +%s)
     seconds=$((ended - started))
 
+    # The five palier harnesses publish a report of their own, and the complete
+    # report points at it rather than paraphrasing it: the machine-level constats
+    # belong to the harness that took them, and a summary of a summary is where
+    # a limit goes missing.
+    if [[ -d "$root/tests/artifacts/proofs/$name" ]]; then
+      pass_report[$name]=$(ls -t -- "$root/tests/artifacts/proofs/$name" 2>/dev/null | head -1)
+    fi
+
     if [[ $status -eq 0 ]]; then
       printf 'PASS %s in %d s\n' "$name" "$seconds"
       record_pass "$name" passed "$seconds" "pass-$name.log"
@@ -473,6 +718,16 @@ do_run() {
       else
         printf 'RED %s after %d s (status %d)\n' "$name" "$seconds" "$status" >&2
         failure_class=product_or_assertion_failure
+        # A multi-hour run can be crossed by a clock step. Several harnesses
+        # refuse to issue an approval against a clock that is moving, and that
+        # refusal is a fact about this host's timekeeping and not about the
+        # product. It is named as such rather than counted as a red of the
+        # product, because the cheapest way to invent a defect is to let an
+        # environment failure wear a product failure's class.
+        if grep -qE "clock is not synchronised|clock moved [0-9-]+s in two seconds" "$log"; then
+          printf 'The failure names this host clock, not the product.\n' >&2
+          failure_class=clock_step_during_run
+        fi
         record_pass "$name" failed "$seconds" "pass-$name.log"
       fi
       first_red=$name
@@ -493,6 +748,18 @@ do_run() {
   printf 'Its evaluation machine lives outside labctl and outside the %s\n' "$topology"
   printf 'topology. It is recorded as not run. A Windows half of this palier\n'
   printf 'remains unproven until that machine plays it.\n'
+
+  # Under `complete` the five below have just run, in the order above. Repeating
+  # here that they did not would be the one sentence of this file a reader could
+  # catch out, so the paragraphs are printed by the mode that is true of them.
+  if [[ $complete_mode -eq 1 ]]; then
+    announce "the five palier harnesses ran above, in the order #19 fixes"
+    printf 'oci-plan (#14), public-profile (#15), private-passage (#16),\n'
+    printf 'private-service (#17) and external-element (#18) each ran through its\n'
+    printf 'own entry point, unmodified, doing its own setup, its own reboots and\n'
+    printf 'its own teardown. Their verdicts are the verdicts of this run.\n'
+    return 0
+  fi
 
   announce "oci-plan is not run here either"
   printf 'It renders the controlled OCI plan palier (#14, proof #86) and not the\n'
@@ -581,7 +848,7 @@ do_close() {
   # calling the LAB clean.
   for item in "${assert_clean_residue[@]}"; do
     case "${item#*:}" in
-      lab-console | lab-machine-1 | "lab-$topology")
+      lab-console | lab-machine-1 | lab-vps | "lab-$topology")
         close_status=failed
         echo "the topology this run owns survived its own destruction: $item" >&2
         return 1
@@ -597,6 +864,367 @@ remains is named above and was there before the proof started. The topology
 this run owns is gone, so this is a retention to account for, not a cleanup
 failure — name it, its reason and the task responsible for it in the report.
 EOF
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# artifacts — `complete` only: the four deterministic files of the closed list
+# ---------------------------------------------------------------------------
+#
+# The four are produced by `tools/release-artifacts`, which reads the repository
+# and its locks and executes neither the product nor a test. Two of the six
+# things `#19` says the proof must constate are about these files rather than
+# about a machine, and neither is asserted here — each is a command whose
+# failure stops this stage:
+#
+#   two runs on one revision render the same bytes   `check-determinism`
+#   every digest recomputes from the repository      `sha256sum -c`
+#
+# The stage runs only when every harness passed. Release artifacts produced
+# beside a red would read as a candidate that no run supports.
+
+do_artifacts() {
+  local status=0 line digest name
+
+  if [[ -n "$first_red" ]]; then
+    artifacts_status=not_run
+    artifacts_reason="the sequence stopped at the first red ($first_red); release artifacts are not cut from a run that failed"
+    announce "Not producing the release artifacts: $artifacts_reason"
+    return 0
+  fi
+
+  announce "Producing the four deterministic artifacts of the closed list"
+  mkdir -m 0755 -p "$artifact_dir" || {
+    artifacts_status=failed
+    artifacts_reason="the artifact directory could not be created"
+    return 1
+  }
+
+  timeout --signal=TERM --kill-after=30s 600 \
+    "$root/tools/release-artifacts" produce "$artifact_dir" || status=$?
+  if [[ $status -ne 0 ]]; then
+    artifacts_status=failed
+    artifacts_reason="tools/release-artifacts produce ended with status $status"
+    failure_class=product_or_assertion_failure
+    first_red=artifacts
+    echo "FAILED: $artifacts_reason" >&2
+    return 1
+  fi
+
+  announce "Determinism is a command here, not a promise"
+  status=0
+  timeout --signal=TERM --kill-after=30s 600 \
+    "$root/tools/release-artifacts" check-determinism || status=$?
+  if [[ $status -ne 0 ]]; then
+    determinism_status=failed
+    artifacts_status=failed
+    artifacts_reason="tools/release-artifacts check-determinism ended with status $status"
+    failure_class=product_or_assertion_failure
+    first_red=artifacts
+    echo "FAILED: $artifacts_reason" >&2
+    return 1
+  fi
+  determinism_status=identical
+
+  announce "Verifying the artifacts the way a third party would"
+  status=0
+  (cd "$artifact_dir" && sha256sum -c checksums.txt) || status=$?
+  if [[ $status -ne 0 ]]; then
+    third_party_status=failed
+    artifacts_status=failed
+    artifacts_reason="sha256sum -c checksums.txt failed inside the artifact directory"
+    failure_class=product_or_assertion_failure
+    first_red=artifacts
+    echo "FAILED: $artifacts_reason" >&2
+    return 1
+  fi
+  third_party_status=passed
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    digest=${line%% *}
+    name=${line##* }
+    artifact_digests+=("$name $digest")
+  done <"$artifact_dir/checksums.txt"
+
+  artifacts_status=passed
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# report — `complete` only: the fifth artifact, and the only sealed one
+# ---------------------------------------------------------------------------
+#
+# It is written last, after the closure, because `labctl assert-clean` is this
+# run's final constat on machines and a report that omitted its own closure
+# would be a report with a hole. Its seal is taken once, over a whole document.
+#
+# `proof-checksum.txt` is the #111 decision, implemented exactly: the format of
+# `sha256sum`, no header and no comment, covering the report alone. Two scopes,
+# two files, neither claiming the other — `sha256sum -c checksums.txt` says the
+# four files are this revision's, `sha256sum -c proof-checksum.txt` says the
+# report is this run's.
+
+hms() {
+  local total=$1
+  printf '%dh%02dm%02ds' $((total / 3600)) $(((total % 3600) / 60)) $((total % 60))
+}
+
+do_report() {
+  local status=0 entry name pass_status seconds bound issues step
+
+  if [[ $artifacts_status != passed ]]; then
+    report_status=not_run
+    announce "Not writing the report: the artifacts stage is '$artifacts_status'"
+    return 0
+  fi
+
+  announce "Writing the single report of this run, and sealing it"
+  {
+    cat <<EOF
+proof: your-cloud v0.1.0, the complete proof — every palier replayed in one run
+       from a topology really destroyed, created and provisioned
+contract: docs/objectifs/v1/PREUVE-COMPLETE.md (palier #19, addendum #111)
+issue: #112
+run: $run_id
+revision: $revision
+started_at: $started_at
+outcome_of_the_sequence: every harness passed
+
+WHAT THE TOPOLOGY IS, SAID BEFORE ANYTHING ELSE
+
+  The topology named 'quick' below is a reference LAB scenario. It is not an
+  imposed infrastructure, and nothing in this report should be read as a
+  prerequisite of a real installation. Its three machines exist so that a
+  scenario is reproducible by someone who has none of this project's hardware.
+
+  The profiles this run exercises — a public one, a private one, a passage
+  between them, an element the product never installed — are explicitly
+  selected loads, not a catalogue. The sentence every profile contract already
+  carries is the sentence this report repeats: nothing is created without
+  declaration, placement, plan and approval. A reader who discovers the product
+  through this report must come out of it knowing what he can choose, not what
+  he will have to endure.
+
+THE CLEAN BASE — 'clean' meaning destroyed, created, provisioned
+
+  'Clean' is not 'the harnesses cleaned up after themselves'. The contract
+  spells it as three commands, and this run ran those three commands before the
+  first pass, once:
+
+    tools/labctl topology destroy quick     $(printf '%-9s' "${rebuild_step_status[destroy]:-not_run}") $(hms "${rebuild_step_seconds[destroy]:-0}")
+    tools/labctl topology create quick      $(printf '%-9s' "${rebuild_step_status[create]:-not_run}") $(hms "${rebuild_step_seconds[create]:-0}")
+    tools/provision-lab all                 $(printf '%-9s' "${rebuild_step_status[provision]:-not_run}") $(hms "${rebuild_step_seconds[provision]:-0}")
+
+  started $rebuild_started_at, finished $rebuild_finished_at, $(hms "$rebuild_seconds") in all.
+
+  The machines below therefore came from the base image and from the recipe,
+  and from nothing an earlier run left. No account, no subordinate range, no
+  table and no key of a previous execution survived into this one, because the
+  domains and their volumes ceased to exist between the first line and the
+  second.
+
+  The three machines this run then held, as the guard read them just after the
+  provisioning and before the first pass:
+
+    lab-console      ${vm_address[lab-console]:-unread}
+                     the operator's machine. It builds the Console crate, plays
+                     the Controller of the bootstrap passes, and stands in as
+                     hostile observer and synthetic neighbour for the harnesses
+                     that need a third party with root;
+    lab-machine-1    ${vm_address[lab-machine-1]:-unread}
+                     the machine of the LAN. It holds the managed services, the
+                     private service and its data, and it is the initiator of
+                     the passage. It gains no public port;
+    lab-vps          ${vm_address[lab-vps]:-unread}
+                     the public machine. It holds the entrypoint, the declared
+                     names, the listener's side of the passage and, for the
+                     external palier, the Controller.
+
+  The pilot's own host is the fourth party throughout, and the one that judges
+  from outside: it speaks TCP and TLS to those machines like any other client
+  and never runs a command on them for a constat about what they expose.
+
+THE SEQUENCE AS EXECUTED
+
+  Each harness ran through its own entry point with its own 'all', unmodified.
+  A harness edited for this occasion would prove something other than what its
+  palier closed, so none was edited, reordered or split. Each did its own
+  setup, its own reboots and its own teardown, in its own order.
+
+  The bounds are wall-clock ceilings, not expectations: they exist so a hung
+  pass ends as a named failure instead of an unattended night.
+
+    pass                    issues        verdict     duration     bound
+EOF
+    for entry in "${pass_results[@]}"; do
+      name=$(sed -n 's/.*"pass":"\([^"]*\)".*/\1/p' <<<"$entry")
+      issues=$(sed -n 's/.*"issues":"\([^"]*\)".*/\1/p' <<<"$entry")
+      pass_status=$(sed -n 's/.*"status":"\([^"]*\)".*/\1/p' <<<"$entry")
+      seconds=$(sed -n 's/.*"duration_seconds":\([0-9]*\).*/\1/p' <<<"$entry")
+      bound=$(sed -n 's/.*"bound_seconds":\([0-9]*\).*/\1/p' <<<"$entry")
+      printf '    %-23s %-13s %-11s %-12s %s\n' \
+        "$name" "$issues" "$pass_status" "$(hms "${seconds:-0}")" "$(hms "${bound:-0}")"
+    done
+    cat <<EOF
+
+  Order, and why it is this one: the #13 passes first, because bootstrap and
+  identities are what every later harness travels over; then the mechanism of
+  the controlled plan before any load is placed on it; then the public entry,
+  read from outside the machine that serves it; then the bounded passage and
+  its refusals; then the private service that travels that passage, with its
+  data and its archives; then the external element, last, because it is about
+  what the product never installed.
+
+  A failing harness stops the sequence. The complete proof never announces a
+  partial success, and this run has nothing partial to announce: every pass
+  above is 'passed'.
+
+  Per-pass logs, redacted of this host's paths, are beside this file one level
+  up: pass-<name>.log. The machine-level constats — every table, port, unit and
+  refusal each harness read — stay in the harness's own report, pointed at here
+  rather than paraphrased, because a summary of a summary is where a limit goes
+  missing:
+
+EOF
+    for name in "${palier_passes[@]}"; do
+      printf '    %-20s tests/artifacts/proofs/%s/%s/report.txt\n' \
+        "$name" "$name" "${pass_report[$name]:-<none published>}"
+    done
+    cat <<EOF
+
+  Not run, and named rather than omitted:
+
+    windows-helper   its evaluation machine lives outside labctl and outside
+                     this topology. The Windows half of the bootstrap palier is
+                     unproven by this run.
+
+THE ARTIFACTS
+
+  The closed list of #19 has five entries. Four are written by
+  tools/release-artifacts from the repository and its locks; the fifth is this
+  file.
+
+EOF
+    for entry in "${artifact_digests[@]}"; do
+      printf '    %-20s %s\n' "${entry%% *}" "${entry##* }"
+    done
+    cat <<EOF
+
+  two runs, one revision, same bytes             $determinism_status
+  sha256sum -c checksums.txt, in the directory   $third_party_status
+
+  Both are commands this run ran, not properties it asserts. The first produced
+  the four files twice into two directories and compared them byte for byte;
+  the second is what a third party runs, needing nothing of ours.
+
+  This report is named by manifest.json without a digest, and the manifest says
+  why: the four other artifacts speak of a revision, and this one speaks of a
+  run. Its dates, its machines and its limits are exactly what two executions
+  on one revision cannot render identical, so hashing it into the manifest
+  would make the manifest vary from run to run and destroy the property that
+  makes the other four verifiable.
+
+  It is sealed instead by proof-checksum.txt, written beside it, in the exact
+  format of checksums.txt and covering this report alone. Two scopes, two
+  files, neither claiming the other:
+
+    sha256sum -c checksums.txt        these four files are this revision's
+    sha256sum -c proof-checksum.txt   this report is this run's
+
+  What this artifact set carries no byte of: the distributable loads. The
+  Debian 13 amd64 server .deb and the Console installers are built elsewhere
+  and linked by their own signed manifest.
+
+THE CLOSURE
+
+  tools/labctl assert-clean refuses every VM carrying the origin
+  your-cloud/labctl and every suspect lab-* name. It is therefore red for as
+  long as the topology exists, whatever the harnesses cleaned: the machines
+  themselves are what it names. 'assert-clean green at the end' consequently
+  requires the topology to be destroyed as the final act, and this run destroys
+  it — a decision recorded here rather than discovered by a reader.
+
+    tools/labctl topology destroy quick    $close_status
+    tools/labctl assert-clean              $assert_clean_status
+
+  Nothing was added to assert-clean by hand for this run, and no exception was
+  written for it.
+
+THE BLOCKING RULE, WITHOUT AN IMPLICIT EXCEPTION
+
+  Every capability this proof does not establish is announced as unproven and
+  prevents the release. The rule admits neither 'proven elsewhere', nor 'proven
+  in unit', nor 'proven at an earlier palier' as a silent substitute: what is
+  proven otherwise is named with the exact form of its proof, and that form is
+  legible here.
+
+  Already known, and carried by name:
+
+    1. the Console is not exercised by the LAB harnesses. Its surface is proven
+       by its own suite, and the native consent window is not wired to any run
+       above;
+    2. the signatures of these proofs go through synthetic fixtures; the
+       Console signs nothing in these runs;
+    3. the TLS of these proofs is a synthetic authority of the run;
+    4. none of these executions has seen a hosted gate;
+    5. arm64 is not proven;
+    6. public Windows distribution remains blocked.
+
+  Each harness carries further limits of its own, in its own report, and this
+  run does not restate them here as if they were fewer.
+EOF
+    case "$revision" in
+      *+worktree)
+        cat <<EOF
+
+  And one more, belonging to this run rather than to the palier:
+
+    7. this run judges an unpublished tree. The revision above ends in
+       '+worktree', which names a state no one else can fetch. Every digest in
+       these artifacts is recomputable from this working tree and from nothing
+       a third party can obtain, so this run closes no line that asks for an
+       exact SHA. It is a rehearsal of the complete proof against real machines,
+       not the run that attaches artifacts to an announced revision.
+EOF
+        ;;
+    esac
+    cat <<EOF
+
+WHAT THIS PROOF IS NOT
+
+  It is necessary and not sufficient. Three requirements of v0.1.0 name a SHA
+  attested by the hosted gate — the palier issues all closed, the artifacts
+  matching the announced revision, the tag designating the SHA of the final
+  matrix. No local execution produces that attestation, and this report says so
+  rather than letting a reader discover it.
+
+  It says what was constated on machines of a reference LAB scenario. It does
+  not say what the product would do on a real infrastructure.
+
+report written: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+  } >"$report_file" || {
+    report_status=failed
+    return 1
+  }
+  chmod 0644 "$report_file"
+
+  (cd "$artifact_dir" && sha256sum report.txt >proof-checksum.txt) || {
+    report_status=failed
+    return 1
+  }
+  chmod 0644 "$proof_checksum_file"
+
+  (cd "$artifact_dir" && sha256sum -c proof-checksum.txt) || status=$?
+  if [[ $status -ne 0 ]]; then
+    report_status=failed
+    echo "FAILED: the report's own seal does not verify" >&2
+    return 1
+  fi
+  report_status=sealed
+  printf 'report=%s\n' "$report_file"
+  printf 'seal=%s\n' "$proof_checksum_file"
   return 0
 }
 
@@ -620,5 +1248,24 @@ case "$command" in
     do_run || run_status=$?
     do_close || fail "the LAB could not be closed"
     [[ $run_status -eq 0 && -z "$first_red" ]] || exit 1
+    ;;
+  complete)
+    # The order of #19, in one place: a clean base, the passes, the artifacts,
+    # the closure, the report. The closure runs whatever happened before it,
+    # because a proof that fails and leaves a topology up has failed twice.
+    do_rebuild || fail "the topology could not be rebuilt from nothing"
+    do_guard
+    run_status=0
+    do_run || run_status=$?
+    artifacts_status_ok=0
+    do_artifacts || artifacts_status_ok=$?
+    close_ok=0
+    do_close || close_ok=$?
+    do_report || echo "the report could not be written or sealed" >&2
+    [[ $close_ok -eq 0 ]] || fail "the LAB could not be closed"
+    [[ $run_status -eq 0 && $artifacts_status_ok -eq 0 && -z "$first_red" ]] || exit 1
+    [[ "$assert_clean_status" == green ]] \
+      || fail "assert-clean is not green: #19 requires it green at the end, without an exception added by hand"
+    [[ "$report_status" == sealed ]] || fail "the report was not sealed"
     ;;
 esac

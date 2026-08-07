@@ -109,15 +109,32 @@ provision_console() {
     # The WebKit and rsvg lines are what the console crate itself links
     # against; without them only the Assistant crate compiles here, and the
     # console crate's own tests have no ground to run on.
+    #
+    # The display server and its two probes are here for a reason that took a
+    # destroyed topology to see. An earlier reading of this file kept them out,
+    # on the grounds that a virtual screen belongs to a hosted runner and not to
+    # a compilation ground. That was wrong about what this machine does: the
+    # personal-access proof opens the product's own native window and drives it,
+    # so `xvfb-run` is not a runner's convenience here but the floor that proof
+    # stands on. A topology alive for days had them from an earlier hand; the
+    # first run from nothing stopped on `xvfb-run: command not found`.
     remote lab-console "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
       && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         build-essential pkg-config libgtk-3-dev gdb \
         libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+        xvfb dbus-x11 xdotool imagemagick lsof \
         >/dev/null"
     note "build dependencies" "installed"
   fi
-  # `gdb` is not optional: the secret-crash suite runs `gcore`.
-  remote lab-console "command -v gdb >/dev/null" || fail "gdb is absent after installation"
+  # Each of these is named rather than assumed, because every one of them was
+  # once present by an accident of history and absent from this recipe: `gdb`
+  # because the secret-crash suite runs `gcore`, `xvfb-run` because the
+  # personal-access proof drives a real native window, `xdotool` and `import`
+  # because that proof probes and photographs it.
+  for tool in gdb xvfb-run xdotool import; do
+    remote lab-console "command -v $tool >/dev/null" \
+      || fail "$tool is absent after installation"
+  done
 
   if remote lab-console ". /root/.cargo/env 2>/dev/null && cargo +$rust_version --version >/dev/null 2>&1"; then
     note "Rust $rust_version" "already installed"
@@ -129,6 +146,42 @@ provision_console() {
     note "Rust $rust_version" "installed"
   fi
   note observed "$(remote lab-console ". /root/.cargo/env && cargo +$rust_version --version")"
+
+  # The registry of crates the proofs build against, warmed here and not by the
+  # proofs themselves.
+  #
+  # Every harness that compiles the console builds with `--offline`, so that the
+  # build proves it pulls nothing from a network at the moment it runs. That
+  # flag is worth having and it says nothing about where the crates came from:
+  # they have to be on the machine already. Until the first complete proof, they
+  # always were — a topology that had been alive for days carried a registry
+  # warmed by an earlier build, and no one had to name it. The first run from a
+  # topology really destroyed and recreated found the machine bare and stopped
+  # on `no matching package named serde`, fifty-five seconds in.
+  #
+  # So the registry is ground, exactly like the toolchain above, and it is
+  # placed by the recipe: the workspace is copied here, `cargo fetch --locked`
+  # resolves it from the lock the repository versions, and the copy is removed.
+  # What stays is `~/.cargo/registry`, which is what a later `--offline` build
+  # reads.
+  if remote lab-console "test -d /root/.cargo/registry/cache"; then
+    note "crate registry" "already warmed"
+  else
+    local warm=/root/cargo-warm archive
+    archive=$(mktemp -t provision-lab-workspace-XXXXXX.tgz)
+    tar czf "$archive" -C "$root/console" --exclude=target --exclude=node_modules src-tauri
+    remote lab-console "rm -rf $warm && install -d -m 0700 $warm"
+    "$labctl" copy-to lab-console "$archive" /root/cargo-warm-workspace.tgz >/dev/null
+    rm -f "$archive"
+    remote lab-console "tar xzf /root/cargo-warm-workspace.tgz -C $warm \
+      && rm -f /root/cargo-warm-workspace.tgz"
+    remote lab-console ". /root/.cargo/env \
+      && cd $warm/src-tauri \
+      && cargo +$rust_version fetch --locked >/dev/null 2>&1"
+    remote lab-console "rm -rf $warm"
+    note "crate registry" "warmed from the versioned lock"
+  fi
+  note observed "$(remote lab-console "ls /root/.cargo/registry/cache/*/ | wc -l") crates cached"
 }
 
 # ensure_go places the pinned toolchain a proof compiles the product with. It is
@@ -146,6 +199,20 @@ ensure_go() {
       && rm -f /tmp/go.tgz"
     note "Go $go_version" "installed"
   fi
+  # The toolchain is placed where every shell looks, and not only where this
+  # recipe put it.
+  #
+  # `go` unpacks under /usr/local/go/bin, which is on no default PATH. A command
+  # run over ssh is neither a login shell nor an interactive one, so it reads no
+  # profile: a harness that calls `go` plainly does not find it. The newer
+  # harnesses export the path themselves; the older ones ask `command -v go` and
+  # were answered, for months, by a line someone had added by hand to a machine
+  # that has since been destroyed. Two links cost nothing and make the toolchain
+  # findable by whoever asks, which is what installing it was supposed to mean.
+  remote "$vm" "ln -sfn /usr/local/go/bin/go /usr/local/bin/go \
+    && ln -sfn /usr/local/go/bin/gofmt /usr/local/bin/gofmt"
+  remote "$vm" "command -v go >/dev/null" \
+    || fail "go is absent from the PATH of a plain command on $vm"
   note observed "$(remote "$vm" '/usr/local/go/bin/go version')"
 }
 

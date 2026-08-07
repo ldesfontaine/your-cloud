@@ -287,6 +287,116 @@ que `#108` a nommée : **la Console n'est pas exercée par ce harnais** — elle
 l'inventaire et retire une déclaration, elle n'a pas de formulaire de
 déclaration, et c'est sa propre suite Rust et TypeScript qui la prouve.
 
+### La course complète : `tests/lab/v0.1.0/prove complete`
+
+Le palier `#19` demande que toutes ces preuves tiennent **ensemble, dans
+l'ordre, sur des machines qui ne gardaient rien**. C'est ce que fait le mode
+`complete` de [`tests/lab/v0.1.0/prove`](../../tests/lab/v0.1.0/prove), et c'est
+un **mode de cet orchestrateur** plutôt qu'un second orchestrateur : le contrat
+demande un ordre et un rapport, pas deux fichiers qui pourraient diverger.
+
+```text
+tests/lab/v0.1.0/prove complete
+```
+
+Les modes existants ne changent pas. `guard`, `run`, `close` et `all` gardent
+exactement leur comportement, et chaque preuve de palier reste lançable seule
+par sa propre entrée — c'est la condition pour qu'une preuve de palier continue
+de prouver son palier.
+
+Ce que `complete` ajoute tient en cinq choses.
+
+**Une base réellement propre.** `Propre` n'est pas « les harnais ont nettoyé
+derrière eux ». Ce sont les trois commandes du contrat, jouées une fois, avant
+la première passe :
+
+```text
+tools/labctl topology destroy quick     la topologie cesse d'exister
+tools/labctl topology create quick      les machines renaissent de l'image de base
+tools/provision-lab all                 le sol est reposé par la recette
+```
+
+La destruction n'est pas conditionnée à une topologie que l'inventaire
+montrerait : elle est exactement l'inventaire que cette étape existe pour ne pas
+croire. Le coût est de vingt à trente minutes, la chaîne Rust de `lab-console`
+en tenant l'essentiel.
+
+**Onze passes, chacune rejouée telle quelle.** Les six passes du palier `#13`,
+puis les cinq harnais de palier dans l'ordre du produit : `oci-plan` (`#14`),
+`public-profile` (`#15`), `private-passage` (`#16`), `private-service` (`#17`),
+`external-element` (`#18`). Chacun est appelé par sa propre entrée avec son
+propre `all`, donc fait son propre montage, ses propres redémarrages et son
+propre démontage, dans son propre ordre. Rien n'est réordonné ni modifié : un
+harnais retouché pour l'occasion prouverait autre chose que ce que son palier a
+fermé. Un harnais qui échoue **arrête la séquence**.
+
+Chaque passe porte une borne d'horloge murale — un plafond, jamais une attente.
+Elles sont généreuses parce que ces harnais compilent du Rust et du Go sur les
+machines et les redémarrent vraiment ; elles existent pour qu'une passe bloquée
+finisse en échec nommé plutôt qu'en nuit sans surveillance. Une passe tuée sur
+sa borne est forcée à travers son propre `remove` avant la suivante.
+
+**Les artefacts, et deux commandes plutôt que deux intentions.**
+[`tools/release-artifacts`](../../tools/release-artifacts) écrit les quatre
+fichiers déterministes de la liste close ; la course lance ensuite
+`check-determinism`, qui produit deux fois et compare octet pour octet, puis
+`sha256sum -c checksums.txt` dans le répertoire, c'est-à-dire la vérification
+d'un tiers. L'étape ne s'exécute **que si toutes les passes sont vertes** : des
+artefacts de release taillés à côté d'un rouge se liraient comme un candidat que
+nulle course ne soutient.
+
+**Un rapport unique, scellé par sa propre course.** `report.txt` est le
+cinquième artefact. Le manifeste le **nomme sans l'empreindre** — les quatre
+autres parlent d'une révision, lui parle d'une course — et il est scellé par un
+`proof-checksum.txt` écrit à côté de lui, au format exact de `checksums.txt`,
+couvrant le seul rapport (décision `#111`). Deux portées, deux fichiers :
+
+```text
+sha256sum -c checksums.txt        les quatre fichiers sont ceux de cette révision
+sha256sum -c proof-checksum.txt   le rapport lu est celui que cette course a produit
+```
+
+Le rapport nomme la topologie **scénario LAB de référence** et jamais
+infrastructure imposée, porte nommément les six limites déjà connues du contrat,
+et pointe le rapport propre à chaque harnais plutôt que de le résumer : un
+résumé de résumé est l'endroit où une limite disparaît.
+
+**Une fermeture qui est verte pour la bonne raison.** `labctl assert-clean`
+refuse toute VM d'origine `your-cloud/labctl` et tout nom `lab-*` suspect : il
+est donc **rouge tant que la topologie existe**, quoi que les harnais aient
+nettoyé, puisque ce sont les machines elles-mêmes qu'il nomme. « `assert-clean`
+vert à la fin » exige par conséquent que la topologie soit détruite en dernier
+acte, et `complete` la détruit. Aucune exception n'est ajoutée à la main.
+
+Deux ordonnancements sont des décisions et le rapport les porte : les artefacts
+ne sont produits qu'après une séquence entièrement verte, et le rapport est
+**écrit après la fermeture** — `assert-clean` est le dernier constat de la
+course sur des machines, et un rapport taisant sa propre fermeture serait un
+rapport troué. Son sceau est donc pris une fois, sur un document entier, et
+jamais rouvert.
+
+Deux risques d'une course de plusieurs heures sont traités plutôt que subis :
+une horloge qui **bouge** en cours de route — plusieurs harnais refusent
+d'émettre une approbation contre une horloge en train d'être recalée, et
+l'orchestrateur classe ce rouge `clock_step_during_run` plutôt que de le laisser
+porter la classe d'un défaut produit —, et un arbre de travail modifié, que le
+rapport annonce comme une limite supplémentaire : `+worktree` nomme un état que
+personne d'autre ne peut récupérer, et une telle course est une répétition
+générale de la preuve complète, pas la course qui rattache des artefacts à une
+révision annoncée.
+
+Les sorties vont sous
+`tests/artifacts/proofs/v0.1.0-complete/<run>/` — répertoire distinct de
+`v0.1.0/<run>`, pour qu'un lecteur n'ait pas à deviner si la course qu'il ouvre
+a jugé six passes ou onze. On y trouve `result.json`, les journaux expurgés
+`pass-<nom>.log`, et `artifacts/` avec les six fichiers : `manifest.json`,
+`checksums.txt`, `sbom.json`, `provenance.json`, `report.txt` et
+`proof-checksum.txt`.
+
+Enfin, ce que cette course ne fait pas : elle est **nécessaire et non
+suffisante**. Trois exigences de `v0.1.0` nomment un SHA attesté par la porte
+hébergée, qu'aucune exécution locale ne produit.
+
 Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
 sur les sources et contrats réutilisables. La **preuve LAB** sous
 [`tests/lab/`](../../tests/lab/) ajoute le placement réel, les processus,

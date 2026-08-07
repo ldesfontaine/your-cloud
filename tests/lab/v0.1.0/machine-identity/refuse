@@ -92,7 +92,7 @@ echo "== the identity of one machine, on its own machine and on the other =="
 for machine in "$one" "$two"; do
   answer=$(bounded "$machine" "$machine" </dev/null 2>&1 || true)
   case "$answer" in
-    *"signed approval must contain"*)
+    *"auxiliary input must contain"*)
       report "$machine admits the identity minted for it" "the Auxiliary answered" ;;
     *) fail "$machine admits the identity minted for it" "$answer" ;;
   esac
@@ -104,7 +104,7 @@ for pair in "$one $two" "$two $one"; do
   read -r key target <<<"$pair"
   answer=$(bounded "$key" "$target" </dev/null 2>&1 || true)
   case "$answer" in
-    *"signed approval must contain"*)
+    *"auxiliary input must contain"*)
       fail "the identity of $key presented to $target" "IT WAS ACCEPTED: $answer" ;;
     *"Permission denied (publickey)"*)
       report "the identity of $key presented to $target" \
@@ -146,7 +146,7 @@ echo
 echo "== a shell, and a command the client chose =="
 admin "$one" "rm -f /tmp/lab-machine-identity-shell-canary"
 answer=$(bounded_running "$one" "$one" 'touch /tmp/lab-machine-identity-shell-canary' </dev/null 2>&1 || true)
-expect "a client command on the bounded identity" "signed approval must contain" "$answer"
+expect "a client command on the bounded identity" "auxiliary input must contain" "$answer"
 observed=$(admin "$one" "test -e /tmp/lab-machine-identity-shell-canary && echo present || echo absent")
 case "$observed" in
   *absent*) report "the command the client asked for" "never ran" ;;
@@ -309,7 +309,7 @@ echo "== the elevation, run from the account itself =="
 elevate() { admin "$one" "sudo -u $account sudo -n $*"; }
 answer=$(elevate "/usr/lib/your-cloud/your-cloud auxiliary approve </dev/null" 2>&1 || true)
 expect "the exact invocation is the one thing it may run" \
-  "signed approval must contain" "$answer"
+  "auxiliary input must contain" "$answer"
 answer=$(elevate "/usr/lib/your-cloud/your-cloud auxiliary approve --format=json </dev/null" 2>&1 || true)
 expect "one free argument added to the exact invocation" "a password is required" "$answer"
 answer=$(elevate "/bin/sh -c id" 2>&1 || true)
