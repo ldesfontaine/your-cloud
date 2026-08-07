@@ -1,0 +1,846 @@
+#!/usr/bin/env bash
+# Drive the external element proof: a service Your Cloud never installed is
+# declared, read, contradicted, aged, collided with a managed one, withdrawn and
+# left running — and never once adopted.
+#
+# Three machines take part and none of them is interchangeable.
+#
+#   lab-machine-1  the observed machine. It holds the Daemon, the Relay, the
+#                  root-owned sheet of declared targets, both services this
+#                  harness posts by hand, and the one service the product itself
+#                  places. Every reading of this proof is taken on it;
+#   lab-vps        the Controller. It holds the declared inventory, mints the
+#                  element identifiers and the dates, reads the Relay and decides
+#                  the age of every constat;
+#   lab-console    the human's side. It holds the run's PKI and the synthetic
+#                  client that stands in for the Console, because the Console of
+#                  `#108` reads and withdraws and has no declaration form at all.
+#
+# What is real here and what is not, stated once. The Controller, the Relay, the
+# Daemon, the read-only adapter and the Auxiliary are the product's own binaries,
+# built from the synchronised sources and running against real systemd, a real
+# kernel and a real rootless Podman. Three things are synthetic and each is named
+# where it is used: the run's PKI, the approval envelope that places the managed
+# probe, and the client that speaks the Controller's API. The Console window is
+# not wired to this proof at all — it is a Rust and TypeScript surface proven by
+# its own suite.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [setup | chain | run | remove | all]
+
+  setup   synchronise the sources, let the Controller mint its identity, generate
+          the run's PKI for it, start the Controller, the Relay and the Daemon,
+          pair one device, open one session, and audit both machines before
+          anything of the scenario exists
+  chain   assert that the observation chain is really alive end to end: the
+          Daemon publishes, the Relay holds, the Controller reads
+  run     the eleven numbered steps of the scenario
+  remove  remove the perimeter from the three machines and prove its absence
+  all     the four above in order, removing even when a step fails (default)
+
+This harness belongs to the palier of external responsibility (#18, proof #109)
+and is deliberately not one of the passes of tests/lab/v0.1.0/prove, whose
+sequence is the bootstrap and replacement palier (#13, proof #41). It mounts and
+removes its own perimeter on lab-machine-1, lab-vps and lab-console, and creates
+no topology.
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  setup | chain | run | remove | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.0/external-element"
+observed_vm=lab-machine-1
+controller_vm=lab-vps
+client_vm=lab-console
+expected_origin=your-cloud/labctl
+remote_harness=/root/your-cloud-lab-external-element
+remote_sources=/root/lab-external-element-sources
+remote_state=/root/lab-external-element
+machine_id=lab-machine-1
+posed_port=19191
+neighbour_port=19192
+managed_port=18080
+freshness_limit=90
+result_root="$root/tests/artifacts/proofs/external-element"
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+workdir=$(mktemp -d)
+carried="${TMPDIR:-/tmp}/your-cloud-lab-external-element"
+mkdir -p "$carried"
+trap 'rm -rf "$workdir"' EXIT
+
+# The three labels of the scenario. They are constants of the harness so that a
+# constat taken before a reading and the same constat taken after it name the
+# same element, and so that the hostile one is written down exactly once.
+# Printable ASCII, because the contract closes the label on bytes and not on
+# taste: the first run of this proof wrote an accented word here and drew the
+# 422 the contract promises. It is kept as ASCII rather than as a fifth refusal
+# case, because the refusals below are the ones the palier names.
+posed_label='service posed by hand, described by no plan'
+managed_label='port that a plan already published'
+# Printable ASCII, inside the contract's 1..64 bound, and hostile in every way
+# the bound still allows: a script element, an attribute break, both quote kinds,
+# an SQL comment opener, an HTML entity that spells a right-to-left override and
+# a backslash escape that spells one too. The bytes that are *not* printable
+# ASCII belong to the refused cases below, because the contract says they can
+# never arrive at all.
+hostile_label='<script>alert("x")</script> '"'"'--&#x202E;\u202E`$(id)'
+
+scripts=(common install-observed install-controller install-client audit poser targets probe remove)
+
+failures=0
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+report() { printf '%-74s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+step() { printf '\n== %s ==\n' "$*"; }
+defect() {
+  printf '!! PRODUCT DEFECT: %s\n' "$1"
+  printf '   %s\n' "$2"
+}
+limit() {
+  printf '!! LIMIT: %s\n' "$1"
+  printf '   %s\n' "$2"
+}
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+# The revision is named once and honestly. A modified tree is announced as such,
+# because a report built on a state nobody can fetch closes no line of a palier.
+revision() {
+  local sha
+  sha=$(git -C "$root" rev-parse HEAD)
+  if ! git -C "$root" diff --quiet \
+    || ! git -C "$root" diff --cached --quiet \
+    || [[ -n $(git -C "$root" ls-files --others --exclude-standard) ]]; then
+    sha="$sha+worktree"
+  fi
+  echo "$sha"
+}
+
+observed_address=
+controller_address=
+client_address=
+
+locate() {
+  observed_address=$(inventory "$observed_vm")
+  controller_address=$(inventory "$controller_vm")
+  client_address=$(inventory "$client_vm")
+}
+
+on() {
+  local vm=$1
+  shift
+  "$labctl" ssh "$vm" -- "$remote_harness/$*"
+}
+
+# ask runs one script on one machine and returns the value it printed as
+# NAME=value. The whole stream is still shown, because a value read out of a step
+# whose assertions nobody saw is a value nobody can trust.
+ask() {
+  local vm=$1 name=$2
+  shift 2
+  local log="$workdir/ask-$vm-$name.log" status=0
+  set +e
+  "$labctl" ssh "$vm" -- "$remote_harness/$*" 2>&1 | tee "$log" >&2
+  status=${PIPESTATUS[0]}
+  set -e
+  [[ $status -eq 0 ]] || return "$status"
+  sed -n "s/^$name=//p" "$log" | tail -1
+}
+
+# ---------------------------------------------------------------------------
+# The Controller's own API, spoken from lab-console by the synthetic client.
+#
+# `api` prints the status line and the body exactly as the Controller answered,
+# and never fails on a refusal: half of what this palier proves is what the
+# Controller refuses, and a refusal read as a transport error would be a refusal
+# nobody could assert.
+
+api() {
+  local method=$1 path=$2 body=${3:-} remote
+  remote="lab-external-console $remote_state call $method $path"
+  if [[ $# -ge 3 ]]; then
+    remote="$remote $(printf '%q' "$body")"
+  fi
+  "$labctl" ssh "$client_vm" -- "$remote"
+}
+
+api_status() { sed -n 's/^status=//p' <<<"$1" | head -1; }
+api_body() { sed '1d' <<<"$1"; }
+
+inventory_field() {
+  printf '%s' "$1" | python3 -c '
+import json, sys
+label, field = sys.argv[1], sys.argv[2]
+try:
+    view = json.load(sys.stdin)
+except Exception:
+    print("unreadable")
+    sys.exit(0)
+for element in view.get("elements", []):
+    if element.get("label") == label:
+        value = element.get(field)
+        print("null" if value is None else value)
+        sys.exit(0)
+print("absent")
+' "$2" "$3"
+}
+
+inventory_count() {
+  printf '%s' "$1" | python3 -c '
+import json, sys
+try:
+    print(len(json.load(sys.stdin).get("elements", [])))
+except Exception:
+    print("unreadable")
+'
+}
+
+read_inventory() {
+  local answer
+  answer=$(api GET /v0/external-elements)
+  [[ "$(api_status "$answer")" == 200 ]] || {
+    printf '%s\n' "$answer" >&2
+    return 1
+  }
+  api_body "$answer"
+}
+
+# await_state waits for one element to reach one state and gives up loudly. The
+# wait exists because the chain is real: the Daemon collects every thirty
+# seconds, the Relay holds what it received and the Controller absorbs on the
+# read. Nothing here shortens that; the bound only says how long this proof is
+# willing to wait for a cadence the product owns.
+await_state() {
+  local label=$1 wanted=$2 bound=${3:-180} projection current waited=0
+  while true; do
+    projection=$(read_inventory) || return 1
+    current=$(inventory_field "$projection" "$label" state)
+    if [[ "$current" == "$wanted" ]]; then
+      printf '%s' "$projection"
+      return 0
+    fi
+    if [[ $waited -ge $bound ]]; then
+      echo "the element stayed $current after ${bound}s instead of reaching $wanted" >&2
+      printf '%s\n' "$projection" >&2
+      return 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
+declare_element() {
+  local label=$1 kind=$2 port=$3 encoded
+  encoded=$(printf '%s' "$label" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+  api POST /v0/external-elements \
+    "{\"schema_version\":1,\"machine_id\":\"$machine_id\",\"label\":$encoded,\"kind\":\"$kind\",\"probe_port\":$port}"
+}
+
+# ---------------------------------------------------------------------------
+
+mount_perimeter() {
+  local vm=$1 mode=$2 script
+  "$labctl" ssh "$vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  for script in "${scripts[@]}"; do
+    "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$script"
+  done
+  # lab-console receives the scripts and nothing else: it carries no Go
+  # toolchain, and the one program it runs arrives already built.
+  [[ "$mode" == sources ]] || return 0
+  "$labctl" copy-to "$vm" "$workdir/sources.tgz" /root/lab-external-element-sources.tgz >/dev/null
+  "$labctl" copy-to "$vm" "$harness/_fixture/main.go" /root/lab-external-console-main.go >/dev/null
+  "$labctl" copy-to "$vm" "$root/tests/lab/v0.1.0/oci-plan/_fixture/main.go" /root/lab-external-probe-main.go >/dev/null
+  "$labctl" copy-to "$vm" "$root/tests/lab/v0.0.3/generate-runtime-pki.go" /root/lab-external-pki-main.go >/dev/null
+  # The three programs that are not the product live inside the module because
+  # one of them asks internal/plan for canonical plan bytes. They exist only in
+  # this copy and are never packages of the product.
+  "$labctl" ssh "$vm" -- \
+    "rm -rf $remote_sources && install -d -m 0700 $remote_sources \
+     && tar xzf /root/lab-external-element-sources.tgz -C $remote_sources \
+     && install -d -m 0700 $remote_sources/labconsole $remote_sources/labprobe $remote_sources/labpki \
+     && mv /root/lab-external-console-main.go $remote_sources/labconsole/main.go \
+     && mv /root/lab-external-probe-main.go $remote_sources/labprobe/main.go \
+     && mv /root/lab-external-pki-main.go $remote_sources/labpki/main.go \
+     && rm -f /root/lab-external-element-sources.tgz"
+}
+
+setup() {
+  locate
+  echo "perimeter: observed $observed_vm at $observed_address, Controller $controller_vm at $controller_address"
+  echo "the human's side: $client_vm at $client_address"
+  echo "revision: $(revision)"
+
+  tar czf "$workdir/sources.tgz" -C "$root" go.mod go.sum cmd internal
+  mount_perimeter "$controller_vm" sources
+  mount_perimeter "$observed_vm" sources
+  mount_perimeter "$client_vm" scripts-only
+
+  # The Controller mints its identity first, because the run's PKI is generated
+  # *for* those two identifiers: a reader manifest naming another installation is
+  # refused, and rightly. The same phase builds the synthetic client, because
+  # lab-console carries no Go toolchain — a fact of this LAB, not a decision of
+  # the architecture, and the reason a finished binary crosses instead of a
+  # source tree.
+  local controller_id infrastructure_id
+  controller_id=$(ask "$controller_vm" CONTROLLER_ID \
+    "install-controller init $remote_sources") || return 1
+  infrastructure_id=$(sed -n 's/^INFRASTRUCTURE_ID=//p' \
+    "$workdir/ask-$controller_vm-CONTROLLER_ID.log" | tail -1)
+  [[ -n "$controller_id" && -n "$infrastructure_id" ]] \
+    || fail "the Controller did not mint an identity"
+  printf '%s\n%s\n' "$controller_id" "$infrastructure_id" >"$carried/identity"
+  echo "the Controller of this run is $controller_id in infrastructure $infrastructure_id"
+
+  # Each machine receives the leaves of its own role and no other's.
+  for role in relay machine-1; do
+    "$labctl" ssh "$controller_vm" -- "tar czf /root/pki-$role.tgz -C $remote_state/pki $role" >/dev/null
+    "$labctl" copy-from "$controller_vm" "/root/pki-$role.tgz" "$workdir/pki-$role.tgz" >/dev/null
+    "$labctl" ssh "$controller_vm" -- "rm -f /root/pki-$role.tgz"
+    "$labctl" copy-to "$observed_vm" "$workdir/pki-$role.tgz" "/root/pki-$role.tgz" >/dev/null
+    "$labctl" ssh "$observed_vm" -- \
+      "install -d -m 0700 $remote_state/credentials && tar xzf /root/pki-$role.tgz -C /root \
+       && cp /root/$role/* $remote_state/credentials/ && rm -rf /root/$role /root/pki-$role.tgz"
+  done
+  "$labctl" ssh "$controller_vm" -- \
+    "install -d -m 0700 $remote_state/credentials && cp $remote_state/pki/controller/* $remote_state/credentials/"
+
+  # The client crosses to the machine it belongs on, and the sources it was built
+  # from stay behind.
+  "$labctl" copy-from "$controller_vm" "$remote_state/lab-external-console" "$workdir/lab-external-console" >/dev/null
+  "$labctl" copy-to "$client_vm" "$workdir/lab-external-console" "/root/lab-external-console" >/dev/null
+  ask "$client_vm" CLIENT_READY "install-client /root/lab-external-console" >/dev/null || return 1
+  "$labctl" ssh "$client_vm" -- "rm -f /root/lab-external-console"
+
+  "$labctl" ssh "$controller_vm" -- \
+    "export PATH=\$PATH:/usr/local/go/bin && $remote_harness/install-controller serve \
+     $remote_state/credentials $client_address/32 $observed_address" || return 1
+  "$labctl" copy-from "$controller_vm" "$remote_state/window.json" "$workdir/window.json" >/dev/null
+  "$labctl" copy-to "$client_vm" "$workdir/window.json" "$remote_state/window.json" >/dev/null
+
+  "$labctl" ssh "$observed_vm" -- \
+    "export PATH=\$PATH:/usr/local/go/bin && $remote_harness/install-observed \
+     $remote_sources $remote_state/credentials $controller_address" || return 1
+
+  # One device, one human key, one session. This is the whole of what the
+  # synthetic Console does, and it is the debt `#108` named: the real Console has
+  # no declaration form, so a proof of this palier declares through the API.
+  "$labctl" ssh "$client_vm" -- \
+    "lab-external-console $remote_state pair $remote_state/window.json \
+     $controller_address:9443 $controller_address:9444" || return 1
+  "$labctl" ssh "$client_vm" -- "lab-external-console $remote_state session" || return 1
+
+  on "$controller_vm" audit before
+  on "$observed_vm" audit before
+}
+
+# ---------------------------------------------------------------------------
+
+chain() {
+  step "the observation chain, alive for real"
+  local waited=0 answer body
+  # The machine has to reach the managed inventory of the Controller, and it can
+  # only get there through a Relay read the Controller makes itself. Attaching is
+  # therefore the honest proof that Daemon, Relay and Controller are all three
+  # doing their job: no snapshot, no attachment.
+  while true; do
+    answer=$(api PUT "/v0/machines/$machine_id" \
+      '{"schema_version":1,"label":"the observed machine"}')
+    [[ "$(api_status "$answer")" == 200 || "$(api_status "$answer")" == 201 ]] && break
+    if [[ $waited -ge 120 ]]; then
+      printf '%s\n' "$answer" >&2
+      red "the machine attaches through a live chain" "the Controller answered $(api_status "$answer") after ${waited}s"
+      return 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  report "the machine attaches through a live chain" "attached after ${waited}s, Daemon -> Relay -> Controller"
+
+  answer=$(api GET /v0/machines)
+  body=$(api_body "$answer")
+  local observation
+  observation=$(printf '%s' "$body" | python3 -c '
+import json, sys
+view = json.load(sys.stdin)
+for machine in view.get("machines", []):
+    if machine.get("machine_id") == sys.argv[1]:
+        print(machine.get("observation_status"), machine.get("enrollment_status"))
+        sys.exit(0)
+print("absent")
+' "$machine_id")
+  case "$observation" in
+    "recent active") report "the Controller reads a recent observation of it" "$observation" ;;
+    *) red "the Controller reads a recent observation of it" "$observation" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+
+run() {
+  local projection state_word status_word reason observed_at answer body count
+  local posed_id managed_id hostile_id
+
+  # -------------------------------------------------------------------------
+  step "0. a fresh perimeter: no declaration anywhere, no sheet on the machine"
+
+  projection=$(read_inventory) || return 1
+  count=$(inventory_count "$projection")
+  [[ "$count" == 0 ]] && report "the declared inventory, before anything" "empty" \
+    || red "the declared inventory, before anything" "$count elements"
+  ask "$observed_vm" TARGETS_SHEET "targets show" >"$workdir/sheet-before" || return 1
+  [[ "$(cat "$workdir/sheet-before")" == absent ]] \
+    && report "the sheet of declared targets, before anything" "absent" \
+    || red "the sheet of declared targets, before anything" "$(cat "$workdir/sheet-before")"
+
+  # -------------------------------------------------------------------------
+  step "1. a service Your Cloud never installed, posted by this harness"
+
+  local owner
+  owner=$(ask "$observed_vm" POSED_OWNER "poser start $posed_port") || return 1
+  report "127.0.0.1:$posed_port, posted by hand" "accepting, held by $owner"
+  [[ "$owner" != your-cloud-* ]] \
+    && report "the account that holds it" "$owner — no account of this product" \
+    || red "the account that holds it" "$owner carries the product's own prefix"
+
+  # -------------------------------------------------------------------------
+  step "2. declared external: nothing installed, nothing read"
+
+  answer=$(declare_element "$posed_label" external_service "$posed_port")
+  if [[ "$(api_status "$answer")" != 201 ]]; then
+    printf '%s\n' "$answer" >&2
+    red "the declaration" "the Controller answered $(api_status "$answer")"
+    return 1
+  fi
+  posed_id=$(api_body "$answer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["element"]["element_id"])')
+  report "the declaration" "201, element_id $posed_id minted by the Controller"
+
+  projection=$(read_inventory) || return 1
+  state_word=$(inventory_field "$projection" "$posed_label" state)
+  status_word=$(inventory_field "$projection" "$posed_label" observation_status)
+  observed_at=$(inventory_field "$projection" "$posed_label" observed_at)
+  [[ "$state_word" == declared ]] && report "its state, before any reading" "declared" \
+    || red "its state, before any reading" "$state_word"
+  [[ "$status_word" == absent ]] && report "its age, before any reading" "absent" \
+    || red "its age, before any reading" "$status_word"
+  [[ "$observed_at" == null ]] && report "its date, before any reading" "none: nobody looked" \
+    || red "its date, before any reading" "$observed_at"
+
+  on "$observed_vm" audit after-declaration >"$workdir/audit-after-declaration" || true
+  local created
+  created=$(grep -cE '^(the sheet of declared targets|the probe account|the probe home) +absent$' \
+    "$workdir/audit-after-declaration" || true)
+  [[ "$created" == 3 ]] \
+    && report "what the declaration installed on the machine" "nothing: no sheet, no account, no home" \
+    || red "what the declaration installed on the machine" \
+      "$(grep -E 'probe account|probe home|sheet of declared' "$workdir/audit-after-declaration" | tr -s ' ' | tr '\n' ';')"
+
+  # -------------------------------------------------------------------------
+  step "3. the root-owned sheet is provisioned; the chain reads; the element is verified"
+
+  ask "$observed_vm" TARGETS_OWNER "targets set $posed_port" >"$workdir/sheet-owner" || return 1
+  report "the sheet, provisioned by root" "$(cat "$workdir/sheet-owner"), naming $posed_port"
+
+  projection=$(await_state "$posed_label" verified) || {
+    red "the reading" "the element never became verified"
+    return 1
+  }
+  observed_at=$(inventory_field "$projection" "$posed_label" observed_at)
+  status_word=$(inventory_field "$projection" "$posed_label" observation_status)
+  reason=$(inventory_field "$projection" "$posed_label" reason)
+  report "its state, after one reading" "verified"
+  report "the date of that constat" "$observed_at"
+  [[ "$status_word" == recent ]] && report "its age" "recent, inside the ${freshness_limit}s the product announces" \
+    || red "its age" "$status_word"
+  [[ "$reason" == null ]] && report "its reason" "none: a verified reading carries no reason" \
+    || red "its reason" "$reason"
+  printf '%s\n' "$observed_at" >"$workdir/verified-at"
+
+  # -------------------------------------------------------------------------
+  step "4. the posed service is stopped by hand: the next reading contradicts"
+
+  ask "$observed_vm" POSED_STATE "poser stop $posed_port" >/dev/null || return 1
+  projection=$(await_state "$posed_label" contradicted) || {
+    red "the reading after the stop" "the element never became contradicted"
+    return 1
+  }
+  observed_at=$(inventory_field "$projection" "$posed_label" observed_at)
+  status_word=$(inventory_field "$projection" "$posed_label" observation_status)
+  reason=$(inventory_field "$projection" "$posed_label" reason)
+  report "its state, after the stop" "contradicted"
+  report "the date of that constat" "$observed_at"
+  [[ "$observed_at" != "$(cat "$workdir/verified-at")" ]] \
+    && report "the constat moved" "yes: a new reading, a new date" \
+    || red "the constat moved" "the date did not change"
+  [[ "$status_word" == recent ]] && report "its age" "recent" || red "its age" "$status_word"
+  [[ "$reason" == null ]] && report "its reason" "none: contradicted is a state, not an excuse" \
+    || red "its reason" "$reason"
+  # The contract's own words, and the ones it forbids. `contradicted` says the
+  # port stopped accepting; it never says the thing is gone, and a projection
+  # that leaked such a word would be the misreading `#108` was told to prevent.
+  if printf '%s' "$projection" | grep -qiE '"(gone|disappeared|removed|deleted|missing)"'; then
+    red "the vocabulary of the projection" "it carries a word of disappearance"
+  else
+    report "the vocabulary of the projection" "contradicted, and no word of disappearance"
+  fi
+
+  # -------------------------------------------------------------------------
+  step "5. the Daemon is stopped: the constat ages, and the state does not move"
+
+  "$labctl" ssh "$observed_vm" -- "systemctl stop your-cloud-daemon.service"
+  report "the Daemon" "stopped, so nothing reads that port any more"
+  local aged_from
+  aged_from=$observed_at
+  sleep $((freshness_limit + 20))
+  projection=$(read_inventory) || return 1
+  state_word=$(inventory_field "$projection" "$posed_label" state)
+  status_word=$(inventory_field "$projection" "$posed_label" observation_status)
+  observed_at=$(inventory_field "$projection" "$posed_label" observed_at)
+  [[ "$status_word" == old ]] \
+    && report "its age, past the ${freshness_limit}s limit" "old: no longer presented as current" \
+    || red "its age, past the ${freshness_limit}s limit" "$status_word"
+  [[ "$state_word" == contradicted ]] \
+    && report "its state, while ageing" "contradicted, unchanged" \
+    || red "its state, while ageing" "$state_word"
+  [[ "$observed_at" == "$aged_from" ]] \
+    && report "the date of the constat, while ageing" "unchanged: nothing was invented to fill the silence" \
+    || red "the date of the constat, while ageing" "$observed_at moved from $aged_from"
+
+  # -------------------------------------------------------------------------
+  step "6. a neighbour nobody declared, and a service that comes back"
+
+  ask "$observed_vm" POSED_OWNER "poser start $neighbour_port" >/dev/null || return 1
+  report "127.0.0.1:$neighbour_port, posted by hand" "accepting, and named in no sheet and no declaration"
+  ask "$observed_vm" POSED_OWNER "poser start $posed_port" >/dev/null || return 1
+  "$labctl" ssh "$observed_vm" -- "systemctl start your-cloud-daemon.service"
+  report "the Daemon" "started again"
+
+  projection=$(await_state "$posed_label" verified) || {
+    red "the reading after the service returns" "the element never became verified again"
+    return 1
+  }
+  status_word=$(inventory_field "$projection" "$posed_label" observation_status)
+  report "the posed service, read again" "verified, $status_word"
+  count=$(inventory_count "$projection")
+  [[ "$count" == 1 ]] \
+    && report "the neighbour, in the declared inventory" "absent: one element, and it is the declared one" \
+    || red "the neighbour, in the declared inventory" "the inventory holds $count elements"
+  # The envelope the machine emitted is the place a discovery would have to
+  # appear, and it is read on the machine rather than inferred from the API.
+  local envelope
+  envelope=$("$labctl" ssh "$observed_vm" -- \
+    "grep -o '\"probe_port\":[0-9]*' /var/lib/private/your-cloud-daemon/observation-buffer.json 2>/dev/null | sort -u | tr '\n' ' '" || true)
+  report "the ports the machine's own envelope names" "${envelope:-only what the sheet names}"
+  if [[ "$envelope" == *"$neighbour_port"* ]]; then
+    red "no discovery happens" "the envelope names $neighbour_port, which no sheet declares"
+  else
+    report "no discovery happens" "the neighbour is named nowhere: no scan, no range, no resolution"
+  fi
+
+  # -------------------------------------------------------------------------
+  step "7. the collision: a port a managed service publishes"
+
+  ask "$observed_vm" MANAGED_OWNER "probe deploy" >"$workdir/managed-owner" || return 1
+  owner=$(cat "$workdir/managed-owner")
+  [[ "$owner" == your-cloud-* ]] \
+    && report "127.0.0.1:$managed_port, placed by an approved plan" "held by $owner, an account of this product" \
+    || red "127.0.0.1:$managed_port, placed by an approved plan" "held by $owner"
+  local syn_before
+  syn_before=$(ask "$observed_vm" MANAGED_SYN "probe watch") || return 1
+  [[ "$syn_before" == 0 ]] \
+    && report "the counter that witnesses connections to it" "installed at zero, on the kernel's input hook" \
+    || red "the counter that witnesses connections to it" "started at $syn_before"
+
+  answer=$(declare_element "$managed_label" external_service "$managed_port")
+  [[ "$(api_status "$answer")" == 201 ]] \
+    && report "declaring it external" "201: the Controller cannot know, and does not pretend to" \
+    || red "declaring it external" "the Controller answered $(api_status "$answer")"
+  managed_id=$(api_body "$answer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["element"]["element_id"])' 2>/dev/null || echo unknown)
+
+  ask "$observed_vm" TARGETS "targets set $posed_port $managed_port" >/dev/null || return 1
+  projection=$(await_state "$managed_label" unverifiable) || {
+    red "the machine's own constat" "the element never became unverifiable"
+    return 1
+  }
+  reason=$(inventory_field "$projection" "$managed_label" reason)
+  status_word=$(inventory_field "$projection" "$managed_label" observation_status)
+  observed_at=$(inventory_field "$projection" "$managed_label" observed_at)
+  [[ "$reason" == port_is_managed ]] \
+    && report "the reason the machine names" "port_is_managed" \
+    || red "the reason the machine names" "$reason"
+  report "its state and date" "unverifiable at $observed_at, $status_word"
+  local syn_after syn_control
+  syn_after=$(ask "$observed_vm" MANAGED_SYN "probe syns") || return 1
+  [[ "$syn_after" == 0 ]] \
+    && report "what the reading sent to the managed service" \
+      "nothing: not one connection was opened to it across the whole window" \
+    || red "what the reading sent to the managed service" "$syn_after connections were opened to it"
+  # And the counter is shown to be a witness rather than a rule that never
+  # matches: one connection made by hand has to move it.
+  syn_control=$(ask "$observed_vm" MANAGED_SYN "probe touch") || return 1
+  [[ "$syn_control" -gt 0 ]] \
+    && report "the counter, against one connection made by hand" \
+      "moved to $syn_control: it really witnesses what reaches that port" \
+    || red "the counter, against one connection made by hand" "stayed at $syn_control and witnesses nothing"
+  ask "$observed_vm" MANAGED_WATCH "probe unwatch" >/dev/null || true
+  # The declaration is not withdrawn by the Controller, and that is a decision:
+  # retiring what a human wrote is a human's act.
+  [[ "$(inventory_field "$projection" "$managed_label" element_id)" == "$managed_id" ]] \
+    && report "the declaration, after the collision" "still there: retiring it is a human's act" \
+    || red "the declaration, after the collision" "the Controller removed it"
+
+  # -------------------------------------------------------------------------
+  step "8. a hostile label, inert everywhere, and the bound that refuses the rest"
+
+  answer=$(declare_element "$hostile_label" external_passage 19999)
+  if [[ "$(api_status "$answer")" != 201 ]]; then
+    printf '%s\n' "$answer" >&2
+    red "a hostile label inside the bound" "the Controller answered $(api_status "$answer")"
+  else
+    hostile_id=$(api_body "$answer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["element"]["element_id"])')
+    report "a hostile label inside the bound" "201, stored exactly as written"
+    projection=$(read_inventory) || return 1
+    local returned
+    returned=$(inventory_field "$projection" "$hostile_label" element_id)
+    [[ "$returned" == "$hostile_id" ]] \
+      && report "the label, read back" "byte for byte what the human wrote, and inert" \
+      || red "the label, read back" "the projection does not carry it unchanged ($returned)"
+    if printf '%s' "$projection" | grep -q '<script>alert("x")</script>'; then
+      red "the label, in the projection" "it appears unescaped in the JSON body"
+    else
+      report "the label, in the projection" "escaped as JSON text, never as markup"
+    fi
+  fi
+
+  local case_name refused
+  for case_name in empty over-long control-byte right-to-left; do
+    local payload
+    case "$case_name" in
+      empty) payload='""' ;;
+      over-long) payload="\"$(printf 'a%.0s' {1..65})\"" ;;
+      control-byte) payload='"a\u0007b"' ;;
+      right-to-left) payload='"a‮b"' ;;
+    esac
+    answer=$(api POST /v0/external-elements \
+      "{\"schema_version\":1,\"machine_id\":\"$machine_id\",\"label\":$payload,\"kind\":\"external_service\",\"probe_port\":19998}")
+    refused=$(api_status "$answer")
+    if [[ "$refused" == 422 ]] && printf '%s' "$(api_body "$answer")" | grep -q 'label_invalid'; then
+      report "a label outside the bound: $case_name" "422 label_invalid"
+    else
+      red "a label outside the bound: $case_name" "$refused $(api_body "$answer" | tr -d '\n')"
+    fi
+  done
+
+  # -------------------------------------------------------------------------
+  step "9. no plan, no management action, no route by identifier"
+
+  answer=$(api POST /v0/probe-plans \
+    "{\"schema_version\":1,\"machine_id\":\"$machine_id\",\"operation\":\"deploy_oci_probe\",\"local_port\":$posed_port,\"element_id\":\"$posed_id\"}")
+  [[ "$(api_status "$answer")" == 400 ]] \
+    && report "a plan request carrying element_id" "400 invalid_request, refused at the decode" \
+    || red "a plan request carrying element_id" "$(api_status "$answer")"
+
+  local method
+  for method in GET PUT POST DELETE PATCH; do
+    answer=$(api "$method" "/v0/external-elements/$posed_id" '{"schema_version":1}')
+    if [[ "$(api_status "$answer")" == 404 ]]; then
+      report "$method /v0/external-elements/{id}" "404 route_not_found: the path exists under no method"
+    else
+      red "$method /v0/external-elements/{id}" "$(api_status "$answer") $(api_body "$answer" | tr -d '\n')"
+    fi
+  done
+
+  answer=$(api POST /v0/external-element-withdrawals '{"schema_version":1,"element_id":"AAAAAAAAAAAAAAAAAAAAAA"}')
+  [[ "$(api_status "$answer")" == 404 ]] \
+    && report "withdrawing a declaration nobody made" "404 resource_not_found" \
+    || red "withdrawing a declaration nobody made" "$(api_status "$answer")"
+
+  # -------------------------------------------------------------------------
+  step "10. the declaration is withdrawn, and the service keeps running"
+
+  answer=$(api POST /v0/external-element-withdrawals \
+    "{\"schema_version\":1,\"element_id\":\"$posed_id\"}")
+  [[ "$(api_status "$answer")" == 200 ]] \
+    && report "the withdrawal" "200, by POST on its own route and never by DELETE" \
+    || red "the withdrawal" "$(api_status "$answer")"
+
+  projection=$(read_inventory) || return 1
+  state_word=$(inventory_field "$projection" "$posed_label" state)
+  [[ "$state_word" == absent ]] \
+    && report "the element, after the withdrawal" "gone from the inventory" \
+    || red "the element, after the withdrawal" "$state_word"
+
+  local still
+  still=$(ask "$observed_vm" POSED_STATE "poser state $posed_port") || return 1
+  [[ "$still" == accepting ]] \
+    && report "the thing that was declared" "still running: withdrawing removed the declaration and nothing else" \
+    || red "the thing that was declared" "$still"
+
+  ask "$observed_vm" POSED_STATE "poser stop $posed_port" >/dev/null || return 1
+  report "who takes it away" "this harness, as its own act, because it is the one that posted it"
+
+  # -------------------------------------------------------------------------
+  step "11. the declarations this run made are withdrawn by the hand that made them"
+
+  local leftover
+  for leftover in "$managed_id" "$hostile_id"; do
+    [[ -n "$leftover" && "$leftover" != unknown ]] || continue
+    answer=$(api POST /v0/external-element-withdrawals "{\"schema_version\":1,\"element_id\":\"$leftover\"}")
+    [[ "$(api_status "$answer")" == 200 ]] \
+      && report "withdrawing $leftover" "200" \
+      || red "withdrawing $leftover" "$(api_status "$answer")"
+  done
+  projection=$(read_inventory) || return 1
+  count=$(inventory_count "$projection")
+  [[ "$count" == 0 ]] && report "the declared inventory, at the end" "empty" \
+    || red "the declared inventory, at the end" "$count elements"
+
+  [[ $failures -eq 0 ]] || {
+    echo "FAILED: $failures assertions" >&2
+    return 1
+  }
+  echo
+  echo "PASS: the eleven steps of the external element scenario"
+}
+
+# ---------------------------------------------------------------------------
+
+remove_perimeters() {
+  local status=0
+  step "removing the perimeter from the three machines"
+  on "$observed_vm" remove || status=$?
+  on "$controller_vm" remove || status=$?
+  on "$client_vm" remove || status=$?
+  on "$observed_vm" audit removed || status=$?
+  on "$controller_vm" audit removed || status=$?
+  for vm in "$observed_vm" "$controller_vm" "$client_vm"; do
+    "$labctl" ssh "$vm" -- "rm -rf $remote_harness $remote_sources $remote_state" || true
+  done
+  rm -f "$carried/identity"
+  return "$status"
+}
+
+play() {
+  local status=0
+  setup || status=$?
+  if [[ $status -eq 0 ]]; then chain || status=$?; fi
+  if [[ $status -eq 0 ]]; then run || status=$?; fi
+  remove_perimeters || status=$?
+  return "$status"
+}
+
+publish() {
+  local status=$1 log=$2 directory="$result_root/$run_id"
+  install -d -m 0755 "$directory"
+  {
+    printf 'proof: your-cloud external responsibility, represented without being adopted (palier #18, issue #109)\n'
+    printf 'run: %s\n' "$run_id"
+    printf 'revision: %s\n' "$(revision)"
+    printf 'observed machine: %s (topology quick) — Daemon, Relay, target sheet, posed services, managed probe\n' "$observed_vm"
+    printf 'Controller: %s (topology quick) — declared inventory, identifiers, dates and ages\n' "$controller_vm"
+    printf 'the human side: %s (topology quick) — run PKI and the synthetic Console client\n' "$client_vm"
+    if [[ $status -eq 0 ]] && ! grep -q '^!! PRODUCT DEFECT' "$log"; then
+      printf 'outcome: passed\n'
+    elif [[ $status -eq 0 ]]; then
+      printf 'outcome: failed (every assertion held; the failure is the product defects below)\n'
+    else
+      printf 'outcome: failed\n'
+    fi
+    printf 'finished_at: %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    if grep -q '^!! PRODUCT DEFECT' "$log"; then
+      printf 'product defects this run found, reported and deliberately not repaired by it:\n\n'
+      grep -A2 '^!! PRODUCT DEFECT' "$log" | sed -e 's/^/  /' -e 's/^  --$//'
+      printf '\n'
+    fi
+    if grep -q '^!! LIMIT' "$log"; then
+      printf 'limits this run named where they applied:\n\n'
+      grep -A2 '^!! LIMIT' "$log" | sed -e 's/^/  /' -e 's/^  --$//'
+      printf '\n'
+    fi
+
+    cat <<'DEBTS'
+what this proof does not claim, whatever its outcome:
+
+  - the Console is not exercised by this harness. `#108` closed with the debt
+    that the Console has no declaration form — it reads the declared inventory and
+    withdraws a declaration, and nothing else — so this proof declares through the
+    Controller's own route, with a synthetic client that stands in for a Console
+    and renders nothing. What a human would see is proven by the Console's own
+    Rust and TypeScript suite and never by this run.
+  - the run's PKI is synthetic, and so is the approval envelope that places the
+    managed probe. Four short-lived authorities are generated for this run alone,
+    and the plan half of the managed service is the fixture of tests/lab/v0.1.0/
+    oci-plan, reused unchanged: this proof borrows a managed service that palier
+    already knows how to place, and does not re-prove the OCI plan.
+  - two addresses are placed by the harness. The Relay refuses to listen anywhere
+    but one exact private address and its reader refuses every source but another,
+    and the topology `quick` holds neither. Both are put there with `ip addr` and
+    `ip route` and removed again; they are facts of the LAB and never behaviours
+    of the product.
+  - the collision constat is only as strong as the account that holds the socket.
+    It is read from the kernel's own tables and the account table, and a future
+    rootless arrangement that moved the host-side listener to another uid would
+    degrade the constat to "not managed" without any code changing. This run
+    asserts the account that really holds it rather than assuming it.
+  - the ageing step waits real seconds. The threshold is the product's announced
+    ninety, and this proof does not shorten it, move a clock or inject a date: it
+    stops the Daemon and waits, which is why the run is long.
+  - the hosted gate does not run this harness. It needs libvirt, a LAB and the
+    better part of half an hour; the quota debt of the September candidate covers
+    it.
+
+DEBTS
+    sed -e "s#$root#<repo>#g" -e "s#$HOME#<home>#g" -e "s#$(id -un)#<user>#g" "$log"
+  } >"$directory/report.txt"
+  chmod 0644 "$directory/report.txt"
+  printf '\nreport=%s\n' "$directory/report.txt"
+}
+
+case "$command" in
+  setup) setup ;;
+  chain) locate && chain ;;
+  run) locate && run ;;
+  remove)
+    locate
+    remove_perimeters
+    ;;
+  all)
+    set +e
+    play 2>&1 | tee "$workdir/run.log"
+    status=${PIPESTATUS[0]}
+    set -e
+    publish "$status" "$workdir/run.log"
+    exit "$status"
+    ;;
+esac

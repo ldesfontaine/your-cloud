@@ -247,6 +247,46 @@ topologie ne donne pas à `lab-machine-1` la pile réseau que la fiche de l'entr
 nomme —, et `retire_route` du genre public peut encore éteindre un fragment du
 genre lien, ce que le contrat n'interdit pas et que cette preuve n'exerce pas.
 
+Pour le palier de la responsabilité externe (`#18`),
+[`tests/lab/v0.1.0/external-element/prove`](../../tests/lab/v0.1.0/external-element/prove)
+est l'entrée d'orchestration, et c'est la première preuve LAB qui **monte la
+chaîne d'observation entière** plutôt que de la remplacer par une fiction :
+`lab-machine-1` tient le Daemon et le Relay, `lab-vps` tient le Controller — un
+vrai `controller init`, un vrai inventaire déclaré, ses propres identifiants et
+ses propres dates —, et `lab-console` tient le client qui parle à sa surface.
+Chaque état, chaque date et chaque mot d'ancienneté que le rapport cite sort de
+ce Controller-là.
+
+Le scénario est celui que le contrat annonce, en onze étapes : un service que
+Your Cloud n'a jamais installé est **posé à la main** sur un port de loopback,
+déclaré externe — sans que rien ne s'installe et sans qu'aucune lecture n'existe
+encore —, puis la fiche root-owned `/etc/your-cloud/external-targets.json` est
+provisionnée et la chaîne le rend `vérifié` avec sa date. Le service est arrêté
+à la main et la lecture suivante rend `contredit` ; le Daemon est arrêté et le
+constat **vieillit** au-delà des 90 secondes annoncées sans que son état bouge ;
+un voisin que personne ne déclare n'apparaît nulle part et n'est nommé dans
+aucune enveloppe ; un port qu'un service **géré** publie est rendu
+`invérifiable` pour le motif `port_is_managed` sans qu'aucune connexion ne lui
+soit adressée ; un libellé hostile reste inerte et les libellés hors bornes sont
+refusés ; aucun plan n'est constructible et `/v0/external-elements/{id}`
+n'existe sous aucune méthode ; enfin la déclaration est retirée par `POST` sur
+sa propre route et **le service continue de tourner**, que le harnais retire
+ensuite comme son propre acte.
+
+Cinq actes du harnais sortent de ce que le produit décide et se nomment
+eux-mêmes : poser puis retirer les deux écouteurs qu'aucun plan ne décrit ;
+provisionner la fiche de cibles à la place de root ; emprunter le fixture de
+[`oci-plan`](../../tests/lab/v0.1.0/oci-plan/) pour placer le service géré de la
+collision ; poser un compteur `nftables` purement observateur, parce que
+« rien ne s'est connecté à ce port » doit être un nombre et non une absence de
+preuve ; et **placer deux adresses**, `192.168.243.153` et `192.168.242.103`,
+que le Relay et son lecteur exigent et que la topologie `quick` ne porte pas.
+Cette dernière est une contrainte du produit lue par le LAB, jamais un
+comportement du produit modifié pour lui plaire. Le rapport porte aussi la dette
+que `#108` a nommée : **la Console n'est pas exercée par ce harnais** — elle lit
+l'inventaire et retire une déclaration, elle n'a pas de formulaire de
+déclaration, et c'est sa propre suite Rust et TypeScript qui la prouve.
+
 Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
 sur les sources et contrats réutilisables. La **preuve LAB** sous
 [`tests/lab/`](../../tests/lab/) ajoute le placement réel, les processus,

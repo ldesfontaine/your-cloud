@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# What one machine of this scenario holds, read before anything of the proof
+# exists on it and again after everything has been taken away.
+#
+# It judges nothing on its own: it prints, and the caller compares the two
+# readings. What it names is exactly the surface this proof can create — a sheet
+# of targets, two posed listeners, one managed probe and its account, the chain's
+# three units, and the two addresses the harness places for the product's own
+# pinned ones.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+moment=${1:-now}
+printf 'audit %s on %s at %s\n' "$moment" "$(hostname)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+report "the sheet of declared targets" "$([[ -e "$targets_sheet" ]] && echo present || echo absent)"
+report "the probe account" "$(id -u "$probe_account" >/dev/null 2>&1 && echo present || echo absent)"
+report "the probe home" "$([[ -e "$probe_home" ]] && echo present || echo absent)"
+for port in "$posed_port" "$neighbour_port" "$managed_port"; do
+  report "127.0.0.1:$port" "$(answers_on "$port"), held by $(who_holds "$port")"
+done
+for unit in "$daemon_unit" "$relay_unit" "$controller_unit"; do
+  report "$unit" "$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || echo unknown)/$(unit_state "$unit")"
+done
+report "the product binary" "$([[ -e "$artifact" ]] && sha256sum "$artifact" | cut -d' ' -f1 || echo absent)"
+report "the approval anchor" "$([[ -e "$anchor" ]] && echo present || echo absent)"
+report "the consumed anti-replay position" \
+  "$([[ -f "$replay" ]] && sed -n 's/.*"consumed_sequence":\([0-9]*\).*/\1/p' "$replay" || echo none)"
+report "the addresses this harness places" \
+  "$(ip -4 -brief address show scope global | tr '\n' ' ')"
+report "the declared inventory of any Controller here" \
+  "$([[ -e /var/lib/your-cloud-controller/external-elements.json ]] && echo present || echo absent)"
+
+verdict "$moment audit of $(hostname)"

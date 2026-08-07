@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Place, read and remove the one *managed* service of this proof.
+#
+# It exists for a single constat: the collision. A port a human declares external
+# while this product itself publishes it must be read `unverifiable` for the
+# named reason `port_is_managed`, and must never be connected to at all. To
+# constat that, the machine has to really hold a service the product really
+# placed, under an account the product really created.
+#
+# The service is the probe of `#14`, deployed through the plan and the approved
+# envelope of that palier and applied by the real Auxiliary. The plan half is the
+# synthetic fixture of tests/lab/v0.1.0/oci-plan, reused unchanged rather than
+# rewritten: this proof is not re-proving the OCI plan, it is borrowing a managed
+# service that palier already knows how to place.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+action=${1:?usage: probe <deploy|remove|state|watch|syns|touch|unwatch>}
+
+consumed_sequence() {
+  [[ -f "$replay" ]] || {
+    echo 0
+    return
+  }
+  sed -n 's/.*"consumed_sequence":\([0-9]*\).*/\1/p' "$replay"
+}
+
+as_probe() {
+  local uid
+  uid=$(id -u "$probe_account" 2>/dev/null) || return 1
+  cd / && runuser -u "$probe_account" -- env \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME="$probe_home" \
+    USER="$probe_account" \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    "$@"
+}
+
+case "$action" in
+  deploy)
+    cd /root
+    sequence=$(($(consumed_sequence) + 1))
+    lab-external-probe-fixture -operation deploy_oci_probe -port "$managed_port" -sequence "$sequence" \
+      >"$state/probe-plan.json"
+    output=$("$artifact" auxiliary approve --format=json <"$state/probe-plan.json" 2>&1) || {
+      printf '%s\n' "$output" >&2
+      echo "FAILED: the approved probe deployment was refused" >&2
+      exit 1
+    }
+    case "$output" in
+      *'"outcome":"applied"'*) ;;
+      *)
+        printf '%s\n' "$output" >&2
+        echo "FAILED: the probe deployment did not apply" >&2
+        exit 1
+        ;;
+    esac
+    for attempt in $(seq 1 60); do
+      [[ "$(answers_on "$managed_port")" == accepting ]] && break
+      sleep 1
+      [[ $attempt -lt 60 ]] || {
+        echo "FAILED: the managed probe never accepted on $managed_port" >&2
+        exit 1
+      }
+    done
+    printf 'MANAGED_PORT=%s\nMANAGED_OWNER=%s\nMANAGED_STATE=%s\n' \
+      "$managed_port" "$(who_holds "$managed_port")" "$(answers_on "$managed_port")"
+    ;;
+  remove)
+    cd /root
+    if id -u "$probe_account" >/dev/null 2>&1; then
+      sequence=$(($(consumed_sequence) + 1))
+      lab-external-probe-fixture -operation remove_oci_probe -port "$managed_port" -sequence "$sequence" \
+        >"$state/probe-retire.json" 2>/dev/null || true
+      "$artifact" auxiliary approve --format=json <"$state/probe-retire.json" >/dev/null 2>&1 || true
+    fi
+    printf 'MANAGED_PORT=%s\nMANAGED_STATE=%s\nMANAGED_ACCOUNT=%s\n' \
+      "$managed_port" "$(answers_on "$managed_port")" \
+      "$(id -u "$probe_account" >/dev/null 2>&1 && echo present || echo absent)"
+    ;;
+  state)
+    printf 'MANAGED_PORT=%s\nMANAGED_OWNER=%s\nMANAGED_STATE=%s\nMANAGED_ACCOUNT=%s\n' \
+      "$managed_port" "$(who_holds "$managed_port")" "$(answers_on "$managed_port")" \
+      "$(id -u "$probe_account" >/dev/null 2>&1 && echo present || echo absent)"
+    ;;
+  watch)
+    # A counter on the kernel's own input hook, so that "nothing ever connected
+    # to it" is a number and not an absence of evidence.
+    #
+    # The first run of this proof asked the container's log instead, and the log
+    # never moved — not for the reading, and not for a deliberate connection
+    # either. A witness that says nothing in both cases witnesses nothing. This
+    # one counts the opening packet of every loopback connection aimed at the
+    # managed port, and the step that reads it also makes one connection by hand
+    # to prove the counter really moves.
+    #
+    # It is a harness act on a harness-owned table, at the lowest priority and
+    # with an accept policy: it observes and decides nothing.
+    /usr/sbin/nft delete table inet lab-external-element 2>/dev/null || true
+    /usr/sbin/nft add table inet lab-external-element
+    /usr/sbin/nft add chain inet lab-external-element observe \
+      '{ type filter hook input priority -300 ; policy accept ; }'
+    /usr/sbin/nft add rule inet lab-external-element observe \
+      iif lo tcp dport "$managed_port" tcp flags syn counter
+    printf 'MANAGED_SYN=%s\n' "$("$here/probe" syns | sed -n 's/^MANAGED_SYN=//p')"
+    ;;
+  syns)
+    printf 'MANAGED_SYN=%s\n' \
+      "$(/usr/sbin/nft -a list chain inet lab-external-element observe 2>/dev/null \
+        | sed -n 's/.*counter packets \([0-9]*\).*/\1/p' | head -1)"
+    ;;
+  touch)
+    # One deliberate connection, so the counter above is shown to be a witness
+    # and not a rule that never matches.
+    answers_on "$managed_port" >/dev/null
+    printf 'MANAGED_SYN=%s\n' \
+      "$(/usr/sbin/nft -a list chain inet lab-external-element observe 2>/dev/null \
+        | sed -n 's/.*counter packets \([0-9]*\).*/\1/p' | head -1)"
+    ;;
+  unwatch)
+    /usr/sbin/nft delete table inet lab-external-element 2>/dev/null || true
+    printf 'MANAGED_WATCH=removed\n'
+    ;;
+  *)
+    echo "usage: probe <deploy|remove|state|watch|syns|touch|unwatch>" >&2
+    exit 2
+    ;;
+esac

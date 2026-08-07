@@ -256,7 +256,8 @@ write_result() {
     printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"},\n'
     printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"},\n'
     printf '    {"pass": "private-passage", "reason": "it renders the private WireGuard passage palier (#16, proofs #96 and #97, machine proof #98) across lab-machine-1 and lab-vps, not the bootstrap and replacement this sequence proves"},\n'
-    printf '    {"pass": "private-service", "reason": "it renders the private Vaultwarden profile palier (#17, proof #104) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"}\n'
+    printf '    {"pass": "private-service", "reason": "it renders the private Vaultwarden profile palier (#17, proof #104) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"},\n'
+    printf '    {"pass": "external-element", "reason": "it renders the external responsibility palier (#18, proof #109) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"}\n'
     printf '  ],\n'
     printf '  "passes": [\n'
     for index in "${!pass_results[@]}"; do
@@ -520,6 +521,15 @@ do_run() {
   printf 'neighbour. It needs the three machines of this topology and power cycles two\n'
   printf 'of them, so it never runs beside these passes. A verdict of its own belongs\n'
   printf 'to its own palier and is recorded as not run here.\n'
+
+  announce "external-element is not run here either"
+  printf 'It renders the external responsibility palier (#18, proof #109): a service\n'
+  printf 'Your Cloud never installed, declared, read, contradicted, aged and\n'
+  printf 'withdrawn without ever being adopted. It stands up a whole observation\n'
+  printf 'chain — a Daemon and a Relay on lab-machine-1, a Controller on lab-vps and\n'
+  printf 'a synthetic Console client on lab-console — so it holds the three machines\n'
+  printf 'of this topology and never runs beside these passes. A verdict of its own\n'
+  printf 'belongs to its own palier and is recorded as not run here.\n'
 }
 
 # ---------------------------------------------------------------------------

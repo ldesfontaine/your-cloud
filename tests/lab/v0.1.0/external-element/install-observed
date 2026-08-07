@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Mount the observed half of the perimeter on lab-machine-1: the machine the
+# Daemon runs on, the machine the Relay serves from, and the machine every
+# reading of this proof is taken on.
+#
+# What is installed here is the product's own binary and its two real units. The
+# only synthetic things are the run's PKI — four short-lived authorities whose
+# private halves this harness never keeps — and one approval anchor, needed
+# because the collision constat of step 7 requires a service the product really
+# placed.
+#
+# What is deliberately *not* installed: the sheet of declared targets, the posed
+# services and the probe. Each of those is an act of a later step, because a
+# proof that began with them already in place could not say which step put them
+# there.
+set -euo pipefail
+export PATH=$PATH:/usr/local/go/bin
+
+sources=${1:?usage: install-observed <go-sources> <credentials> <controller-address>}
+credentials=${2:?usage: install-observed <go-sources> <credentials> <controller-address>}
+controller_address=${3:?usage: install-observed <go-sources> <credentials> <controller-address>}
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+note() { printf '  %-46s %s\n' "$1" "$2"; }
+
+command -v go >/dev/null || fail "the target has no Go toolchain"
+command -v podman >/dev/null || fail "the target has no Podman: run tools/provision-lab"
+command -v newuidmap >/dev/null || fail "the target has no newuidmap: run tools/provision-lab"
+command -v ss >/dev/null || fail "the target has no ss: this proof reads the kernel's socket tables through it"
+[[ $(hostname) == "$machine_id" ]] || fail "this half belongs to $machine_id and this machine is $(hostname)"
+
+# The clock guard the private-service install carries, reused unchanged and for
+# the same reason. Here it protects two different sentences rather than one: the
+# approval envelope of the managed probe is issued and verified on this machine,
+# and — new to this palier — every constat of an external reading is a *date*
+# whose age decides whether the product presents a state as current. A clock
+# stepped mid-run would make an honest `recent` read `old`, or the reverse, and
+# that reads exactly like a defect it is not.
+[[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]] \
+  || fail "this machine's clock is not synchronised: an age computed against it would mean nothing"
+clock_before=$(date -u +%s)
+sleep 2
+clock_drift=$(( $(date -u +%s) - clock_before - 2 ))
+[[ ${clock_drift#-} -le 1 ]] \
+  || fail "this machine's clock moved ${clock_drift}s in two seconds: it is being stepped, and no age read against it would mean anything"
+note "clock" "synchronised, no step in two seconds"
+
+# The machine starts holding none of what this proof creates. Each is named
+# separately rather than swept, so a machine failing this says which leftover it
+# is, and this harness never silently removes somebody else's service.
+[[ ! -e "$targets_sheet" ]] || fail "the machine already holds a sheet of declared targets"
+id -u "$probe_account" >/dev/null 2>&1 && fail "the machine already holds the probe account"
+[[ ! -e "$probe_home" ]] || fail "the machine already holds the probe home"
+for port in "$posed_port" "$neighbour_port" "$managed_port"; do
+  [[ "$(answers_on "$port")" == refusing ]] || fail "something is already listening on 127.0.0.1:$port"
+done
+for file in /etc/subuid /etc/subgid; do
+  if grep -q "^$probe_account:" "$file" 2>/dev/null; then
+    fail "$file already carries a range for $probe_account — the machine is not stock"
+  fi
+done
+
+(cd "$sources" && go build -o /usr/local/bin/lab-external-probe-fixture ./labprobe)
+install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud
+(cd "$sources" && go build -o "$artifact" ./cmd/your-cloud)
+chmod 0755 "$artifact"
+note "product binary" "$(sha256sum "$artifact" | cut -d' ' -f1)"
+
+install -d -m 0700 -o root -g root "$state"
+install -d -m 0700 -o root -g root /var/lib/your-cloud-auxiliary
+rm -f /var/lib/your-cloud-auxiliary/approval-state.json /var/lib/your-cloud-auxiliary/approval-state.lock
+lab-external-probe-fixture -anchor -epoch 1 -seed 1 >"$anchor"
+chmod 0600 "$anchor"
+note "approval anchor" "epoch 1, synthetic seed, machine $machine_id"
+
+# The run's own credentials. They are leaves of four authorities generated for
+# this run alone; no private byte of an authority exists anywhere after the
+# generation, and the leaves die with the perimeter.
+install -o root -g root -m 0644 "$credentials/relay.crt" /etc/your-cloud/relay.crt
+install -o root -g root -m 0600 "$credentials/relay.key" /etc/your-cloud/relay.key
+install -o root -g root -m 0644 "$credentials/daemon-ca.crt" /etc/your-cloud/daemon-ca.crt
+install -o root -g root -m 0644 "$credentials/relay-reader.crt" /etc/your-cloud/relay-reader.crt
+install -o root -g root -m 0600 "$credentials/relay-reader.key" /etc/your-cloud/relay-reader.key
+install -o root -g root -m 0644 "$credentials/controller-reader-ca.crt" /etc/your-cloud/controller-reader-ca.crt
+install -o root -g root -m 0644 "$credentials/enrollment.json" /etc/your-cloud/enrollment.json
+install -o root -g root -m 0644 "$credentials/relay-reader.json" /etc/your-cloud/relay-reader.json
+install -o root -g root -m 0644 "$credentials/daemon.crt" /etc/your-cloud/daemon.crt
+install -o root -g root -m 0600 "$credentials/daemon.key" /etc/your-cloud/daemon.key
+install -o root -g root -m 0644 "$credentials/relay-ca.crt" /etc/your-cloud/relay-ca.crt
+printf '%s\n' '{"schema":1,"role":"relay-candidate"}' >/etc/your-cloud/relay-candidate.json
+chmod 0644 /etc/your-cloud/relay-candidate.json
+
+# The two addresses the product's binaries insist on. The Relay refuses to listen
+# anywhere but the first; its reader listener refuses every source but the
+# second. This LAB topology is flat and holds neither, so the harness places one
+# here and routes the other to the machine that will hold it. It is a fact of
+# the topology and never a behaviour of the product — a proof that changed the
+# product's addresses to fit the LAB would be proving the LAB.
+ip -4 addr replace "$relay_address/32" dev "$(ip -4 route show default | awk '{print $5; exit}')"
+ip -4 route replace "$controller_source/32" via "$controller_address"
+grep -q "^$relay_address $relay_name\$" /etc/hosts \
+  || printf '%s %s\n' "$relay_address" "$relay_name" >>/etc/hosts
+note "the Relay's own address" "$relay_address, reached by name $relay_name"
+note "the Controller's reader source" "$controller_source, routed via $controller_address"
+
+cat >/etc/systemd/system/"$relay_unit" <<UNIT
+[Unit]
+Description=Your Cloud observation Relay and private reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=your-cloud-relay
+StateDirectory=your-cloud-relay
+StateDirectoryMode=0700
+UMask=0077
+LoadCredential=relay.crt:/etc/your-cloud/relay.crt
+LoadCredential=relay.key:/etc/your-cloud/relay.key
+LoadCredential=daemon-ca.crt:/etc/your-cloud/daemon-ca.crt
+LoadCredential=relay-reader.crt:/etc/your-cloud/relay-reader.crt
+LoadCredential=relay-reader.key:/etc/your-cloud/relay-reader.key
+LoadCredential=controller-reader-ca.crt:/etc/your-cloud/controller-reader-ca.crt
+ExecStart=$artifact relay --listen=$relay_address:$relay_ingestion_port
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+ReadOnlyPaths=/etc/your-cloud/enrollment.json /etc/your-cloud/relay-candidate.json /etc/your-cloud/relay-reader.json
+InaccessiblePaths=-/etc/your-cloud/daemon.key -/etc/your-cloud/controller-reader.key
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# The Daemon's unit is the one of v0.0.2, with nothing added for this palier.
+# That is the point of the additive envelope: a machine whose sheet names no
+# target emits the bytes v0.0.2 proved, and the same unit carries both.
+cat >/etc/systemd/system/"$daemon_unit" <<UNIT
+[Unit]
+Description=Your Cloud observation Daemon
+After=network-online.target $relay_unit
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=your-cloud-daemon
+StateDirectory=your-cloud-daemon
+StateDirectoryMode=0700
+LoadCredential=daemon.crt:/etc/your-cloud/daemon.crt
+LoadCredential=daemon.key:/etc/your-cloud/daemon.key
+LoadCredential=relay-ca.crt:/etc/your-cloud/relay-ca.crt
+ExecStart=$artifact daemon --machine-id=$machine_id --relay-url=https://$relay_name:$relay_ingestion_port
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+InaccessiblePaths=-/etc/your-cloud/relay.key -/etc/your-cloud/relay-reader.key -/etc/your-cloud/daemon-ca.crt -/etc/your-cloud/enrollment.json -/etc/your-cloud/relay-candidate.json
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl reset-failed "$relay_unit" "$daemon_unit" 2>/dev/null || true
+systemctl enable --now "$relay_unit" >/dev/null
+systemctl enable --now "$daemon_unit" >/dev/null
+sleep 3
+[[ "$(unit_state "$relay_unit")" == active ]] || {
+  journalctl -u "$relay_unit" -n 30 --no-pager >&2
+  fail "the Relay did not come up"
+}
+[[ "$(unit_state "$daemon_unit")" == active ]] || {
+  journalctl -u "$daemon_unit" -n 30 --no-pager >&2
+  fail "the Daemon did not come up"
+}
+note "Relay" "$(unit_state "$relay_unit"), listening on $relay_address:$relay_ingestion_port and :$relay_reader_port"
+note "Daemon" "$(unit_state "$daemon_unit"), publishing to $relay_name:$relay_ingestion_port"
+
+printf 'OBSERVED_READY=1\n'

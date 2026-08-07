@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Provision, show and take away the root-owned sheet a Daemon reads its targets
+# from.
+#
+# This script is a harness act standing in for root, and it discharges the debt
+# `#107` left to this proof by name: without this sheet nothing is ever read, and
+# every declaration stays `declared` forever. Which is itself a constat this
+# proof takes — step 2 reads an element that no sheet names, and it must say
+# `declared`, never "probably fine".
+#
+# What the sheet may say is closed by the product and repeated here so that a
+# malformed sheet is this harness's mistake and never the product's: a schema
+# version, the identity of *this* machine, and a sorted unique list of loopback
+# ports. No address, no label, no identifier, no path and no command — writing
+# this file grants nothing beyond being read.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+action=${1:?usage: targets <set [port...]|remove|show>}
+shift || true
+
+case "$action" in
+  set)
+    ports=$(printf '%s\n' "$@" | sort -n -u | paste -sd, -)
+    install -d -o root -g root -m 0755 /etc/your-cloud
+    printf '{"schema_version":1,"machine_id":"%s","probe_ports":[%s]}\n' "$machine_id" "$ports" \
+      >"$targets_sheet.new"
+    chown root:root "$targets_sheet.new"
+    chmod 0644 "$targets_sheet.new"
+    mv -f "$targets_sheet.new" "$targets_sheet"
+    printf 'TARGETS=%s\nTARGETS_OWNER=%s\n' "$ports" "$(stat -c '%U:%G %a' "$targets_sheet")"
+    ;;
+  remove)
+    rm -f "$targets_sheet"
+    printf 'TARGETS=absent\n'
+    ;;
+  show)
+    if [[ -e "$targets_sheet" ]]; then
+      printf 'TARGETS_SHEET=%s\nTARGETS_OWNER=%s\n' "$(cat "$targets_sheet")" "$(stat -c '%U:%G %a' "$targets_sheet")"
+    else
+      printf 'TARGETS_SHEET=absent\n'
+    fi
+    ;;
+  *)
+    echo "usage: targets <set [port...]|remove|show>" >&2
+    exit 2
+    ;;
+esac

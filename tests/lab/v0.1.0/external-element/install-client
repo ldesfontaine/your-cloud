@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Mount the human's half of the perimeter on lab-console: the synthetic stand-in
+# for the Console, and nothing else of the product.
+#
+# `#108` closed with the debt this discharges: the real Console reads the
+# declared inventory and withdraws a declaration, and has no declaration form at
+# all. Declaring goes through the Controller's own route, so this proof needs a
+# device the Controller issued and a session it opened. What runs here is that
+# and no more — it renders nothing, decides nothing and is never the thing under
+# proof.
+#
+# Nothing is compiled here. This machine carries no Go toolchain, so the client
+# was built on the machine that has one and crosses as the finished binary it is.
+set -euo pipefail
+
+client=${1:?usage: install-client <client-binary>}
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+note() { printf '  %-46s %s\n' "$1" "$2"; }
+
+[[ -f "$client" ]] || fail "the client binary did not reach this machine"
+install -d -m 0700 -o root -g root "$state"
+install -o root -g root -m 0755 "$client" /usr/local/bin/lab-external-console
+note "the synthetic Console client" "$(sha256sum /usr/local/bin/lab-external-console | cut -d' ' -f1)"
+
+printf 'CLIENT_READY=1\n'

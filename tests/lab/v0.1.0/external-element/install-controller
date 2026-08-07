@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Mount the Controller half of the perimeter on lab-vps, in the two phases the
+# order of authorities forces.
+#
+#   init   build the product binary, create the private state and let the
+#          Controller mint its own identity. Nothing serves yet, and nothing
+#          could: the run's PKI is generated *for* the two identifiers this phase
+#          produces, and a reader manifest naming another installation is refused;
+#   serve  place those credentials, write the unit and start the real Controller
+#          with one enrolment window open.
+#
+# This is the product's own Controller. Nothing of the declared inventory is
+# synthetic: the element identifiers, the dates, the states and the ages of this
+# proof are the ones this process minted.
+#
+# Two things belong to the harness and are named as such: the account and the
+# state directory, because the private state must be mode 0700 and owned by the
+# process that opens it; and the source address the Controller reaches the Relay
+# from, because the product pins that source and this flat topology holds no such
+# address.
+set -euo pipefail
+export PATH=$PATH:/usr/local/go/bin
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+phase=${1:?usage: install-controller <init|serve> ...}
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+note() { printf '  %-46s %s\n' "$1" "$2"; }
+
+controller_account=your-cloud-controller
+controller_state=/var/lib/your-cloud-controller
+window_sheet=/run/your-cloud-controller/window.json
+
+case "$phase" in
+  init)
+    sources=${2:?usage: install-controller init <go-sources>}
+    command -v go >/dev/null || fail "the target has no Go toolchain"
+
+    # The clock guard the private-service install carries, reused unchanged. Here
+    # it protects a sentence that palier did not have: every constat of this
+    # proof is a *date*, and its age is what decides whether the product presents
+    # a state as current. A clock stepped mid-run would make an honest `recent`
+    # read `old`, and that reads exactly like a defect it is not.
+    [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]] \
+      || fail "this machine's clock is not synchronised: it stamps every declaration and every age this proof reads"
+    clock_before=$(date -u +%s)
+    sleep 2
+    clock_drift=$(( $(date -u +%s) - clock_before - 2 ))
+    [[ ${clock_drift#-} -le 1 ]] \
+      || fail "this machine's clock moved ${clock_drift}s in two seconds: every date it stamps would be arbitrary"
+    note "clock" "synchronised, no step in two seconds"
+
+    id -u "$controller_account" >/dev/null 2>&1 \
+      || useradd --system --no-create-home --home-dir "$controller_state" --shell /usr/sbin/nologin "$controller_account"
+    install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud
+    (cd "$sources" && go build -o "$artifact" ./cmd/your-cloud)
+    chmod 0755 "$artifact"
+    note "product binary" "$(sha256sum "$artifact" | cut -d' ' -f1)"
+
+    rm -rf "$controller_state"
+    install -d -o "$controller_account" -g "$controller_account" -m 0700 "$controller_state"
+    install -d -m 0700 -o root -g root "$state"
+
+    identities=$(runuser -u "$controller_account" -- "$artifact" controller init --state-dir="$controller_state")
+    controller_id=${identities#controller_id=}
+    controller_id=${controller_id%% *}
+    infrastructure_id=${identities##*infrastructure_id=}
+    note "Controller" "$controller_id"
+    note "infrastructure" "$infrastructure_id"
+
+    # The run's PKI is generated here rather than on lab-console, and the reason
+    # is a fact of the LAB and not a decision of the architecture: lab-console
+    # carries no Go toolchain. It is generated *after* the identity above,
+    # because a reader manifest naming another installation is refused, and
+    # rightly. The four authorities live as long as this run; the generator never
+    # writes a private authority byte down, and the harness carries only the
+    # leaves of each role to the machine that role belongs to.
+    rm -rf "$state/pki"
+    (cd "$sources" && go run ./labpki \
+      -output "$state/pki" -controller-id "$controller_id" -infrastructure-id "$infrastructure_id")
+    note "the run's PKI" "four authorities, no private authority byte kept"
+
+    # The synthetic client is built here for the same reason and runs nowhere but
+    # lab-console: what stands in for a Console belongs on the human's machine,
+    # and a Go binary crosses between two machines of the same LAB unchanged.
+    (cd "$sources" && go build -o "$state/lab-external-console" ./labconsole)
+    note "the synthetic Console client" "$(sha256sum "$state/lab-external-console" | cut -d' ' -f1)"
+
+    printf 'CONTROLLER_ID=%s\n' "$controller_id"
+    printf 'INFRASTRUCTURE_ID=%s\n' "$infrastructure_id"
+    printf 'PKI=%s\n' "$state/pki"
+    printf 'CLIENT=%s\n' "$state/lab-external-console"
+    ;;
+
+  serve)
+    credentials=${2:?usage: install-controller serve <credentials> <allowed-source> <observed-address>}
+    allowed_source=${3:?usage: install-controller serve <credentials> <allowed-source> <observed-address>}
+    observed_address=${4:?usage: install-controller serve <credentials> <allowed-source> <observed-address>}
+
+    listen_address=$(ip -4 -o addr show scope global | awk 'NR==1 {split($4, a, "/"); print a[1]}')
+    [[ -n "$listen_address" ]] || fail "this machine holds no global address to serve on"
+
+    install -o root -g root -m 0644 "$credentials/controller-reader.crt" /etc/your-cloud/controller-reader.crt
+    install -o root -g root -m 0600 "$credentials/controller-reader.key" /etc/your-cloud/controller-reader.key
+    install -o root -g root -m 0644 "$credentials/relay-reader-ca.crt" /etc/your-cloud/relay-reader-ca.crt
+
+    # The source address the reader listener of the Relay is pinned to. The
+    # Controller is never told about it: the kernel is, so that the connection
+    # this process makes on its own leaves from the address the product expects.
+    # It is a fact of this flat topology and never a behaviour of the product — a
+    # proof that changed the product's pinned addresses to fit the LAB would be
+    # proving the LAB.
+    interface=$(ip -4 route show default | awk '{print $5; exit}')
+    ip -4 addr replace "$controller_source/32" dev "$interface"
+    ip -4 route replace "$relay_address/32" via "$observed_address" src "$controller_source"
+    note "the reader source" "$controller_source toward $relay_address via $observed_address"
+
+    cat >/etc/systemd/system/"$controller_unit" <<UNIT
+[Unit]
+Description=Your Cloud read-only Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$controller_account
+Group=$controller_account
+RuntimeDirectory=your-cloud-controller
+RuntimeDirectoryMode=0700
+UMask=0077
+LoadCredential=controller-reader.crt:/etc/your-cloud/controller-reader.crt
+LoadCredential=controller-reader.key:/etc/your-cloud/controller-reader.key
+LoadCredential=relay-reader-ca.crt:/etc/your-cloud/relay-reader-ca.crt
+ExecStart=$artifact controller serve --state-dir=$controller_state --listen=$listen_address:9443 --allowed-source=$allowed_source --relay-endpoint=$relay_address:$relay_reader_port --window=enrollment --window-sheet=$window_sheet
+Restart=no
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ReadWritePaths=$controller_state
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    systemctl daemon-reload
+    systemctl reset-failed "$controller_unit" 2>/dev/null || true
+    systemctl enable --now "$controller_unit" >/dev/null
+    for attempt in $(seq 1 30); do
+      [[ -s "$window_sheet" ]] && break
+      sleep 1
+      [[ $attempt -lt 30 ]] || {
+        journalctl -u "$controller_unit" -n 40 --no-pager >&2
+        fail "the Controller never wrote its one-time enrolment sheet"
+      }
+    done
+    cp "$window_sheet" "$state/window.json"
+    chmod 0600 "$state/window.json"
+    note "Controller" "$(unit_state "$controller_unit"), API on $listen_address:9443, window on :9444"
+    printf 'CONTROLLER_LISTEN=%s\n' "$listen_address"
+    printf 'WINDOW_SHEET=%s\n' "$state/window.json"
+    ;;
+
+  *)
+    fail "install-controller takes init or serve"
+    ;;
+esac

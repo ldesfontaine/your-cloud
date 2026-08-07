@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Post, stop and read the services Your Cloud never installed.
+#
+# This script is a harness act and it says so at the top, because it is the whole
+# point of the palier: nothing below is described by a plan, approved by anybody,
+# owned by an account of this product or known to any inventory. It is a plain
+# listener on a loopback port, put there by the same hand that later takes it
+# away, and Your Cloud's only relationship to it is that a human said "look at
+# this port from that machine".
+#
+# What is posted is deliberately the poorest possible service: something that
+# accepts a TCP connection and says one line. A richer one would invite the
+# reader to believe the product learned something about it, and the contract is
+# explicit that a reading proves only that *a* thing accepted a connection.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+action=${1:?usage: poser <start|stop|state> <port>}
+port=${2:?usage: poser <start|stop|state> <port>}
+[[ "$port" =~ ^[0-9]+$ ]] || {
+  echo "FAILED: $port is not a port" >&2
+  exit 1
+}
+
+pidfile="$state/posed-$port.pid"
+install -d -m 0700 -o root -g root "$state"
+
+case "$action" in
+  start)
+    if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+      echo "POSED_PORT=$port already up"
+      exit 0
+    fi
+    # Nothing of systemd, nothing of the product: a bare process, owned by root
+    # because a human with a shell is exactly who posts a service the product
+    # does not manage. It is not an account of this product, and the collision
+    # constat depends on that being visibly true.
+    setsid python3 -c "
+import socketserver
+
+class Line(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.sendall(b'posed by hand, described by no plan\n')
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+
+Server(('127.0.0.1', $port), Line).serve_forever()
+" >/dev/null 2>&1 &
+    echo $! >"$pidfile"
+    for attempt in $(seq 1 20); do
+      [[ "$(answers_on "$port")" == accepting ]] && break
+      sleep 0.5
+      [[ $attempt -lt 20 ]] || {
+        echo "FAILED: the posed service on $port never accepted" >&2
+        exit 1
+      }
+    done
+    printf 'POSED_PORT=%s\nPOSED_PID=%s\nPOSED_OWNER=%s\n' "$port" "$(cat "$pidfile")" "$(who_holds "$port")"
+    ;;
+  stop)
+    if [[ -f "$pidfile" ]]; then
+      pkill -TERM -P "$(cat "$pidfile")" 2>/dev/null || true
+      kill -TERM "$(cat "$pidfile")" 2>/dev/null || true
+      rm -f "$pidfile"
+    fi
+    for attempt in $(seq 1 20); do
+      [[ "$(answers_on "$port")" == refusing ]] && break
+      sleep 0.5
+    done
+    printf 'POSED_PORT=%s\nPOSED_STATE=%s\n' "$port" "$(answers_on "$port")"
+    ;;
+  state)
+    printf 'POSED_PORT=%s\nPOSED_STATE=%s\nPOSED_OWNER=%s\n' \
+      "$port" "$(answers_on "$port")" "$(who_holds "$port")"
+    ;;
+  *)
+    echo "usage: poser <start|stop|state> <port>" >&2
+    exit 2
+    ;;
+esac

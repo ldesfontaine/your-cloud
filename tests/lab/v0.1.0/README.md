@@ -56,14 +56,15 @@ L'ordre est celui des dépendances de #13 : `personal-access` (#51, #52),
   remplacement que cette séquence prouve. Il partage `lab-machine-1` avec ces
   passages et ne tourne donc jamais à côté d'eux, mais son verdict appartient à
   son palier ; il est enregistré `not_run` ici et possède sa propre entrée.
-- `public-profile`, `private-passage` et `private-service` **n'en font pas
-  partie non plus**, pour la même raison qu'`oci-plan` : ils rendent les paliers
-  du profil public (#15, preuve #92), du passage privé (#16, preuve machine #98)
-  et du profil privé de bout en bout (#17, preuve #104). Les deux derniers
-  exigent `lab-machine-1` et `lab-vps` à la fois et les redémarrent, donc aucun
-  ne tourne à côté de ces passages ; chacun est enregistré `not_run` ici et
-  possède sa propre entrée. Ils sont décrits dans les
-  [règles LAB](../../../docs/lab/README.md).
+- `public-profile`, `private-passage`, `private-service` et `external-element`
+  **n'en font pas partie non plus**, pour la même raison qu'`oci-plan` : ils
+  rendent les paliers du profil public (#15, preuve #92), du passage privé (#16,
+  preuve machine #98), du profil privé de bout en bout (#17, preuve #104) et de
+  la responsabilité externe (#18, preuve #109). Les trois derniers exigent
+  plusieurs machines à la fois — `external-element` monte une chaîne
+  d'observation entière sur les trois —, donc aucun ne tourne à côté de ces
+  passages ; chacun est enregistré `not_run` ici et possède sa propre entrée. Ils
+  sont décrits dans les [règles LAB](../../../docs/lab/README.md).
 - **La fermeture relit la garde et nomme ce qui reste**, au lieu d'appeler le
   LAB propre. Si l'un des résidus appartenait à la topologie détruite, c'est un
   échec de nettoyage et la fermeture rougit ; s'il lui préexistait, il est

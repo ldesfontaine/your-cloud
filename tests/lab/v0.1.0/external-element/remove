@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Take this proof's perimeter off one machine and say what is left.
+#
+# It removes only what this harness mounted, and it removes it in the order that
+# leaves nothing running against a missing file: the posed services first,
+# because they are the harness's own act and nothing else depends on them; the
+# managed probe next, through the product's own retirement so the account and
+# its home go the way the product removes them; then the chain's units, the
+# credentials, the addresses and the binary.
+#
+# It never sweeps. Everything it deletes is named, so a machine that ends up
+# holding something this script did not name will still be holding it, and the
+# audit that follows will say so.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+controller_account=your-cloud-controller
+controller_state=/var/lib/your-cloud-controller
+
+for port in "$posed_port" "$neighbour_port"; do
+  "$here/poser" stop "$port" >/dev/null 2>&1 || true
+done
+if [[ -x /usr/local/bin/lab-external-probe-fixture ]] && id -u "$probe_account" >/dev/null 2>&1; then
+  "$here/probe" remove >/dev/null 2>&1 || true
+fi
+# What the product's own retirement leaves is removed here as the harness's own
+# act, and named as such: an account this proof asked for is an account this
+# proof takes back.
+if id -u "$probe_account" >/dev/null 2>&1; then
+  loginctl disable-linger "$probe_account" >/dev/null 2>&1 || true
+  pkill -KILL -u "$probe_account" >/dev/null 2>&1 || true
+  sleep 1
+  userdel --remove "$probe_account" >/dev/null 2>&1 || userdel "$probe_account" >/dev/null 2>&1 || true
+fi
+rm -rf "$probe_home"
+sed -i "/^$probe_account:/d" /etc/subuid /etc/subgid 2>/dev/null || true
+
+/usr/sbin/nft delete table inet lab-external-element 2>/dev/null || true
+rm -f "$targets_sheet"
+
+for unit in "$daemon_unit" "$relay_unit" "$controller_unit"; do
+  systemctl disable --now "$unit" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/$unit"
+done
+systemctl daemon-reload || true
+for unit in "$daemon_unit" "$relay_unit" "$controller_unit"; do
+  systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+done
+rm -rf /var/lib/private/your-cloud-relay /var/lib/private/your-cloud-daemon \
+  /var/lib/your-cloud-relay /var/lib/your-cloud-daemon
+rm -rf "$controller_state"
+if id -u "$controller_account" >/dev/null 2>&1; then
+  userdel "$controller_account" >/dev/null 2>&1 || true
+fi
+
+rm -f /etc/your-cloud/relay.crt /etc/your-cloud/relay.key /etc/your-cloud/daemon-ca.crt \
+  /etc/your-cloud/relay-reader.crt /etc/your-cloud/relay-reader.key \
+  /etc/your-cloud/controller-reader-ca.crt /etc/your-cloud/controller-reader.crt \
+  /etc/your-cloud/controller-reader.key /etc/your-cloud/relay-reader-ca.crt \
+  /etc/your-cloud/enrollment.json /etc/your-cloud/relay-reader.json \
+  /etc/your-cloud/relay-candidate.json /etc/your-cloud/daemon.crt /etc/your-cloud/daemon.key \
+  /etc/your-cloud/relay-ca.crt "$anchor"
+rm -rf /var/lib/your-cloud-auxiliary
+rm -f /usr/local/bin/lab-external-probe-fixture /usr/local/bin/lab-external-console "$artifact"
+rmdir /usr/local/lib/your-cloud /etc/your-cloud 2>/dev/null || true
+
+interface=$(ip -4 route show default | awk '{print $5; exit}')
+if [[ -n "$interface" ]]; then
+  ip -4 addr del "$relay_address/32" dev "$interface" 2>/dev/null || true
+  ip -4 addr del "$controller_source/32" dev "$interface" 2>/dev/null || true
+fi
+ip -4 route del "$relay_address/32" 2>/dev/null || true
+ip -4 route del "$controller_source/32" 2>/dev/null || true
+sed -i "/ $relay_name\$/d" /etc/hosts 2>/dev/null || true
+
+rm -rf "$state"
+
+printf 'REMOVED=%s\n' "$(hostname)"

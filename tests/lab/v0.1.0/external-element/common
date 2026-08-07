@@ -1,0 +1,114 @@
+# Shared vocabulary of the external element perimeter, sourced by every script
+# that runs on a machine of this scenario. It asserts nothing by itself: it is
+# the words the judging scripts speak, so that a fact read before a reading and
+# the same fact read after it are read by the same lines.
+#
+# Everything here is read-only except where a function says otherwise. Three
+# scripts are allowed to change a machine outside anything the product decided,
+# and each says so where it does it: `poser`, which posts and stops the services
+# Your Cloud never installed; `targets`, which provisions the root-owned sheet a
+# Daemon reads; and `remove`, which takes the perimeter away.
+
+export LC_ALL=C.UTF-8
+
+state=/root/lab-external-element
+machine_id=lab-machine-1
+
+# The chain this proof needs alive, and the two addresses the product's own
+# binaries insist on. They are constants of the product, not choices of this
+# harness: the Relay refuses to listen anywhere but the first, and its reader
+# refuses every source but the second.
+relay_address=192.168.243.153
+relay_ingestion_port=8443
+relay_reader_port=8444
+controller_source=192.168.242.103
+relay_name=relay.observation.your-cloud.test
+
+daemon_unit=your-cloud-daemon.service
+relay_unit=your-cloud-relay.service
+controller_unit=your-cloud-controller.service
+artifact=/usr/local/lib/your-cloud/your-cloud
+targets_sheet=/etc/your-cloud/external-targets.json
+
+# The three loopback ports of the scenario, each with a different job.
+#
+#   posed_port      a service Your Cloud never installed, put there by this
+#                   harness, declared external, read, contradicted and finally
+#                   taken away by the harness that posted it;
+#   neighbour_port  a second one exactly like it that nobody ever declares and
+#                   nothing ever names. It exists so that "no discovery happens"
+#                   is a constat and not an absence of evidence;
+#   managed_port    the port the #14 probe publishes once an approved plan has
+#                   placed it. Declaring an external element on it is the
+#                   collision the machine — and only the machine — can decide.
+posed_port=19191
+neighbour_port=19192
+managed_port=18080
+
+probe_account=your-cloud-probe
+probe_home=/var/lib/your-cloud-probe
+probe_unit="$probe_home/.config/containers/systemd/your-cloud-probe.container"
+probe_service=your-cloud-probe.service
+probe_container=your-cloud-probe
+anchor=/etc/your-cloud/approval-anchor.json
+replay=/var/lib/your-cloud-auxiliary/approval-state.json
+
+failures=0
+
+report() { printf '%-68s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+step() { printf '\n== %s ==\n' "$*"; }
+
+verdict() {
+  [[ $failures -eq 0 ]] || {
+    echo "FAILED: $failures assertions" >&2
+    exit 1
+  }
+  echo "PASS: $1"
+}
+
+# defect names something the machine does that the product did not intend, in
+# full, and lets the rest of the palier run. It is never repaired here: the
+# session that orchestrates this proof decides what a defect costs.
+defect() {
+  printf '!! PRODUCT DEFECT: %s\n' "$1"
+  printf '   %s\n' "$2"
+}
+
+limit() {
+  printf '!! LIMIT: %s\n' "$1"
+  printf '   %s\n' "$2"
+}
+
+unit_state() { systemctl show "$1" --property=ActiveState --value 2>/dev/null || echo unknown; }
+
+listening_on() {
+  local port=$1
+  ss -Hltnp "sport = :$port" 2>/dev/null | head -1
+}
+
+# who_holds names the account that holds the listening socket of one port, read
+# from the kernel's own tables exactly as the product reads them, and never from
+# a process name.
+who_holds() {
+  local port=$1 hex uid
+  hex=$(printf '%04X' "$port")
+  uid=$(awk -v hex="$hex" '$4 == "0A" { split($2, part, ":"); if (part[2] == hex) { print $8; exit } }' \
+    /proc/net/tcp /proc/net/tcp6 2>/dev/null)
+  [[ -n "$uid" ]] || { echo "nobody"; return; }
+  local name
+  name=$(getent passwd "$uid" | cut -d: -f1)
+  echo "${name:-uid:$uid}"
+}
+
+answers_on() {
+  local port=$1
+  if timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+    echo accepting
+  else
+    echo refusing
+  fi
+}
