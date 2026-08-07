@@ -30,7 +30,7 @@ func TestBufferPersistsOrderedDeliveryAcrossRestart(t *testing.T) {
 	}
 	start := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	for index := 0; index < 3; index++ {
-		if _, err := queue.Enqueue("lab-machine-1", validHealth(), start.Add(time.Duration(index)*time.Second)); err != nil {
+		if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, start.Add(time.Duration(index)*time.Second)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -72,7 +72,7 @@ func TestBufferStatsMeasureOnlyPendingObservationBytes(t *testing.T) {
 	if err != nil || before.PendingBytes != 0 {
 		t.Fatalf("empty queue reported pending observation bytes: %#v %v", before, err)
 	}
-	envelope, err := queue.Enqueue("lab-machine-1", validHealth(), time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
+	envelope, err := queue.Enqueue("lab-machine-1", validHealth(), nil, time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestBufferSaturationPreservesCurrentAndCreatesVisibleGap(t *testing.T) {
 	}
 	start := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	for index := 0; index < 5; index++ {
-		if _, err := queue.Enqueue("lab-machine-1", validHealth(), start.Add(time.Duration(index)*time.Second)); err != nil {
+		if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, start.Add(time.Duration(index)*time.Second)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -134,7 +134,7 @@ func TestBufferRejectsWrongAcknowledgementAndHostileState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queue.Enqueue("lab-machine-1", validHealth(), time.Now()); err != nil {
+	if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := queue.Acknowledge(2, time.Now()); err == nil {
@@ -158,7 +158,7 @@ func TestInspectReadsWithoutRewritingState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queue.Enqueue("lab-machine-1", validHealth(), time.Now()); err != nil {
+	if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(directory, stateFileName)
@@ -188,10 +188,10 @@ func TestBufferAgeLimitDropsExpiredObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
-	if _, err := queue.Enqueue("lab-machine-1", validHealth(), start); err != nil {
+	if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, start); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queue.Enqueue("lab-machine-1", validHealth(), start.Add(2*time.Minute)); err != nil {
+	if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, start.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	encoded, _, err := queue.Peek()
@@ -221,7 +221,7 @@ func TestBufferPersistenceFailurePublishesNoSequenceAckOrDeliveryState(t *testin
 	writeState := queue.writeState
 	diskFailure := errors.New("simulated disk failure")
 	queue.writeState = func(state) error { return diskFailure }
-	if _, err := queue.Enqueue("lab-machine-1", validHealth(), start); !errors.Is(err, diskFailure) {
+	if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, start); !errors.Is(err, diskFailure) {
 		t.Fatalf("enqueue did not expose the persistence failure: %v", err)
 	}
 	after, err := queue.Stats()
@@ -233,7 +233,7 @@ func TestBufferPersistenceFailurePublishesNoSequenceAckOrDeliveryState(t *testin
 	}
 
 	queue.writeState = writeState
-	envelope, err := queue.Enqueue("lab-machine-1", validHealth(), start)
+	envelope, err := queue.Enqueue("lab-machine-1", validHealth(), nil, start)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestBufferPersistenceFailureDoesNotAttachGapInMemory(t *testing.T) {
 	}
 	start := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	for index := 0; index < 2; index++ {
-		if _, err := queue.Enqueue("lab-machine-1", validHealth(), start.Add(time.Duration(index)*time.Second)); err != nil {
+		if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, start.Add(time.Duration(index)*time.Second)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -334,7 +334,7 @@ func BenchmarkBufferEnqueueDurable(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if _, err := queue.Enqueue("lab-machine-1", validHealth(), time.Now()); err != nil {
+		if _, err := queue.Enqueue("lab-machine-1", validHealth(), nil, time.Now()); err != nil {
 			b.Fatal(err)
 		}
 	}

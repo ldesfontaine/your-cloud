@@ -64,6 +64,10 @@ type snapshotObservation struct {
 	ReceivedAt    string                 `json:"received_at"`
 	Gaps          []observation.Gap      `json:"gaps"`
 	Health        observation.HostHealth `json:"health"`
+	// External carries the declared-target readings of that machine, and is
+	// omitted for a machine whose own sheet names none: the snapshot of every
+	// machine proved before `#107` is the snapshot that palier proved.
+	External []observation.ExternalReading `json:"external,omitempty"`
 }
 
 type readerProblem struct {
@@ -270,6 +274,7 @@ func canonicalSnapshotObservation(stored ObservationSnapshot) (*snapshotObservat
 		ReceivedAt:    receivedAt.UTC().Format(time.RFC3339Nano),
 		Gaps:          gaps,
 		Health:        stored.Envelope.Health,
+		External:      append([]observation.ExternalReading(nil), stored.Envelope.External...),
 	}, nil
 }
 

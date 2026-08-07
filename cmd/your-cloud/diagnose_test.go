@@ -39,7 +39,7 @@ func TestDiagnosticRendersBoundedTextAndJSONWithoutCollectorValues(t *testing.T)
 		Uptime: observation.UptimeResult{Status: "ok", UptimeSeconds: &zero},
 		Memory: observation.MemoryResult{Status: "ok", TotalBytes: &zero, AvailableBytes: &zero},
 		RootFS: observation.RootFSResult{Status: "ok", TotalBytes: &zero, AvailableBytes: &zero},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ldesfontaine/your-cloud/internal/observation"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
@@ -425,4 +426,84 @@ func TestControllerExternalElementsProduceNoPlanInEitherDirection(t *testing.T) 
 	if strings.Contains(response.Body.String(), declared.Element.ElementID) {
 		t.Fatalf("a plan named a declaration: %s", response.Body.String())
 	}
+}
+
+// TestControllerExternalListingAbsorbsWhatTheMachinesRead is the transport of
+// `#107` end to end, through the Console's own route.
+//
+// The machine reads its declared loopback port, the reading rides the
+// observation chain, the Relay carries it and the Controller joins it onto the
+// declaration by the one pair a declaration is unique on: the machine and the
+// port. Nothing came down to the machine to make it look, and nothing but a
+// reading came back up.
+//
+// The listing also shows the two dimensions staying apart. A verified reading
+// inside the announced limit is `recent`; the same reading once the limit has
+// passed still says `verified` and stops saying `recent`, which is exactly "the
+// state is no longer presented as current" without a fourth state to say it.
+func TestControllerExternalListingAbsorbsWhatTheMachinesRead(t *testing.T) {
+	fixture := newControllerHTTPFixture(t)
+	attachProbeMachine(t, fixture, "lab-machine-1")
+	bearer := "Bearer " + fixture.token
+	declared := declareExternalElement(t, fixture,
+		externalDeclarationBody("lab-machine-1", "NAS du salon", ExternalKindService, 5000))
+
+	base := *fixture.current
+	at := func(offset time.Duration) string {
+		return base.Add(offset).UTC().Format(time.RFC3339Nano)
+	}
+	*fixture.current = base.Add(time.Minute)
+	fixture.relay.status = RelayAvailable
+	fixture.relay.err = nil
+	fixture.relay.snapshot = readingsSnapshot(at(55*time.Second), at(50*time.Second),
+		observation.ExternalReading{ProbePort: 5000, Outcome: observation.ExternalAnswered})
+
+	view := listExternalElements(t, fixture, bearer)
+	if len(view.Elements) != 1 {
+		t.Fatalf("the listing carried %d elements", len(view.Elements))
+	}
+	element := view.Elements[0]
+	if element.ElementID != declared.Element.ElementID || element.State != ExternalStateVerified ||
+		element.Reason != nil || element.ObservedAt == nil || *element.ObservedAt != at(50*time.Second) ||
+		element.ObservationStatus != "recent" {
+		t.Fatalf("a verified reading was projected as %+v", element)
+	}
+	if view.ExternalRevision != declared.ExternalRevision+1 {
+		t.Fatalf("absorbing one reading moved the revision to %d", view.ExternalRevision)
+	}
+
+	// Reading the same listing again changes nothing at all: a Console that
+	// refreshes must not make the inventory look like it moved.
+	if again := listExternalElements(t, fixture, bearer); again.ExternalRevision != view.ExternalRevision {
+		t.Fatalf("a second listing moved the revision to %d", again.ExternalRevision)
+	}
+
+	*fixture.current = base.Add(3 * time.Minute)
+	aged := listExternalElements(t, fixture, bearer)
+	if aged.Elements[0].State != ExternalStateVerified || aged.Elements[0].ObservationStatus != "old" {
+		t.Fatalf("an aged constat was projected as %+v", aged.Elements[0])
+	}
+
+	// A Relay this Controller cannot read is its own failure and never a fact
+	// about a machine: the last constat stays exactly where it was.
+	fixture.relay.status = RelayUnavailable
+	fixture.relay.snapshot = nil
+	blind := listExternalElements(t, fixture, bearer)
+	if blind.Elements[0].State != ExternalStateVerified || blind.ExternalRevision != view.ExternalRevision {
+		t.Fatalf("an unreadable Relay rewrote the declared inventory: %+v", blind)
+	}
+}
+
+func listExternalElements(t *testing.T, fixture controllerHTTPFixture, bearer string) ExternalElementsView {
+	t.Helper()
+	response := fixture.request(http.MethodGet, "/v0/external-elements", "",
+		"application/json", bearer, fixture.certificate)
+	if response.Code != http.StatusOK {
+		t.Fatalf("listing status=%d body=%s", response.Code, response.Body.String())
+	}
+	var view ExternalElementsView
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	return view
 }

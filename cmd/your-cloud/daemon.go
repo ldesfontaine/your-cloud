@@ -13,6 +13,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/buffer"
 	"github.com/ldesfontaine/your-cloud/internal/credentials"
 	"github.com/ldesfontaine/your-cloud/internal/daemon"
+	"github.com/ldesfontaine/your-cloud/internal/external"
 	"github.com/ldesfontaine/your-cloud/internal/machineid"
 	"github.com/ldesfontaine/your-cloud/internal/observation"
 	"github.com/ldesfontaine/your-cloud/internal/transport"
@@ -54,7 +55,20 @@ func runDaemon(arguments []string) error {
 	}
 
 	logger := log.New(os.Stdout, "your-cloud daemon: ", log.LstdFlags|log.LUTC)
-	collector, err := daemon.NewCollector(configuration.machineID, localBuffer, observation.SystemSources(), logger)
+	// The read-only adapter is assembled here and nowhere else, and what it is
+	// given is two functions that return bytes. It receives no buffer, no client,
+	// no credentials and no writer: the Daemon can publish what it read and the
+	// adapter cannot even reach the thing that publishes.
+	//
+	// The machine's own sheet is re-read at every collection rather than at
+	// start-up, so a target provisioned by root takes effect within the cadence
+	// instead of at the next restart, and a sheet taken away stops being read at
+	// once.
+	sight := external.SystemSight()
+	readExternal := func(ctx context.Context) ([]observation.ExternalReading, error) {
+		return external.Collect(ctx, sight, configuration.machineID)
+	}
+	collector, err := daemon.NewCollector(configuration.machineID, localBuffer, observation.SystemSources(), readExternal, logger)
 	if err != nil {
 		return fmt.Errorf("daemon collector: %w", err)
 	}

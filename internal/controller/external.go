@@ -436,7 +436,13 @@ func validateExternalObservation(observed ExternalObservation) error {
 		}
 	case ExternalStateUnverifiable:
 		switch observed.Reason {
-		case ExternalReasonNothingListening, ExternalReasonResponseTooLarge, ExternalReasonMachineUnreachable:
+		case ExternalReasonNothingListening, ExternalReasonResponseTooLarge, ExternalReasonMachineUnreachable,
+			// The fourth reason is `#107`'s named extension of the list `#105`
+			// closed, and it is the collision the Controller could not decide: the
+			// machine holds the sheets, and a port whose listening socket belongs to
+			// an account of this product is a port this product published. See
+			// external_readings.go for why it is a reason and not a fourth state.
+			ExternalReasonPortIsManaged:
 		default:
 			return errors.New("an unverifiable reading must name a reason of the closed list")
 		}

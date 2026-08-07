@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -49,7 +50,7 @@ func TestSnapshotHandlerRendersEmptyAndObservedMachines(t *testing.T) {
 		Uptime: observation.UptimeResult{Status: "ok", UptimeSeconds: &up},
 		Memory: observation.MemoryResult{Status: "ok", TotalBytes: &total, AvailableBytes: &available},
 		RootFS: observation.RootFSResult{Status: "error", Error: "source_unavailable"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,5 +209,46 @@ func writeRootPolicy(t *testing.T, path, contents string) {
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSnapshotCarriesTheDeclaredReadingsWithoutReadingThem is the Relay's half of
+// `#107`'s transport, and the Relay's half is to carry and nothing else.
+//
+// It neither asks for a reading, nor interprets one, nor answers a Daemon about
+// one: the section it received is the section the Controller receives, and a
+// machine that declared no target adds no field at all to the snapshot every
+// previous palier proved.
+func TestSnapshotCarriesTheDeclaredReadingsWithoutReadingThem(t *testing.T) {
+	t.Parallel()
+	up := uint64(42)
+	readings := []observation.ExternalReading{{ProbePort: 5000, Outcome: observation.ExternalAnswered}}
+	envelope, err := observation.NewEnvelope("lab-machine-1", 1,
+		time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC), observation.HostHealth{
+			Uptime: observation.UptimeResult{Status: "ok", UptimeSeconds: &up},
+			Memory: observation.MemoryResult{Status: "ok", TotalBytes: &up, AvailableBytes: &up},
+			RootFS: observation.RootFSResult{Status: "ok", TotalBytes: &up, AvailableBytes: &up},
+		}, readings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := ObservationSnapshot{Envelope: envelope, ReceivedAt: "2026-08-07T10:00:01Z"}
+	carried, err := canonicalSnapshotObservation(stored)
+	if err != nil || len(carried.External) != 1 || carried.External[0] != readings[0] {
+		t.Fatalf("the Relay did not carry the readings unchanged: %+v %v", carried, err)
+	}
+	encoded, err := json.Marshal(carried)
+	if err != nil || !strings.Contains(string(encoded), `"external":[{"probe_port":5000,"outcome":"answered"}]`) {
+		t.Fatalf("the carried section is not what the Controller decodes: %s %v", encoded, err)
+	}
+
+	stored.Envelope.External = nil
+	silent, err := canonicalSnapshotObservation(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(silent)
+	if err != nil || strings.Contains(string(encoded), "external") {
+		t.Fatalf("a machine with no declared target changed the snapshot: %s %v", encoded, err)
 	}
 }

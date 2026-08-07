@@ -329,7 +329,7 @@ func TestExternalStoreRefusesAForeignOrCorruptDocument(t *testing.T) {
 // receive nothing with which to build, freeze, sign or apply a document. It is a
 // property of what they import, not a discipline of review.
 func TestExternalInventoryCannotReachThePlanSurface(t *testing.T) {
-	for _, name := range []string{"external.go", "external_http.go"} {
+	for _, name := range []string{"external.go", "external_http.go", "external_readings.go"} {
 		file, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
 		if err != nil {
 			t.Fatal(err)

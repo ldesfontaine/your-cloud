@@ -33,7 +33,7 @@ func main() {
 	now := time.Now().UTC()
 	for index := 0; index < 3; index++ {
 		health := observation.CollectHostHealth(sources)
-		if _, err := local.Enqueue(*machineID, health, now.Add(time.Duration(index)*time.Nanosecond)); err != nil {
+		if _, err := local.Enqueue(*machineID, health, nil, now.Add(time.Duration(index)*time.Nanosecond)); err != nil {
 			log.Fatalf("enqueue real host observation %d: %v", index+1, err)
 		}
 	}

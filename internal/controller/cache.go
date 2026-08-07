@@ -105,6 +105,7 @@ func cloneRelaySnapshot(snapshot RelaySnapshot) RelaySnapshot {
 		}
 		observationCopy := *machine.Observation
 		observationCopy.Gaps = append([]observation.Gap(nil), machine.Observation.Gaps...)
+		observationCopy.External = append([]observation.ExternalReading(nil), machine.Observation.External...)
 		if machine.Observation.Gaps != nil && observationCopy.Gaps == nil {
 			observationCopy.Gaps = make([]observation.Gap, 0)
 		}

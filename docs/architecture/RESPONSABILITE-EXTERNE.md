@@ -5,8 +5,9 @@
 > seule a le droit de faire, la distinction entre ce qui est déclaré et ce qui
 > est vérifié, et la liste de ce que l'App annonce ne pas pouvoir faire.
 > L'implémentation le suit depuis `#106` (l'inventaire déclaré du Controller, sa
-> surface et son seuil d'ancienneté) ; l'adaptateur en lecture seule reste
-> `#107`, l'affichage `#108` et la preuve LAB du palier `#109`.
+> surface et son seuil d'ancienneté) puis `#107` (l'adaptateur en lecture seule,
+> son trajet, sa cadence et le refus croisé que la machine décide) ; l'affichage
+> reste `#108` et la preuve LAB du palier `#109`.
 
 ## Le palier qui n'ajoute aucun plan
 
@@ -237,3 +238,164 @@ pas, l'App dit ce qu'elle sait et rien de plus.
 6. aucune action de gestion n'est offerte pour un élément externe, et la
    déclaration retirée laisse le service intact, que le harnais retire
    lui-même comme son propre acte.
+
+## Additif `#107` : par où la lecture voyage
+
+`#106` a laissé une dette nommée : `RecordObservation` existe, aucune route ne
+la sert, et le trajet par lequel la lecture d'une machine atteint le Controller
+appartenait à ce palier. Il est tranché ici.
+
+### La chaîne d'observation, pas un second chemin de remontée
+
+**La lecture voyage par la chaîne que le produit possède déjà** : le Daemon
+relève, le Relay transporte, le Controller lit et enregistre. Aucune autorité
+n'est ajoutée, aucun port n'est ouvert, aucun certificat n'est émis.
+
+Les raisons de ce choix, et ce qu'il refuse :
+
+- **L'adaptateur lit sur la machine enrôlée**, dit le contrat. Le Daemon est
+  déjà le processus permanent, non privilégié, qui observe sur place et rapporte
+  vers l'extérieur sans connaître le Controller. Inventer un second rapporteur
+  aurait dupliqué une identité, un transport mTLS, un enrôlement et un tampon
+  pour transporter deux entiers par port.
+- **Une lecture ponctuelle empruntant le chemin de l'Auxiliaire est refusée.**
+  L'Auxiliaire est une commande forcée, root, à approbation signée et à séquence
+  anti-rejeu consommée : ce palier n'ajoute ni plan, ni approbation, ni séquence,
+  ni mutation. Et la cadence à elle seule l'écarte — une approbation humaine
+  toutes les 90 secondes n'est pas une cadence, c'est un renoncement.
+- **Les règles d'autorité de la chaîne ne bougent pas.** Le Daemon ne connaît
+  toujours que son Relay ; le Relay ne transporte toujours aucun ordre, dans
+  aucun sens ; le Controller lit toujours. Rien ne descend vers une machine.
+
+### Le profil d'observation : comment la machine sait quoi regarder
+
+Le Daemon ignore l'inventaire déclaré du Controller, et rien ne peut le lui
+apprendre sans créer le chemin descendant que le produit refuse. La liste vient
+donc **de la machine** : un document root-owned et borné,
+`/etc/your-cloud/external-targets.json`, relu à chaque collecte, qui ne porte
+que sa version de schéma, l'identité de sa machine et des ports de loopback.
+
+C'est exactement la forme du registre d'enrôlement : la machine dit ce qui peut
+être regardé, l'humain dit ce que cela signifie, et **aucune des deux moitiés ne
+peut écrire l'autre**. Un document nommant une autre machine est refusé — le
+Controller identifie une déclaration par le couple machine et port, donc un point
+de vue déplaçable par copie de fichier ne serait pas un point de vue. Le document
+ne porte ni adresse, ni libellé, ni identifiant, ni chemin, ni commande : le
+provisionner n'accorde rien de plus que d'être lu.
+
+La jointure est faite par le Controller, et elle est possible sans rien
+inventer : la machine rapporte un port, et le couple machine et port est
+précisément ce sur quoi une déclaration est unique.
+
+### Ce que l'enveloppe porte en plus, et ce qu'elle ne renomme pas
+
+Les lectures voyagent dans l'enveloppe d'observation existante, sous une section
+`external` **absente par défaut**. Une machine dont la fiche ne nomme aucune
+cible émet octet pour octet le message que `v0.0.2` a prouvé.
+
+`profile` continue de nommer l'ensemble fixe des trois collecteurs de `health`,
+parce que c'est ce qu'il a toujours nommé. Une lecture externe n'est pas un
+quatrième collecteur : elle ne porte ni valeur, ni santé, ni contenu — seulement
+ce qu'une connexion à un port déclaré a fait. Chaque lecture est deux champs, le
+port et l'un de quatre mots fermés ; la section est bornée à seize entrées,
+triée et unique par port.
+
+### L'incapacité d'écrire, par construction
+
+L'adaptateur reçoit **une fonction, qui prend un port et rend un `io.ReadCloser`**.
+Pas d'adresse, pas de schéma, pas de chemin, pas de couture d'effets, pas de
+magasin. L'interface rendue expose `Read` et `Close` : l'adaptateur ne peut pas
+même envoyer un octet à ce qu'il lit.
+
+Trois preuves le tiennent, et ce sont des tests :
+
+1. `probe.go` importe **exactement** `context`, `errors` et `io` — une liste
+   positive, pas une liste d'interdits ;
+2. la couture rend un `io.ReadCloser` dont l'ensemble de méthodes est exactement
+   `Read` et `Close`, et un `Adapter` ne porte qu'un seul champ ;
+3. aucun fichier du paquet n'importe `os/exec`, `net/http`, `crypto/tls`,
+   `syscall`, `internal/plan`, `internal/approval`, `internal/auxiliary` ni
+   `internal/controller` ; seul le fichier qui relie le paquet à une machine peut
+   nommer `os`, `net` ou `internal/securefile`.
+
+L'absence de `net/http` est ce qui rend « aucune redirection suivie » et « aucune
+décision de confiance TLS » vraies par construction : il n'existe ici aucun
+client qui pourrait suivre ou décider quoi que ce soit. Le reste des bornes est
+au même endroit : `127.0.0.1` est une constante de la liaison, la connexion et la
+lecture ont chacune leur délai, la réponse est comptée puis jetée dans
+`io.Discard` au-delà de quatre kilo-octets.
+
+### Ce que `contredit` veut dire ici, exactement
+
+> **contredit** : un port qu'une lecture datée avait trouvé répondant n'accepte
+> plus aucune connexion. La machine contredit ce que la déclaration dit s'y
+> trouver.
+
+Et rien d'autre. Ce n'est jamais une comparaison de contenu — aucun profil ne
+décrit le contenu d'une chose externe, donc rien ici ne pourrait en comparer un.
+Ce n'est jamais la première réponse au sujet d'un élément : personne n'a vu ce
+port répondre, il n'y a donc rien à contredire, et la lecture dit
+`invérifiable` avec `nothing_listening`. Une fois établi, `contredit` tient
+jusqu'à une lecture qui vérifie de nouveau : un élément dont rien ne change ne
+doit pas osciller entre deux mots.
+
+### La collision géré/externe : la machine tranche, et le dit
+
+Le contrat laissait ce refus à la machine, parce que le Controller connaît les
+machines et non leurs fiches. La machine y répond par un constat, non par une
+comparaison à un registre : **le noyau écrit qui détient une socket en écoute**,
+et la table des comptes dit à qui appartient cet identifiant. Un compte de ce
+produit porte le préfixe du produit — les fiches le disent déjà, et ce préfixe
+existe précisément pour qu'un nom de rôle n'adopte jamais un groupe système
+générique.
+
+Un port déclaré externe que ce produit détient est **lu comme
+`invérifiable`, motif `port_is_managed`**, et n'est jamais connecté du tout : la
+lecture qui aurait suivi n'aurait pu dire que « quelque chose répond », c'est-à-
+dire exactement la phrase qui ferait passer un service géré pour un service
+externe.
+
+C'est une **extension nommée** de la liste fermée de `#105`, et les deux autres
+réponses possibles sont refusées :
+
+- refuser la lecture laisserait l'élément affiché `déclaré`, c'est-à-dire
+  silencieusement présenté comme externe : le contraire du but ;
+- un quatrième état romprait la règle « trois états, et jamais un quatrième
+  déguisé ».
+
+La déclaration n'est pas retirée pour autant : retirer est un acte humain, jamais
+celui d'un Controller. Une machine qui ne peut pas lire sa propre table de
+comptes ne rapporte aucune lecture du tout, plutôt que d'en rapporter en
+supposant qu'aucun port n'est géré.
+
+`machine_unreachable` garde le troisième motif honnête : un instantané que le
+Controller a bien lu, dans lequel la machine ne porte aucune observation, dit à
+un élément **déjà lu une fois** que le point de vue qu'il nomme a cessé de
+répondre. Un élément que personne n'a jamais lu reste `déclaré` : « pas encore
+provisionné » n'est pas « injoignable ».
+
+### La cadence, et où elle est tenue
+
+Le Collector relève toutes les **30 secondes**, soit trois fois à l'intérieur de
+la limite de 90 secondes que le produit annonce. La contrainte que `#105` posait
+à ce palier — lire au moins aussi souvent, ou assumer qu'un constat vérifié ne
+soit jamais présenté comme actuel — est donc **tenue**, et elle l'est par la
+cadence qui existait déjà.
+
+L'enregistrement, lui, se fait à la lecture : `GET /v0/external-elements`
+absorbe l'instantané du Relay avant de projeter, par la même lecture bornée que
+`GET /v0/machines` fait déjà, avec son cache et son backoff. Cela ne déplace pas
+l'âge affiché : un constat porte **la date de collecte de la machine**, pas celle
+du rafraîchissement qui l'a rapportée. Absorber deux fois le même instantané ne
+change rien, ne déplace aucune révision et ne réécrit aucun fichier. Un Relay que
+le Controller ne peut pas lire est sa propre panne et jamais un fait sur une
+machine : rien n'est enregistré, et les derniers constats vieillissent
+honnêtement.
+
+### Ce que cet additif n'ajoute pas
+
+Aucune route n'est ajoutée à la surface du Controller : les trois de `#105`
+restent les trois. Aucun `DELETE` n'apparaît. Le Relay n'expose ni route, ni
+champ, ni réponse nouvelle vers un Daemon. Aucune découverte n'existe nulle part :
+un voisin que personne n'a déclaré reste inconnu, parce qu'il n'y a ni balayage,
+ni plage, ni résolution de nom dans aucun de ces chemins.

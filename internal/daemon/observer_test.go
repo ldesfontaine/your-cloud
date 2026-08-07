@@ -29,12 +29,12 @@ func TestCollectorPersistsFixedHostHealth(t *testing.T) {
 		StatFS: func(string) (observation.FileSystemStats, error) {
 			return observation.FileSystemStats{BlockSize: 1, TotalBlocks: 100, AvailableBlocks: 50}, nil
 		},
-	}, log.New(io.Discard, "", 0))
+	}, nil, log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	collector.now = func() time.Time { return time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC) }
-	if err := collector.CollectOnce(); err != nil {
+	if err := collector.CollectOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	encoded, sequence, err := localBuffer.Peek()
@@ -50,7 +50,7 @@ func TestCollectorPersistsFixedHostHealth(t *testing.T) {
 func TestPublisherRemovesOnlyAnExactlyAcknowledgedObservation(t *testing.T) {
 	t.Parallel()
 	localBuffer := daemonTestBuffer(t)
-	if _, err := localBuffer.Enqueue("lab-machine-1", daemonHealth(), time.Now()); err != nil {
+	if _, err := localBuffer.Enqueue("lab-machine-1", daemonHealth(), nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -80,7 +80,7 @@ func TestPublisherKeepsObservationAfterHostileAcknowledgement(t *testing.T) {
 		bytes.Repeat([]byte("x"), maxAckBytes+1),
 	} {
 		localBuffer := daemonTestBuffer(t)
-		if _, err := localBuffer.Enqueue("lab-machine-1", daemonHealth(), time.Now()); err != nil {
+		if _, err := localBuffer.Enqueue("lab-machine-1", daemonHealth(), nil, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -150,5 +150,78 @@ func daemonHealth() observation.HostHealth {
 		Uptime: observation.UptimeResult{Status: "ok", UptimeSeconds: &zero},
 		Memory: observation.MemoryResult{Status: "ok", TotalBytes: &zero, AvailableBytes: &zero},
 		RootFS: observation.RootFSResult{Status: "ok", TotalBytes: &zero, AvailableBytes: &zero},
+	}
+}
+
+// TestCollectorCarriesTheDeclaredTargetsWithoutDependingOnThem is the Daemon's
+// half of `#107`'s transport.
+//
+// The readings of the machine's declared loopback ports ride the very envelope
+// the three collectors already fill, so no second reporting path exists, no
+// second authority is enrolled and no answer ever comes back down to this
+// machine telling it what to look at.
+//
+// And an external element the product does not own may not take the observation
+// of a machine down with it: a reading that could not be taken is logged and
+// dropped, the host's own health is persisted regardless, and the silence ages
+// honestly in the Controller's projection instead of stopping the chain.
+func TestCollectorCarriesTheDeclaredTargetsWithoutDependingOnThem(t *testing.T) {
+	t.Parallel()
+	localBuffer := daemonTestBuffer(t)
+	readings := []observation.ExternalReading{
+		{ProbePort: 5000, Outcome: observation.ExternalAnswered},
+		{ProbePort: 8443, Outcome: observation.ExternalManaged},
+	}
+	failing := false
+	logged := &bytes.Buffer{}
+	collector, err := NewCollector("lab-machine-1", localBuffer, daemonTestSources(),
+		func(context.Context) ([]observation.ExternalReading, error) {
+			if failing {
+				return nil, errors.New("this machine cannot say who holds its sockets")
+			}
+			return readings, nil
+		}, log.New(logged, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.CollectOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _, err := localBuffer.Peek()
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := observation.Decode(encoded)
+	if err != nil || len(envelope.External) != 2 || envelope.External[1] != readings[1] {
+		t.Fatalf("the declared readings did not reach the envelope: %+v %v", envelope.External, err)
+	}
+	if envelope.Profile != observation.Profile {
+		t.Fatalf("the fixed collector set was renamed to %q", envelope.Profile)
+	}
+
+	failing = true
+	if err := collector.CollectOnce(context.Background()); err != nil {
+		t.Fatalf("a failed external reading stopped the observation of a machine: %v", err)
+	}
+	if !strings.Contains(logged.String(), "external reading unavailable") {
+		t.Fatalf("a failed external reading was swallowed silently: %q", logged.String())
+	}
+	stats, err := localBuffer.Stats()
+	if err != nil || stats.PendingRecords != 2 {
+		t.Fatalf("the host's own health was not persisted anyway: %+v %v", stats, err)
+	}
+}
+
+func daemonTestSources() observation.Sources {
+	return observation.Sources{
+		ReadFile: func(path string) ([]byte, error) {
+			if path == "/proc/uptime" {
+				return []byte("10.0 2.0"), nil
+			}
+			return []byte("MemTotal: 100 kB\nMemAvailable: 50 kB\n"), nil
+		},
+		StatFS: func(string) (observation.FileSystemStats, error) {
+			return observation.FileSystemStats{BlockSize: 1, TotalBlocks: 100, AvailableBlocks: 50}, nil
+		},
 	}
 }

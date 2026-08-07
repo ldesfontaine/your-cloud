@@ -227,7 +227,7 @@ func relayTestEnvelope(t *testing.T, sequence uint64, gaps []observation.Gap) ob
 	}
 	envelope, err := observation.NewEnvelope(
 		"lab-machine-1", sequence,
-		time.Date(2026, 7, 18, 12, 0, int(sequence), 0, time.UTC), health,
+		time.Date(2026, 7, 18, 12, 0, int(sequence), 0, time.UTC), health, nil,
 	)
 	if err != nil {
 		t.Fatal(err)

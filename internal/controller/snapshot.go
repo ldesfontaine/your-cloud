@@ -43,6 +43,11 @@ type RelaySnapshotObservation struct {
 	ReceivedAt    string                 `json:"received_at"`
 	Gaps          []observation.Gap      `json:"gaps"`
 	Health        observation.HostHealth `json:"health"`
+	// External is what the machine's declared loopback targets did at the instant
+	// of its own collection. An absent section means that machine's sheet names no
+	// target, which is different from a target that answered nothing — so the
+	// field is nullable and never a required empty array, unlike Gaps.
+	External []observation.ExternalReading `json:"external,omitempty"`
 }
 
 func DecodeRelaySnapshot(data []byte, controllerID, infrastructureID string) (RelaySnapshot, error) {
@@ -116,6 +121,7 @@ func validateSnapshotObservation(machineID string, snapshotAt time.Time, candida
 		ObservedAt:    candidate.ObservedAt,
 		Health:        candidate.Health,
 		Gaps:          candidate.Gaps,
+		External:      candidate.External,
 	}
 	if err := envelope.Validate(); err != nil {
 		return err

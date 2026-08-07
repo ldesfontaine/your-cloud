@@ -74,7 +74,7 @@ Les rôles partagent l'artefact, pas leur autorité :
 
 | Rôle | Peut lire | Peut modifier | Réseau |
 |---|---|---|---|
-| Daemon | son certificat, sa clé, la CA Relay et les trois sources système fixes | son tampon sous `/var/lib/private/your-cloud-daemon` | HTTPS sortant vers l'origine Relay exacte |
+| Daemon | son certificat, sa clé, la CA Relay, les trois sources système fixes et, si elle existe, la fiche root-owned des ports de loopback déclarés externes | son tampon sous `/var/lib/private/your-cloud-daemon` | HTTPS sortant vers l'origine Relay exacte |
 | Relay | ses certificats, ses CA, le registre et les manifestes root-owned | son état sous `/var/lib/private/your-cloud-relay` | ingestion `:8443` et lecteur privé `:8444` séparés |
 | Controller | ses identités, l'inventaire métier et le cache Relay | ses états privés Controller | lecture mTLS sortante vers le Relay et API privée `:9443` |
 | Diagnose | lancé ponctuellement par `root`, certificat public Daemon et état local déjà produit | rien | aucun accès réseau |
@@ -457,7 +457,12 @@ sequenceDiagram
 
 Une observation contient exactement : version de schéma, identité machine,
 version Daemon, profil, séquence persistante, heure de collecte, résultats des
-trois collecteurs et éventuelles lacunes.
+trois collecteurs et éventuelles lacunes. Depuis `#107` elle porte en plus une
+section absente par défaut : sur une machine dont une fiche root-owned nomme des
+ports de loopback déclarés externes, ce qu'une connexion bornée à chacun d'eux a
+fait — un port et l'un de quatre mots fermés, jamais un contenu. `profil` continue
+de nommer l'ensemble fixe des trois collecteurs de santé, qu'il n'a pas cessé de
+nommer, et une machine sans fiche émet le message que `v0.0.2` a prouvé.
 
 Le Relay accuse seulement après publication durable. Un accusé erroné ne
 retire rien du tampon. Un rejeu octet pour octet est idempotent ; la même
@@ -499,6 +504,7 @@ en `v0.0.2`.
 | `internal/observation` | schéma, validation et trois collecteurs | Collector, Buffer, Relay |
 | `internal/buffer` | file locale bornée, séquences, lacunes et diagnostic | Daemon, Diagnose |
 | `internal/daemon/observer.go` | boucles Collector et Publisher | `runDaemon` |
+| `internal/external` | adaptateur en lecture seule des ports déclarés externes, sans aucun chemin d'écriture | Collector |
 | `internal/controller` | identités, sessions, inventaire, cache, projection et API Controller | `runController` |
 | `internal/transport` | politiques TLS 1.3 client et serveur | Daemon, Relay, Controller |
 | `internal/enrollment` | registre, empreinte et révocation rechargeable | Relay |

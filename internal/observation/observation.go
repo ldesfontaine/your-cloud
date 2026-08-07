@@ -22,6 +22,27 @@ const (
 	CollectionInterval = 30 * time.Second
 	// MaxMessageBytes bounds an encoded observation before transport decoding.
 	MaxMessageBytes = 4096
+	// MaxExternalReadings bounds the declared-target section of one envelope.
+	//
+	// It is small on purpose. The section rides inside the same 4 KiB message the
+	// three collectors already fit in, and a machine that could report a hundred
+	// ports would be a machine whose envelope no longer fits — so the bound is
+	// here, where the message is, rather than left to whoever provisions targets.
+	MaxExternalReadings = 16
+)
+
+// The closed vocabulary of one external reading.
+//
+// Every one of them is a fact about a connection and never about a content:
+// something accepted, nothing accepted, something accepted and would not stop
+// talking within the bound, or the socket is held by an account of this product.
+// There is no value here that says what answered, because a thing that answers
+// proves that a thing answers and not that it is the thing a human named.
+const (
+	ExternalAnswered   = "answered"
+	ExternalNoListener = "no_listener"
+	ExternalTooLarge   = "response_too_large"
+	ExternalManaged    = "managed_by_this_product"
 )
 
 const (
@@ -32,15 +53,38 @@ const (
 )
 
 // Envelope is immutable once placed in the local delivery queue.
+//
+// `profile` names the fixed collector set of `health` and goes on naming exactly
+// those three, because that is what it has always named. `external` is not a
+// fourth collector and does not belong to that profile: it carries no value, no
+// health and no content, only what a connection to a declared loopback port of
+// this machine did. It is present only on a machine whose own root-provisioned
+// sheet names targets, so an envelope from every machine proved before `#107` is
+// byte for byte the envelope that palier proved.
 type Envelope struct {
-	SchemaVersion int        `json:"schema_version"`
-	MachineID     string     `json:"machine_id"`
-	DaemonVersion string     `json:"daemon_version"`
-	Profile       string     `json:"profile"`
-	Sequence      uint64     `json:"sequence"`
-	ObservedAt    string     `json:"observed_at"`
-	Health        HostHealth `json:"health"`
-	Gaps          []Gap      `json:"gaps,omitempty"`
+	SchemaVersion int               `json:"schema_version"`
+	MachineID     string            `json:"machine_id"`
+	DaemonVersion string            `json:"daemon_version"`
+	Profile       string            `json:"profile"`
+	Sequence      uint64            `json:"sequence"`
+	ObservedAt    string            `json:"observed_at"`
+	Health        HostHealth        `json:"health"`
+	Gaps          []Gap             `json:"gaps,omitempty"`
+	External      []ExternalReading `json:"external,omitempty"`
+}
+
+// ExternalReading is one bounded conclusion about one loopback port a
+// root-provisioned sheet on that machine declared.
+//
+// Two fields and no third. There is no address, because the read is made on the
+// machine's own loopback and nowhere else; no label, because the human's words
+// live in the Controller's declared inventory and not on the wire; no body, no
+// size, no status and no media type, because nothing about the answer is
+// interpreted and a field that could carry a byte of a third party would be a
+// field somebody would eventually read.
+type ExternalReading struct {
+	ProbePort int    `json:"probe_port"`
+	Outcome   string `json:"outcome"`
 }
 
 // Gap makes one contiguous range of discarded observations explicit.
@@ -83,7 +127,13 @@ type RootFSResult struct {
 }
 
 // NewEnvelope binds one collected state to its machine and persistent sequence.
-func NewEnvelope(machineID string, sequence uint64, observedAt time.Time, health HostHealth) (Envelope, error) {
+//
+// The declared-target section travels beside the health of the host rather than
+// in a message of its own: a machine that has one thing to report has one
+// message to send, and a second reporting path would be a second authority to
+// enrol, to authenticate and to bound. An empty section is omitted rather than
+// sent empty, so a machine that declares no target sends what it always sent.
+func NewEnvelope(machineID string, sequence uint64, observedAt time.Time, health HostHealth, external []ExternalReading) (Envelope, error) {
 	result := Envelope{
 		SchemaVersion: SchemaVersion,
 		MachineID:     machineID,
@@ -92,6 +142,9 @@ func NewEnvelope(machineID string, sequence uint64, observedAt time.Time, health
 		Sequence:      sequence,
 		ObservedAt:    observedAt.UTC().Format(time.RFC3339Nano),
 		Health:        health,
+	}
+	if len(external) != 0 {
+		result.External = append([]ExternalReading(nil), external...)
 	}
 	if err := result.Validate(); err != nil {
 		return Envelope{}, err
@@ -158,6 +211,9 @@ func (envelope Envelope) Validate() error {
 	if err := validatePair(envelope.Health.RootFS.Status, envelope.Health.RootFS.TotalBytes, envelope.Health.RootFS.AvailableBytes, envelope.Health.RootFS.Error); err != nil {
 		return fmt.Errorf("rootfs collector: %w", err)
 	}
+	if err := validateExternalReadings(envelope.External); err != nil {
+		return err
+	}
 	for index, gap := range envelope.Gaps {
 		if err := gap.Validate(); err != nil {
 			return fmt.Errorf("gap %d: %w", index, err)
@@ -184,6 +240,34 @@ func (gap Gap) Validate() error {
 	last, lastErr := time.Parse(time.RFC3339Nano, gap.LastObservedAt)
 	if firstErr != nil || lastErr != nil || last.Before(first) {
 		return errors.New("gap observation interval is invalid")
+	}
+	return nil
+}
+
+// validateExternalReadings keeps the declared-target section closed, bounded and
+// ordered on the one value that identifies a target.
+//
+// Sorted and unique by port, so that a reader mapping a reading onto a
+// declaration never has to choose between two answers about the same port, and
+// so that the same machine in the same state produces the same bytes.
+func validateExternalReadings(readings []ExternalReading) error {
+	if len(readings) > MaxExternalReadings {
+		return errors.New("observation carries more external readings than the bound")
+	}
+	previousPort := 0
+	for _, reading := range readings {
+		if reading.ProbePort < 1 || reading.ProbePort > 65535 {
+			return errors.New("external reading probe_port is outside 1..65535")
+		}
+		if reading.ProbePort <= previousPort {
+			return errors.New("external readings must be unique and sorted by probe_port")
+		}
+		switch reading.Outcome {
+		case ExternalAnswered, ExternalNoListener, ExternalTooLarge, ExternalManaged:
+		default:
+			return errors.New("external reading outcome is outside its closed list")
+		}
+		previousPort = reading.ProbePort
 	}
 	return nil
 }

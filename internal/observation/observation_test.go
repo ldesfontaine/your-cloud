@@ -2,6 +2,7 @@ package observation
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,7 +65,7 @@ func TestEnvelopeRoundTripAndHostileDocuments(t *testing.T) {
 			return FileSystemStats{BlockSize: 1, TotalBlocks: 100, AvailableBlocks: 50}, nil
 		},
 	})
-	envelope, err := NewEnvelope("lab-machine-1", 1, time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), health)
+	envelope, err := NewEnvelope("lab-machine-1", 1, time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), health, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestEnvelopeRejectsUnknownProfileAndFreeCollectorData(t *testing.T) {
 		Memory: MemoryResult{Status: statusOK, TotalBytes: &zero, AvailableBytes: &zero},
 		RootFS: RootFSResult{Status: statusOK, TotalBytes: &zero, AvailableBytes: &zero},
 	}
-	value, err := NewEnvelope("lab-machine-1", 1, time.Now(), validHealth)
+	value, err := NewEnvelope("lab-machine-1", 1, time.Now(), validHealth, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestEnvelopeRejectsGapAtOrAfterCurrentSequence(t *testing.T) {
 		{FirstSequence: 2, LastSequence: 2, DroppedCount: 1, FirstObservedAt: "2026-07-18T11:59:58Z", LastObservedAt: "2026-07-18T11:59:58Z"},
 		{FirstSequence: 3, LastSequence: 4, DroppedCount: 2, FirstObservedAt: "2026-07-18T11:59:58Z", LastObservedAt: "2026-07-18T11:59:59Z"},
 	} {
-		envelope, err := NewEnvelope("lab-machine-1", 2, time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), health)
+		envelope, err := NewEnvelope("lab-machine-1", 2, time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC), health, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,5 +145,75 @@ func BenchmarkCollectHostHealth(b *testing.B) {
 		if result.Uptime.Status != statusOK || result.Memory.Status != statusOK || result.RootFS.Status != statusOK {
 			b.Fatalf("real host-health collection failed: %#v", result)
 		}
+	}
+}
+
+// TestExternalSectionIsClosedBoundedAndOptional holds the one field `#107` added
+// to the wire message.
+//
+// The section is optional above all: a machine whose own sheet names no target
+// produces exactly the bytes every machine produced before this palier, so the
+// envelope `v0.0.2` proved is still the envelope such a machine sends. What the
+// section may say is closed on four words, bounded, and sorted and unique on the
+// port — a reader mapping a reading onto a declaration must never have to choose
+// between two answers about the same port.
+func TestExternalSectionIsClosedBoundedAndOptional(t *testing.T) {
+	t.Parallel()
+	health := validHostHealth()
+	silent, err := NewEnvelope("lab-machine-1", 1, time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC), health, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := silent.Encode()
+	if err != nil || strings.Contains(string(encoded), "external") {
+		t.Fatalf("a machine with no declared target sent %s (%v)", encoded, err)
+	}
+
+	speaking, err := NewEnvelope("lab-machine-1", 1, time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC), health,
+		[]ExternalReading{{ProbePort: 5000, Outcome: ExternalAnswered}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = speaking.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil || len(decoded.External) != 1 || decoded.External[0] != speaking.External[0] {
+		t.Fatalf("one reading did not survive the wire: %+v %v", decoded.External, err)
+	}
+
+	tooMany := make([]ExternalReading, MaxExternalReadings+1)
+	for index := range tooMany {
+		tooMany[index] = ExternalReading{ProbePort: index + 1, Outcome: ExternalAnswered}
+	}
+	for name, readings := range map[string][]ExternalReading{
+		"an unknown outcome": {{ProbePort: 5000, Outcome: "probably_fine"}},
+		"an empty outcome":   {{ProbePort: 5000}},
+		"a port of zero":     {{ProbePort: 0, Outcome: ExternalAnswered}},
+		"a repeated port": {
+			{ProbePort: 5000, Outcome: ExternalAnswered},
+			{ProbePort: 5000, Outcome: ExternalNoListener},
+		},
+		"unsorted ports": {
+			{ProbePort: 9000, Outcome: ExternalAnswered},
+			{ProbePort: 5000, Outcome: ExternalAnswered},
+		},
+		"more than the bound": tooMany,
+	} {
+		candidate := speaking
+		candidate.External = readings
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("an envelope carrying %s was accepted", name)
+		}
+	}
+}
+
+func validHostHealth() HostHealth {
+	value := uint64(1)
+	return HostHealth{
+		Uptime: UptimeResult{Status: statusOK, UptimeSeconds: &value},
+		Memory: MemoryResult{Status: statusOK, TotalBytes: &value, AvailableBytes: &value},
+		RootFS: RootFSResult{Status: statusOK, TotalBytes: &value, AvailableBytes: &value},
 	}
 }

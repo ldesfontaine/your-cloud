@@ -125,12 +125,16 @@ func openAt(directory string, limits Limits, now time.Time) (*Buffer, error) {
 }
 
 // Enqueue persists one new current state before making it available to send.
-func (buffer *Buffer) Enqueue(machineID string, health observation.HostHealth, now time.Time) (observation.Envelope, error) {
+//
+// external is what the machine's declared loopback targets did at the same
+// instant, and it is empty on every machine whose own sheet names none: the
+// queue of such a machine holds exactly the envelopes it held before `#107`.
+func (buffer *Buffer) Enqueue(machineID string, health observation.HostHealth, external []observation.ExternalReading, now time.Time) (observation.Envelope, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 
 	candidate := cloneState(buffer.state)
-	envelope, err := observation.NewEnvelope(machineID, candidate.NextSequence, now, health)
+	envelope, err := observation.NewEnvelope(machineID, candidate.NextSequence, now, health, external)
 	if err != nil {
 		return observation.Envelope{}, err
 	}
@@ -394,6 +398,7 @@ func cloneState(source state) state {
 func cloneEnvelope(source observation.Envelope) observation.Envelope {
 	result := source
 	result.Gaps = append([]observation.Gap(nil), source.Gaps...)
+	result.External = append([]observation.ExternalReading(nil), source.External...)
 	result.Health.Uptime.UptimeSeconds = cloneUint64(source.Health.Uptime.UptimeSeconds)
 	result.Health.Memory.TotalBytes = cloneUint64(source.Health.Memory.TotalBytes)
 	result.Health.Memory.AvailableBytes = cloneUint64(source.Health.Memory.AvailableBytes)

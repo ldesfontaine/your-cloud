@@ -27,18 +27,32 @@ const (
 	maxAckBytes         = 256
 )
 
-// Collector periodically records the fixed host-health profile locally.
+// Collector periodically records the fixed host-health profile locally, and
+// beside it whatever the machine's own declared loopback targets did.
 type Collector struct {
 	machineID string
 	buffer    *buffer.Buffer
 	sources   observation.Sources
+	external  ExternalReader
 	interval  time.Duration
 	now       func() time.Time
 	logger    *log.Logger
 }
 
-// NewCollector accepts no profile, path or collector parameter.
-func NewCollector(machineID string, localBuffer *buffer.Buffer, sources observation.Sources, logger *log.Logger) (*Collector, error) {
+// ExternalReader is the read-only adapter of `#107` as this package sees it: one
+// function that answers what the declared loopback ports of this machine did,
+// and that receives nothing with which to change anything.
+//
+// It is a parameter rather than a package this file reaches into, for the reason
+// the three fixed sources are: the Daemon is the process that observes and
+// reports, and what it may observe is decided at assembly rather than by the
+// loop that runs every thirty seconds.
+type ExternalReader func(context.Context) ([]observation.ExternalReading, error)
+
+// NewCollector accepts no profile, path or collector parameter. The external
+// reader may be absent, and a Daemon without one reports exactly what every
+// Daemon reported before this palier.
+func NewCollector(machineID string, localBuffer *buffer.Buffer, sources observation.Sources, external ExternalReader, logger *log.Logger) (*Collector, error) {
 	if err := machineid.Validate(machineID); err != nil {
 		return nil, err
 	}
@@ -46,23 +60,44 @@ func NewCollector(machineID string, localBuffer *buffer.Buffer, sources observat
 		return nil, errors.New("collector requires a buffer, fixed sources and logger")
 	}
 	return &Collector{
-		machineID: machineID, buffer: localBuffer, sources: sources,
+		machineID: machineID, buffer: localBuffer, sources: sources, external: external,
 		interval: observation.CollectionInterval, now: time.Now, logger: logger,
 	}, nil
 }
 
 // CollectOnce records one typed state even when an individual collector fails.
-func (collector *Collector) CollectOnce() error {
+//
+// A declared-target reading that could not be taken is logged and dropped, and
+// the host's own health is persisted regardless: an external element the product
+// does not own may not take the observation of a machine down with it. The
+// absence then ages honestly in the Controller's projection, which is the
+// product's own way of saying "nobody looked recently".
+func (collector *Collector) CollectOnce(ctx context.Context) error {
 	health := observation.CollectHostHealth(collector.sources)
-	if _, err := collector.buffer.Enqueue(collector.machineID, health, collector.now()); err != nil {
+	var external []observation.ExternalReading
+	if collector.external != nil {
+		readings, err := collector.external(ctx)
+		if err != nil {
+			collector.logger.Printf("external reading unavailable: %v", err)
+		} else {
+			external = readings
+		}
+	}
+	if _, err := collector.buffer.Enqueue(collector.machineID, health, external, collector.now()); err != nil {
 		return fmt.Errorf("persist host health: %w", err)
 	}
 	return nil
 }
 
 // Run collects immediately, then at the fixed candidate cadence.
+//
+// That cadence is what makes an external reading usable at all: the product
+// announces one ageing limit, ninety seconds, and a reading taken every thirty
+// reaches the Relay three times inside it. A slower adapter would have rendered
+// every external element permanently old, which is the cost `#105` asked this
+// palier to either meet or admit.
 func (collector *Collector) Run(ctx context.Context) {
-	collector.collectAndLog()
+	collector.collectAndLog(ctx)
 	ticker := time.NewTicker(collector.interval)
 	defer ticker.Stop()
 	for {
@@ -70,13 +105,13 @@ func (collector *Collector) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			collector.collectAndLog()
+			collector.collectAndLog(ctx)
 		}
 	}
 }
 
-func (collector *Collector) collectAndLog() {
-	if err := collector.CollectOnce(); err != nil {
+func (collector *Collector) collectAndLog(ctx context.Context) {
+	if err := collector.CollectOnce(ctx); err != nil {
 		collector.logger.Printf("observation collection unavailable: %v", err)
 	}
 }

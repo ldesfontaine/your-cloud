@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/ldesfontaine/your-cloud/internal/machineid"
 )
@@ -77,6 +78,18 @@ func (handler *ControllerHandler) serveExternalElements(response http.ResponseWr
 	if request.Method == http.MethodGet {
 		if !handler.requireEmptyBody(response, request) {
 			return
+		}
+		// The readings of the machines are taken in before the inventory is
+		// projected, from the same Relay read `GET /v0/machines` already makes and
+		// with the same bounds, caching and backoff. A Relay this Controller could
+		// not read leaves the declared inventory exactly as it was: a transport this
+		// Controller is blind through is its own failure and never a fact about a
+		// machine, so nothing is recorded and the last constats go on ageing
+		// honestly. A failure to record is not a failure to answer either — the
+		// projection is what the human asked for.
+		snapshot, status, _ := handler.relay.Read(request.Context(), time.Time{})
+		if status == RelayAvailable {
+			_ = handler.external.AbsorbSnapshot(snapshot)
 		}
 		view, err := ProjectExternalElements(handler.external.Snapshot(), handler.now())
 		if err != nil {
