@@ -366,3 +366,33 @@ propre genre et d'aucun autre.
 7. idempotence de chaque plan rejoué ; digest flottant, volume, port,
    pair ou trajet non approuvés refusés ; le démontage rend les machines à
    leur état de clôture nommé.
+
+### Addendum `#104` : une erreur honnête exige un délai borné
+
+La preuve machine a mesuré ce que « rend l'erreur de passerelle » coûtait
+réellement : rien. Un backend joint par un passage tombé ne refuse pas la
+connexion — il ne répond pas du tout, les paquets entrant dans un trou —, et
+le point d'entrée, sans délai borné, attendait une minute et demie avant de
+conclure. Le client, lui, n'obtenait ni erreur ni succès : il attendait.
+
+Borner le délai de connexion ne suffit pas, et c'est le second
+enseignement de cette preuve. Un backend derrière un passage tombé ne refuse
+pas toujours la connexion et ne l'avale pas toujours : à travers la pile
+rootless derrière laquelle l'entrée tourne, la connexion peut être
+**acceptée** puis n'être honorée par personne. La connexion a réussi, donc
+aucun délai de connexion ne s'applique, et l'entrée attend un premier
+en-tête qui ne viendra jamais — mesuré sur la machine : quatre-vingt-dix
+secondes, puis le client abandonne le premier et ne lit rien du tout.
+
+La configuration statique de l'entrée borne donc les deux attentes : cinq
+secondes pour la connexion, dix pour le premier en-tête de la réponse. Les
+valeurs se lisent contre les échecs qu'elles séparent — un backend sur le
+loopback de la machine répond en microsecondes et un backend à travers un
+passage debout en millisecondes — et la borne porte sur l'en-tête, jamais
+sur le corps, si bien qu'une réponse volumineuse n'est pas tronquée. Ce sont
+des constantes du contrat au même titre que les ports : une entrée n'a rien
+d'approuvable au-delà de son existence et de son image.
+
+La phrase du contrat reste vraie et gagne sa condition : une entrée qui pend
+n'énonce ni succès ni échec, et aucun plan de ce produit ne doit laisser un
+lecteur à cet endroit.

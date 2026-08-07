@@ -59,6 +59,32 @@ const (
 	entrypointSecurePort = 443
 	entrypointClearPort  = 80
 
+	// entrypointDialTimeoutSeconds and entrypointResponseHeaderTimeoutSeconds
+	// bound how long the entry waits for a backend that is not answering before
+	// it says so. Both are needed, and the machine proof of `#104` is why.
+	//
+	// The dial bound was written first, against the failure everyone expects: a
+	// backend that cannot be reached at all. It works — a destination that
+	// silently drops packets renders a gateway error in five seconds instead of
+	// hanging — and it was not enough. A backend behind a fallen private
+	// passage does not always refuse the connection and does not always swallow
+	// it: through the rootless stack the entry runs behind, the connection can
+	// be *accepted* and then answered by nobody. The dial has succeeded, so no
+	// dial bound applies, and the entry waits for a first response header that
+	// never comes. Measured on the machine: ninety seconds, then the client
+	// gave up first and read nothing at all.
+	//
+	// So the wait for the first header is bounded too, and the two values are
+	// chosen against the failures they stand between. A backend on this
+	// machine's own loopback answers in microseconds and one across a standing
+	// passage in milliseconds, so five seconds is far beyond any healthy dial
+	// and ten seconds far beyond any healthy first header — the bound is on the
+	// header, not on the body, so a large answer is never cut short. They are
+	// constants of the contract for the same reason the ports are: an entry has
+	// nothing approvable beyond its existence and its image.
+	entrypointDialTimeoutSeconds           = 5
+	entrypointResponseHeaderTimeoutSeconds = 10
+
 	// hostPortsPolicyPath is where the one host relaxation this product allows
 	// itself is written, and hostPortsPolicy is exactly what is written there.
 	//
@@ -200,7 +226,15 @@ WantedBy=default.target
 //   - the clear entry point does nothing but redirect, permanently, to the
 //     secure one. It is not a second way in;
 //   - the two calls Traefik makes home by default are refused by name, because a
-//     machine of this product does not talk to the network unbidden.
+//     machine of this product does not talk to the network unbidden;
+//   - the dial towards a backend is bounded. A backend reached through a private
+//     passage that has fallen answers nothing at all — no refusal, no
+//     unreachable, just a route into a hole — and an unbounded dial turns that
+//     into a client that waits a minute and a half and is told nothing. The
+//     machine proof of `#104` measured exactly that. A bounded dial makes the
+//     entry say what it knows, promptly: this name has a backend and the backend
+//     is not answering. An entry that hangs states neither a success nor a
+//     failure, and a plan of this product may not leave a reader in that place.
 func renderEntrypointConfiguration() []byte {
 	return []byte(fmt.Sprintf(`# Written by your-cloud auxiliary from one approved plan. Do not edit: this
 # machine compares this file byte for byte against the plan it is given, and an
@@ -226,12 +260,19 @@ providers:
     directory: %s
     watch: true
 
+serversTransport:
+  forwardingTimeouts:
+    dialTimeout: %ds
+    responseHeaderTimeout: %ds
+
 log:
   level: INFO
 `,
 		entrypointClearPort,
 		entrypointSecurePort,
 		entrypointFragmentDirectory,
+		entrypointDialTimeoutSeconds,
+		entrypointResponseHeaderTimeoutSeconds,
 	))
 }
 

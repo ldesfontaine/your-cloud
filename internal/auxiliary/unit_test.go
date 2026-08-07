@@ -392,6 +392,11 @@ providers:
     directory: /etc/your-cloud/entrypoint/dynamic
     watch: true
 
+serversTransport:
+  forwardingTimeouts:
+    dialTimeout: 5s
+    responseHeaderTimeout: 10s
+
 log:
   level: INFO
 `
