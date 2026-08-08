@@ -84,16 +84,17 @@ type relaySnapshotReader interface {
 // device transport; this handler rechecks the live device authority on every
 // request and independently authenticates the human session where required.
 type ControllerHandler struct {
-	authority *AuthorityStore
-	pairing   *PairingManager
-	sessions  *SessionManager
-	inventory *InventoryStore
-	external  *ExternalStore
-	relay     relaySnapshotReader
-	host      string
-	now       func() time.Time
-	random    io.Reader
-	sleep     func(context.Context, time.Duration) error
+	authority   *AuthorityStore
+	pairing     *PairingManager
+	sessions    *SessionManager
+	inventory   *InventoryStore
+	external    *ExternalStore
+	definitions *ServiceDefinitionStore
+	relay       relaySnapshotReader
+	host        string
+	now         func() time.Time
+	random      io.Reader
+	sleep       func(context.Context, time.Duration) error
 
 	requestMu sync.Mutex
 	active    map[string]uint8
@@ -106,23 +107,26 @@ func NewControllerHandler(
 	sessions *SessionManager,
 	inventory *InventoryStore,
 	external *ExternalStore,
+	definitions *ServiceDefinitionStore,
 	relay relaySnapshotReader,
 	host string,
 ) (*ControllerHandler, error) {
-	if authority == nil || pairing == nil || sessions == nil || inventory == nil || external == nil || relay == nil ||
-		host == "" || strings.ContainsAny(host, "/?#@") {
+	if authority == nil || pairing == nil || sessions == nil || inventory == nil || external == nil ||
+		definitions == nil || relay == nil || host == "" || strings.ContainsAny(host, "/?#@") {
 		return nil, errors.New("Controller HTTP dependencies and exact Host are required")
 	}
 	state := authority.Snapshot()
 	inventoryState := inventory.Snapshot()
 	externalState := external.Snapshot()
+	definitionState := definitions.Snapshot()
 	if inventoryState.ControllerID != state.ControllerID || inventoryState.InfrastructureID != state.InfrastructureID ||
-		externalState.ControllerID != state.ControllerID || externalState.InfrastructureID != state.InfrastructureID {
+		externalState.ControllerID != state.ControllerID || externalState.InfrastructureID != state.InfrastructureID ||
+		definitionState.ControllerID != state.ControllerID || definitionState.InfrastructureID != state.InfrastructureID {
 		return nil, errors.New("Controller HTTP authorities do not describe the same installation")
 	}
 	return &ControllerHandler{
 		authority: authority, pairing: pairing, sessions: sessions, inventory: inventory,
-		external: external, relay: relay, host: host,
+		external: external, definitions: definitions, relay: relay, host: host,
 		now: time.Now, random: rand.Reader, active: make(map[string]uint8),
 		sleep: func(ctx context.Context, delay time.Duration) error {
 			timer := time.NewTimer(delay)
@@ -180,6 +184,8 @@ func (handler *ControllerHandler) ServeHTTP(response http.ResponseWriter, reques
 		handler.serveExternalElements(response, request, certificate)
 	case "/v0/external-element-withdrawals":
 		handler.serveExternalElementWithdrawals(response, request, certificate)
+	case "/v0/service-definitions":
+		handler.serveServiceDefinitions(response, request, certificate)
 	case "/v0/recovery-key":
 		handler.serveRecoveryKey(response, request, certificate)
 	case "/v0/probe-plans":
@@ -603,17 +609,32 @@ func (handler *ControllerHandler) decodeJSON(response http.ResponseWriter, reque
 	return ok
 }
 
+// decodeJSONWithin is the same read under a bound one named route announces for
+// itself. It exists because one document of the product — the service definition
+// — is bounded above the common request bound by its own contract, and a route
+// that could not receive a document the contract admits would be a bound decided
+// by an oversight. Every other route keeps the common bound by construction: the
+// wider one has to be passed in, one call at a time.
+func (handler *ControllerHandler) decodeJSONWithin(response http.ResponseWriter, request *http.Request, destination any, maximum int64) bool {
+	_, ok := handler.readJSONWithin(response, request, destination, maximum)
+	return ok
+}
+
 func (handler *ControllerHandler) readJSON(response http.ResponseWriter, request *http.Request, destination any) ([]byte, bool) {
+	return handler.readJSONWithin(response, request, destination, maxControllerRequestBytes)
+}
+
+func (handler *ControllerHandler) readJSONWithin(response http.ResponseWriter, request *http.Request, destination any, maximum int64) ([]byte, bool) {
 	if request.Header.Get("Content-Type") != "application/json" {
 		handler.writeProblem(response, http.StatusUnsupportedMediaType, "unsupported_media_type", 0)
 		return nil, false
 	}
-	if request.ContentLength <= 0 || request.ContentLength > maxControllerRequestBytes || len(request.TransferEncoding) != 0 {
+	if request.ContentLength <= 0 || request.ContentLength > maximum || len(request.TransferEncoding) != 0 {
 		handler.writeProblem(response, http.StatusRequestEntityTooLarge, "request_too_large", 0)
 		return nil, false
 	}
-	body, err := io.ReadAll(io.LimitReader(request.Body, maxControllerRequestBytes+1))
-	if err != nil || int64(len(body)) != request.ContentLength || int64(len(body)) > maxControllerRequestBytes {
+	body, err := io.ReadAll(io.LimitReader(request.Body, maximum+1))
+	if err != nil || int64(len(body)) != request.ContentLength || int64(len(body)) > maximum {
 		handler.writeProblem(response, http.StatusRequestEntityTooLarge, "request_too_large", 0)
 		return nil, false
 	}
@@ -718,6 +739,12 @@ func controllerRouteMethods(path string) ([]string, bool) {
 		return []string{http.MethodGet, http.MethodPost}, true
 	case "/v0/external-element-withdrawals":
 		return []string{http.MethodPost}, true
+	// The frozen definitions read and grow, and nothing else. There is no DELETE
+	// and no PUT: a revision is a new freeze that coexists with the previous ones,
+	// so a method that replaced or removed one would be a method for an act this
+	// palier does not have.
+	case "/v0/service-definitions":
+		return []string{http.MethodGet, http.MethodPost}, true
 	case "/v0/recovery-key":
 		return []string{http.MethodPut}, true
 	case "/v0/probe-plans", "/v0/service-plans", "/v0/entrypoint-plans", "/v0/route-plans",
