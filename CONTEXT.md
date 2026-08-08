@@ -140,6 +140,13 @@ Service, passage ou autre capacité observée en lecture seule sur une machine e
 Parcours explicite qui audite un élément détecté ou externe avant de permettre son passage en mode géré après approbation.
 <!-- coherence: OWNERSHIP-MODES:end -->
 
+**Définition de service**:
+Document inerte rédigé par l'utilisateur dans des bornes fermées, puis gelé et haché par le Controller. Elle décrit un service sans produire aucun effet : seul un plan approuvé et signé peut l'épingler par son digest et en faire naître une instance.
+_Avoid_: « catalogue », car aucune liste d'applications n'est fournie ni promise ; chaque définition est écrite, gelée et déployée sous l'autorité de son utilisateur.
+
+**Révision**:
+Nouveau gel d'une définition de service sous le même nom, qui coexiste avec les gels précédents sans jamais les remplacer ni les effacer. Chaque instance déployée nomme la révision exacte qu'elle exécute.
+
 ## Relationships
 
 - Une **Infrastructure** regroupe des **Machines** et leurs **Services**.
@@ -187,6 +194,12 @@ Parcours explicite qui audite un élément détecté ou externe avant de permett
   son **État vérifié**.
 - Un **Élément détecté** ne devient jamais géré par sa seule découverte. Une
   **Adoption** réussie est nécessaire pour transférer cette autorité.
+- Une **Définition de service** ne crée rien par elle-même : seul un **Plan de
+  déploiement** approuvé qui épingle une de ses **Révisions** par digest
+  produit une instance sur une machine.
+- Un **Profil de service** est fourni et borné par Your Cloud ; une
+  **Définition de service** est rédigée par l'utilisateur dans des bornes que
+  Your Cloud fixe. Les deux familles ne partagent jamais un nom.
 - Une panne de la **Console**, du **Controller** ou du **Relay** ne doit pas
   arrêter un **Service** déjà déployé.
 

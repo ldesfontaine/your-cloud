@@ -1148,11 +1148,18 @@ jamais un simple changement de roadmap.
 
 ## Premier jalon demandé après `v0.1.0`
 
-La `v0.1.1` ajoutera au profil optionnel Vaultwarden un petit parcours SSO au
-moyen d'un fournisseur d'identité compatible OpenID Connect. Le fournisseur,
-son placement et son mode de récupération seront choisis seulement lors du
-cadrage de ce jalon ; cette note n'installe aucun de ces services par défaut,
-ne les impose pas à `v0.1.0` et ne préconçoit pas encore sa solution.
+La `v0.1.1` « Services utilisateur » ajoutera les définitions de service
+utilisateur : un document inerte, gelé et haché, que seuls des plans approuvés
+et signés épinglent par digest, pour déployer une application choisie par
+l'utilisateur dans les limites nommées de son contrat
+([`SERVICE-UTILISATEUR.md`](../../architecture/SERVICE-UTILISATEUR.md)). Ce
+contrat est la « modification explicite et nouvelle validation » que la liste
+ci-dessus exige avant d'approcher un catalogue : la capacité reste bornée —
+elle n'accepte pas arbitrairement tout service — et rien n'entre pour autant
+dans `v0.1.0`. Le petit parcours SSO OpenID Connect de Vaultwarden, demandé
+plus tôt pour ce jalon, passe à un jalon ultérieur sans changer de réserve :
+fournisseur, placement et récupération seront choisis à son cadrage, et rien
+n'est installé par défaut.
 
 ## Paramètres fixés au bon incrément
 

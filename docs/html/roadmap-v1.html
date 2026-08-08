@@ -39,7 +39,7 @@
       <tr><td>Identités</td><td>mTLS d'observation, accès SSH personnel conservé et identité SSH Your Cloud différente par machine, forcée vers l'Auxiliaire ; HTTPS pour les services Web.</td><td>WireGuard d'administration futur sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller.</td></tr>
       <tr><td>Services</td><td>Scénario LAB de référence avec Traefik file provider et deux profils optionnels sur la même IP:443.</td><td>Autres placements pris en charge ou externes ; vraie DMZ seulement après preuve de frontières réseau indépendantes.</td></tr>
       <tr><td>Responsabilité</td><td>Modes géré et externe ; déclaré différent de vérifié ; aucun profil ne crée de ressource sans déclaration, placement, plan et approbation explicites.</td><td>Découverte locale en lecture seule, aucun scan, adoption auditée et approuvée.</td></tr>
-      <tr><td>Après v0.1.0</td><td>Hors périmètre.</td><td><code>v0.1.1</code> note un petit SSO OIDC pour le profil optionnel Vaultwarden ; le reste sera cadré plus tard.</td></tr>
+      <tr><td>Après v0.1.0</td><td>Hors périmètre.</td><td><code>v0.1.1</code> « Services utilisateur » : définitions bornées gelées par le Controller, épinglées par digest dans des plans approuvés ; le SSO OIDC de Vaultwarden passe à un jalon ultérieur.</td></tr>
     </tbody></table></div>
 
     <section class="next">
@@ -100,7 +100,7 @@
     <div class="after"><strong>Frontières déjà applicables à <code>v0.1.0</code> :</strong> l'Agent garde un artefact unique et des processus isolés ; l'Auxiliaire de <code>v0.1.0</code> est ponctuel, sans listener, réseau général ou shell, et vérifie une approbation signée avec anti-rejeu local sans faire confiance au seul Controller. Ansible reste un outil externe et une intégration future possible, pas une dépendance du Controller ou des machines de <code>v0.1.0</code>. OpenStack, l'IaC et K3s utilisent leur API ou runner adapté. Le Controller reste privé derrière WireGuard à terme et aucune découverte ne scanne le LAN.</div>
     <!-- coherence: AGENT-AUTHORITY:end -->
 
-    <div class="after"><strong>Premier jalon demandé après <code>v0.1.0</code> :</strong> <code>v0.1.1</code> ajoutera un petit parcours SSO OIDC au profil optionnel Vaultwarden. Le fournisseur, son placement et sa récupération seront cadrés après la preuve de <code>v0.1.0</code> ; aucun service n'est installé par défaut.</div>
+    <div class="after"><strong>Premier jalon demandé après <code>v0.1.0</code> :</strong> <code>v0.1.1</code> « Services utilisateur » ajoutera les définitions de service utilisateur — documents inertes gelés et hachés, épinglés par digest dans des plans approuvés, bornés par le contrat <a href="../architecture/SERVICE-UTILISATEUR.md"><code>SERVICE-UTILISATEUR.md</code></a>. Le SSO OIDC de Vaultwarden passe à un jalon ultérieur ; aucun service n'est installé par défaut.</div>
 
     <div class="after"><strong>Choix encore ouvert :</strong> le dispositif gratuit de signature Windows et la preuve d'éligibilité du projet. Le dépôt ne contient actuellement aucune licence ; son choix reste une décision explicite du mainteneur, jamais un changement implicite destiné seulement à obtenir une signature.</div>
 

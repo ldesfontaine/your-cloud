@@ -173,7 +173,7 @@ simplement la roadmap de `v0.1.0` d'oublier la direction déjà validée.
 | Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif v0.1.0](README.md) |
 | Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif v0.1.0](README.md) |
 | Sécurité et preuves | Justification OWASP et NIS2 proportionnée, refus hostiles, secrets synthétiques, artefacts épinglés, rapport visuel et aucune revendication de conformité | Conserver le moindre privilège, les mises à jour séparées, la révocation, les SBOM, la provenance et les risques résiduels visibles | [Qualité](../../contribution/QUALITE.md) et [cap](../../projet/CAP.md) |
-| Premier jalon après `v0.1.0` | Hors de `v0.1.0` | `v0.1.1` : petit parcours SSO OpenID Connect pour Vaultwarden ; fournisseur, placement et récupération seront cadrés seulement après la preuve de `v0.1.0` | [Cap](../../projet/CAP.md) |
+| Premier jalon après `v0.1.0` | Hors de `v0.1.0` | `v0.1.1` « Services utilisateur » : définitions bornées, gelées et hachées par le Controller, épinglées par digest dans des plans approuvés ([contrat](../../architecture/SERVICE-UTILISATEUR.md)) ; le SSO OpenID Connect de Vaultwarden passe à un jalon ultérieur | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
 
 ## Incrément prouvé : `v0.0.1`
 
@@ -689,10 +689,13 @@ runner Ansible, ni découverte assistée, ni haute disponibilité. Elle fixe leu
 frontières avant leur futur cadrage.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
-Le seul jalon déjà noté après cette limite est la demande d'une `v0.1.1` pour un
-petit parcours SSO OpenID Connect de Vaultwarden. Son fournisseur, son placement
-et sa récupération seront cadrés après la preuve de `v0.1.0` ; ils ne font pas partie de
-la présente roadmap.
+Le premier jalon déjà noté après cette limite est la `v0.1.1` « Services
+utilisateur » : des définitions de service bornées, gelées et hachées par le
+Controller, épinglées par digest dans des plans approuvés, contractées dans
+[`SERVICE-UTILISATEUR.md`](../../architecture/SERVICE-UTILISATEUR.md). Le petit
+parcours SSO OpenID Connect de Vaultwarden, demandé plus tôt pour la `v0.1.1`,
+passe à un jalon ultérieur sans changer de réserve. Ni l'un ni l'autre ne font
+partie de la présente roadmap.
 
 ## Points volontairement non décidés
 
@@ -706,9 +709,9 @@ la présente roadmap.
   récupération locale de `v0.1.0` sont décidés et ne sont plus des points ouverts.
 - Le placement et le protocole d'une éventuelle passerelle Web publique après la
   `v0.1.0` ; le Controller privé derrière WireGuard et le SSO facultatif sont décidés.
-- Le fournisseur, le placement et la récupération du SSO `v0.1.1` de
-  Vaultwarden ; ce jalon de service ne rend pas le SSO obligatoire pour le
-  Controller.
+- Le fournisseur, le placement et la récupération du SSO de Vaultwarden,
+  passé à un jalon ultérieur à la `v0.1.1` ; ce jalon de service ne rend pas
+  le SSO obligatoire pour le Controller.
 
 ## Point d'arrêt
 
