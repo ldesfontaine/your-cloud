@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# The junction of this machine's side, bounded to the loopback port of a service
+# of the **third** door.
+#
+# That is the one thing this step adds to `#98` and to `#104`, and it is the whole
+# reason it is replayed: the presence rule behind a junction reads "a managed
+# service of this machine publishes this port", and since `#119` that reading
+# walks the homes of the third door beside the two closed lists of delivered
+# profiles. Here it accepts a port published by a service the product does not
+# know, described by a document its user wrote.
+#
+# The peer is named by the public key the *other* machine's preparation reported.
+# It arrives as an argument because that is how it travels in the real chain: an
+# observation the Controller read out of one report and carried, readable, into
+# the plan a human approves on the other machine.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-junction <peer-public-key> <peer-endpoint-host>}
+endpoint=${2:?usage: play-junction <peer-public-key> <peer-endpoint-host>}
+
+cd /root
+
+operation=attach_link_peer
+[[ "$link_role" == initiator ]] && operation=join_link_peer
+
+step "15. the junction of the $link_role, bounded to the user service's port $app_port"
+
+report "the peer this plan names" "$peer_key"
+[[ "$link_role" == initiator ]] && report "the endpoint it reaches" "$endpoint:$link_listen_port"
+
+apply "$operation" '"changed":true' \
+  -operation "$operation" -link-role "$link_role" \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" \
+  -service-port "$app_port"
+
+matches_bytes "the description, with its one peer" "$link_netdev" \
+  "$(expected_netdev "$peer_key" "$endpoint")"
+matches_bytes "the addressing, with its one route" "$link_network" \
+  "$(expected_network with-route)"
+expect "the peers the kernel holds" "$(wg_peers)" "$peer_key"
+expect "what that peer is allowed to be" "$(wg_allowed_ips)" "$link_peer_address/32"
+expect "the bounding table in the kernel" "$(link_table_loaded)" loaded
+expect "the unit that puts the bounds back at boot" "$(unit_enabled "$link_unit_name")" enabled
+
+rules=$(link_table_rules)
+if grep -qF "tcp dport $app_port" <<<"$rules"; then
+  report "the one port the loaded table bounds" "$app_port, the user service's own loopback port"
+else
+  red "the one port the loaded table bounds" "$(printf '%s' "$rules" | tr '\n' ' ')"
+fi
+
+if [[ "$link_role" == initiator ]]; then
+  grep -qF "iifname \"$link_interface\" ip saddr $link_peer_address tcp dport $app_port dnat ip to 127.0.0.1:$app_port" <<<"$rules" \
+    && report "the redirection towards the service's loopback" "posed, for the approved port alone" \
+    || red "the redirection towards the service's loopback" "absent from the loaded table"
+  expect "route_localnet on the passage's interface" "$(sysctl_value "$route_localnet_key")" 1
+  expect "route_localnet on every interface at once" \
+    "$(sysctl_value net.ipv4.conf.all.route_localnet)" 0
+  # The point this palier adds: the port the passage bounds is published by a
+  # service of the *third* door, and the presence rule accepted it.
+  grep -qx "PublishPort=127.0.0.1:$app_port:$app_container_port" "$app_unit" \
+    && report "what publishes the port this junction bounds" \
+      "the sheet of a user service, which the presence rule reads through the third door since #119" \
+    || red "what publishes the port this junction bounds" "$(grep '^PublishPort=' "$app_unit" | tr '\n' ' ')"
+  expect "the vault's own port, which this junction does not bound" \
+    "$(grep -cF "tcp dport $vault_port" <<<"$rules")" 0
+  report "what that costs and why it is not a defect" \
+    "one junction bounds exactly one port — the decision of #103, unchanged here — so the vault of this machine cannot be published while this junction carries the user service"
+else
+  expect "the host relaxation, on the listener" "$(present "$link_policy")" absent
+  expect "any dnat in the listener's table" "$(printf '%s\n' "$rules" | grep -c dnat)" 0
+  grep -qF "oifname \"$link_interface\" ip daddr $link_peer_address tcp dport $app_port accept" <<<"$rules" \
+    && report "what may leave by the passage" "one couple: $link_peer_address:$app_port" \
+    || red "what may leave by the passage" "absent from the loaded table"
+fi
+
+expect "forwarding on this machine" "$(sysctl_value net.ipv4.ip_forward)" 0
+report "the tables this machine holds" "$(nft_tables)"
+
+verdict "this machine holds exactly one peer and one named table bounding exactly the user service's loopback port, and the presence rule behind it read a service of the third door"

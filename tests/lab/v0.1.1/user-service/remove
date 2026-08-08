@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Remove the user service perimeter from one machine and prove its absence.
+#
+# This is the one script of the harness allowed to do what no plan may, and each
+# kind of residue it takes away is the harness's own act rather than a conclusion
+# of the product:
+#
+#   - the service accounts, their homes and their subordinate ranges. No plan of
+#     any palier describes an account, so no approved document can take one away
+#     and the product deliberately leaves them;
+#   - **the volumes of the user services, their archives and their generated
+#     values.** The product kept them on purpose — a removal of this product
+#     destroys no data and no secret — so it is the harness that destroys what it
+#     planted, and it says so here rather than letting a reader think a plan did
+#     it;
+#   - the entrypoint's root-owned tree, including the certificates this harness
+#     placed there. The Auxiliary removes what it wrote and nothing else, and it
+#     never wrote a certificate;
+#   - the observer table this harness posed beside the product's own, which the
+#     product was required never to name;
+#   - **the run's authority, out of the machine's trust store, and the origin's
+#     name, out of its hosts file.** Those are the two acts `install` performed
+#     outside any plan, and the machine is read again afterwards so that "the trust
+#     store is what it was" is a comparison;
+#   - the anchor, the anti-replay position, the Controller's definition store and
+#     the binaries this run compiled.
+#
+# It runs even when a step of the proof failed: a machine left holding an anchor,
+# a spent position, lingering accounts, containers, a tunnel interface and loaded
+# tables is not a clean LAB, whatever failed above. Everything is removed by name —
+# never by a sweep — so that a residue this script did not anticipate is still
+# visible in what it prints.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /
+remaining=0
+
+step "51. the perimeter is removed by the harness, not by a plan"
+
+retire() {
+  local account=$1
+  id -u "$account" >/dev/null 2>&1 || return 0
+  as_account "$account" systemctl --user stop "$account.service" >/dev/null 2>&1 || true
+  as_account "$account" podman rm --force --ignore "$account" >/dev/null 2>&1 || true
+  as_account "$account" podman rmi --all --force >/dev/null 2>&1 || true
+  loginctl disable-linger "$account" >/dev/null 2>&1 || true
+  as_account "$account" systemctl --user exit >/dev/null 2>&1 || true
+  sleep 1
+  pkill -9 -u "$account" >/dev/null 2>&1 || true
+  sleep 1
+  userdel --remove "$account" >/dev/null 2>&1 || userdel "$account" >/dev/null 2>&1 || true
+  rm -rf "/var/lib/$account"
+  sed -i "/^$account:/d" /etc/subuid /etc/subgid
+}
+
+# The passage first, in the order the product's own operations would have taken
+# it. A proof that failed halfway can leave any subset of these.
+/usr/sbin/nft add table "$link_table_family" "$link_table_name" 2>/dev/null || true
+/usr/sbin/nft delete table "$link_table_family" "$link_table_name" 2>/dev/null || true
+systemctl disable "$link_unit_name" >/dev/null 2>&1 || true
+rm -f "$link_unit" "$link_rules" "$link_policy"
+sysctl --ignore --write "$route_localnet_key=0" >/dev/null 2>&1 || true
+rm -f "$link_netdev" "$link_network"
+networkctl reload >/dev/null 2>&1 || true
+ip link delete "$link_interface" 2>/dev/null || true
+rm -rf "$link_root"
+
+# The confinement of the machine, and the observer this harness posed beside it.
+/usr/sbin/nft add table "$egress_table_family" "$egress_table_name" 2>/dev/null || true
+/usr/sbin/nft delete table "$egress_table_family" "$egress_table_name" 2>/dev/null || true
+/usr/sbin/nft add table inet lab-egress-observer 2>/dev/null || true
+/usr/sbin/nft delete table inet lab-egress-observer 2>/dev/null || true
+systemctl disable "$egress_unit_name" >/dev/null 2>&1 || true
+rm -f "$egress_unit" "$egress_rules"
+rm -rf "$egress_root"
+systemctl daemon-reload >/dev/null 2>&1 || true
+
+if [[ -d "$app_volumes" || -d "$app_snapshots" || -d "$app_secrets" ]]; then
+  report "the volumes, archives and generated values the product kept" \
+    "removed here by the harness, which planted them; no plan of this product describes their destruction"
+fi
+for account in "$vault_account" "$app_account" "$edge_account" "$plain_account" "$entry_account"; do
+  retire "$account"
+done
+if [[ -e "$host_ports_policy" ]]; then
+  rm -f "$host_ports_policy"
+  sysctl --write "$host_ports_setting=1024" >/dev/null 2>&1 || true
+  sysctl --system >/dev/null 2>&1 || true
+fi
+rm -rf "$entry_root"
+
+# The two acts `install` performed outside any plan.
+if [[ -e "$origin_authority_anchor" ]]; then
+  rm -f "$origin_authority_anchor"
+  update-ca-certificates --fresh >/dev/null 2>&1 || true
+  report "HARNESS ACT undone: the run's authority" "removed from the trust store and the store rebuilt"
+fi
+if grep -q "$origin_hosts_marker" /etc/hosts 2>/dev/null; then
+  sed -i "\|$origin_hosts_marker|d" /etc/hosts
+  report "HARNESS ACT undone: the origin's name" "removed from /etc/hosts by its own marker"
+fi
+
+rm -f "$anchor" "$replay" "${replay%.json}.lock"
+rmdir /etc/your-cloud 2>/dev/null || true
+rm -rf "$state" /usr/local/bin/lab-user-service-fixture /usr/local/bin/your-cloud
+rm -rf /root/lab-user-service-sources /root/lab-user-service-certificates
+
+step "52. what the machine holds afterwards"
+
+check() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    report "$label" "FAILED: $observed"
+    remaining=$((remaining + 1))
+  fi
+}
+
+for account in "$vault_account" "$app_account" "$edge_account" "$plain_account" "$entry_account"; do
+  check "the account $account" "$(account_state "$account")" absent
+  check "the home of $account" "$(present "/var/lib/$account")" absent
+  check "the subordinate ranges of $account" \
+    "$({ grep -h "^$account:" /etc/subuid /etc/subgid || true; } | wc -l)" 0
+done
+check "any home of the third door at all" \
+  "$(user_service_homes)" none
+check "the confinement tree" "$(present "$egress_root")" absent
+check "the unit that posed the confinement" "$(present "$egress_unit")" absent
+check "the confinement table" "$(egress_table_loaded)" absent
+check "the observer table this harness posed" "$(table_loaded inet lab-egress-observer)" absent
+check "the entrypoint tree" "$(present "$entry_root")" absent
+check "the host ports policy" "$(present "$host_ports_policy")" absent
+check "the running host ports floor" "$(host_ports_value)" 1024
+check "the passage tree" "$(present "$link_root")" absent
+check "the interface" "$(interface_state)" absent
+check "the bounding table" "$(link_table_loaded)" absent
+check "the tables this machine holds" "$(nft_tables)" ""
+check "route_localnet on every interface at once" "$(sysctl_value net.ipv4.conf.all.route_localnet)" 0
+check "the approval anchor" "$(present "$anchor")" absent
+check "the anti-replay position" "$(present "$replay")" absent
+check "the Controller's definition store" "$(present "$store")" absent
+check "the run's state directory" "$(present "$state")" absent
+check "the product binary" "$(present /usr/local/bin/your-cloud)" absent
+check "the fixture" "$(present /usr/local/bin/lab-user-service-fixture)" absent
+check "the authority this harness had trusted" "$(present "$origin_authority_anchor")" absent
+check "the origin's name in this machine's hosts file" \
+  "$(grep -c "$origin_host_name" /etc/hosts || true)" 0
+check "the secure public port" "$(port_listening 443)" closed
+check "the clear public port" "$(port_listening 80)" closed
+for port in "$vault_port" "$app_port" "$edge_port"; do
+  check "the loopback port $port" "$(port_listening "$port")" closed
+done
+check "the tunnel's UDP port" "$(udp_port_bound "$link_listen_port")" unbound
+
+# What this harness never had the right to change, read one last time.
+report "systemd-networkd" \
+  "$(systemctl is-enabled systemd-networkd)/$(systemctl is-active systemd-networkd)"
+report "the real interfaces" "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+report "what the machine still carries of this run and nobody removes" \
+  "the Go module and build caches under /root, which every LAB harness that compiles on a machine leaves"
+
+[[ $remaining -eq 0 ]] || {
+  echo "FAILED: $remaining things this harness mounted are still there" >&2
+  exit 1
+}
+echo "PASS: the machine holds nothing this harness mounted"

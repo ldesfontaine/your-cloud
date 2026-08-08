@@ -695,8 +695,8 @@ Controller, épinglées par digest dans des plans approuvés, contractées dans
 [`SERVICE-UTILISATEUR.md`](../../architecture/SERVICE-UTILISATEUR.md) et en
 issues dans la
 [milestone GitHub](https://github.com/ldesfontaine/your-cloud/milestone/8)
-(`#115`–`#121`). Rien de `v0.1.1` ne commence avant le candidat attesté de
-`v0.1.0`. Le petit parcours SSO OpenID Connect de Vaultwarden, demandé plus
+(`#115`–`#121`). La `v0.1.1` ne sera pas déclarée atteinte avant le candidat
+attesté de `v0.1.0`. Le petit parcours SSO OpenID Connect de Vaultwarden, demandé plus
 tôt pour la `v0.1.1`, passe à un jalon ultérieur non numéroté sans changer de
 réserve. Ni l'un ni l'autre ne font partie de la présente roadmap.
 

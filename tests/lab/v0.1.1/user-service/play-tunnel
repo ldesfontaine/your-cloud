@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# What the passage carries, asked from the listener — the machine at the public
+# end of the tunnel. It runs on lab-vps because the claim is "from the VPS,
+# through the tunnel": a machine reporting on its own reachability from itself
+# would have proven nothing.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+reach_through() {
+  local port=$1
+  if timeout 5 bash -c "exec 3<>/dev/tcp/$link_peer_address/$port" 2>/dev/null; then
+    echo reachable
+  else
+    echo unreachable
+  fi
+}
+
+step "16. the tunnel is established, and it carries the user service"
+
+report "the peer this machine holds" "$(wg_peers)"
+if handshake=$(handshake_within 90); then
+  report "the latest handshake" "$handshake"
+else
+  red "the latest handshake" "$handshake"
+fi
+
+status=$(curl --silent --show-error --max-time 10 --output /dev/null \
+  --write-out '%{http_code}' "http://$link_peer_address:$app_port/" 2>/dev/null || echo none)
+expect "GET http://$link_peer_address:$app_port/ from the VPS, through the tunnel" "$status" 200
+
+step "17. through the tunnel, the abbreviated matrix of proof #98"
+
+report "where the full matrix lives" \
+  "proof #98 (palier #16): SSH, every other port, an address of the reserved subnet and the LAN behind the initiator, each read from this machine with both layers named"
+expect "SSH on $link_peer_address:22, through the tunnel" "$(reach_through 22)" unreachable
+expect "the vault's own port at the other end, which this junction does not bound" \
+  "$(reach_through "$vault_port")" unreachable
+expect "a port nothing at all listens on, $link_peer_address:$unmanaged_port" \
+  "$(reach_through "$unmanaged_port")" unreachable
+destinations=$(ip -4 route show dev "$link_interface" | awk '{print $1}' | sort | paste -sd, -)
+expect "what this machine routes into the tunnel" "$destinations" "$link_peer_address"
+expect "any new TCP port on this machine" "$(port_listening "$app_port")" closed
+
+verdict "the tunnel carries exactly one couple — the user service's loopback port at the other end — the vault beside it is not reachable through it, and this machine gained no TCP port of its own"

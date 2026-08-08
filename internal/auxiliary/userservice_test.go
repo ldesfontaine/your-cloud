@@ -74,6 +74,14 @@ func approvedUserServiceOf(
 // written, a volume that gained a second spelling, an origin that stopped being
 // interpolated or an environment file that appeared where no key is declared all
 // fail this check by existing.
+//
+// The title line is quoted and the two others are not, and that difference is the
+// point rather than a detail: an unquoted value ends at its first whitespace in the
+// file this text is, so a title written verbatim reaches the container as `Your`.
+// The rule is stated and tested where it lives, in TestAnApprovedValueReachesThe
+// ContainerWhole; here it is held in place by a golden sheet, so that a change
+// which quoted everything — and thereby moved the delivered profiles' sheets —
+// fails too.
 func TestTheSheetOfTheReferenceDefinitionIsTheOneThisContractFixes(t *testing.T) {
 	t.Parallel()
 	const expected = `# Written by your-cloud auxiliary from one approved plan. Do not edit: this
@@ -92,7 +100,7 @@ NoNewPrivileges=true
 DropCapability=ALL
 Volume=/var/lib/your-cloud-user-lab-notes/volumes/srv/notes:/srv/notes:rw
 Volume=/var/lib/your-cloud-user-lab-notes/volumes/var/lib/lab-notes:/var/lib/lab-notes:rw
-Environment=LAB_NOTES_TITLE=Your Cloud lab notes
+Environment="LAB_NOTES_TITLE=Your Cloud lab notes"
 Environment=LAB_NOTES_ORIGIN=https://notes.lab.your-cloud.test/
 Environment=LAB_NOTES_READ_ONLY=1
 EnvironmentFile=/var/lib/your-cloud-user-lab-notes/secrets.env
@@ -153,6 +161,66 @@ func TestTheLowPortSysctlIsAFunctionOfTheDeclaredPortAndNeverOfADoor(t *testing.
 // container paths where one opens the other, and a slug and a path traded against
 // one another. Every host path of every case is collected into one set, and two
 // cases sharing a directory is the failure.
+// TestEveryDirectoryOnTheWayToAVolumeIsNamed holds the fix of the defect the
+// machine proof of `#121` found on its first deployment.
+//
+// A container path of two segments or more has a parent that exists only because
+// something created it on the way down. The seam creates, chmods and chowns
+// exactly the directories this placement names, so a parent the placement did not
+// name was created by `MkdirAll` and left root-owned in 0700 — and a rootless
+// engine could not traverse into its own mount: `statfs …: permission denied`, on
+// every user service whose volumes are not single-segment paths.
+//
+// What is required here is therefore not "the volumes are named" but "every
+// directory between the durable root and each volume is named, parents first,
+// once". The delivered private profile, whose single volume is the root itself,
+// still names exactly one directory: that is the other half of the same rule and
+// it is asserted beside this one so a change cannot satisfy one and break the
+// other.
+func TestEveryDirectoryOnTheWayToAVolumeIsNamed(t *testing.T) {
+	t.Parallel()
+	document := `{"schema_version":1,"slug":"notes",` +
+		`"image_repository":"registry.lab.your-cloud.test/your-cloud/lab-notes",` +
+		`"container_port":8080,"volumes":["/srv/state","/srv/content","/deep/a/b/c"],` +
+		`"tmpfs":[],"environment":[],"secret_keys":[]}`
+	definition, err := servicedefinition.Decode([]byte(document))
+	if err != nil {
+		t.Fatalf("the reference definition is not one this product accepts: %v", err)
+	}
+	where := userServicePlacementOf(definition, fixtureUserImageDigest, "")
+	root := where.home + "/volumes"
+	expected := []string{
+		root,
+		root + "/srv", root + "/srv/state", root + "/srv/content",
+		root + "/deep", root + "/deep/a", root + "/deep/a/b", root + "/deep/a/b/c",
+	}
+	held := where.durableDirectories()
+	if strings.Join(held, ",") != strings.Join(expected, ",") {
+		t.Fatalf("the placement names %q rather than %q", held, expected)
+	}
+	// Parents first and each directory once, which is what makes creating them in
+	// this order a walk down rather than a set of independent mkdirs.
+	seen := map[string]struct{}{}
+	for index, directory := range held {
+		if _, twice := seen[directory]; twice {
+			t.Fatalf("the placement names %q twice", directory)
+		}
+		seen[directory] = struct{}{}
+		if index == 0 {
+			continue
+		}
+		parent := directory[:strings.LastIndex(directory, "/")]
+		if _, named := seen[parent]; !named {
+			t.Fatalf("the placement names %q before its parent %q", directory, parent)
+		}
+	}
+	// The delivered private profile keeps exactly the effect `#102` proved.
+	if delivered := vaultwardenPlacement.durableDirectories(); len(delivered) != 1 ||
+		delivered[0] != VaultwardenDataDirectory {
+		t.Fatalf("the delivered private profile names %q", delivered)
+	}
+}
+
 func TestNothingAUserWroteBecomesAHostPathOrAnAccountName(t *testing.T) {
 	t.Parallel()
 	neighbours := []struct {
@@ -454,12 +522,12 @@ func TestTheNominalUserServiceDeploymentPosesEveryEffectInTheOrderTheContractFix
 	if strings.Join(executor.effects, ",") != strings.Join(expected, ",") {
 		t.Fatalf("unexpected effects: %q", executor.effects)
 	}
-	// The directories this machine now owns are the durable root and one per
-	// declared volume, and no other path at all.
+	// The directories this machine now owns are the durable root, every directory
+	// on the way down to each declared volume, and no other path at all.
 	if strings.Join(executor.dataDirectories, ",") != strings.Join(where.durableDirectories(), ",") {
 		t.Fatalf("the deployment held directories this placement never derived: %q", executor.dataDirectories)
 	}
-	if len(executor.dataDirectories) != 1+len(where.volumes) {
+	if len(executor.dataDirectories) < 1+len(where.volumes) {
 		t.Fatalf("the deployment held %d directories for %d volumes",
 			len(executor.dataDirectories), len(where.volumes))
 	}

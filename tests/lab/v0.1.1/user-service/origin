@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# The origin of the synthetic application's image, and the synthetic neighbour of
+# the LAN — one listener, two roles, on the third machine of this LAB.
+#
+# The two roles are one listener on purpose, and it is the strongest arrangement
+# this proof found. The third door pulls its image by digest from a registry, so
+# the fetch has to reach another machine over the network; the contract also
+# requires that a confined service reach no neighbour of the LAN. Making the
+# origin *be* the neighbour turns those into one experiment with a positive
+# control that cannot be argued with: the very host a rootless engine really
+# fetched this image from is the host the service's own account cannot open a
+# connection to five minutes later, while root on the same machine still can.
+#
+# Nothing of the product is installed here. What runs is the harness's own fixture
+# binary — built from the synchronised sources on the machine of the LAN, because
+# lab-console carries no Go toolchain — serving the read half of the OCI
+# distribution API over the run's own TLS, out of a static tree. It is started and
+# stopped by this script and its directory is removed with it.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+command=${1:?usage: origin <start|stop|status> [repository]}
+repository=${2:-registry.lab.your-cloud.test/lab/synthetic-app}
+
+root=/root/lab-user-service-origin
+pidfile="$root/origin.pid"
+log="$root/origin.log"
+port=443
+
+running() {
+  [[ -f "$pidfile" ]] || return 1
+  local pid
+  pid=$(cat "$pidfile")
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+case "$command" in
+  start)
+    [[ -x "$root/fixture" ]] || {
+      echo "ORIGIN=no fixture binary was placed here" >&2
+      exit 1
+    }
+    [[ -f "$root/image/manifest.json" ]] || {
+      echo "ORIGIN=no image tree was placed here" >&2
+      exit 1
+    }
+    if running; then
+      kill "$(cat "$pidfile")" 2>/dev/null || true
+      sleep 1
+    fi
+    rm -f "$pidfile" "$log"
+    setsid nohup "$root/fixture" -origin \
+      -origin-root "$root/image" \
+      -image-repository "$repository" \
+      -origin-listen ":$port" \
+      -origin-certificate "$root/origin.crt" \
+      -origin-key "$root/origin.key" >"$log" 2>&1 &
+    echo $! >"$pidfile"
+    for _ in $(seq 1 20); do
+      ss -Hltn "sport = :$port" 2>/dev/null | grep -q . && break
+      sleep 1
+    done
+    if ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
+      echo "ORIGIN=serving $repository on $port"
+      echo "ORIGIN_DIGEST=$(cat "$root/image/manifest.digest")"
+    else
+      echo "ORIGIN=silent" >&2
+      tail -5 "$log" >&2 || true
+      exit 1
+    fi
+    ;;
+  stop)
+    if running; then
+      kill "$(cat "$pidfile")" 2>/dev/null || true
+      sleep 1
+    fi
+    rm -f "$pidfile"
+    if ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
+      echo "ORIGIN=still listening on $port" >&2
+      exit 1
+    fi
+    echo "ORIGIN=stopped"
+    ;;
+  status)
+    if ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
+      echo "ORIGIN=listening on $port"
+    else
+      echo "ORIGIN=silent"
+    fi
+    ;;
+  *)
+    echo "usage: origin <start|stop|status> [repository]" >&2
+    exit 2
+    ;;
+esac

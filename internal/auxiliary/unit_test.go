@@ -441,3 +441,81 @@ func TestTheHostPortsPolicyIsAByteConstantNamingTheClearPort(t *testing.T) {
 		t.Fatalf("the host policy is not persisted where a reboot reads it: %q", hostPortsPolicyPath)
 	}
 }
+
+// TestAnApprovedValueReachesTheContainerWhole holds the fix of the second defect
+// the machine proof of `#121` found.
+//
+// A definition admits any printable ASCII in an environment value; the file this
+// package writes is read by a parser where an unquoted value ends at its first
+// whitespace and where `%` opens a specifier. Before this was written, a
+// definition declaring `TITLE=Your Cloud notes` produced a container holding
+// `TITLE=Your` — no error, no warning, a report announcing that the approved state
+// held, and a human who had approved something else.
+//
+// The rule asserted here is the property, not the spelling: the reader's own
+// unquoting, applied to what this package writes, returns the value that was
+// approved. It is asserted beside the other half of the rule — a value that needs
+// none of it is written verbatim — because a change that quoted everything would
+// satisfy the first and break the closure criterion "les fiches des profils livrés
+// ne bougent pas d'un octet".
+func TestAnApprovedValueReachesTheContainerWhole(t *testing.T) {
+	t.Parallel()
+	for _, subject := range []struct {
+		name    string
+		line    string
+		written string
+	}{
+		{"a value that needs nothing", "A=simple", "A=simple"},
+		{"a path", "DIR=/srv/state", "DIR=/srv/state"},
+		{"an origin", "ORIGIN=https://notes.lab.your-cloud.test", "ORIGIN=https://notes.lab.your-cloud.test"},
+		{"a title with spaces", "TITLE=Your Cloud notes", `"TITLE=Your Cloud notes"`},
+		{"a value carrying a tab", "T=a\tb", "\"T=a\tb\""},
+		{"a value carrying a double quote", `Q=he said "hi"`, `"Q=he said \"hi\""`},
+		{"a value carrying a single quote", "S=it's here", `"S=it's here"`},
+		{"a value carrying a backslash", `B=a\b`, `"B=a\\b"`},
+		{"a value carrying a specifier", "P=100%done", "P=100%%done"},
+		{"a value carrying both", "M=100% of it", `"M=100%% of it"`},
+	} {
+		if written := environmentLine(subject.line); written != subject.written {
+			t.Fatalf("%s is written %q rather than %q", subject.name, written, subject.written)
+		}
+		if unquoteUnitValue(subject.written) != subject.line {
+			t.Fatalf("%s does not read back as %q: %q",
+				subject.name, subject.line, unquoteUnitValue(subject.written))
+		}
+	}
+
+	// The delivered profiles do not move by one byte: every line they carry is
+	// written verbatim, and the whole sheet of the private profile is the one the
+	// golden check above holds.
+	for _, line := range append([]string{}, vaultwardenPlacement.environment...) {
+		if environmentLine(line) != line {
+			t.Fatalf("the delivered private profile's line %q is no longer written verbatim", line)
+		}
+	}
+	origin := vaultwardenPlacement.originEnvironmentPrefix + "vault.lab.your-cloud.test"
+	if environmentLine(origin) != origin {
+		t.Fatalf("the delivered private profile's origin line %q is no longer written verbatim", origin)
+	}
+}
+
+// unquoteUnitValue is the reader's side of the rule above, written here rather
+// than imported: what it undoes is specifier expansion and the unit file's own
+// unquoting, and a test that asked this package to check its own spelling would be
+// asserting that a function equals itself.
+func unquoteUnitValue(written string) string {
+	if strings.HasPrefix(written, `"`) && strings.HasSuffix(written, `"`) && len(written) >= 2 {
+		inner := written[1 : len(written)-1]
+		unescaped := &strings.Builder{}
+		for index := 0; index < len(inner); index++ {
+			if inner[index] == '\\' && index+1 < len(inner) {
+				index++
+				unescaped.WriteByte(inner[index])
+				continue
+			}
+			unescaped.WriteByte(inner[index])
+		}
+		written = unescaped.String()
+	}
+	return strings.ReplaceAll(written, "%%", "%")
+}

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# One machine's own side of the passage: the key that is born here and never
+# leaves, and the closed interface the role's constants describe.
+#
+# This is `#16`'s step, replayed because this palier composes on top of it. The
+# full life of a passage — every refusal, the idempotence of each of the four
+# plans, the departure, the withdrawal and the controlled failure — was proven on
+# these two machines at `#98`, and this harness does not prove it a second time.
+# What it asserts is the little the composition rests on.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "14. the passage is prepared on this machine — role $link_role"
+
+apply "prepare_link as the $link_role" '"changed":true' \
+  -operation prepare_link -link-role "$link_role"
+public_key=$(json_field link_public_key)
+
+if [[ ${#public_key} -eq 44 ]]; then
+  report "the report carries a public key" "$public_key"
+else
+  red "the report carries a public key" "${public_key:-none}"
+fi
+
+expect "the passage key's owner and mode" "$(file_owner "$link_key")" "root:systemd-network 640"
+matches_bytes "the description of $link_interface" "$link_netdev" "$(expected_netdev)"
+matches_bytes "the addressing of $link_interface" "$link_network" "$(expected_network)"
+expect "the interface" "$(interface_state)" up
+expect "the address it holds" "$(interface_address)" "$link_own_address/32"
+expect "the public key the kernel holds" "$(wg_public_key)" "$public_key"
+expect "the peers the kernel holds" "$(wg_peers)" none
+expect "the bounding table, after a preparation" "$(link_table_loaded)" absent
+
+printf '%s\n' "$public_key" >"$state/own-public-key.txt"
+printf 'LINK_PUBLIC_KEY=%s\n' "$public_key"
+verdict "this machine holds a key it generated and never reported the private half of, a closed interface at $link_own_address/32, and no peer and no table"

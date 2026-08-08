@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# The public entry, on the machine that faces the world.
+#
+# Nothing here is new. It is the flow `#92` proved and `#104` replayed, and it is
+# replayed again for the one claim of this palier that needs it standing: the name
+# of a user service published through the passage and the name of a user service
+# published by a local route answer on the **same public IP and the same 443**,
+# and a proof that held only one name could not say that.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+# The Auxiliary is deliberately started from root's home — the exact directory a
+# forced SSH command inherits and no service account can enter.
+cd /root
+
+step "7. one approved entrypoint plan, and the two public ports"
+
+apply "the entrypoint of #15" '"changed":true' -operation deploy_entrypoint
+
+expect "the host policy's owner and mode" "$(file_owner "$host_ports_policy")" "root:root 644"
+grep -qx "$host_ports_setting=80" "$host_ports_policy" \
+  && report "the host policy's content" "$host_ports_setting=80" \
+  || red "the host policy's content" "$(grep -v '^#' "$host_ports_policy" | tr '\n' ' ')"
+expect "the running kernel setting" "$(host_ports_value)" 80
+expect "the entry service" "$(service_state "$entry_account" "$entry_service")" active
+expect "the running entry image" "$(container_image "$entry_account" "$entry_container")" "$pinned_entry"
+expect "the secure public port" "$(port_listening 443)" open
+expect "the clear public port" "$(port_listening 80)" open
+expect "the certificate directory the entry reads" "$(file_owner "$entry_certificates")" "root:root 755"
+expect "what it holds before the harness signs anything" \
+  "$(ls -A "$entry_certificates" 2>/dev/null | paste -sd, -)" ""
+expect "the routes this machine publishes" "$(published_fragments)" none
+
+expect "the third door, still absent from this machine" \
+  "$(user_service_homes)" none
+expect "the confinement table, still absent" "$(egress_table_loaded)" absent
+
+printf '%s\n' "$(service_property "$entry_account" "$entry_service" InvocationID)" \
+  >"$state/entry-invocation.txt"
+
+verdict "the public machine holds one entrypoint on both public ports, reads an empty certificate directory, publishes no name and holds no service of the third door"

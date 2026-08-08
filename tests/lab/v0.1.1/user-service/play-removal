@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# The dismantling, played in the one order the contracts fix: the name the passage
+# carries, then the passage, then the two services of the third door and the vault
+# beside one of them, then the local name and the entry that served it.
+#
+# It takes the stage as an argument because the claim is about the order, and each
+# stage has to be readable from outside the machines before the next one runs.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+stage=${1:?usage: play-removal <retire-app|depart|remove-user|remove-edge> [peer-key] [endpoint]}
+peer_key=${2:-}
+endpoint=${3:-}
+
+cd /root
+
+case "$stage" in
+  retire-app)
+    step "46. the name the passage carried is retired, and only the name"
+
+    entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+    edge_digest=$(file_digest "$entry_fragments/$edge_host.yaml")
+
+    apply "retire_link_route of $app_host" '"changed":true' \
+      -operation retire_link_route -route-host "$app_host" -backend-port "$app_port"
+    expect "the passage state the report names" "$(json_field passage_state)" active
+    expect "the fragment" "$(present "$entry_fragments/$app_host.yaml")" absent
+    expect "the fragments this machine still holds" "$(published_fragments)" "$edge_host.yaml"
+    expect "the local fragment, untouched" "$(file_digest "$entry_fragments/$edge_host.yaml")" "$edge_digest"
+    expect "the entry was not restarted" \
+      "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+    expect "the peer this machine still holds" "$(wg_peers)" "$peer_key"
+    expect "the bounding table, untouched by a route retirement" "$(link_table_loaded)" loaded
+    expect "the certificates, which no plan writes and no plan removes" \
+      "$(ls -1 "$entry_certificates" | paste -sd, -)" \
+      "$app_host.crt,$app_host.key,$edge_host.crt,$edge_host.key"
+
+    apply "retiring it again" '"changed":false' \
+      -operation retire_link_route -route-host "$app_host" -backend-port "$app_port"
+
+    verdict "the name is silent, the tunnel and the service it named are exactly where they were, the other name of the same entry is untouched, and the certificate of the retired name is still on this machine"
+    ;;
+
+  depart)
+    step "47. the passage is undone on this machine — role $link_role"
+
+    operation=detach_link_peer
+    [[ "$link_role" == initiator ]] && operation=leave_link_peer
+
+    apply "$operation" '"changed":true' \
+      -operation "$operation" -link-role "$link_role" \
+      -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" -service-port "$app_port"
+    expect "the peer, in the kernel" "$(wg_peers)" none
+    expect "the bounding table in the kernel" "$(link_table_loaded)" absent
+    expect "the bounding rules on disk" "$(present "$link_rules")" absent
+    expect "the interface, which a departure leaves standing" "$(interface_state)" up
+
+    apply "withdraw_link" '"changed":true' -operation withdraw_link -link-role "$link_role"
+    expect "the interface" "$(interface_state)" absent
+    expect "this machine's own passage key" "$(present "$link_key")" absent
+    expect "the tunnel's UDP port" "$(udp_port_bound "$link_listen_port")" unbound
+    report "systemd-networkd, which a withdrawal deliberately does not disable" \
+      "$(systemctl is-enabled systemd-networkd)/$(systemctl is-active systemd-networkd)"
+
+    apply "withdraw_link, asked for again" '"changed":false' \
+      -operation withdraw_link -link-role "$link_role"
+
+    verdict "the peer, the bounds, the interface and the key are gone from this machine, and its own networking is untouched"
+    ;;
+
+  remove-user)
+    step "48. the user service is removed, and its data, archives and values are not"
+
+    vault_uid=$(cat "$state/vault-uid.txt")
+    nightly_digest=$(cat "$state/nightly-digest.txt")
+    volumes=$(cat "$state/volumes-state.txt")
+    attestation=$(cat "$state/app-attestation.txt")
+
+    apply "remove_user_service $app_slug" '"changed":true' \
+      -operation remove_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host"
+    report "the durable root the report names as kept" "$(json_field data_path)"
+    report "the generated values the report names as kept" "$(json_field secrets_path)"
+    report "the archives the report names as surviving" \
+      "$(grep -o '"snapshot_slots":\[[^]]*\]' "$state/last-report.json" || echo none)"
+
+    expect "the sheet" "$(present "$app_unit")" absent
+    expect "the service" "$(service_state "$app_account" "$app_service")" inactive
+    expect "the container" "$(container_image "$app_account" "$app_container")" none
+    expect "the images the account's storage holds" "$(stored_images "$app_account")" 0
+    expect "the loopback port" "$(port_listening "$app_port")" closed
+
+    # The whole of "retrait qui garde les données", read by name.
+    expect "the account, which no plan of this product describes" \
+      "$(account_state "$app_account")" present
+    expect "the durable state" "$(volumes_state)" "$volumes"
+    expect "the named archive" "$(archive_digest "$app_snapshots" "$nightly_slot")" "$nightly_digest"
+    expect "the archives on disk" "$(archive_slots "$app_snapshots")" "$nightly_slot,$reserved_slot"
+    expect "the generated value" \
+      "$(fixture -attest -secret-file "$app_secret_file" | sed -n 's/^ATTESTATION=//p')" "$attestation"
+    expect "the environment file" "$(present "$app_environment_file")" present
+    report "who removes them, then" \
+      "a human with their own tools, or — here — this harness's own removal step, which says so"
+
+    # And the confinement of the machine goes back to naming the account that
+    # remains, which is where this proof found it.
+    matches_bytes "the table, over the account that remains" "$egress_rules" \
+      "$(expected_egress_rules "$vault_account=$vault_uid")"
+
+    apply "removing it again" '"changed":false' \
+      -operation remove_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host"
+
+    step "49. the vault is removed last, and the table of the machine goes with it"
+
+    apply "remove_private_service" '"changed":true' \
+      -operation remove_private_service -profile vaultwarden \
+      -port "$vault_port" -origin-host "$vault_host"
+    expect "the vault's sheet" "$(present "$vault_unit")" absent
+    expect "the confinement rules on disk" "$(present "$egress_rules")" absent
+    expect "the unit that posed it at boot" "$(present "$egress_unit")" absent
+    expect "that unit's enablement, in systemd's own word" "$(unit_enabled "$egress_unit_name")" not-found
+    expect "the confinement table in the kernel" "$(egress_table_loaded)" absent
+    report "why the files only go now" \
+      "the table is the machine's and not one profile's: only the removal of the last confined service takes it away"
+    expect "the observer table this harness posed, untouched by the product" \
+      "$(table_loaded inet lab-egress-observer)" loaded
+    expect "the volumes of the user service, still there after all of it" \
+      "$(volumes_state)" "$volumes"
+
+    verdict "everything that ran is gone and everything that was written is still there — volumes, archives and generated values — the confinement table survived the first removal and went with the last one, and the table this harness posed beside it was never named by any plan"
+    ;;
+
+  remove-edge)
+    step "50. the local name, its service and the entry, in the order the contract fixes"
+
+    apply "retire_route of $edge_host" '"changed":true' \
+      -operation retire_route -route-host "$edge_host" -backend-port "$edge_port"
+    expect "the fragments this machine holds" "$(published_fragments)" none
+    expect "the user service, untouched by the retirement of its name" \
+      "$(service_state "$edge_account" "$edge_service")" active
+
+    apply "remove_user_service $edge_slug" '"changed":true' \
+      -operation remove_user_service -definition edge \
+      -image-digest "$(image_digest)" -port "$edge_port" -origin-host "$edge_host"
+    expect "the sheet" "$(present "$edge_unit")" absent
+    expect "the service" "$(service_state "$edge_account" "$edge_service")" inactive
+    expect "the loopback port" "$(port_listening "$edge_port")" closed
+    expect "the account, which no plan describes" "$(account_state "$edge_account")" present
+    expect "the confinement rules on disk, once the last confined account left" \
+      "$(present "$egress_rules")" absent
+    expect "the confinement table in the kernel" "$(egress_table_loaded)" absent
+    report "what a service that kept nothing leaves behind" \
+      "an account and a home holding neither volumes, nor archives, nor generated values: $(ls -A "$edge_home" 2>/dev/null | paste -sd, - || echo nothing)"
+
+    apply "remove_entrypoint" '"changed":true' -operation remove_entrypoint
+    expect "the entry sheet" "$(present "$entry_unit")" absent
+    expect "the host ports policy file" "$(present "$host_ports_policy")" absent
+    expect "the running kernel setting" "$(host_ports_value)" 1024
+    expect "the secure public port" "$(port_listening 443)" closed
+    expect "the clear public port" "$(port_listening 80)" closed
+    expect "the certificate directory, which the entry read and never wrote" \
+      "$(present "$entry_certificates")" present
+    report "what it still holds" "$(ls -1 "$entry_certificates" | paste -sd, -)"
+
+    report "the machine, as it now stands" "$(fingerprint)"
+    report "the final consumed position" "$(consumed_sequence)"
+
+    verdict "the name, the service and the entry are gone in the contract's order, the public ports closed last, and what remains is exactly what no plan describes"
+    ;;
+
+  *)
+    echo "usage: play-removal <retire-app|depart|remove-user|remove-edge>" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# The name of the user service, published through the passage, beside the name a
+# local route already serves on this very entry.
+#
+# This is the criterion "publié par le passage à côté du coffre, le nom du service
+# répond sur la même IP publique et le même 443 — les plans de route sont, aux
+# octets de forme près, ceux d'aujourd'hui". The bytes are held against the
+# contract's own text here; that both names answer one address on one port is read
+# from outside by `outside`, because a machine asserting that it serves itself
+# proves nothing about a client.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+edge_fragment_digest=$(cat "$state/edge-fragment-digest.txt")
+
+step "18. one approved link route plan publishes the user service through the passage"
+
+apply "publishing $app_host through the passage" '"changed":true' \
+  -operation publish_link_route -route-host "$app_host" -backend-port "$app_port"
+report "the name the report announces" "$(json_field route_host)"
+expect "the passage state a publication reports" "$(json_field passage_state)" active
+
+fragment="$entry_fragments/$app_host.yaml"
+expect "the fragment's owner and mode" "$(file_owner "$fragment")" "root:root 644"
+matches_bytes "the fragment of a name the passage carries" "$fragment" \
+  "$(expected_link_fragment "$app_host" "$app_port")"
+report "why these are the bytes of today" \
+  "publish_link_route gained no field for the third door: what learned three doors is the reading 'a managed service of this machine publishes this port', not the form of a route"
+
+grep -q "url: \"http://$link_initiator_address:$app_port\"" "$fragment" \
+  && report "the backend it names" "$link_initiator_address:$app_port, the tunnel's peer constant" \
+  || red "the backend it names" "$(grep -A2 'servers:' "$fragment" | tr '\n' ' ')"
+grep -q "$entry_loopback" "$fragment" \
+  && red "this machine's own loopback in the fragment" "present" \
+  || report "this machine's own loopback in the fragment" "absent: a link route never names it"
+grep -qi 'middlewares' "$fragment" \
+  && red "the middlewares section" "$(grep -i -A3 middlewares "$fragment" | tr '\n' ' ')" \
+  || report "the middlewares section" "absent, as a control that grants nothing must be"
+
+step "19. two names, two kinds of route, one entry"
+
+expect "the fragments this machine now holds" "$(published_fragments)" "$app_host.yaml,$edge_host.yaml"
+expect "the local fragment, untouched by this publication" \
+  "$(file_digest "$entry_fragments/$edge_host.yaml")" "$edge_fragment_digest"
+expect "the entry was not restarted" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+expect "the secure public port" "$(port_listening 443)" open
+expect "any new port this publication opened" "$(port_listening "$app_port")" closed
+report "the two kinds this entry now serves" \
+  "$app_host through the passage towards $link_initiator_address:$app_port, $edge_host locally towards $entry_loopback:$edge_port — both of them services of the third door"
+
+observe() {
+  curl --silent --insecure --max-time 15 --output /dev/null \
+    --resolve "$1:443:127.0.0.1" --write-out '%{http_code}' "https://$1/" 2>/dev/null || echo none
+}
+expect "https to $app_host, from the machine" "$(observe "$app_host")" 200
+expect "https to $edge_host, from the machine" "$(observe "$edge_host")" 200
+expect "https to a name nobody declared, from the machine" "$(observe "$unknown_host")" 404
+
+printf '%s\n' "$(file_digest "$fragment")" >"$state/app-fragment-digest.txt"
+
+verdict "one approved plan published the user service as one fragment towards the tunnel's peer, carrying no middleware, beside the local fragment of the other user service it did not touch"

@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Mount the user service perimeter on one machine of the scenario.
+#
+# Everything installed here is synthetic and root-owned: one approval anchor
+# minted from a synthetic seed and naming this machine, one empty anti-replay
+# position, the product binary, the fixture that stands in for the Controller and
+# the Console, and — on the machine of the LAN alone — the certificate authority
+# of this run, the synthetic application's binary and the image built from it. No
+# account, no sheet, no volume, no archive, no secret, no entry, no route, no key
+# of the passage, no interface and no table: those are what the proof asks the
+# product to create.
+#
+# Two acts here change a machine outside any approved plan, and both are named
+# rather than folded into a step:
+#
+#   - **the run's authority enters this machine's trust store.** The third door
+#     pulls its image from an origin served over TLS, and a rootless engine that
+#     does not trust the authority of that origin cannot pull at all. Trusting one
+#     synthetic authority for the length of a run is the smallest act that makes
+#     the fetch real; declaring the origin *insecure* in the machine's registry
+#     policy would have been smaller to write and would have weakened the machine
+#     instead, so it is not what this does. The removal takes it away and reads the
+#     store again;
+#   - **the origin's name enters this machine's hosts file.** The LAB carries no
+#     resolver, and the repository a definition names has to resolve to the machine
+#     this run serves the image from.
+#
+# The perimeter always starts from a machine that holds none of the product's own
+# state, because a proof that began from a leftover would be measuring the
+# leftover. The refusals below are hard stops rather than cleanups: a machine
+# carrying a service, an entry or a tunnel that nobody in this run created is a
+# machine whose state nobody can attribute.
+set -euo pipefail
+
+sources=${1:?usage: install <go-sources> <lan|vps> <machine-id> <origin-address> [authority] [digest]}
+role=${2:?usage: install <go-sources> <lan|vps> <machine-id> <origin-address> [authority] [digest]}
+machine=${3:?usage: install <go-sources> <lan|vps> <machine-id> <origin-address> [authority] [digest]}
+origin_address=${4:?usage: install <go-sources> <lan|vps> <machine-id> <origin-address> [authority] [digest]}
+carried_authority=${5:-}
+carried_digest=${6:-}
+export LC_ALL=C.UTF-8
+
+state=/root/lab-user-service
+anchor_directory=/etc/your-cloud
+replay_directory=/var/lib/your-cloud-auxiliary
+origin_host_name=registry.lab.your-cloud.test
+origin_repository="$origin_host_name/lab/synthetic-app"
+origin_authority_anchor=/usr/local/share/ca-certificates/lab-user-service-authority.crt
+origin_hosts_marker="# your-cloud lab user service origin"
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+note() { printf '  %-48s %s\n' "$1" "$2"; }
+
+case "$role" in
+  lan | vps) ;;
+  *) fail "this scenario has two machines and $role is not one of them" ;;
+esac
+
+command -v go >/dev/null || fail "the target has no Go toolchain"
+command -v podman >/dev/null || fail "the target has no Podman: run tools/provision-lab"
+command -v newuidmap >/dev/null || fail "the target has no newuidmap: run tools/provision-lab"
+[[ -x /usr/sbin/nft ]] || fail "the target has no /usr/sbin/nft: run tools/provision-lab"
+[[ -x /usr/sbin/sysctl ]] || fail "the target has no /usr/sbin/sysctl: run tools/provision-lab"
+command -v wg >/dev/null || fail "the target has no wg: run tools/provision-lab"
+command -v update-ca-certificates >/dev/null \
+  || fail "the target cannot extend its trust store: the origin of this run's image would be unreachable"
+getent group systemd-network >/dev/null \
+  || fail "the target has no systemd-network group: the passage key would stay 0600 and the interface would never come up"
+modinfo wireguard >/dev/null 2>&1 || fail "this kernel carries no WireGuard module"
+if [[ "$role" == vps ]]; then
+  command -v slirp4netns >/dev/null || fail "the target has no slirp4netns: run tools/provision-lab lab-vps"
+fi
+
+# The clock guard `#104` wrote, reused unchanged and for the same reason: every
+# envelope of this proof is issued by the fixture on the very machine that
+# verifies it, so a clock stepped mid-run makes an honest approval read "not valid
+# yet" — and that sentence, landing on the anti-replay assertion, reads exactly
+# like a refusal that came for the wrong reason.
+[[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]] \
+  || fail "this machine's clock is not synchronised: an approval issued and verified on it could be refused as not yet valid, which would read as a defect it is not"
+clock_before=$(date -u +%s)
+sleep 2
+clock_drift=$(($(date -u +%s) - clock_before - 2))
+[[ ${clock_drift#-} -le 1 ]] \
+  || fail "this machine's clock moved ${clock_drift}s in two seconds: it is being stepped, and no proof issued against it would mean anything"
+note "clock" "synchronised, no step in two seconds"
+
+# Nothing of the three doors, and nothing of the passage. Each is named separately
+# rather than swept, so that a machine failing this check says which leftover it
+# is.
+[[ ! -e /etc/your-cloud/link ]] || fail "the machine already holds the passage tree /etc/your-cloud/link"
+[[ ! -e /etc/systemd/network/yc-link0.netdev ]] || fail "the machine already describes yc-link0"
+[[ ! -d /sys/class/net/yc-link0 ]] || fail "the machine already holds the interface yc-link0"
+[[ ! -e /etc/systemd/system/your-cloud-link-rules.service ]] \
+  || fail "the machine already holds the unit that puts a passage's bounds back"
+[[ ! -e /etc/your-cloud/egress ]] || fail "the machine already holds a service confinement tree"
+[[ ! -e /etc/systemd/system/your-cloud-egress-rules.service ]] \
+  || fail "the machine already holds the unit that poses a confinement at boot"
+/usr/sbin/nft list table inet your-cloud-egress >/dev/null 2>&1 \
+  && fail "the machine already holds the confinement table of a managed service"
+/usr/sbin/nft list table inet your-cloud-link >/dev/null 2>&1 \
+  && fail "the machine already holds the bounding table of a passage"
+
+case "$role" in
+  lan) accounts=(your-cloud-svc-vaultwarden your-cloud-user-labapp) ;;
+  vps)
+    accounts=(your-cloud-entrypoint your-cloud-user-labedge)
+    [[ ! -e /etc/your-cloud/entrypoint ]] || fail "the machine already holds the entrypoint tree"
+    [[ ! -e /etc/sysctl.d/your-cloud-entrypoint.conf ]] || fail "the machine already holds the host ports policy"
+    ;;
+esac
+
+# Every account of the scenario is named on both machines. The ones belonging to
+# the other machine are read absent here too: a leftover of a previous proof would
+# otherwise be measured as this one's result.
+for account in your-cloud-probe your-cloud-svc-bentopdf your-cloud-entrypoint \
+  your-cloud-svc-vaultwarden your-cloud-user-labapp your-cloud-user-labedge \
+  your-cloud-user-labplain; do
+  id -u "$account" >/dev/null 2>&1 && fail "the machine already holds the account $account"
+  [[ ! -e "/var/lib/$account" ]] || fail "the machine already holds the home of $account"
+  for file in /etc/subuid /etc/subgid; do
+    if grep -q "^$account:" "$file" 2>/dev/null; then
+      fail "$file already carries a range for $account — the machine is not stock"
+    fi
+  done
+done
+note "accounts this machine must not hold yet" "${accounts[*]}"
+
+# The product binary and the fixture, both built from the sources this run
+# synchronised and from nothing already present on the machine. The fixture is
+# built inside the product module because it asks internal/servicedefinition,
+# internal/controller and internal/plan for the canonical documents; it exists only
+# in this copy and is never a package of the product.
+(cd "$sources" && go build -o /usr/local/bin/your-cloud ./cmd/your-cloud)
+(cd "$sources" && go build -o /usr/local/bin/lab-user-service-fixture ./labfixture)
+note "product binary" "$(sha256sum /usr/local/bin/your-cloud | cut -d' ' -f1)"
+note "fixture" "$(sha256sum /usr/local/bin/lab-user-service-fixture | cut -d' ' -f1)"
+
+install -d -m 0700 -o root -g root "$state"
+install -d -m 0755 -o root -g root "$anchor_directory"
+install -d -m 0700 -o root -g root "$replay_directory"
+rm -f "$replay_directory/approval-state.json" "$replay_directory/approval-state.lock"
+rm -f "$state"/*.json "$state"/*.txt
+
+printf '%s\n' "$role" >"$state/role"
+
+lab-user-service-fixture -anchor -epoch 1 -seed 1 -machine "$machine" \
+  >"$anchor_directory/approval-anchor.json"
+chmod 0600 "$anchor_directory/approval-anchor.json"
+note anchor "epoch 1, synthetic seed, machine $machine, role $role"
+
+# The Controller's private state. It is a real directory of the product's own
+# store — 0700, owned by the process that opens it — because freezing a definition
+# and reading it back are performed by `controller.ServiceDefinitionStore` and not
+# by anything this harness invented.
+install -d -m 0700 -o root -g root "$state/controller"
+note "the Controller's definition store" "$state/controller, empty"
+
+if [[ "$role" == lan ]]; then
+  # The authority of this run, and the three names it signs: the two declared
+  # names of the product, and the origin the images come from — which is not a
+  # name of the product at all, but of the LAB.
+  lab-user-service-fixture -authority -authority-directory "$state/authority"
+  chmod 0700 "$state/authority"
+  for host in app.lab.your-cloud.test edge.lab.your-cloud.test "$origin_host_name"; do
+    lab-user-service-fixture -issue -authority-directory "$state/authority" \
+      -out "$state/issued" -route-host "$host"
+  done
+  note "synthetic authority" "$(sha256sum "$state/authority/authority.crt" | cut -d' ' -f1)"
+  note "names it signed" "$(cd "$state/issued" && ls -1 | paste -sd, -)"
+
+  # The synthetic application and the image that carries it. The binary is static
+  # and stripped, the layer's timestamps are fixed and the configuration carries no
+  # date, so the digest below is a function of the sources and of nothing else.
+  (cd "$sources" && CGO_ENABLED=0 go build -trimpath -ldflags=-s\ -w \
+    -o "$state/synthetic-application" ./labapp)
+  note "synthetic application" "$(sha256sum "$state/synthetic-application" | cut -d' ' -f1)"
+  lab-user-service-fixture -image-build \
+    -binary "$state/synthetic-application" -out "$state/image" | tee "$state/image-build.txt"
+  sed -n 's/^IMAGE_DIGEST=//p' "$state/image-build.txt" >"$state/image-digest.txt"
+  [[ -s "$state/image-digest.txt" ]] || fail "the image build reported no digest"
+  authority_source="$state/authority/authority.crt"
+else
+  [[ -s "$carried_authority" ]] \
+    || fail "the vps half needs the run's authority, which the machine of the LAN created"
+  [[ -n "$carried_digest" ]] \
+    || fail "the vps half needs the digest of the image the machine of the LAN built"
+  printf '%s\n' "$carried_digest" >"$state/image-digest.txt"
+  authority_source="$carried_authority"
+fi
+note "the image this run pins" "$origin_repository@$(cat "$state/image-digest.txt")"
+
+# HARNESS ACT 1: the run's authority enters this machine's trust store, so that a
+# rootless engine can verify the origin it pulls from.
+[[ ! -e "$origin_authority_anchor" ]] \
+  || fail "the machine already trusts an authority of this harness"
+install -m 0644 -o root -g root "$authority_source" "$origin_authority_anchor"
+update-ca-certificates >/dev/null 2>&1
+note "HARNESS ACT: the run's authority" "trusted by this machine for the length of the run"
+
+# HARNESS ACT 2: the origin's name resolves to the machine that serves it.
+grep -q "$origin_host_name" /etc/hosts && fail "the machine already resolves $origin_host_name"
+printf '%s %s %s\n' "$origin_address" "$origin_host_name" "$origin_hosts_marker" >>/etc/hosts
+note "HARNESS ACT: the origin's name" "$origin_host_name resolves to $origin_address"
+
+note "the primary interface" "$(ip -4 -brief address show scope global | paste -sd' ' -)"
+note "systemd-networkd, before any plan" \
+  "$(systemctl is-enabled systemd-networkd 2>&1)/$(systemctl is-active systemd-networkd 2>&1)"
+
+printf 'ANCHOR=%s\n' "$anchor_directory/approval-anchor.json"
+printf 'STATE=%s\n' "$state"
+printf 'ROLE=%s\n' "$role"
+printf 'IMAGE_DIGEST=%s\n' "$(cat "$state/image-digest.txt")"

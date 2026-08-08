@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# The second service of the third door: the same image, another definition,
+# another machine, and the other kind of route.
+#
+# It exists for four things no single service could establish:
+#
+#   - **the absence side of every derivation.** This definition declares no
+#     volume, no secret key and a container port above 1024, so the sheet carries
+#     no `Volume=`, no `EnvironmentFile=` and no `Sysctl=` — and the home holds no
+#     durable root and no archive directory at all. Each absence is a decision of
+#     the document, and each is read here beside the presence the other service
+#     reads;
+#   - **two slugs are two accounts**, on two machines, by construction;
+#   - **the other kind of route.** The addendum of `#119` opens both genres to the
+#     third door — a local route on the machine that holds the service, or the
+#     passage from another — and this is the local one. It is also the refusal the
+#     delivered private profile would draw in its place, and the difference is
+#     named: what refuses a public route towards a vault is a decision of that
+#     profile, not a law of the doors;
+#   - **a second name on the one public address**, so that "the same IP and the
+#     same 443" is a comparison rather than a claim about a single name.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+image=$(image_reference)
+entry_invocation=$(cat "$state/entry-invocation.txt")
+
+step "9. one approved user service plan for a definition that keeps nothing"
+
+apply "deploy_user_service $edge_slug on 127.0.0.1:$edge_port" '"changed":true' \
+  -operation deploy_user_service -definition edge \
+  -image-digest "$(image_digest)" -port "$edge_port" -origin-host "$edge_host"
+
+report "the durable root the report names" "[$(json_field data_path)]"
+report "the state the report announces" "$(json_field service_state)"
+
+edge_uid=$(account_uid "$edge_account")
+expect "the account the slug derives" "$(account_state "$edge_account")" present
+report "the identifier this machine gave it" "$edge_uid"
+expect "the home" "$(present "$edge_home")" present
+
+step "10. what a definition without volumes leaves absent, and why"
+
+expect "the durable root a service that keeps nothing owns" "$(present "$edge_volumes")" absent
+expect "the archive directory it would be archived into" "$(present "$edge_snapshots")" absent
+expect "its secrets directory" "$(present "$edge_home/secrets")" absent
+expect "the environment file its sheet would read" "$(present "$edge_home/secrets.env")" absent
+report "why each of those is absent" \
+  "the definition declares no volume and no secret key: a placement that keeps nothing names no durable root, and a line that reads nothing still reads as a line that was needed"
+
+step "11. the sheet, to the byte"
+
+expect "the sheet's owner and mode" "$(file_owner "$edge_unit")" "root:root 644"
+matches_bytes "the sheet this definition derives" "$edge_unit" "$(expected_edge_sheet "$image")"
+expect "the volume lines it carries" "$(grep -c '^Volume=' "$edge_unit" || true)" 0
+expect "the environment file lines it carries" "$(grep -c '^EnvironmentFile=' "$edge_unit" || true)" 0
+grep -q '^Sysctl=' "$edge_unit" \
+  && red "the low-port sysctl" "present although this definition declares container_port $edge_container_port" \
+  || report "the low-port sysctl" \
+    "absent, because the definition declares container_port $edge_container_port — a control that grants nothing must not be written"
+grep -qx "Tmpfs=$app_scratch:rw,mode=1777" "$edge_unit" \
+  && report "the tmpfs this definition still declares" "$app_scratch" \
+  || red "the tmpfs this definition still declares" "$(grep '^Tmpfs=' "$edge_unit" || echo absent)"
+
+step "12. what it serves, and the confinement of a machine holding one user service"
+
+expect "the service" "$(service_state "$edge_account" "$edge_service")" active
+expect "the running container's image" "$(container_image "$edge_account" "$edge_container")" "$image"
+expect "its answer" "$(loopback_status_within "$edge_port" 120)" 200
+page=$(loopback_page "$edge_port")
+report "what it serves" "$(tr '\n' ' ' <<<"$page" | cut -c1-180)"
+expect "the origin it received" "$(page_field "$page" origin)" "https://$edge_host"
+expect "the generated value a definition without secret keys receives" \
+  "$(page_field "$page" token)" absent
+expect "what a service without volumes recorded" "$(page_field "$page" boots)" 0
+
+matches_bytes "the confinement table of this machine" "$egress_rules" \
+  "$(expected_egress_rules "$edge_account=$edge_uid")"
+expect "the confinement table in the kernel" "$(egress_table_loaded)" loaded
+expect "the entry, not restarted by any of it" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+
+step "13. one approved local route publishes it, which the third door is allowed"
+
+apply "publishing $edge_host towards 127.0.0.1:$edge_port" '"changed":true' \
+  -operation publish_route -route-host "$edge_host" -backend-port "$edge_port"
+
+fragment="$entry_fragments/$edge_host.yaml"
+expect "the fragment's owner and mode" "$(file_owner "$fragment")" "root:root 644"
+expect "the fragments this machine holds" "$(published_fragments)" "$edge_host.yaml"
+grep -q "http://$entry_loopback:$edge_port" "$fragment" \
+  && report "the backend the local fragment names" \
+    "http://$entry_loopback:$edge_port, this machine's own loopback through slirp4netns" \
+  || red "the backend the local fragment names" "$(grep -A2 'servers:' "$fragment" | tr '\n' ' ')"
+grep -q "certFile: \"$entry_certificates/$edge_host.crt\"" "$fragment" \
+  && report "the certificate it points at" "$entry_certificates/$edge_host.crt" \
+  || red "the certificate it points at" "$(grep certFile "$fragment")"
+report "what the reading behind that publication now knows" \
+  "a managed service of this machine publishes $edge_port — and this one came through the third door, which the reading learned in #119"
+
+expect "the entry was not restarted" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+
+printf '%s\n' "$edge_uid" >"$state/edge-uid.txt"
+printf '%s\n' "$(file_digest "$fragment")" >"$state/edge-fragment-digest.txt"
+printf '%s\n' "$(file_digest "$edge_unit")" >"$state/edge-sheet-digest.txt"
+
+verdict "a definition that keeps nothing places a service with no volume, no archive, no generated value and no low-port sysctl, confined like every other, and a local route publishes it — the kind of route the third door is allowed and the delivered private profile is not"

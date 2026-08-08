@@ -2,6 +2,7 @@ package auxiliary
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
@@ -58,6 +59,45 @@ func PinnedImage() string { return probePlacement.image }
 // proved it: the port, an integer the plan validation already bound.
 func renderUnit(document *plan.Document) []byte {
 	return renderSheet(probePlacement, document.LocalPort, "")
+}
+
+// environmentLine renders one inert configuration line into the sheet, in the one
+// spelling the generator that reads this file understands.
+//
+// It is the single place where a value a human approved crosses into another
+// parser's syntax, and that is why it is a function with a contract rather than a
+// concatenation. A definition admits any printable ASCII in a value — a title with
+// spaces above all — while the reader of this file is systemd's own unit syntax as
+// Quadlet implements it, where an unquoted value ends at the first whitespace and
+// a `%` opens a specifier. Written naively, `Environment=TITLE=Your Cloud notes`
+// reaches the container as `TITLE=Your`: the value a human approved, silently
+// truncated, with nothing said anywhere. The machine proof of `#121` observed
+// exactly that before this function existed, and the reason it is a defect rather
+// than a limitation is that no error is raised at any point — a plan is applied,
+// the report says the state holds, and the container runs on a value nobody wrote.
+//
+// Two rules, and there is no third:
+//
+//   - `%` is always doubled, because specifiers are expanded whether the value is
+//     quoted or not;
+//   - a line carrying whitespace, a quote or a backslash is wrapped in double
+//     quotes with its backslashes and its double quotes escaped, which is exactly
+//     the unquoting systemd performs. A line carrying none of them is written
+//     verbatim, so the sheets of the delivered profiles do not move by one byte —
+//     which is a closure criterion of this palier and not an optimisation.
+//
+// Nothing here is an escape *the contract* offers a user: a definition still has
+// one interpolation and no escaping at all. This is the transport of an already
+// approved value into a file, and the property it must have is that what the
+// container receives is what the human read.
+func environmentLine(line string) string {
+	escaped := strings.ReplaceAll(line, "%", "%%")
+	if !strings.ContainsAny(escaped, " \t\"'\\") {
+		return escaped
+	}
+	escaped = strings.ReplaceAll(escaped, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
 }
 
 // renderSheet builds the Quadlet sheet of one managed service.
@@ -133,10 +173,11 @@ func renderSheet(where placement, localPort int, originHost string) []byte {
 	}
 	environment := ""
 	for _, line := range where.environment {
-		environment += "Environment=" + line + "\n"
+		environment += "Environment=" + environmentLine(line) + "\n"
 	}
 	if where.originEnvironmentPrefix != "" {
-		environment += "Environment=" + where.originEnvironmentPrefix + originHost + "\n"
+		environment += "Environment=" +
+			environmentLine(where.originEnvironmentPrefix+originHost) + "\n"
 	}
 	if where.bearsSecrets() {
 		environment += "EnvironmentFile=" + where.environmentFilePath() + "\n"

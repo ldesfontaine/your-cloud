@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# Everything this machine refuses while it holds this state, and everything it
+# declines to do twice.
+#
+# A refusal is followed by a comparison against a fingerprint taken before it,
+# because "refused" and "refused without effect" are two different claims. An
+# idempotent application is followed by the same comparison for the opposite
+# reason: a plan that demanded what was already true and then rewrote a file would
+# be an action reported as none.
+#
+# The refusals of the third door split in two, and the split is the contract's
+# rather than this harness's:
+#
+#   - a **document outside the contract of a definition** is one nobody can
+#     freeze. Those are constated at the Controller, in `play-freeze`, because
+#     there is no such revision for a plan to pin and nothing for a machine to
+#     receive;
+#   - a **document the contract admits and the pinning does not** reaches a
+#     machine, and this machine refuses it before reading anything of itself.
+#     Those are here.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+peer_key=${1:?usage: play-refusals <peer-public-key> <peer-endpoint-host>}
+endpoint=${2:?usage: play-refusals <peer-public-key> <peer-endpoint-host>}
+
+cd /root
+
+link_operation=attach_link_peer
+[[ "$link_role" == initiator ]] && link_operation=join_link_peer
+
+step "37. every plan this machine holds, asked for a second time — role $role"
+
+before=$(fingerprint)
+
+case "$role" in
+  lan)
+    apply "the same private service plan" '"changed":false' \
+      -operation deploy_private_service -profile vaultwarden \
+      -port "$vault_port" -origin-host "$vault_host"
+    apply "the same user service plan" '"changed":false' \
+      -operation deploy_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host"
+    ;;
+  vps)
+    apply "the same entrypoint plan" '"changed":false' -operation deploy_entrypoint
+    apply "the same user service plan" '"changed":false' \
+      -operation deploy_user_service -definition edge \
+      -image-digest "$(image_digest)" -port "$edge_port" -origin-host "$edge_host"
+    apply "the same local route plan" '"changed":false' \
+      -operation publish_route -route-host "$edge_host" -backend-port "$edge_port"
+    apply "the same link route plan" '"changed":false' \
+      -operation publish_link_route -route-host "$app_host" -backend-port "$app_port"
+    ;;
+esac
+apply "the same preparation of the passage" '"changed":false' \
+  -operation prepare_link -link-role "$link_role"
+apply "the same junction" '"changed":false' \
+  -operation "$link_operation" -link-role "$link_role" \
+  -peer-public-key "$peer_key" -peer-endpoint-host "$endpoint" -service-port "$app_port"
+
+unchanged "every plan of this machine, replayed together" "$before"
+
+step "38. what the third door refuses on a machine"
+
+case "$role" in
+  lan)
+    refuses "a definition altered by one byte after the plan pinned it" \
+      "does not carry the digest that names it" \
+      -operation deploy_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host" \
+      -hostile altered-definition
+    report "why the plan beside it was perfectly valid" \
+      "the envelope names the digests of two documents a human could have read, and the definition is the one thing this machine rebuilds the digest of for itself"
+
+    refuses "a user service plan whose definition did not travel with it" \
+      "pins a service definition and none travelled with it" \
+      -operation deploy_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host" \
+      -hostile no-definition
+
+    refuses "a plan naming a repository the pinned definition does not name" \
+      "image_reference is not the repository the pinned definition names" \
+      -operation deploy_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host" \
+      -hostile foreign-repository
+
+    refuses "an origin approved where no line of the definition consumes one" \
+      "origin_host is refused because no line of the pinned definition consumes the origin" \
+      -operation deploy_user_service -definition plain \
+      -image-digest "$(image_digest)" -port "$unmanaged_port" -origin-host "$app_host" \
+      -hostile unconsumed-origin
+
+    refuses "no origin approved where a line of the definition consumes one" \
+      "origin_host is required because the pinned definition interpolates the origin" \
+      -operation deploy_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host" \
+      -hostile missing-origin
+
+    # The one direction `#119` had left to state: a definition beside a plan that
+    # pins none. An archive plan is the sharpest case, because everything an
+    # archive touches derives from the slug alone and no definition is needed.
+    refuses "a definition carried beside an archive plan, which pins none" \
+      "travelled beside \"snapshot_service\", which pins none" \
+      -operation snapshot_service -profile "$app_slug" -snapshot-slot "$scratch_slot" \
+      -definition-beside application
+
+    refuses "an archive of a service this machine never deployed" \
+      "this machine holds no $user_account_prefix$plain_slug service" \
+      -operation snapshot_service -profile "$plain_slug" -snapshot-slot "$scratch_slot"
+    ;;
+
+  vps)
+    refuses "an archive of a service whose definition keeps nothing" \
+      "there is nothing to archive" \
+      -operation snapshot_service -profile "$edge_slug" -snapshot-slot "$scratch_slot"
+    report "where that refusal is decided" \
+      "on this machine and before any effect: the definition is not carried by an archive plan, so whether that home holds volumes is a question the machine answers about itself"
+
+    refuses "a link route towards a port the junction does not bound" \
+      "and the approved plan publishes $unmanaged_port" \
+      -operation publish_link_route -route-host "$unknown_host" -backend-port "$unmanaged_port"
+
+    refuses "a local route towards a port nothing of this machine manages" \
+      "no managed service of this machine publishes" \
+      -operation publish_route -route-host "$unknown_host" -backend-port "$unmanaged_port"
+
+    # One name is one claim, and the two kinds share one namespace. Both
+    # directions are asked, because a rule that only held one way would let a name
+    # change what serves it as long as it changed in the right direction.
+    refuses "a local route over the name the passage carries" \
+      "a route through the private passage and the approved plan publishes it as a route towards a service of this machine" \
+      -operation publish_route -route-host "$app_host" -backend-port "$edge_port"
+    refuses "a link route over the name a local service carries" \
+      "a route towards a service of this machine and the approved plan publishes it as a route through the private passage" \
+      -operation publish_link_route -route-host "$edge_host" -backend-port "$app_port"
+
+    refuses "removing the entry while two names are published" \
+      "still publishes" \
+      -operation remove_entrypoint
+    ;;
+esac
+
+step "39. one envelope, accepted once and never twice"
+
+fixture -operation prepare_link -link-role "$link_role" >"$state/replayable.json"
+output=$(your-cloud auxiliary approve --format=json <"$state/replayable.json" 2>&1) || true
+case "$output" in
+  *'"changed":false'*) report "the envelope, the first time" "accepted, changed=false" ;;
+  *) red "the envelope, the first time" "$(echo "$output" | tr '\n' ' ')" ;;
+esac
+before=$(fingerprint)
+if output=$(your-cloud auxiliary approve <"$state/replayable.json" 2>&1); then
+  red "the same envelope, replayed" "accepted: $(echo "$output" | tr '\n' ' ')"
+else
+  case "$output" in
+    *"is not the exact successor of"*) report "the same envelope, replayed" "refused by anti-replay" ;;
+    *) red "the same envelope, replayed" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+fi
+unchanged "that replay, zero effect" "$before"
+
+step "40. the refusals every document of this product carries"
+
+refuses "one byte of the transported plan changed" \
+  "is not the document the approval signed" \
+  -operation prepare_link -link-role "$link_role" -hostile altered-plan
+refuses "an approval whose window has closed" \
+  "has expired" \
+  -operation prepare_link -link-role "$link_role" -lifetime 300 -age 400
+refuses "an approval aimed at the other machine of this scenario" \
+  "names another machine than this one" \
+  -operation prepare_link -link-role "$link_role" -machine "$other_machine"
+
+report "the consumed position at the end of this step" "$(consumed_sequence)"
+
+verdict "every plan this machine holds was asked for again and changed nothing, and every document it must refuse was refused by its own reason and without effect"

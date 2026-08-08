@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# The third door, on a machine that already runs a service of the second one.
+#
+# This is the step the palier exists for. One approved plan pins a definition its
+# user wrote, and what this machine does with it is the whole engine: an account
+# derived from the slug, a home under it, two volume subtrees at paths derived
+# from the container paths, archives beside them at root, one generated value, an
+# environment file the account owns, a sheet whose every line is a function of the
+# document, an image fetched by digest from an origin over the network, and a
+# confinement table that now names two accounts instead of one.
+#
+# Four constats of the contract are settled here:
+#
+#   - "le service déployé court sous your-cloud-user-<slug>, ses données vivent
+#     sous le foyer aux chemins dérivés, son environnement porte l'origine
+#     interpolée, son secret existe en 0600 et sa valeur n'apparaît dans aucun
+#     document, rapport ni observation";
+#   - the low-port sysctl is a **function of the document** rather than a constant
+#     of a profile: this definition declares a container port below 1024 and the
+#     sheet carries the line;
+#   - the delivered profile's sheet does not move by one byte, and its container is
+#     not restarted;
+#   - "déployer un service utilisateur ne déconfine jamais le coffre, fût-ce le
+#     temps d'un tirage". That one is not asserted from the code: the confinement
+#     file is sampled while the deployment runs, and every version of it this
+#     machine held during the fetch is read.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+vault_uid=$(cat "$state/vault-uid.txt")
+vault_sheet_digest=$(cat "$state/vault-sheet-digest.txt")
+vault_invocation=$(cat "$state/vault-invocation.txt")
+image=$(image_reference)
+
+step "10. the confinement of the vault, watched while a second service is deployed"
+
+# The sampler is the harness's own and it changes nothing: it reads one file in a
+# loop. It exists because the property under proof is about an *instant* — the
+# window in which this account leaves the table so that its image can be fetched —
+# and an instant that is over by the time the plan returns cannot be read
+# afterwards.
+samples="$state/egress-samples.txt"
+: >"$samples"
+(
+  while :; do
+    if [[ -f "$egress_rules" ]]; then
+      printf '%s %s\n' "$(sha256sum "$egress_rules" | cut -d' ' -f1)" \
+        "$(grep -c "meta skuid $vault_uid drop" "$egress_rules" || true)"
+    else
+      printf 'absent 0\n'
+    fi
+    sleep 0.2
+  done
+) >>"$samples" 2>/dev/null &
+sampler=$!
+
+step "11. one approved user service plan, pinning one frozen definition"
+
+apply "deploy_user_service $app_slug on 127.0.0.1:$app_port" '"changed":true' \
+  -operation deploy_user_service -definition application \
+  -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host"
+
+kill "$sampler" 2>/dev/null || true
+wait "$sampler" 2>/dev/null || true
+
+report "the durable root the report names" "$(json_field data_path)"
+report "the generated values' directory the report names" "$(json_field secrets_path)"
+report "the state the report announces" "$(json_field service_state)"
+
+step "12. what the vault held while that happened"
+
+distinct=$(sort -u "$samples" | wc -l)
+unconfined=$(awk '$2 == 0' "$samples" | wc -l)
+report "distinct states of the confinement file during the deployment" "$distinct"
+report "samples taken" "$(wc -l <"$samples")"
+expect "samples in which the vault's account was not named" "$unconfined" 0
+report "why that is the claim" \
+  "the deploying account leaves the table for the length of the fetch and every other confined account stays in it: the vault is never unconfined, not even for a tirage"
+
+step "13. the account, the home and the derived paths"
+
+app_uid=$(account_uid "$app_account")
+expect "the account the slug derives" "$(account_state "$app_account")" present
+report "the identifier this machine gave it" "$app_uid"
+expect "the two accounts are two identities" \
+  "$([[ "$app_uid" != "$vault_uid" ]] && echo distinct || echo shared)" distinct
+report "its subordinate ranges" "$(subordinate_range "$app_account")"
+expect "the home" "$(present "$app_home")" present
+expect "the durable root" "$(file_owner "$app_volumes")" "$app_account:$app_account 700"
+expect "the host path of the volume $app_state_volume" \
+  "$(file_owner "$app_volumes$app_state_volume")" "$app_account:$app_account 700"
+expect "the host path of the volume $app_content_volume" \
+  "$(file_owner "$app_volumes$app_content_volume")" "$app_account:$app_account 700"
+expect "the archives, at root alone" "$(file_owner "$app_snapshots")" "root:root 700"
+expect "the archives it holds" "$(archive_slots "$app_snapshots")" none
+report "why the host path is the container path" \
+  "the identity of the data is the container path, rooted under the home the slug derives — injective, without escape, fallback or fingerprint"
+
+step "14. the sheet, to the byte"
+
+expect "the sheet's owner and mode" "$(file_owner "$app_unit")" "root:root 644"
+matches_bytes "the sheet the definition derives" "$app_unit" "$(expected_app_sheet "$image")"
+expect "the volume lines it carries" "$(grep -c '^Volume=' "$app_unit" || true)" 2
+expect "the environment lines it carries" "$(grep -c '^Environment=' "$app_unit" || true)" 7
+grep -qx "Environment=YC_LAB_ORIGIN=https://$app_host" "$app_unit" \
+  && report "the one interpolation this product has, replaced" "YC_LAB_ORIGIN=https://$app_host" \
+  || red "the one interpolation this product has, replaced" "$(grep '^Environment=YC_LAB_ORIGIN' "$app_unit")"
+grep -q '{origin_host}' "$app_unit" \
+  && red "the placeholder itself" "it reached the sheet" \
+  || report "the placeholder itself" "absent from the sheet: it is a substitution, not a template"
+grep -qx "Environment=\"YC_LAB_CONTENT=$app_content\"" "$app_unit" \
+  && report "the one value of this definition that carries spaces" \
+    "written quoted, because an unquoted value of this file ends at its first whitespace" \
+  || red "the one value of this definition that carries spaces" \
+    "$(grep '^Environment=.*YC_LAB_CONTENT' "$app_unit" || echo absent)"
+lines_written=$(grep -c '^Environment="' "$app_unit" || true)
+expect "the environment lines this sheet had to quote" "$lines_written" 1
+grep -qx 'Sysctl=net.ipv4.ip_unprivileged_port_start=0' "$app_unit" \
+  && report "the namespace-scoped low-port sysctl" \
+    "present, because the definition declares container_port $app_container_port" \
+  || red "the namespace-scoped low-port sysctl" "absent although the definition declares a port below 1024"
+grep -qx "Tmpfs=$app_scratch:rw,mode=1777" "$app_unit" \
+  && report "the tmpfs the definition declares" "$app_scratch, in memory and gone with the container" \
+  || red "the tmpfs the definition declares" "$(grep '^Tmpfs=' "$app_unit" || echo absent)"
+grep -qx "EnvironmentFile=$app_environment_file" "$app_unit" \
+  && report "the environment file of the generated value" "$app_environment_file" \
+  || red "the environment file of the generated value" "$(grep '^EnvironmentFile=' "$app_unit" || echo absent)"
+
+step "15. the generated value: present, closed, and in no document at all"
+
+expect "the secrets directory" "$(file_owner "$app_secrets")" "$app_account:$app_account 700"
+expect "the value of the declared key" "$(file_owner "$app_secret_file")" "$app_account:$app_account 600"
+expect "the environment file's owner and mode" \
+  "$(file_owner "$app_environment_file")" "$app_account:$app_account 600"
+report "why it belongs to the account and not to root" \
+  "it is the account's own systemd manager that reads EnvironmentFile=, and a root file in a home the account owns would claim a protection the directory cannot hold"
+expect "the keys the environment file names" \
+  "$(cut -d= -f1 <"$app_environment_file" | paste -sd, -)" "$app_secret_key"
+expect "the shape of the generated value" \
+  "$(head -1 "$app_secret_file" | grep -cE '^[0-9a-f]{64}$')" 1
+
+# The value is never read into a variable, an argument or this log. grep is handed
+# the file as its pattern source, so the comparison happens inside grep and the
+# sixty-four characters never leave the two files that are allowed to hold them.
+for document in "$app_unit" "$state/last-report.json" "$state/held-definitions.txt" \
+  "$state/emitted-application.txt"; do
+  if grep -q -F -f "$app_secret_file" "$document" 2>/dev/null; then
+    red "the generated value inside $(basename "$document")" "it appears there"
+  else
+    report "the generated value inside $(basename "$document")" "absent"
+  fi
+done
+
+step "16. what actually runs, and what it serves"
+
+expect "the service" "$(service_state "$app_account" "$app_service")" active
+expect "the running container's image" "$(container_image "$app_account" "$app_container")" "$image"
+expect "the images the account's own storage holds" "$(stored_images "$app_account")" 1
+expect "the loopback port it publishes" "$(port_listening "$app_port")" open
+expect "its answer" "$(loopback_status_within "$app_port" 120)" 200
+
+page=$(loopback_page "$app_port")
+printf '%s\n' "$page" >"$state/app-page.txt"
+report "what the application serves" "$(tr '\n' ' ' <<<"$page" | cut -c1-200)"
+expect "the slug it was given" "$(page_field "$page" slug)" "$app_slug"
+expect "the origin it received" "$(page_field "$page" origin)" "https://$app_host"
+expect "the scratch it required" "$(page_field "$page" scratch)" writable
+expect "the content it wrote into its own volume" "$(page_field "$page" content)" "$app_content"
+expect "the number of starts its state volume records" "$(page_field "$page" boots)" 1
+
+# The attestation is what makes "the container received exactly the value this
+# machine generated" a comparison. Neither side ever handles the value: the
+# container keys an HMAC over one fixed message with what it read from its
+# environment, and the fixture keys the same HMAC with what the file holds.
+attested=$(fixture -attest -secret-file "$app_secret_file" | sed -n 's/^ATTESTATION=//p')
+expect "the generated value the container received" "$(page_field "$page" token)" "$attested"
+
+step "17. the two volumes really are two, and the data is on the host"
+
+expect "the content the application wrote, on the host" \
+  "$(cat "$app_volumes$app_content_volume/content.txt" 2>/dev/null)" "$app_content"
+expect "the starts the application recorded, on the host" \
+  "$(wc -l <"$app_volumes$app_state_volume/boots.log" 2>/dev/null || echo 0)" 1
+expect "the owner of what it wrote" \
+  "$(file_owner "$app_volumes$app_content_volume/content.txt")" "$app_account:$app_account 644"
+report "the durable state this proof now carries" "$(volumes_state | cut -c1-160)"
+volumes_state >"$state/volumes-state.txt"
+
+step "18. the confinement table of a machine holding two confined accounts"
+
+matches_bytes "the table, rendered over both accounts" "$egress_rules" \
+  "$(expected_egress_rules "$vault_account=$vault_uid" "$app_account=$app_uid")"
+expect "the confinement table in the kernel" "$(egress_table_loaded)" loaded
+report "the preamble a machine confining two accounts writes" \
+  "$(grep -A3 'The confined accounts are' "$egress_rules" | tr '\n' ' ')"
+rules=$(egress_table_rules)
+unscoped=$(printf '%s\n' "$rules" | grep -vE '^(table|chain|type|\}|$)' | grep -v 'skuid' || true)
+expect "rules of this table without an account scope" \
+  "$(printf '%s' "$unscoped" | paste -sd'; ' -)" ""
+for uid in "$vault_uid" "$app_uid"; do
+  grep -qF "meta skuid $uid drop" <<<"$rules" \
+    && report "the loaded table refuses everything account $uid emits" "present" \
+    || red "the loaded table refuses everything account $uid emits" "absent"
+done
+
+step "19. what deploying the third door did not do to the second"
+
+expect "the vault's sheet, to the byte" "$(file_digest "$vault_unit")" "$vault_sheet_digest"
+matches_bytes "and against the contract's own text" "$vault_unit" "$(expected_vault_sheet)"
+expect "the vault's service, not restarted" \
+  "$(service_property "$vault_account" "$vault_service" InvocationID)" "$vault_invocation"
+expect "the vault, still answering" "$(loopback_status "$vault_port")" 200
+expect "the secure public port, on the machine of the LAN" "$(port_listening 443)" closed
+expect "this machine's own passage key, still" "$(present "$link_key")" absent
+
+printf '%s\n' "$app_uid" >"$state/app-uid.txt"
+printf '%s\n' "$(container_id "$app_account" "$app_container")" >"$state/app-container.txt"
+printf '%s\n' "$attested" >"$state/app-attestation.txt"
+printf '%s\n' "$(file_digest "$app_unit")" >"$state/app-sheet-digest.txt"
+
+verdict "one approved plan derived an account, a home, two volume subtrees, an archive directory, a generated value and a hardened sheet from a document its user wrote; the container fetched by digest from the run's origin serves the interpolated origin, the content of its own volume and an attestation of the value this machine generated; and the delivered profile beside it did not move by one byte nor lose its confinement for an instant"

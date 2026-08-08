@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Nothing of this scenario exists before an approval, and the machine says so
+# itself.
+#
+# It is the first constat of the palier — the criterion "rien n'existe avant
+# approbation" — and it is worth a script of its own: every claim made after the
+# plans is a difference from what is read here, so a proof that skipped it would
+# be comparing an approved state against nothing.
+#
+# The third door is read absent by the very reading the product uses to find it:
+# `/var/lib` holds no home whose name opens on the account prefix, so there is no
+# user service on this machine, and the confinement table it would be named in
+# does not exist either.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "0. the machine before any approval — role $role"
+
+report "the machine this anchor names" "$(machine_id)"
+report "the consumed position" "$(consumed_sequence)"
+report "systemd" "$([[ -d /run/systemd/system ]] && echo present || echo absent)"
+report "Podman" "$(podman --version)"
+report "the kernel's WireGuard" "$(modinfo -F filename wireguard 2>/dev/null || echo absent)"
+report "the image this run will pin" "$(image_reference)"
+
+step "0a. no account, no home and no subordinate range of any of the three doors"
+
+for account in your-cloud-probe your-cloud-svc-bentopdf your-cloud-entrypoint \
+  "$vault_account" "$app_account" "$edge_account" "$plain_account"; do
+  expect "the account $account" "$(account_state "$account")" absent
+  expect "the home of $account" "$(present "/var/lib/$account")" absent
+  expect "the subordinate ranges of $account" \
+    "$({ grep -h "^$account:" /etc/subuid /etc/subgid || true; } | wc -l)" 0
+done
+
+step "0b. no user service at all, read the way the product reads it"
+
+# The product enumerates the third door by walking /var/lib for homes whose name
+# opens on the account prefix and which hold the sheet their own service would be
+# described by. The same walk is performed here, so "this machine runs no user
+# service" is the product's own question answered by this machine.
+expect "the homes of the third door this machine holds" "$(user_service_homes)" none
+expect "the durable volumes of a user service" "$(present "$app_volumes")" absent
+expect "its archives" "$(present "$app_snapshots")" absent
+expect "its generated values" "$(present "$app_secrets")" absent
+expect "the environment file its sheet would read" "$(present "$app_environment_file")" absent
+
+step "0c. no data of the delivered private profile, and no confinement"
+
+expect "the durable data of the vault" "$(present "$vault_data")" absent
+expect "the archives of the vault" "$(present "$vault_snapshots")" absent
+expect "the confinement rules on disk" "$(present "$egress_rules")" absent
+expect "the unit that poses a confinement at boot" "$(present "$egress_unit")" absent
+expect "that unit's enablement" "$(unit_enabled "$egress_unit_name")" not-found
+expect "the confinement table in the kernel" "$(egress_table_loaded)" absent
+
+step "0d. no entry, no route, no public port, no loopback port of this scenario"
+
+expect "the entrypoint tree" "$(present "$entry_root")" absent
+expect "the entrypoint sheet" "$(present "$entry_unit")" absent
+expect "the host ports policy file" "$(present "$host_ports_policy")" absent
+expect "the running host ports floor" "$(host_ports_value)" 1024
+expect "the secure public port" "$(port_listening 443)" closed
+expect "the clear public port" "$(port_listening 80)" closed
+for port in "$vault_port" "$app_port" "$edge_port"; do
+  expect "the loopback port $port" "$(port_listening "$port")" closed
+done
+
+step "0e. no passage"
+
+expect "this machine's own passage key" "$(present "$link_key")" absent
+expect "the passage tree" "$(present "$link_root")" absent
+expect "the interface itself" "$(interface_state)" absent
+expect "the bounding table in the kernel" "$(link_table_loaded)" absent
+expect "the tunnel's UDP port" "$(udp_port_bound "$link_listen_port")" unbound
+expect "route_localnet on every interface at once" "$(sysctl_value net.ipv4.conf.all.route_localnet)" 0
+
+step "0f. the tables and the trust this machine holds of its own"
+
+tables=$(nft_tables)
+report "the tables this machine holds" "${tables:-none}"
+report "the origin's name, as this harness placed it" "$(grep "$origin_host_name" /etc/hosts | tr -s ' ')"
+report "the authority this harness placed in the trust store" \
+  "$(openssl x509 -noout -subject -in "$origin_authority_anchor" 2>/dev/null || echo unreadable)"
+report "the network manager" \
+  "$(systemctl is-enabled systemd-networkd)/$(systemctl is-active systemd-networkd)"
+
+verdict "the machine holds no account, no home of the third door, no volume, no archive, no generated value, no confinement, no entry, no route and no passage of this scenario"

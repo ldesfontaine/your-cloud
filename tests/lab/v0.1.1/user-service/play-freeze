@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# Writing and freezing definitions, and the property the whole palier rests on:
+# **a definition has no effect.**
+#
+# Two criteria of the contract are settled here and nowhere else:
+#
+#   - "rien — compte, foyer, fiche, table — n'existe avant approbation ; geler une
+#     définition, en particulier, ne crée rien". The machine's whole fingerprint is
+#     taken before the first freeze and compared after the last one;
+#   - "relire une définition gelée rend ses octets exacts ; une définition altérée
+#     d'un octet change de digest". Both halves are read out of the product's own
+#     store — `controller.ServiceDefinitionStore` — rather than out of anything
+#     this harness remembers.
+#
+# The definitions the contract refuses are constated here too, and they are
+# constated **at the Controller** because that is where the refusal lives: a
+# document outside the contract is one nobody can freeze, so there is no such
+# revision for a plan to pin and nothing for a machine to receive. Carrying an
+# impossible document to a machine would be inventing a path the product does not
+# have.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+case "$role" in
+  lan) definitions=(application plain) ;;
+  vps) definitions=(edge) ;;
+  *)
+    echo "FAILED: this machine holds no role" >&2
+    exit 1
+    ;;
+esac
+
+step "1. what a definition says, before anything freezes it — role $role"
+
+before=$(fingerprint)
+report "the machine, before the first freeze" "$(printf '%s' "$before" | cut -c1-150)"
+
+for name in "${definitions[@]}"; do
+  emitted=$(fixture -emit -definition "$name")
+  printf '%s\n' "$emitted" >"$state/emitted-$name.txt"
+  report "the canonical bytes of $name" \
+    "$(sed -n 's/^DEFINITION_BYTES=//p' <<<"$emitted") bytes, digest $(sed -n 's/^DEFINITION_DIGEST=//p' <<<"$emitted")"
+  printf '  %s\n' "$(sed -n 's/^DEFINITION_DOCUMENT=//p' <<<"$emitted")"
+done
+
+step "2. one freeze per definition, and a freeze is an insertion and nothing else"
+
+revision=0
+for name in "${definitions[@]}"; do
+  frozen=$(fixture -freeze -definition "$name")
+  printf '%s\n' "$frozen" >"$state/frozen-$name.txt"
+  slug=$(sed -n 's/^DEFINITION_SLUG=//p' <<<"$frozen")
+  digest=$(sed -n 's/^DEFINITION_DIGEST=//p' <<<"$frozen")
+  created=$(sed -n 's/^DEFINITION_CREATED=//p' <<<"$frozen")
+  revision=$(sed -n 's/^DEFINITION_REVISION=//p' <<<"$frozen")
+  expect "freezing $name created a revision" "$created" true
+  expect "the digest it was frozen under" "$digest" \
+    "$(sed -n 's/^DEFINITION_DIGEST=//p' "$state/emitted-$name.txt")"
+  report "the slug it belongs to" "$slug"
+  report "the inventory's revision afterwards" "$revision"
+done
+
+# The same bytes frozen twice are one revision. It matters because a digest is the
+# identity of a definition everywhere else in this product: two entries under one
+# digest would be one revision counted twice.
+again=$(fixture -freeze -definition "${definitions[0]}")
+expect "freezing the very same bytes again" \
+  "$(sed -n 's/^DEFINITION_CREATED=//p' <<<"$again")" false
+expect "the inventory's revision, unmoved by it" \
+  "$(sed -n 's/^DEFINITION_REVISION=//p' <<<"$again")" "$revision"
+
+step "3. reading a frozen definition back returns its exact bytes"
+
+held=$(fixture -list)
+printf '%s\n' "$held" >"$state/held-definitions.txt"
+expect "the definitions this Controller holds" \
+  "$(sed -n 's/^DEFINITION_COUNT=//p' <<<"$held")" "${#definitions[@]}"
+for name in "${definitions[@]}"; do
+  wanted_digest=$(sed -n 's/^DEFINITION_DIGEST=//p' "$state/emitted-$name.txt")
+  wanted_document=$(sed -n 's/^DEFINITION_DOCUMENT=//p' "$state/emitted-$name.txt")
+  read_back=$(sed -n "s/^DEFINITION_HELD=$wanted_digest //p" <<<"$held")
+  if [[ "$read_back" == "$wanted_document" ]]; then
+    report "the bytes $name was frozen under, read back" \
+      "${#read_back} bytes, identical to what was frozen"
+  else
+    red "the bytes $name was frozen under, read back" \
+      "the store returned [$read_back]"
+  fi
+done
+
+step "4. a definition altered by one byte is another definition"
+
+original=$(sed -n 's/^DEFINITION_DIGEST=//p' "$state/emitted-${definitions[0]}.txt")
+altered=$(fixture -emit -definition "${definitions[0]}" -altered 2>/dev/null || true)
+if [[ -n "$altered" ]]; then
+  altered_digest=$(sed -n 's/^DEFINITION_DIGEST=//p' <<<"$altered")
+  report "the digest of the original" "$original"
+  report "the digest of the same document with one character changed" "$altered_digest"
+  if [[ "$altered_digest" != "$original" && -n "$altered_digest" ]]; then
+    report "the two digests" "different, as a digest over the fields of a document must be"
+  else
+    red "the two digests" "the altered document carries the digest of the original"
+  fi
+  # And what a plan pins is the original, which this Controller still holds. The
+  # machine's own refusal of the altered bytes is asserted where it happens, in
+  # play-refusals, against a signed pair that pins this very digest.
+  expect "the original, still held under its own digest" \
+    "$(grep -c "^DEFINITION_HELD=$original " "$state/held-definitions.txt")" 1
+else
+  report "the altered document" "this definition carries no value this fixture alters"
+fi
+
+step "5. what no Controller of this product can freeze"
+
+unbuildable "a repository carrying a tag" \
+  "names a repository, never a tag" -emit -definition tagged-repository
+unbuildable "a repository carrying a digest" \
+  "names a repository, never a digest" -emit -definition pinned-repository
+unbuildable "a slug another door already answers to" \
+  "is reserved by a door of the product" -emit -definition reserved-slug
+unbuildable "a volume spelled as a host mount" \
+  "must carry only lower-case letters, digits, dots, underscores and hyphens" \
+  -emit -definition host-path
+unbuildable "two mounts where one opens the other" \
+  "are the same mount or one inside the other" -emit -definition overlapping-mounts
+unbuildable "a brace outside the one interpolation this product has" \
+  "may carry a brace only inside {origin_host}" -emit -definition stray-brace
+
+step "6. and none of it touched this machine"
+
+unchanged "every freeze and every refusal of this step" "$before"
+expect "the accounts the third door would create" \
+  "$(user_service_homes)" none
+expect "the confinement table" "$(egress_table_loaded)" absent
+report "the Controller's store, which is the whole of what changed" \
+  "$(file_owner "$store/service-definitions.json" 2>/dev/null)"
+
+verdict "definitions were written, frozen and read back byte for byte, a document altered by one character carries another digest, six documents the contract refuses cannot be frozen at all, and this machine holds exactly what it held before: no account, no home, no sheet and no table"

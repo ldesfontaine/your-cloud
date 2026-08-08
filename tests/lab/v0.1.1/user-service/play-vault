@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# The delivered private profile, deployed on the machine of the LAN before the
+# third door exists there.
+#
+# It is `#104`'s own step, replayed unchanged, and it is here for two reasons this
+# palier needs and no earlier one did:
+#
+#   - the confinement table stops being one profile's and becomes the machine's.
+#     A table rendered over a single account is exactly the bytes `#102` proved,
+#     and this step reads them so that the next one can read the table grow a
+#     second block without either reading being a fresh judgement;
+#   - "les fiches des profils livrés ne bougent pas d'un octet" needs a delivered
+#     profile actually standing on a machine where the third door then arrives.
+#     The sheet's digest is recorded here and compared after every operation of the
+#     user service that follows.
+#
+# The vault is deliberately never published. One junction bounds exactly one port —
+# a decision of `#103`, unchanged by this palier — and the port this scenario's
+# junction bounds is the user service's. What that costs and what it does not is
+# named in the report rather than worked around.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+cd /root
+
+step "7. one approved private service plan, and the machine's first confined account"
+
+expect "the account, before the plan" "$(account_uid "$vault_account")" none
+
+apply "deploy_private_service $vault_host on 127.0.0.1:$vault_port" '"changed":true' \
+  -operation deploy_private_service -profile vaultwarden \
+  -port "$vault_port" -origin-host "$vault_host"
+
+expect "the sheet's owner and mode" "$(file_owner "$vault_unit")" "root:root 644"
+matches_bytes "the sheet of the delivered private profile" "$vault_unit" "$(expected_vault_sheet)"
+expect "the service" "$(service_state "$vault_account" "$vault_service")" active
+expect "the running container's image" "$(container_image "$vault_account" "$vault_container")" "$pinned_vault"
+expect "its loopback port" "$(loopback_status_within "$vault_port" 120)" 200
+expect "the durable data directory" "$(file_owner "$vault_data")" "$vault_account:$vault_account 700"
+expect "the archive directory" "$(file_owner "$vault_snapshots")" "root:root 700"
+
+step "8. the confinement table of a machine holding exactly one confined account"
+
+vault_uid=$(account_uid "$vault_account")
+report "the identifier this machine gave the vault's account" "$vault_uid"
+expect "the confinement rules' owner and mode" "$(file_owner "$egress_rules")" "root:root 644"
+matches_bytes "the table, rendered over one account" "$egress_rules" \
+  "$(expected_egress_rules "$vault_account=$vault_uid")"
+matches_bytes "the unit that poses it at boot" "$egress_unit" "$(expected_egress_unit)"
+expect "that unit's enablement" "$(unit_enabled "$egress_unit_name")" enabled
+expect "the confinement table in the kernel" "$(egress_table_loaded)" loaded
+report "the preamble a machine confining one account writes" \
+  "$(grep -m1 'The confined account' "$egress_rules")"
+
+printf '%s\n' "$vault_uid" >"$state/vault-uid.txt"
+printf '%s\n' "$(file_digest "$vault_unit")" >"$state/vault-sheet-digest.txt"
+printf '%s\n' "$(service_property "$vault_account" "$vault_service" InvocationID)" \
+  >"$state/vault-invocation.txt"
+
+step "9. and the third door still does not exist on this machine"
+
+expect "the homes of the third door" \
+  "$(user_service_homes)" none
+expect "the user service's loopback port" "$(port_listening "$app_port")" closed
+expect "the secure public port, on the machine of the LAN" "$(port_listening 443)" closed
+
+verdict "the delivered private profile stands on this machine with the sheet #104 proved, its data at its own account and its archives at root, and the one confinement table of this machine names exactly one account"

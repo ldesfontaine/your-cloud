@@ -397,6 +397,63 @@ Enfin, ce que cette course ne fait pas : elle est **nécessaire et non
 suffisante**. Trois exigences de `v0.1.0` nomment un SHA attesté par la porte
 hébergée, qu'aucune exécution locale ne produit.
 
+## La preuve de la milestone `v0.1.1` : `tests/lab/v0.1.1/user-service/prove`
+
+[`tests/lab/v0.1.1/user-service/prove`](../../tests/lab/v0.1.1/user-service/prove)
+est l'entrée d'orchestration de la milestone « Services utilisateur » (`#121`).
+Elle ne prouve pas une application : elle prouve le **moteur** de la troisième
+porte, une seule fois, avec une **application synthétique écrite pour
+l'exercer entièrement** — deux volumes, un `tmpfs` sans lequel elle refuse de
+démarrer, un environnement interpolé, un secret généré, un contenu vérifiable de
+l'extérieur — et aucune application du monde réel n'entre dans le dépôt ni dans
+la preuve.
+
+Les trois machines de `quick` ont chacune un rôle qui n'est pas
+interchangeable : `lab-machine-1` tient le service sous preuve, ses deux
+volumes, ses archives, sa valeur générée et son confinement, **le coffre
+`vaultwarden` à côté de lui** et l'initiateur du passage ; `lab-vps` tient
+l'entrée, l'écouteur du passage, un **second service utilisateur qui ne garde
+rien** et les deux noms déclarés ; `lab-console` tient l'**origine de l'image**
+et, par le même écouteur, le voisin synthétique du LAN.
+
+**La décision centrale de ce harnais est l'acheminement de l'image, parce
+qu'aucun registre n'existe dans le LAB et qu'aucune image tierce ne peut entrer
+dans cette preuve.** L'image est construite sur place à partir du binaire Go
+statique de l'application synthétique — une couche `tar.gz`, une configuration
+et un manifeste OCI écrits par la fixture, sans date, donc de digest
+reproductible — puis servie depuis `lab-console` par la moitié en lecture de
+l'API de distribution : `GET /v2/`, un manifeste **par digest** et ses blobs, en
+TLS sous l'autorité synthétique de la course. Le tirage est donc un vrai tirage
+— moteur rootless, réseau, autre machine, par empreinte — et l'origine ne sait
+répondre à **aucun tag**, ce qui fait de « un tag n'est une identité nulle part »
+une propriété de l'origine plutôt qu'une règle à respecter. Faire de cette
+origine **le voisin synthétique** est ce qui donne au confinement son contrôle
+positif le plus fort : l'hôte d'où le moteur a réellement tiré cette image est
+celui que le compte du service ne peut plus joindre cinq étapes plus tard, alors
+que root le joint toujours.
+
+Trois actes du harnais sortent d'un plan approuvé et se nomment eux-mêmes :
+placer l'autorité de la course dans le magasin de confiance des deux machines et
+le nom de l'origine dans leur fichier `hosts` — sans quoi un moteur rootless ne
+tire rien, et déclarer l'origine *non sécurisée* aurait affaibli la machine au
+lieu de l'outiller ; placer les certificats qu'aucun plan ne décrit ; et
+**retirer, puis planter, une valeur générée**, pour produire les deux phrases de
+l'addendum `#119` — une valeur disparue est une dérive régénérée, une valeur que
+la machine n'a pas générée est refusée à la relecture par sa propre grammaire.
+Aucune valeur générée n'entre jamais dans un document ni dans un journal : ce
+qui circule est une attestation à clé que le conteneur et la fixture calculent
+chacun de leur côté sur un message fixe.
+
+Une limite est structurelle et le rapport la nomme plutôt qu'une note de bas de
+page : **une jonction borne exactement un port** — la décision de `#103`, que ce
+palier ne change pas —, donc le coffre et le service utilisateur ne peuvent pas
+être publiés par le même passage en même temps. Le coffre est déployé, confiné
+dans la même table et jamais publié ici ; le second nom de la course est le
+second service utilisateur, publié par une **route locale** sur l'autre machine.
+Les deux genres de route que l'addendum ouvre à la troisième porte sont donc
+exercés tous les deux, et les deux noms répondent sur la même IP publique et le
+même `443`.
+
 Les **contrôles génériques** sous [`tests/checks/`](../../tests/checks/) portent
 sur les sources et contrats réutilisables. La **preuve LAB** sous
 [`tests/lab/`](../../tests/lab/) ajoute le placement réel, les processus,
@@ -415,6 +472,31 @@ documentée et reproductible dans le LAB approprié.
 
 ## Rapports exécutés
 
+- [`v0.1.1` — le moteur des services utilisateur, prouvé une fois](v0.1.1-user-service.md) :
+  passage `quick` du 8 août 2026 pour #121, **vert après deux rouges produit**.
+  Une application synthétique écrite pour exercer le moteur entièrement — deux
+  volumes, un `tmpfs` sans lequel elle refuse de démarrer, une origine
+  interpolée, un secret généré, un contenu lisible de l'extérieur — est gelée en
+  définition, déployée à côté du coffre `vaultwarden` sur la machine du LAN,
+  publiée par le passage, archivée, corrompue, restaurée, retirée puis
+  redéployée ; un second service utilisateur qui ne garde rien tient le côté
+  absence de chaque dérivation sur l'autre machine et y est publié par une
+  **route locale**, si bien que les deux genres de route ouverts à la troisième
+  porte sont exercés et que les deux noms répondent sur la même IP publique et le
+  même `443`. L'image est servie **par digest seul** depuis `lab-console` par la
+  moitié en lecture de l'API de distribution, en TLS sous l'autorité de la course :
+  faire de cette origine le **voisin synthétique** donne au confinement son
+  contrôle positif — l'hôte d'où le moteur a réellement tiré cette image est celui
+  que le compte du service ne peut plus joindre, et son moteur ne peut plus
+  retirer l'image qu'il exécute. Les deux rouges étaient **silencieux** : un
+  répertoire intermédiaire de volume laissé `root:root 0700`, qui empêchait tout
+  service dont un chemin conteneur a plus d'un segment de démarrer ; et une valeur
+  approuvée **tronquée à sa première espace** dans la fiche, sans erreur, le
+  conteneur tournant sur une valeur que personne n'avait écrite. Limites qui
+  commandent la lecture du reste : la révision porte `+worktree`, une jonction
+  borne exactement un port — donc le coffre est déployé, confiné et jamais publié
+  ici —, la surface HTTP du Controller n'est pas montée et les machines ne sont
+  pas redémarrées.
 - [`v0.1.0` — reflow sans coupe au zoom texte 200 %](v0.1.0-console-reflow-200.md) :
   passage `quick` du 7 août 2026 pour la moitié Linux de #56. Les neuf états du
   frontend — les sept vues contractuelles, l'affichage des deux secrets locaux

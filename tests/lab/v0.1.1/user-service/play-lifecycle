@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+# The three things a service of the third door has to survive: being removed and
+# put back, being archived and returned from, and being handed a revision its own
+# image cannot serve.
+#
+# Each stage is an argument because each has to be readable from outside the
+# machines between the others — and because the third one deliberately produces a
+# controlled failure, which a reader must meet as an intended act rather than as
+# an accident of the step before it.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+stage=${1:?usage: play-lifecycle <recreation|backup|revision>}
+
+cd /root
+
+app_uid=$(cat "$state/app-uid.txt")
+vault_uid=$(cat "$state/vault-uid.txt")
+attestation=$(cat "$state/app-attestation.txt")
+vault_sheet_digest=$(cat "$state/vault-sheet-digest.txt")
+
+deploy_revision_one() {
+  apply "$1" "$2" \
+    -operation deploy_user_service -definition application \
+    -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host"
+}
+
+case "$stage" in
+  recreation)
+    step "24. the service is removed, and its data, its archives and its values are not"
+
+    before_container=$(cat "$state/app-container.txt")
+    before_volumes=$(cat "$state/volumes-state.txt")
+    secret_digest=$(file_digest "$app_secret_file")
+
+    apply "remove_user_service $app_slug" '"changed":true' \
+      -operation remove_user_service -definition application \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host"
+    report "the durable root the report names as kept" "$(json_field data_path)"
+    report "the generated values the report names as kept" "$(json_field secrets_path)"
+    report "the state the report announces" "$(json_field service_state)"
+
+    expect "the sheet" "$(present "$app_unit")" absent
+    expect "the service" "$(service_state "$app_account" "$app_service")" inactive
+    expect "the container" "$(container_image "$app_account" "$app_container")" none
+    expect "the images the account's storage holds" "$(stored_images "$app_account")" 0
+    expect "the loopback port" "$(port_listening "$app_port")" closed
+
+    # What a removal keeps, read by name rather than assumed. This is the whole of
+    # "retrait qui garde les données".
+    expect "the account, which no plan of this product describes" \
+      "$(account_state "$app_account")" present
+    expect "the durable root" "$(file_owner "$app_volumes")" "$app_account:$app_account 700"
+    expect "the durable state, byte for byte" "$(volumes_state)" "$before_volumes"
+    expect "the generated value" "$(file_digest "$app_secret_file")" "$secret_digest"
+    expect "the environment file the sheet read" "$(present "$app_environment_file")" present
+    expect "the archive directory" "$(present "$app_snapshots")" present
+
+    # And the confinement of the machine loses exactly this account and keeps the
+    # other, which is the multi-account table's other direction.
+    matches_bytes "the table, rendered over the account that remains" "$egress_rules" \
+      "$(expected_egress_rules "$vault_account=$vault_uid")"
+    expect "the confinement table in the kernel" "$(egress_table_loaded)" loaded
+    expect "the vault, untouched by any of it" \
+      "$(service_state "$vault_account" "$vault_service")" active
+
+    step "25. the same definition deployed again, and the same bytes behind it"
+
+    deploy_revision_one "deploy_user_service, the second plan of the recreation" '"changed":true'
+
+    expect "the service" "$(service_state "$app_account" "$app_service")" active
+    expect "its loopback port" "$(loopback_status_within "$app_port" 120)" 200
+    matches_bytes "the sheet, written again from the same definition" "$app_unit" \
+      "$(expected_app_sheet "$(image_reference)")"
+    expect "the account's identifier, unchanged" "$(account_uid "$app_account")" "$app_uid"
+    matches_bytes "the confinement, posed again over both accounts" "$egress_rules" \
+      "$(expected_egress_rules "$vault_account=$vault_uid" "$app_account=$app_uid")"
+
+    after_container=$(container_id "$app_account" "$app_container")
+    if [[ -n "$after_container" && "$after_container" != "$before_container" ]]; then
+      report "the container" "a new one: ${after_container:0:12} rather than ${before_container:0:12}"
+    else
+      red "the container" "the engine reports the same container identifier: $after_container"
+    fi
+    expect "the generated value, never regenerated" "$(file_digest "$app_secret_file")" "$secret_digest"
+
+    page=$(loopback_page "$app_port")
+    expect "the value the new container received" "$(page_field "$page" token)" "$attestation"
+    expect "the content it found in its own volume" "$(page_field "$page" content)" "$app_content"
+    expect "the number of starts its state volume now records" "$(page_field "$page" boots)" 2
+    report "why the count moved and the content did not" \
+      "the application appends one line per start and writes its content once: a new container in front of the very same bytes"
+
+    step "26. and nothing was restored to make that true"
+
+    expect "the archives this machine holds" "$(archive_slots "$app_snapshots")" none
+    expect "the reserved slot the return mechanism owns" \
+      "$(present "$app_snapshots/$reserved_slot.tar.gz")" absent
+    grep -q 'snapshot_slot' "$state/last-report.json" \
+      && red "the report of a deployment" "it names an archive slot" \
+      || report "the report of a deployment" "names no archive: a deployment is not an operation about archives"
+
+    printf '%s\n' "$after_container" >"$state/app-container.txt"
+    volumes_state >"$state/volumes-state.txt"
+
+    verdict "a removal took away everything that runs and kept the volumes, the archives, the generated value and the account; a second plan put a new container in front of the very same bytes and the very same value, and no archive was read or written between the two"
+    ;;
+
+  backup)
+    step "27. one approved snapshot writes one named archive of every volume at once"
+
+    before_invocation=$(service_property "$app_account" "$app_service" InvocationID)
+    before_content=$(app_content_digest)
+    before_boots=$(app_boots)
+    secret_digest=$(file_digest "$app_secret_file")
+
+    apply "snapshot_service $app_slug into the slot $nightly_slot" '"changed":true' \
+      -operation snapshot_service -profile "$app_slug" -snapshot-slot "$nightly_slot"
+
+    reported_digest=$(json_field archive_sha256)
+    on_disk=$(archive_digest "$app_snapshots" "$nightly_slot")
+    report "the digest the report carries" "$reported_digest"
+    report "the instant the report carries" "$(json_field archived_at)"
+    expect "the report's digest and the file's" "$reported_digest" "$on_disk"
+    expect "the archive's owner and mode" \
+      "$(file_owner "$app_snapshots/$nightly_slot.tar.gz")" "root:root 600"
+    expect "the archives this machine holds" "$(archive_slots "$app_snapshots")" "$nightly_slot"
+    expect "the service, put back as the archive found it" \
+      "$(service_state "$app_account" "$app_service")" active
+    expect "its loopback port" "$(loopback_status_within "$app_port" 120)" 200
+    if [[ "$(service_property "$app_account" "$app_service" InvocationID)" != "$before_invocation" ]]; then
+      report "the service's invocation across the archive" "new: it was really stopped and started"
+    else
+      red "the service's invocation across the archive" "unchanged; the data was archived under a running service"
+    fi
+
+    # What the archive covers, and what it does not. The contract says the archive
+    # is the volumes root entire and that the generated values are a sibling of it,
+    # never a part — so both halves are read out of the archive itself.
+    inside=$(tar --list --gzip --file "$app_snapshots/$nightly_slot.tar.gz" | sort | paste -sd, -)
+    report "what the archive holds" "$inside"
+    for entry in "srv/state/boots.log" "srv/content/content.txt"; do
+      grep -q "$entry" <<<"$inside" \
+        && report "the archive covers $entry" "present: one coherent snapshot of every volume at once" \
+        || red "the archive covers $entry" "absent"
+    done
+    grep -qi 'secret' <<<"$inside" \
+      && red "the generated values inside the archive" "the archive carries them" \
+      || report "the generated values inside the archive" \
+        "absent: they live beside the archived root and never inside it"
+
+    step "28. an archive is immutable, and replacing one is two plans"
+
+    refuses "a second snapshot into the slot $nightly_slot" \
+      "already holds an archive of this service" \
+      -operation snapshot_service -profile "$app_slug" -snapshot-slot "$nightly_slot"
+    expect "the archive on disk, after that refusal" \
+      "$(archive_digest "$app_snapshots" "$nightly_slot")" "$reported_digest"
+
+    step "29. HARNESS ACT: the application's own content is broken on purpose"
+
+    printf 'your-cloud lab deliberate corruption — this is not the content\n' \
+      >"$app_volumes$app_content_volume/content.txt"
+    chown "$app_account:$app_account" "$app_volumes$app_content_volume/content.txt"
+    corrupt_digest=$(app_content_digest)
+    report "the content, deliberately damaged" "$corrupt_digest"
+    expect "the durable state is no longer what was archived" \
+      "$([[ "$corrupt_digest" != "$before_content" ]] && echo different || echo identical)" different
+
+    step "30. one approved return, and the state it replaced is kept"
+
+    apply "restore_service $app_slug from the slot $nightly_slot" '"changed":true' \
+      -operation restore_service -profile "$app_slug" -snapshot-slot "$nightly_slot"
+    expect "the reserved slot a return names" "$(json_field previous_slot)" "$reserved_slot"
+    reported_previous=$(json_field archive_sha256)
+    expect "the digest of what the return kept, and the reserved archive on disk" \
+      "$reported_previous" "$(archive_digest "$app_snapshots" "$reserved_slot")"
+
+    expect "the content of the damaged volume, back byte for byte" "$(app_content_digest)" "$before_content"
+    expect "the content the application wrote" \
+      "$(cat "$app_volumes$app_content_volume/content.txt")" "$app_content"
+    expect "the durable root's owner" "$(file_owner "$app_volumes")" "$app_account:$app_account 700"
+    expect "the service" "$(service_state "$app_account" "$app_service")" active
+    expect "its loopback port" "$(loopback_status_within "$app_port" 120)" 200
+    expect "the generated value, which a return does not touch" \
+      "$(file_digest "$app_secret_file")" "$secret_digest"
+    report "the starts the state volume records, which a return legitimately grew" \
+      "$(app_boots) — the archive was taken with $before_boots and the service has started since"
+    expect "the archives a human's own list holds" \
+      "$(archive_slots "$app_snapshots")" "$nightly_slot,$reserved_slot"
+    grep -q "\"snapshot_slots\":\[\"$nightly_slot\"\]" "$state/last-report.json" \
+      && report "the archives the report lists" \
+        "$nightly_slot alone: the reserved slot is never a human's name" \
+      || report "the archives the report lists" \
+        "$(grep -o '"snapshot_slots":\[[^]]*\]' "$state/last-report.json" || echo none)"
+
+    step "31. what the reserved slot was left holding, read without touching it"
+
+    inspect=$(mktemp -d)
+    tar --extract --gzip --file "$app_snapshots/$reserved_slot.tar.gz" --directory "$inspect"
+    kept=$(file_digest "$inspect/srv/content/content.txt")
+    expect "the content inside the reserved archive" "$kept" "$corrupt_digest"
+    report "what else it carries" \
+      "$(cd "$inspect" && find . -type f -printf '%P\n' | sort | paste -sd, -)"
+    rm -rf "$inspect"
+
+    step "32. an archive is destroyed by its own plan, and by nothing else"
+
+    apply "snapshot_service into the slot $scratch_slot" '"changed":true' \
+      -operation snapshot_service -profile "$app_slug" -snapshot-slot "$scratch_slot"
+    apply "discard_snapshot of the slot $scratch_slot" '"changed":true' \
+      -operation discard_snapshot -profile "$app_slug" -snapshot-slot "$scratch_slot"
+    expect "that archive" "$(present "$app_snapshots/$scratch_slot.tar.gz")" absent
+    expect "the archive the proof keeps" \
+      "$(archive_digest "$app_snapshots" "$nightly_slot")" "$reported_digest"
+    apply "discard_snapshot of the same slot, again" '"changed":false' \
+      -operation discard_snapshot -profile "$app_slug" -snapshot-slot "$scratch_slot"
+
+    refuses "a return from a slot this machine holds nothing in" \
+      "holds no archive of this service" \
+      -operation restore_service -profile "$app_slug" -snapshot-slot "$scratch_slot"
+
+    printf '%s\n' "$reported_digest" >"$state/nightly-digest.txt"
+    volumes_state >"$state/volumes-state.txt"
+
+    verdict "one archive covered every volume of the service at once and carried none of its generated values, its digest matched the file, a second into the same slot was refused, a deliberate corruption was returned from byte for byte, and the reserved slot held exactly the state the return replaced"
+    ;;
+
+  revision)
+    step "33. a second revision of the same service, whose author forgot their port"
+
+    # The contract's "une image qui ne démarre pas sous ReadOnly=true est un échec
+    # contrôlé avec rollback, jamais un assouplissement", produced rather than
+    # asserted. The revision differs from the deployed one by exactly one field:
+    # it declares a container port above 1024 while the image listens below it. The
+    # sheet therefore carries no low-port sysctl, the container cannot bind, and the
+    # deployment fails with the rollback a human signed beside it.
+    before_content=$(app_content_digest)
+    secret_digest=$(file_digest "$app_secret_file")
+    nightly_digest=$(cat "$state/nightly-digest.txt")
+
+    frozen=$(fixture -freeze -definition application-undeclared-low-port)
+    revision_digest=$(sed -n 's/^DEFINITION_DIGEST=//p' <<<"$frozen")
+    original_digest=$(sed -n 's/^DEFINITION_DIGEST=//p' "$state/emitted-application.txt")
+    expect "the revision was frozen" "$(sed -n 's/^DEFINITION_CREATED=//p' <<<"$frozen")" true
+    expect "it belongs to the same slug" "$(sed -n 's/^DEFINITION_SLUG=//p' <<<"$frozen")" "$app_slug"
+    expect "and it is another revision" \
+      "$([[ "$revision_digest" != "$original_digest" ]] && echo distinct || echo identical)" distinct
+    report "the two revisions this Controller now holds of $app_slug" \
+      "$original_digest and $revision_digest"
+    expect "the definitions the store holds" \
+      "$(fixture -list | sed -n 's/^DEFINITION_COUNT=//p')" 3
+
+    step "34. deploying it is a controlled failure with its approved rollback"
+
+    status=0
+    output=$(fixture -operation deploy_user_service -definition application-undeclared-low-port \
+      -image-digest "$(image_digest)" -port "$app_port" -origin-host "$app_host" \
+      | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+    printf '%s\n' "$output" >"$state/last-report.json"
+    report "what the machine concluded" "$(tr '\n' ' ' <<<"$output" | cut -c1-320)"
+
+    case "$output" in
+      *'"outcome":"rolled_back_after_controlled_failure"'*)
+        report "the conclusion" "rolled_back_after_controlled_failure"
+        case "$output" in
+          *'"rollback_attempted":true'*) report "the rollback" "attempted, once, through the ordinary path" ;;
+          *) red "the rollback" "not stated as attempted" ;;
+        esac
+        [[ $status -ne 0 ]] \
+          && report "the exit status" "$status, non-zero as a controlled failure must be" \
+          || red "the exit status" "a controlled failure exited zero"
+        ;;
+      *'"outcome":"applied"'*)
+        red "a revision whose image cannot bind its port" \
+          "this machine reports it as applied: the low-port sysctl was not what the image needed"
+        ;;
+      *)
+        red "the conclusion of a revision the image cannot serve" \
+          "$(tr '\n' ' ' <<<"$output" | cut -c1-240)"
+        ;;
+    esac
+
+    report "why the deployment could not succeed" \
+      "the definition declares container_port 8080, so the sheet carries no Sysctl=net.ipv4.ip_unprivileged_port_start=0 — and the image, which listens on 80 under DropCapability=ALL, cannot bind"
+    report "what nothing relaxed" \
+      "ReadOnly=true, NoNewPrivileges=true and DropCapability=ALL are the same bytes in the failed sheet as in the one that serves: an image that will not start under them is an image whose author writes another revision"
+
+    step "35. what the rollback left, and what it kept"
+
+    expect "the sheet" "$(present "$app_unit")" absent
+    # The service is `failed` here and `inactive` after an ordinary removal, and the
+    # difference is the whole point of this step rather than a detail: the start
+    # really failed. The rollback took away the sheet, the image and this account's
+    # place in the confinement table — everything the product wrote — and the
+    # account's own manager keeps the failure it recorded, which no plan of this
+    # product describes removing.
+    case "$(service_state "$app_account" "$app_service")" in
+      active) red "the service" "still active after a controlled failure and its rollback" ;;
+      *)
+        report "the service" \
+          "$(service_state "$app_account" "$app_service") — the start really failed, and the rollback removed everything the product had written"
+        ;;
+    esac
+    expect "the content of its volume, untouched by a failed deployment" \
+      "$(app_content_digest)" "$before_content"
+    expect "the generated value" "$(file_digest "$app_secret_file")" "$secret_digest"
+    expect "the named archive" "$(archive_digest "$app_snapshots" "$nightly_slot")" "$nightly_digest"
+    expect "the vault beside it" "$(service_state "$vault_account" "$vault_service")" active
+    expect "the vault's sheet, to the byte" "$(file_digest "$vault_unit")" "$vault_sheet_digest"
+
+    step "36. and the revision that works is one more approved plan"
+
+    deploy_revision_one "deploy_user_service, back to the revision that serves" '"changed":true'
+    expect "the service" "$(service_state "$app_account" "$app_service")" active
+    expect "its loopback port" "$(loopback_status_within "$app_port" 120)" 200
+    matches_bytes "the sheet of the revision that serves" "$app_unit" \
+      "$(expected_app_sheet "$(image_reference)")"
+    page=$(loopback_page "$app_port")
+    expect "the value it received" "$(page_field "$page" token)" "$attestation"
+    expect "the content it found" "$(page_field "$page" content)" "$app_content"
+    printf '%s\n' "$(container_id "$app_account" "$app_container")" >"$state/app-container.txt"
+    volumes_state >"$state/volumes-state.txt"
+
+    verdict "a revision of the same slug that declares the wrong container port is a controlled failure whose approved rollback ran, nothing was relaxed, the volumes, the value and the archive were untouched, and the revision that serves came back as one more approved plan"
+    ;;
+
+  *)
+    echo "usage: play-lifecycle <recreation|backup|revision>" >&2
+    exit 2
+    ;;
+esac

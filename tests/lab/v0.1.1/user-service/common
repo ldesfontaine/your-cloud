@@ -1,0 +1,924 @@
+# Shared observations of the user service perimeter, sourced by every script that
+# runs on either machine of the scenario. It asserts nothing by itself: it is the
+# vocabulary the judging scripts speak, so that a fact read before a refusal and
+# the same fact read after it are read by the same lines.
+#
+# It is the `common` of tests/lab/v0.1.0/private-service with the third door added
+# and nothing of the first two removed. That reuse is the point rather than an
+# economy: what `#121` proves is that one engine places a service the product does
+# not know, so the sheet of the vault, its data, its archives and its confinement
+# have to be read here by the very lines that read them when they were the whole
+# of the palier — otherwise "les fiches des profils livrés ne bougent pas d'un
+# octet" would be a claim of this harness rather than a comparison.
+#
+# Everything here is read-only except where a function says otherwise. The scripts
+# allowed to change a machine outside an approved plan say so at the place they do
+# it, and there are exactly five of them: `install`, which places the run's
+# authority in the machine's trust store and the origin's name in its hosts file;
+# `certify`, which places the certificates no plan describes; `play-lifecycle`,
+# which damages the application's own content on purpose and puts a value under
+# the secrets directory by hand; `origin`, which runs the image origin on the
+# third machine; and `remove`, which takes the perimeter away.
+#
+# The two machines source the same file. What differs between them is written
+# once, at the bottom, and read from the role this machine's perimeter was
+# mounted with.
+
+export LC_ALL=C.UTF-8
+
+state=/root/lab-user-service
+authority="$state/authority"
+store="$state/controller"
+anchor=/etc/your-cloud/approval-anchor.json
+replay=/var/lib/your-cloud-auxiliary/approval-state.json
+
+infrastructure_id=8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2
+controller_id=3f2504e0-4f89-41d3-9a0c-0305e82c3301
+
+# --- the origin of the image ------------------------------------------------
+#
+# The one authority this palier could not borrow: no registry exists in this LAB,
+# and no image of a third party may enter this proof. The name carries dots
+# because the contract requires a repository to open on a registry host, and it
+# resolves — by a line this harness writes into /etc/hosts and takes away again —
+# to lab-console, which is a real other machine of this flat subnet.
+origin_host_name=registry.lab.your-cloud.test
+origin_repository="$origin_host_name/lab/synthetic-app"
+origin_authority_anchor=/usr/local/share/ca-certificates/lab-user-service-authority.crt
+origin_hosts_marker="# your-cloud lab user service origin"
+
+# --- the third door, on both machines ---------------------------------------
+user_account_prefix=your-cloud-user-
+
+app_slug=labapp
+app_account="$user_account_prefix$app_slug"
+app_home="/var/lib/$app_account"
+app_unit="$app_home/.config/containers/systemd/$app_account.container"
+app_service="$app_account.service"
+app_container="$app_account"
+app_volumes="$app_home/volumes"
+app_snapshots="$app_home/snapshots"
+app_secrets="$app_home/secrets"
+app_environment_file="$app_home/secrets.env"
+app_secret_key=YC_LAB_TOKEN
+app_secret_file="$app_secrets/$app_secret_key"
+app_state_volume=/srv/state
+app_content_volume=/srv/content
+app_scratch=/scratch
+app_port=18310
+app_container_port=80
+app_host=app.lab.your-cloud.test
+app_content='your-cloud lab synthetic content, revision one'
+
+edge_slug=labedge
+edge_account="$user_account_prefix$edge_slug"
+edge_home="/var/lib/$edge_account"
+edge_unit="$edge_home/.config/containers/systemd/$edge_account.container"
+edge_service="$edge_account.service"
+edge_container="$edge_account"
+edge_volumes="$edge_home/volumes"
+edge_snapshots="$edge_home/snapshots"
+edge_port=18320
+edge_container_port=8080
+edge_host=edge.lab.your-cloud.test
+
+plain_slug=labplain
+plain_account="$user_account_prefix$plain_slug"
+
+# --- the private profile of `v0.1.0`, on the machine of the LAN -------------
+#
+# The vault is deployed beside the user service and is never published here. That
+# is a decision of the passage's own contract read by this proof rather than an
+# omission, and the step that reaches it says so: one junction bounds exactly one
+# port, and the port this junction bounds is the user service's.
+vault_account=your-cloud-svc-vaultwarden
+vault_home="/var/lib/$vault_account"
+vault_unit="$vault_home/.config/containers/systemd/$vault_account.container"
+vault_service="$vault_account.service"
+vault_container="$vault_account"
+vault_data="$vault_home/data"
+vault_snapshots="$vault_home/snapshots"
+vault_port=18280
+vault_container_port=80
+vault_host=vault.lab.your-cloud.test
+pinned_vault="docker.io/vaultwarden/server@sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8"
+
+# The confinement, now shared by every confined account of a machine.
+egress_root=/etc/your-cloud/egress
+egress_rules="$egress_root/rules.nft"
+egress_unit_name=your-cloud-egress-rules.service
+egress_unit="/etc/systemd/system/$egress_unit_name"
+egress_table_family=inet
+egress_table_name=your-cloud-egress
+
+# The archives this proof asks for, and the one the mechanism owns.
+nightly_slot=nightly
+scratch_slot=scratch
+reserved_slot=previous
+
+# --- the entry, on the VPS --------------------------------------------------
+entry_account=your-cloud-entrypoint
+entry_home="/var/lib/$entry_account"
+entry_unit="$entry_home/.config/containers/systemd/$entry_account.container"
+entry_service="$entry_account.service"
+entry_container="$entry_account"
+entry_root=/etc/your-cloud/entrypoint
+entry_configuration="$entry_root/traefik.yaml"
+entry_fragments="$entry_root/dynamic"
+entry_certificates="$entry_root/certificates"
+entry_loopback=10.0.2.2
+host_ports_policy=/etc/sysctl.d/your-cloud-entrypoint.conf
+host_ports_setting=net.ipv4.ip_unprivileged_port_start
+pinned_entry="docker.io/library/traefik@sha256:9c3b91d5fb7770853ca5c1124a23c34bf2d9b47ffaebeab2614cbaf410dcb2ac"
+
+unknown_host=inconnu.lab.your-cloud.test
+unmanaged_port=18281
+
+# --- the passage, on both machines ------------------------------------------
+link_root=/etc/your-cloud/link
+link_key="$link_root/private.key"
+link_rules="$link_root/rules.nft"
+link_interface=yc-link0
+link_netdev="/etc/systemd/network/$link_interface.netdev"
+link_network="/etc/systemd/network/$link_interface.network"
+link_policy=/etc/sysctl.d/your-cloud-link.conf
+link_unit_name=your-cloud-link-rules.service
+link_unit="/etc/systemd/system/$link_unit_name"
+link_table_family=inet
+link_table_name=your-cloud-link
+link_listen_port=51820
+link_listener_address=10.66.66.1
+link_initiator_address=10.66.66.2
+route_localnet_key="net.ipv4.conf.$link_interface.route_localnet"
+
+failures=0
+
+report() { printf '%-72s %s\n' "$1" "$2"; }
+red() {
+  report "$1" "FAILED: $2"
+  failures=$((failures + 1))
+}
+step() { printf '\n== %s ==\n' "$*"; }
+
+# defect names something the machine does that the product did not intend, in
+# full, and lets the rest of the palier run. It deliberately does not count as a
+# failed assertion: a defect stops its own path and everything the palier can
+# still constate is still constated. The run does not pass — `prove` reads these
+# markers out of the log and reports the outcome as failed whatever the assertion
+# count is.
+defects=0
+defect() {
+  defects=$((defects + 1))
+  printf '\n!! PRODUCT DEFECT: %s\n' "$1"
+  printf '%s\n' "$2" | sed -e 's/^/   /'
+  printf '\n'
+}
+
+divergences=0
+divergence() {
+  divergences=$((divergences + 1))
+  printf '\n!! DIVERGENCE %d: %s\n   %s\n\n' "$divergences" "$1" "$2"
+}
+
+# limit names something this step deliberately does not claim, so that a reader of
+# the log meets the boundary at the place it applies rather than only in the
+# report's list of debts.
+limit() { printf '\n!! LIMIT: %s\n   %s\n\n' "$1" "$2"; }
+
+verdict() {
+  [[ $failures -eq 0 ]] || {
+    echo "FAILED: $failures assertions" >&2
+    exit 1
+  }
+  if [[ $defects -gt 0 ]]; then
+    echo "PASS with $defects product defect(s) reported above: $1"
+  else
+    echo "PASS: $1"
+  fi
+}
+
+expect() {
+  local label=$1 observed=$2 expected=$3
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$expected"
+  else
+    red "$label" "expected [$expected], observed [$observed]"
+  fi
+}
+
+# --- reading files and accounts ---------------------------------------------
+
+file_owner() { stat -c '%U:%G %a' "$1" 2>/dev/null || echo absent; }
+
+file_digest() {
+  [[ -f "$1" ]] || {
+    echo absent
+    return
+  }
+  sha256sum "$1" | cut -d' ' -f1
+}
+
+present() { [[ -e "$1" ]] && echo present || echo absent; }
+
+account_state() { id -u "$1" >/dev/null 2>&1 && echo present || echo absent; }
+
+# user_service_homes is the reading the product itself performs to find the third
+# door: the homes under /var/lib whose name opens on the account prefix. It is
+# spelled once here so that "this machine runs no user service" and "it runs
+# exactly these" are the same question asked twice.
+user_service_homes() {
+  local names
+  names=$(find /var/lib -maxdepth 1 -name "${user_account_prefix}*" -printf '%f\n' 2>/dev/null \
+    | sort | paste -sd, -)
+  echo "${names:-none}"
+}
+
+account_uid() { id -u "$1" 2>/dev/null || echo none; }
+
+subordinate_range() { grep "^$1:" /etc/subuid 2>/dev/null || echo none; }
+
+# as_account runs one command under a service account, with exactly the
+# environment the Auxiliary builds for its own calls. The working directory is `/`
+# because a rootless Podman re-executes itself into a user namespace and chdir()s
+# to the directory it inherited.
+as_account() {
+  local account=$1 uid
+  shift
+  uid=$(id -u "$account" 2>/dev/null) || return 1
+  cd / && runuser -u "$account" -- env \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME="/var/lib/$account" \
+    USER="$account" \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    "$@"
+}
+
+service_state() {
+  local account=$1 service=$2
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_account "$account" systemctl --user is-active "$service" 2>/dev/null || true
+}
+
+service_property() {
+  local account=$1 service=$2 property=$3
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_account "$account" systemctl --user show "$service" --property="$property" --value 2>/dev/null \
+    || echo unreadable
+}
+
+container_image() {
+  local account=$1 container=$2
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_account "$account" podman container inspect --format '{{.ImageName}}' "$container" 2>/dev/null \
+    || echo none
+}
+
+container_id() {
+  local account=$1 container=$2
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_account "$account" podman container inspect --format '{{.Id}}' "$container" 2>/dev/null \
+    || echo none
+}
+
+stored_images() {
+  local account=$1
+  id -u "$account" >/dev/null 2>&1 || {
+    echo no-account
+    return
+  }
+  as_account "$account" podman images --quiet 2>/dev/null | wc -l
+}
+
+port_listening() {
+  ss -Hltn "sport = :$1" 2>/dev/null | grep -q . && echo open || echo closed
+}
+
+udp_port_bound() {
+  ss -Hlun "sport = :$1" 2>/dev/null | grep -q . && echo bound || echo unbound
+}
+
+loopback_status() {
+  curl --silent --max-time 8 --output /dev/null \
+    --write-out '%{http_code}' "http://127.0.0.1:$1/" 2>/dev/null || true
+}
+
+loopback_status_within() {
+  local port=$1 bound=${2:-60} waited=0 status
+  while :; do
+    status=$(loopback_status "$port")
+    if [[ "$status" == 200 ]]; then
+      echo "$status"
+      return 0
+    fi
+    if [[ $waited -ge $bound ]]; then
+      echo "${status:-none}"
+      return 1
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+}
+
+loopback_answer_line() {
+  curl --silent --max-time 8 --output /dev/null \
+    --write-out '%{http_code} %{content_type}' "http://127.0.0.1:$1/" 2>/dev/null || true
+}
+
+# loopback_page is what the synthetic application served, read from this machine.
+# It is the weaker half of every content claim of this proof — `outside` reads the
+# same page through the entry — and it is kept because a difference between the
+# two would be a fact about the network rather than about the container.
+loopback_page() {
+  curl --silent --max-time 8 "http://127.0.0.1:$1/" 2>/dev/null || true
+}
+
+page_field() { sed -n "s/^$2=//p" <<<"$1" | head -1; }
+
+published_fragments() {
+  [[ -d "$entry_fragments" ]] || {
+    echo none
+    return
+  }
+  local names
+  names=$(cd "$entry_fragments" && ls -1 2>/dev/null | paste -sd, -)
+  echo "${names:-none}"
+}
+
+host_ports_value() { sysctl -n "$host_ports_setting" 2>/dev/null || echo unreadable; }
+
+sysctl_value() { sysctl -n "$1" 2>/dev/null || echo unreadable; }
+
+archive_slots() {
+  local directory=$1 names
+  [[ -d "$directory" ]] || {
+    echo none
+    return
+  }
+  names=$(cd "$directory" && ls -1 2>/dev/null | sed -n 's/\.tar\.gz$//p' | sort | paste -sd, -)
+  echo "${names:-none}"
+}
+
+archive_digest() { file_digest "$1/$2.tar.gz"; }
+
+# app_content_digest is the one durable file this proof damages and returns from,
+# and app_boots is the one that a start legitimately grows.
+#
+# They are read apart from volumes_state on purpose. Every operation that stops
+# and starts this service — an archive, a return, a redeployment — appends a line
+# to the boot log, because that is what the application was written to do: it is
+# how "a new container in front of the very same bytes" is visible at all. So a
+# constat about what survived compares the content, and a constat about what ran
+# reads the count; comparing the whole tree across a restart would be asserting
+# that the service did not start.
+app_content_digest() { file_digest "$app_volumes$app_content_volume/content.txt"; }
+
+app_boots() { wc -l <"$app_volumes$app_state_volume/boots.log" 2>/dev/null || echo 0; }
+
+# volumes_state is every durable byte of the user service, in one line, so that a
+# later constat is a comparison against something recorded earlier rather than a
+# fresh judgement. It is the right reading exactly where nothing restarted in
+# between.
+volumes_state() {
+  { cd "$app_volumes" && find . -type f -printf '%P\n' | sort | while read -r file; do
+    printf '%s:%s ' "$file" "$(sha256sum "$file" | cut -d' ' -f1)"
+  done; } 2>/dev/null
+  printf '\n'
+}
+
+# --- what the machine holds of the passage ----------------------------------
+
+interface_state() {
+  [[ -d "/sys/class/net/$link_interface" ]] || {
+    echo absent
+    return
+  }
+  local flags
+  flags=$(cat "/sys/class/net/$link_interface/flags")
+  (((flags & 0x1) != 0)) && echo up || echo down
+}
+
+interface_index() { cat "/sys/class/net/$link_interface/ifindex" 2>/dev/null || echo absent; }
+
+interface_address() {
+  ip -4 -brief address show "$link_interface" 2>/dev/null | awk '{print $3}' | paste -sd, - \
+    || echo absent
+}
+
+wg_field() {
+  local value
+  value=$(wg show "$link_interface" "$1" 2>/dev/null | awk -F'\t' '{print $2}' | paste -sd, -)
+  echo "${value:-none}"
+}
+
+wg_peers() {
+  local value
+  value=$(wg show "$link_interface" peers 2>/dev/null | paste -sd, -)
+  echo "${value:-none}"
+}
+
+wg_allowed_ips() { wg_field allowed-ips; }
+
+wg_public_key() {
+  local value
+  value=$(wg show "$link_interface" public-key 2>/dev/null)
+  echo "${value:-none}"
+}
+
+wg_handshake() {
+  local value
+  value=$(wg show "$link_interface" latest-handshakes 2>/dev/null | awk -F'\t' '{print $2}' | head -1)
+  echo "${value:-0}"
+}
+
+handshake_within() {
+  local bound=$1 attempt now handshake
+  for attempt in $(seq 1 "$bound"); do
+    handshake=$(wg_handshake)
+    if [[ "$handshake" != 0 ]]; then
+      now=$(date -u +%s)
+      echo "$((now - handshake))s ago (after ${attempt}s)"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "never within ${bound}s"
+  return 1
+}
+
+nft_tables() { /usr/sbin/nft list tables 2>/dev/null | paste -sd'; ' - || echo none; }
+
+table_loaded() {
+  /usr/sbin/nft list table "$1" "$2" >/dev/null 2>&1 && echo loaded || echo absent
+}
+
+link_table_loaded() { table_loaded "$link_table_family" "$link_table_name"; }
+egress_table_loaded() { table_loaded "$egress_table_family" "$egress_table_name"; }
+
+table_rules() {
+  /usr/sbin/nft --stateless list table "$1" "$2" 2>/dev/null \
+    | sed -e 's/^[[:space:]]*//' -e '/^$/d' || true
+}
+
+egress_table_rules() { table_rules "$egress_table_family" "$egress_table_name"; }
+link_table_rules() { table_rules "$link_table_family" "$link_table_name"; }
+
+unit_enabled() {
+  local value
+  value=$(systemctl is-enabled "$1" 2>/dev/null || true)
+  echo "${value:-absent}"
+}
+
+# --- what the contract says the files must contain ---------------------------
+#
+# These render, from the constants of the contract alone, the exact bytes each
+# file is supposed to carry. They are deliberately a second spelling of what
+# internal/auxiliary renders: a harness that asked the product for the expected
+# bytes would be asking the accused to write the verdict.
+
+product_header() {
+  cat <<'EOF'
+# Written by your-cloud auxiliary from one approved plan. Do not edit: this
+# machine compares this file byte for byte against the plan it is given, and an
+# edit here is a drift that requires a new approved plan rather than a repair.
+EOF
+}
+
+# expected_app_sheet is the sheet of the third door as the contract derives it
+# from one definition: two volumes at host paths the slug decides, the
+# definition's own environment with the one interpolation replaced, the
+# environment file of the generated value, the declared tmpfs, and the low-port
+# sysctl exactly because the declared container port is below 1024.
+expected_app_sheet() {
+  local image=$1
+  product_header
+  cat <<EOF
+[Unit]
+Description=Your Cloud managed $app_slug user service
+
+[Container]
+Image=$image
+ContainerName=$app_container
+PublishPort=127.0.0.1:$app_port:$app_container_port
+Pull=never
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+Volume=$app_volumes$app_state_volume:$app_state_volume:rw
+Volume=$app_volumes$app_content_volume:$app_content_volume:rw
+Environment=YC_LAB_SLUG=$app_slug
+Environment=YC_LAB_LISTEN_PORT=80
+Environment=YC_LAB_ORIGIN=https://$app_host
+Environment=YC_LAB_SCRATCH_DIR=$app_scratch
+Environment=YC_LAB_STATE_DIR=$app_state_volume
+Environment=YC_LAB_CONTENT_DIR=$app_content_volume
+Environment="YC_LAB_CONTENT=$app_content"
+EnvironmentFile=$app_environment_file
+Tmpfs=$app_scratch:rw,mode=1777
+Sysctl=net.ipv4.ip_unprivileged_port_start=0
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+# expected_edge_sheet is the same derivation over a definition that declares
+# nothing durable: no volume line, no environment file, and no low-port sysctl,
+# because the container port it declares is above 1024. It is the absence side of
+# every line above, and each absence is a decision of the document rather than of
+# this package.
+expected_edge_sheet() {
+  local image=$1
+  product_header
+  cat <<EOF
+[Unit]
+Description=Your Cloud managed $edge_slug user service
+
+[Container]
+Image=$image
+ContainerName=$edge_container
+PublishPort=127.0.0.1:$edge_port:$edge_container_port
+Pull=never
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+Environment=YC_LAB_SLUG=$edge_slug
+Environment=YC_LAB_LISTEN_PORT=8080
+Environment=YC_LAB_ORIGIN=https://$edge_host
+Environment=YC_LAB_SCRATCH_DIR=$app_scratch
+Tmpfs=$app_scratch:rw,mode=1777
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+# expected_vault_sheet is the whole sheet of the delivered private profile, byte
+# for byte as `#104` proved it. It is here so that "les fiches des profils livrés
+# ne bougent pas d'un octet" is a comparison against the previous palier's own
+# text rather than against whatever this machine answers today.
+expected_vault_sheet() {
+  product_header
+  cat <<EOF
+[Unit]
+Description=Your Cloud managed Vaultwarden private service
+
+[Container]
+Image=$pinned_vault
+ContainerName=$vault_container
+PublishPort=127.0.0.1:$vault_port:$vault_container_port
+Pull=never
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+Volume=$vault_data:/data:rw
+Environment=SIGNUPS_ALLOWED=false
+Environment=INVITATIONS_ALLOWED=false
+Environment=SHOW_PASSWORD_HINT=false
+Environment=DOMAIN=https://$vault_host
+Sysctl=net.ipv4.ip_unprivileged_port_start=0
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+# expected_egress_block is the three rules one confined account contributes to
+# the one table of a machine.
+expected_egress_block() {
+  local uid=$1
+  cat <<EOF
+
+		# The loopback of this machine, and it grants nothing outward. The sheet
+		# of the account below publishes on the loopback alone, so this is the
+		# line by which the port a human approved answers the machine it lives
+		# on — the local verification of a deployment included. Nothing beyond
+		# this host is reachable through it.
+		meta skuid $uid oifname "lo" accept
+
+		# The replies of connections somebody else opened towards this service,
+		# and the whole of what may leave this machine on its behalf. The related
+		# state is deliberately not accepted beside the established one: what the
+		# contract names is replies, and an ICMP error carried on behalf of a
+		# confined account is not one.
+		meta skuid $uid ct state established accept
+
+		# Everything else this account emits, in one line and with no exception
+		# above it: no neighbour of the LAN, no registry, no name server, no mail
+		# relay. A new connection this service opens is refused wherever it was
+		# going, which is what makes "aucun voisin du LAN n'est joignable depuis
+		# le service" a fact of this machine rather than a claim about a network.
+		meta skuid $uid drop
+EOF
+}
+
+# expected_egress_rules renders the whole table of a machine from the accounts it
+# confines, given as `account=uid` pairs in the order the product sorts them: by
+# account name. The preamble has two shapes, one per cardinal, and rendering both
+# here is what lets this proof assert that a machine confining two services says
+# "the confined accounts are" and names them.
+expected_egress_rules() {
+  local pair account uid names="" blocks=""
+  for pair in "$@"; do
+    account=${pair%%=*}
+    uid=${pair##*=}
+    names+="#   $account"$'\n'
+    blocks+="$(expected_egress_block "$uid")"$'\n'
+  done
+  product_header
+  printf '#\n'
+  if [[ $# -eq 1 ]]; then
+    account=${1%%=*}
+    cat <<EOF
+# This table only ever takes traffic away from one service account. Its chain
+# carries an accept policy and drops what that account may not emit, so nothing
+# here can grant this machine anything it did not already do. Every rule below is
+# scoped to that account, and there is no exception.
+#
+# The confined account is $account.
+EOF
+  else
+    printf '%s' "# This table only ever takes traffic away from the service accounts named below.
+# Its chain carries an accept policy and drops what those accounts may not emit,
+# so nothing here can grant this machine anything it did not already do. Every
+# rule below is scoped to one of them, and there is no exception.
+#
+# The confined accounts are:
+"
+    printf '%s' "$names"
+  fi
+  cat <<EOF
+add table $egress_table_family $egress_table_name
+delete table $egress_table_family $egress_table_name
+table $egress_table_family $egress_table_name {
+	chain output {
+		type filter hook output priority filter; policy accept;
+EOF
+  printf '%s' "$blocks"
+  printf '\t}\n}\n'
+}
+
+expected_egress_unit() {
+  product_header
+  cat <<EOF
+[Unit]
+Description=Your Cloud private service egress confinement
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target
+ConditionPathExists=$egress_rules
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft --file $egress_rules
+
+[Install]
+WantedBy=sysinit.target
+EOF
+}
+
+expected_link_fragment() {
+  local host=$1 port=$2
+  product_header
+  cat <<EOF
+http:
+  routers:
+    "$host":
+      rule: "Host(\`$host\`)"
+      entryPoints:
+        - websecure
+      service: "$host"
+      tls: {}
+  services:
+    "$host":
+      loadBalancer:
+        servers:
+          - url: "http://$link_initiator_address:$port"
+tls:
+  certificates:
+    - certFile: "$entry_certificates/$host.crt"
+      keyFile: "$entry_certificates/$host.key"
+EOF
+}
+
+expected_netdev() {
+  local peer_key=${1:-} endpoint=${2:-}
+  product_header
+  printf '[NetDev]\nName=%s\nKind=wireguard\nDescription=Your Cloud private passage (%s)\n\n' \
+    "$link_interface" "$link_role"
+  printf '[WireGuard]\nPrivateKeyFile=%s\n' "$link_key"
+  [[ "$link_role" == listener ]] && printf 'ListenPort=%d\n' "$link_listen_port"
+  [[ -n "$peer_key" ]] || return 0
+  printf '\n[WireGuardPeer]\nPublicKey=%s\nAllowedIPs=%s/32\n' "$peer_key" "$link_peer_address"
+  [[ "$link_role" == initiator ]] \
+    && printf 'Endpoint=%s:%d\nPersistentKeepalive=25\n' "$endpoint" "$link_listen_port"
+  return 0
+}
+
+expected_network() {
+  product_header
+  printf '[Match]\nName=%s\n\n[Network]\nAddress=%s/32\n' "$link_interface" "$link_own_address"
+  [[ -n "${1:-}" ]] || return 0
+  printf '\n[Route]\nDestination=%s/32\nScope=link\n' "$link_peer_address"
+  return 0
+}
+
+matches_bytes() {
+  local label=$1 path=$2 expected=$3 observed
+  if [[ ! -f "$path" ]]; then
+    red "$label" "$path is absent"
+    return
+  fi
+  observed=$(cat "$path")
+  if [[ "$observed" == "$expected" ]]; then
+    report "$label" "$(wc -c <"$path") bytes, identical to the contract's"
+  else
+    red "$label" "$(diff <(printf '%s\n' "$expected") "$path" | tr '\n' '|')"
+  fi
+}
+
+# --- the fingerprint --------------------------------------------------------
+#
+# Everything an operation of this palier could have changed on this machine, read
+# in one place so that "zero effect" is a comparison and never a claim.
+
+fingerprint() {
+  case "$role" in
+    lan)
+      printf 'vault-account=%s vault-sheet=%s vault-service=%s vault-invocation=%s ' \
+        "$(account_state "$vault_account")" "$(file_digest "$vault_unit")" \
+        "$(service_state "$vault_account" "$vault_service")" \
+        "$(service_property "$vault_account" "$vault_service" InvocationID)"
+      printf 'app-account=%s app-sheet=%s app-service=%s app-invocation=%s app-image=%s ' \
+        "$(account_state "$app_account")" "$(file_digest "$app_unit")" \
+        "$(service_state "$app_account" "$app_service")" \
+        "$(service_property "$app_account" "$app_service" InvocationID)" \
+        "$(container_image "$app_account" "$app_container")"
+      printf 'volumes=%s archives=[%s] secrets=%s/%s envfile=%s ' \
+        "$(present "$app_volumes")" "$(archive_slots "$app_snapshots")" \
+        "$(present "$app_secrets")" "$(file_owner "$app_secrets")" \
+        "$(file_digest "$app_environment_file")"
+      ;;
+    vps)
+      printf 'edge-account=%s edge-sheet=%s edge-service=%s edge-invocation=%s edge-image=%s ' \
+        "$(account_state "$edge_account")" "$(file_digest "$edge_unit")" \
+        "$(service_state "$edge_account" "$edge_service")" \
+        "$(service_property "$edge_account" "$edge_service" InvocationID)" \
+        "$(container_image "$edge_account" "$edge_container")"
+      printf 'entry-sheet=%s entry-config=%s entry-service=%s entry-invocation=%s fragments=%s policy=%s sysctl=%s ports=%s/%s ' \
+        "$(file_digest "$entry_unit")" "$(file_digest "$entry_configuration")" \
+        "$(service_state "$entry_account" "$entry_service")" \
+        "$(service_property "$entry_account" "$entry_service" InvocationID)" \
+        "$(published_fragments)" "$(file_digest "$host_ports_policy")" \
+        "$(host_ports_value)" "$(port_listening 443)" "$(port_listening 80)"
+      ;;
+  esac
+  printf 'egress-rules=%s egress-unit=%s/%s egress-table=%s ' \
+    "$(file_digest "$egress_rules")" "$(file_digest "$egress_unit")" \
+    "$(unit_enabled "$egress_unit_name")" "$(egress_table_loaded)"
+  printf 'key=%s netdev=%s network=%s iface=%s/%s peers=%s link-rules=%s link-table=%s tables=[%s]\n' \
+    "$(present "$link_key")" "$(file_digest "$link_netdev")" "$(file_digest "$link_network")" \
+    "$(interface_state)" "$(interface_index)" "$(wg_peers)" \
+    "$(file_digest "$link_rules")" "$(link_table_loaded)" "$(nft_tables)"
+}
+
+unchanged() {
+  local label=$1 before=$2 after
+  after=$(fingerprint)
+  if [[ "$before" == "$after" ]]; then
+    report "$label" "zero effect"
+  else
+    red "$label" "the machine changed: before [$before] after [$after]"
+  fi
+}
+
+# --- the approval channel ---------------------------------------------------
+
+consumed_sequence() {
+  [[ -f "$replay" ]] || {
+    echo 0
+    return
+  }
+  sed -n 's/.*"consumed_sequence":\([0-9]*\).*/\1/p' "$replay"
+}
+
+next_sequence() { echo $(($(consumed_sequence) + 1)); }
+
+machine_id() { sed -n 's/.*"machine_id":"\([^"]*\)".*/\1/p' "$anchor"; }
+
+# fixture wraps the fixture binary with everything every document of this machine
+# carries: the machine the anchor names, the next position the anti-replay file
+# allows, the Controller's own identifiers, its store, and the repository the
+# images of this run come from.
+fixture() {
+  lab-user-service-fixture \
+    -machine "$(machine_id)" -sequence "$(next_sequence)" \
+    -infrastructure "$infrastructure_id" -controller "$controller_id" \
+    -store "$store" -image-repository "$origin_repository" "$@"
+}
+
+# image_digest is the digest of the synthetic application's image, recorded by
+# `install` from the build and read back here. It is the one value of a plan of
+# this door that a revision does not fix.
+image_digest() { cat "$state/image-digest.txt"; }
+
+image_reference() { echo "$origin_repository@$(image_digest)"; }
+
+# apply <label> <expectation> <fixture arguments...>
+apply() {
+  local label=$1 expected=$2 output status=0
+  shift 2
+  output=$(fixture "$@" | your-cloud auxiliary approve --format=json 2>&1) || status=$?
+  printf '%s\n' "$output" >"$state/last-report.json"
+  case "$output" in
+    *"$expected"*) report "$label" "$expected (status $status)" ;;
+    *) red "$label" "expected $expected, got: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+}
+
+# refuses <label> <expected reason> <fixture arguments...>
+#
+# The reason is asserted, not merely the non-zero status. The machine is compared
+# with itself before and after, so a refusal that changed something is a red even
+# while its reason was right.
+refuses() {
+  local label=$1 expected=$2 output before
+  shift 2
+  before=$(fingerprint)
+  if output=$(fixture "$@" | your-cloud auxiliary approve 2>&1); then
+    red "$label" "accepted: $(echo "$output" | tr '\n' ' ')"
+    return
+  fi
+  printf '%s\n' "$output" >"$state/last-refusal.txt"
+  case "$output" in
+    *"$expected"*) report "$label" "refused: $expected" ;;
+    *) red "$label" "refused for another reason: $(echo "$output" | tr '\n' ' ')" ;;
+  esac
+  unchanged "$label, zero effect" "$before"
+}
+
+# unbuildable asserts that the Controller itself cannot produce a document, and
+# names the sentence it refuses with. Several refusals of this palier live there
+# and nowhere else — a definition the contract refuses is one nobody can freeze —
+# and constating them where they happen is more honest than carrying an
+# impossible document to a machine.
+unbuildable() {
+  local label=$1 expected=$2 output
+  shift 2
+  if output=$(fixture "$@" 2>&1); then
+    red "$label" "the Controller produced it: $(echo "$output" | tr '\n' ' ' | cut -c1-160)"
+    return
+  fi
+  case "$output" in
+    *"$expected"*) report "$label" "the Controller refuses to build it: $expected" ;;
+    *) red "$label" "refused for another reason: $(echo "$output" | tr '\n' ' ' | cut -c1-200)" ;;
+  esac
+}
+
+json_field() { sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" "$state/last-report.json"; }
+
+# --- what the role decides --------------------------------------------------
+
+role=$(cat "$state/role" 2>/dev/null || echo unknown)
+case "$role" in
+  lan)
+    link_role=initiator
+    link_own_address=$link_initiator_address
+    link_peer_address=$link_listener_address
+    other_machine=lab-vps
+    ;;
+  vps)
+    link_role=listener
+    link_own_address=$link_listener_address
+    link_peer_address=$link_initiator_address
+    other_machine=lab-machine-1
+    ;;
+  *)
+    link_role=unknown
+    link_own_address=unknown
+    link_peer_address=unknown
+    other_machine=unknown
+    ;;
+esac

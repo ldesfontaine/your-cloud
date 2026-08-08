@@ -44,6 +44,19 @@ réussit ses quatre jobs sur `c0569d0` : l'issue #45 lie ce run et ce SHA, puis
 se ferme. Sa capacité globale, le chemin d'action et
 les services du reste de `v0.1.0` restent ouverts.
 
+Le **moteur des services utilisateur** de la `v0.1.1` est implémenté et
+**prouvé dans le LAB** par `#121`, dont le
+[rapport](../lab/v0.1.1-user-service.md) est la source : une application
+synthétique écrite pour l'exercer entièrement est gelée en définition, déployée
+à côté d'un profil livré dont la fiche ne bouge pas d'un octet, publiée par les
+deux genres de route, confinée, archivée, corrompue, restaurée, retirée et
+redéployée. Ce passage est vert **après deux rouges produit corrigés** — un
+répertoire intermédiaire de volume laissé à root, et une valeur approuvée
+tronquée à sa première espace dans la fiche. Ce qui reste hors preuve machine de
+cette milestone est nommé dans ce rapport : la surface HTTP du Controller et la
+vue Services de la Console restent tenues par leurs propres suites, et la
+révision jugée porte `+worktree`.
+
 ## Distribution réellement prouvée pour `v0.0.2`
 
 ```text

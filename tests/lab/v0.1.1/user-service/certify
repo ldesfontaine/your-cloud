@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Place the certificate of each declared name where the entry reads it.
+#
+# This is one of the scripts allowed to change a machine outside an approved plan,
+# and it is named as such rather than folded into a step. The contract is
+# explicit: no plan describes a certificate, the Auxiliary never writes into
+# `certificates/`, and a removed entrypoint therefore does not take the directory
+# away.
+#
+# The authority that signs here was created on the machine of the LAN — the one
+# with a Go toolchain that also builds the image and its origin — and the two
+# leaves this machine needs travelled to it through the pilot. That is a fact of
+# where the LAB puts its toolchains and never a claim about the product; the
+# material is synthetic and lives as long as the run.
+#
+#   <name>.crt  root:root 0644              a certificate is public
+#   <name>.key  root:your-cloud-entrypoint 0640
+#
+# The key is readable by the account that runs the entry and by nobody else: a
+# rootless container maps its own UID 0 to that account's identifier on the host.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+issued=${1:-/root/lab-user-service-certificates}
+
+step "8. the run's authority signs both declared names, and the harness places them"
+
+[[ -d "$entry_certificates" ]] \
+  || { echo "FAILED: the entrypoint has not created $entry_certificates" >&2; exit 1; }
+
+entry_invocation=$(service_property "$entry_account" "$entry_service" InvocationID)
+
+for host in "$app_host" "$edge_host"; do
+  [[ -s "$issued/$host.crt" && -s "$issued/$host.key" ]] \
+    || { echo "FAILED: no certificate of $host reached this machine" >&2; exit 1; }
+  install -m 0644 -o root -g root "$issued/$host.crt" "$entry_certificates/$host.crt"
+  install -m 0640 -o root -g "$entry_account" "$issued/$host.key" "$entry_certificates/$host.key"
+  expect "the certificate of $host" "$(file_owner "$entry_certificates/$host.crt")" "root:root 644"
+  expect "the key of $host" "$(file_owner "$entry_certificates/$host.key")" "root:$entry_account 640"
+  report "the subject it carries" \
+    "$(openssl x509 -noout -subject -in "$entry_certificates/$host.crt")"
+done
+
+report "what the entry now reads" "$(ls -1 "$entry_certificates" | paste -sd, -)"
+
+# The entry is not restarted and not reloaded: nothing here is an approved plan,
+# and Traefik reads a certificate when a fragment names it.
+expect "the entry was not restarted by this act" \
+  "$(service_property "$entry_account" "$entry_service" InvocationID)" "$entry_invocation"
+expect "the routes this machine publishes, still" "$(published_fragments)" none
+
+verdict "both declared names hold a certificate signed by this run's own authority, in a directory no plan writes into and no plan removes"

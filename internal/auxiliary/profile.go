@@ -2,6 +2,7 @@ package auxiliary
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
@@ -236,25 +237,66 @@ func (where placement) secretsDirectory() string { return where.home + "/secrets
 func (where placement) environmentFilePath() string { return where.home + "/secrets.env" }
 
 // durableDirectories are every directory the data of this placement needs before
-// the container starts, parents first.
+// the container starts, parents first and each one named.
 //
-// It is the root and then each volume's own host path, because a rootless engine
-// given a mount whose host path is missing creates that path itself — and a
-// directory this Auxiliary did not create is a directory whose owner and mode
-// nobody decided. The list is deduplicated, so the delivered private profile,
-// whose single volume *is* the root, still names exactly one directory and
-// reaches exactly the effect `#102` proved.
+// It is the root, then **every** directory on the way down to each volume's own
+// host path, and then that path. Naming the intermediates is not tidiness: a
+// container path of two segments or more — `/srv/state` is the smallest real one
+// — has a parent that exists only because it was created on the way, and a
+// directory created on the way is a directory whose owner and mode nobody stated.
+// The machine proof of `#121` met exactly that: `volumes/srv` stayed root-owned in
+// 0700 while `volumes/srv/state` belonged to the service, and the rootless engine
+// could not traverse into its own mount — `statfs …: permission denied`, on every
+// deployment of every definition whose volumes are not single-segment paths.
+//
+// The list is deduplicated and ordered parents first, because the seam that
+// consumes it creates, chmods and chowns each entry in turn: two volumes under one
+// parent name that parent once, and no entry is ever created before the one above
+// it. The delivered private profile, whose single volume *is* the root, still names
+// exactly one directory and reaches exactly the effect `#102` proved.
 func (where placement) durableDirectories() []string {
 	if !where.bearsData() {
 		return nil
 	}
 	directories := []string{where.dataDirectory}
+	named := map[string]struct{}{where.dataDirectory: {}}
 	for _, mount := range where.volumes {
-		if mount.host != where.dataDirectory {
-			directories = append(directories, mount.host)
+		for _, directory := range descendTo(where.dataDirectory, mount.host) {
+			if _, held := named[directory]; held {
+				continue
+			}
+			named[directory] = struct{}{}
+			directories = append(directories, directory)
 		}
 	}
 	return directories
+}
+
+// descendTo names every directory strictly under a root and down to one path,
+// including that path, parents first.
+//
+// A path that is the root itself names nothing, which is the delivered private
+// profile's case. A path that is not under the root at all names itself alone:
+// this package derives every host path from the root and none can be outside it,
+// and answering with the path rather than with a walk keeps a caller that somehow
+// held one from silently creating directories nobody asked for.
+func descendTo(root, path string) []string {
+	if path == root {
+		return nil
+	}
+	if !strings.HasPrefix(path, root+"/") {
+		return []string{path}
+	}
+	descent := []string{}
+	current := root
+	for _, segment := range strings.Split(strings.TrimPrefix(path, root+"/"), "/") {
+		if segment == "" {
+			continue
+		}
+		current += "/" + segment
+		descent = append(descent, current)
+	}
+	return descent
 }
 
 // archivePath is the one file a named slot owns for this profile.

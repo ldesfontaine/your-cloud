@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# The confinement, asked of the machine rather than of the table.
+#
+# The contract's sentence is "aucune sortie réseau, sans exception déclarable à ce
+# palier", and what makes it constatable here is stronger than a neighbour the
+# harness invented: **the neighbour is the origin this very image was fetched
+# from**. A rootless engine running as this account really opened a TLS connection
+# to that host a few steps ago and pulled a manifest and two blobs by digest. The
+# same account, the same host, the same port, after the table was posed — and the
+# difference between the two is the whole claim.
+#
+# Three readings are taken of that destination and the difference between them is
+# what is proven:
+#
+#   root                 reaches it — so the origin is up, the network carries the
+#                        packets, and nothing but the account's own scope decides;
+#   the service account  does not, for the two confined accounts of this machine;
+#   the engine of that
+#   account              cannot pull the image it just pulled.
+#
+# One harness-owned table takes part and is named as such. It counts what each
+# account emits at a priority ahead of the product's own, because "rien n'est
+# sorti" must be a number read from the kernel and not an absence of evidence —
+# the lesson `#109` wrote. The product must delete its own table by name and leave
+# this one exactly where it is, which the removal step reads again.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+origin_address=${1:?usage: play-egress <origin-address>}
+
+cd /root
+
+app_uid=$(cat "$state/app-uid.txt")
+vault_uid=$(cat "$state/vault-uid.txt")
+observer_table=lab-egress-observer
+
+pose_observer() {
+  /usr/sbin/nft -f - <<EOF
+add table inet $observer_table
+delete table inet $observer_table
+table inet $observer_table {
+	chain output {
+		type filter hook output priority -10; policy accept;
+		meta skuid $app_uid counter
+		meta skuid $vault_uid counter
+	}
+}
+EOF
+}
+
+observer_packets() {
+  /usr/sbin/nft --handle list table inet "$observer_table" 2>/dev/null \
+    | sed -n "s/.*skuid $1 counter packets \([0-9]*\).*/\1/p" | head -1
+}
+
+# reaches runs one attempt and answers with what happened, never with why. The
+# first argument names who is attempting and is dropped: it is there so that a
+# reader of this file sees, at the call site, which identity each of the three
+# readings below belongs to.
+reaches() {
+  shift
+  if "$@" >/dev/null 2>&1; then
+    echo reachable
+  else
+    echo refused
+  fi
+}
+
+step "20. the origin of this image, and who may still reach it"
+
+report "the origin this image really came from" "$origin_host_name at $origin_address, on a third machine of this flat subnet"
+report "the accounts under confinement" "$app_account ($app_uid), $vault_account ($vault_uid)"
+
+pose_observer
+expect "the observer table this harness poses" "$(table_loaded inet "$observer_table")" loaded
+before_app=$(observer_packets "$app_uid")
+report "what it has counted of the user service's account so far" "${before_app:-unreadable} packets"
+
+# --- root reaches the origin: the positive control --------------------------
+root_answer=$(reaches root curl --silent --max-time 10 --output /dev/null \
+  "https://$origin_host_name/v2/")
+expect "the origin, from root of this machine" "$root_answer" reachable
+
+# --- neither confined account does ------------------------------------------
+app_answer=$(reaches account runuser -u "$app_account" -- \
+  curl --silent --max-time 10 --output /dev/null "https://$origin_host_name/v2/")
+expect "the origin, from the user service's own account" "$app_answer" refused
+
+vault_answer=$(reaches account runuser -u "$vault_account" -- \
+  curl --silent --max-time 10 --output /dev/null "https://$origin_host_name/v2/")
+expect "the origin, from the vault's own account" "$vault_answer" refused
+
+outside_answer=$(reaches account runuser -u "$app_account" -- \
+  curl --silent --max-time 10 --output /dev/null "http://1.1.1.1/")
+expect "an address outside this LAB, from the user service's account" "$outside_answer" refused
+
+# --- the loopback is not a permission, and it still answers ------------------
+loopback_answer=$(runuser -u "$app_account" -- curl --silent --max-time 8 \
+  --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$app_port/" 2>/dev/null || echo none)
+expect "its own loopback port, from its own account" "$loopback_answer" 200
+
+after_app=$(observer_packets "$app_uid")
+report "what the observer counted across those attempts" \
+  "${after_app:-unreadable} packets from uid $app_uid (was ${before_app:-unreadable})"
+if [[ -n "$after_app" && -n "$before_app" && "$after_app" -gt "$before_app" ]]; then
+  report "the identifier the packets of this account leave with" \
+    "$app_uid — counted in the kernel, ahead of the drop that refuses them"
+else
+  red "the identifier the packets of this account leave with" \
+    "the observer counted nothing: before ${before_app:-unreadable}, after ${after_app:-unreadable}"
+fi
+
+step "21. the fetch that worked during the deployment does not work now"
+
+# The strongest reading this palier offers of its own confinement: the very
+# operation the deployment lifted the table for is attempted again, by the same
+# engine, as the same account, against the same origin.
+before_app=$(observer_packets "$app_uid")
+# The attempt is bounded by this harness rather than by the engine: a fetch whose
+# packets are dropped does not fail, it waits, and an unbounded wait here would
+# read as a proof that hung rather than as a confinement that held.
+if timeout 90 env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  HOME="$app_home" USER="$app_account" \
+  XDG_RUNTIME_DIR="/run/user/$app_uid" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$app_uid/bus" \
+  runuser -u "$app_account" -- podman pull "$(image_reference)" \
+  >"$state/refetch.txt" 2>&1; then
+  red "the image, pulled again by the confined account" "the fetch succeeded"
+else
+  report "the image, pulled again by the confined account" \
+    "refused: $(tr '\n' ' ' <"$state/refetch.txt" | cut -c1-140)"
+fi
+after_app=$(observer_packets "$app_uid")
+report "what the observer counted across that fetch" \
+  "${after_app:-unreadable} packets from uid $app_uid (was ${before_app:-unreadable})"
+report "why the deployment could fetch and this cannot" \
+  "the flow lifts this account's own block for the length of the fetch and poses it again before the sheet is written — and it leaves every other confined account in the table while it does"
+
+step "22. the rootless stack these packets leave through"
+
+stack=$(pgrep -u "$app_account" -a -f 'pasta|slirp4netns' 2>/dev/null | head -1 || true)
+if [[ -n "$stack" ]]; then
+  report "the rootless network stack of this container" "$(printf '%s' "$stack" | cut -c1-120)"
+  report "the account it runs as" \
+    "$app_account (uid $app_uid) — so every packet the container emits leaves this host with that identifier"
+else
+  report "the rootless network stack of this container" \
+    "no pasta or slirp4netns process belongs to $app_account"
+fi
+limit "the container's own egress is not exercised from inside the container" \
+  "the synthetic image is a single static binary on an empty filesystem and ships no client this harness could call, by design — an image that could reach the network on demand would be an image that does not hold the eligibility contract it exists to demonstrate. What is established is that the account is refused, that the engine of that account is refused, and that the stack carrying container packets runs as that account."
+
+step "23. what the confinement has not changed"
+
+expect "the user service, after all of this" "$(service_state "$app_account" "$app_service")" active
+expect "its loopback port" "$(loopback_status "$app_port")" 200
+expect "the vault, after all of this" "$(service_state "$vault_account" "$vault_service")" active
+expect "the confinement table" "$(egress_table_loaded)" loaded
+expect "the observer table this harness posed" "$(table_loaded inet "$observer_table")" loaded
+report "the tables this machine holds" "$(nft_tables)"
+
+verdict "neither confined account of this machine reaches the origin its own image came from nor the outside while root reaches both, the engine of the user service cannot fetch the image it is running, the loopback still answers, and the packets are counted in the kernel under the identifiers the table names"
