@@ -112,6 +112,79 @@
   resize: vertical;
 }
 
+/* Les phrases du contrat d'éligibilité et les lignes de conséquence sont des
+   phrases, pas des colonnes : elles s'empilent, se coupent dans le mot quand il
+   le faut, et ne peuvent élargir aucune mise en page à 200 %. */
+.yc-sentence-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-inline-start: var(--space-4);
+}
+
+.yc-sentence-list li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.yc-definition-grid {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+/* Le nom d'un service et son dépôt sont des octets que l'humain a écrits : ils
+   restent bornés à leur cadre, coupés plutôt que débordants, et isolés du sens
+   de lecture de la page. */
+.yc-definition__slug,
+.yc-definition__origin,
+.yc-paste__subjects {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+.yc-definition__origin,
+.yc-paste__subjects {
+  color: var(--color-muted);
+}
+
+/* Le document canonique est affiché entier : il se replie plutôt que de
+   défiler, parce qu'un document dont une moitié sort du cadre est un document
+   que personne n'a lu avant de le geler. */
+.yc-document {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+  user-select: text;
+}
+
+.yc-diff {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-2);
+}
+
+.yc-diff__side {
+  min-width: 0;
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-control);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
 @container window (max-width: 46em) {
   .yc-access {
     padding-block: var(--space-4);

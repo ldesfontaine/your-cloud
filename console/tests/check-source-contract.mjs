@@ -381,6 +381,12 @@ const planV3Protocol = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "plan_v3.rs"),
 );
 const linkPlanRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "link_plan.rs"));
+const definitionMirror = await readSourceText(
+  join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "service_definition.rs"),
+);
+const definitionRuntime = await readSourceText(
+  join(consoleRoot, "src-tauri", "src", "service_definition.rs"),
+);
 const bootstrapProtocolManifest = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "Cargo.toml"),
 );
@@ -421,6 +427,14 @@ const productModels = await readSourceText(join(consoleRoot, "src", "product", "
 const nativeOperations = await readSourceText(join(consoleRoot, "src", "product", "native.ts"));
 const infrastructureViews = await readSourceText(
   join(consoleRoot, "src", "product", "infrastructure-views.tsx"),
+);
+const serviceViews = await readSourceText(join(consoleRoot, "src", "product", "service-views.tsx"));
+const productApp = await readSourceText(join(consoleRoot, "src", "product", "App.tsx"));
+const reflowFixture = await readSourceText(
+  join(consoleRoot, "tests", "reflow", "tauri-core.ts"),
+);
+const reflowOracle = await readSourceText(
+  join(consoleRoot, "..", "tests", "lab", "v0.1.0", "console-reflow", "reflow-oracle.py"),
 );
 const productScreens = await readSourceText(join(consoleRoot, "src", "product", "screens.css"));
 const cargoVersion = cargoManifest.match(/^version\s*=\s*"([^"]+)"$/mu)?.[1];
@@ -2077,6 +2091,288 @@ if (/Date\.now\(\)|new Date\(/u.test(infrastructureViews)) {
   failures.push("infrastructure-views.tsx: l’ancienneté doit rester celle que le Controller calcule");
 }
 
+// --------------------------------------------------------------------------
+// La neuvième vue : rédiger, geler et suivre les définitions de service
+// utilisateur. `docs/architecture/SERVICE-UTILISATEUR.md`, issue #120.
+
+// La vue existe, elle est nommée dans le type des vues et elle est atteinte par
+// la navigation plutôt que par une variable.
+if (!productModels.includes('  | "services"\n')) {
+  failures.push("models.ts: la neuvième vue n’est pas nommée dans ViewName");
+}
+if (!productApp.includes('{ view: "services", label: "Services", icon: PackageOpen },')) {
+  failures.push("App.tsx: la vue Services n’a pas d’entrée de navigation");
+}
+// Les définitions sont un troisième inventaire, lu à part : geler une définition
+// ne doit pas déplacer la révision contre laquelle la Console tient son parc.
+if (
+  !productApp.includes('if (selectedInfrastructure && view === "services") void loadDefinitions();')
+) {
+  failures.push("App.tsx: les définitions doivent être lues sur leur propre révision");
+}
+
+// La grammaire est celle du miroir, jamais une seconde lecture d’elle. Le
+// formulaire n’a aucun droit de borner un champ lui-même.
+for (const expected of [
+  "pub fn refusals(&self) -> Vec<ServiceDefinitionFieldRefusal>",
+  "fn a_definition_has_no_named_refusal_exactly_when_it_is_inside_the_contract()",
+]) {
+  if (!definitionMirror.includes(expected)) {
+    failures.push(`bootstrap-protocol/service_definition.rs: garde du miroir absente (${expected})`);
+  }
+}
+for (const forbidden of [
+  /new RegExp\([^)]*a-z0-9/u,
+  /\/\^\[a-z0-9\]/u,
+  /\/\^\[A-Z\]\[A-Z0-9_\]/u,
+  /RESERVED|bentopdf["'`]/u,
+]) {
+  if (forbidden.test(serviceViews.replace(/—\s*bentopdf, vaultwarden, probe, entrypoint\s*—/u, ""))) {
+    failures.push(
+      `service-views.tsx: une grammaire de définition est réécrite côté vue (${forbidden})`,
+    );
+  }
+}
+for (const command of [
+  "review_service_definition",
+  "parse_service_definition_paste",
+  "read_service_definitions",
+  "freeze_service_definition",
+]) {
+  if (!nativeOperations.includes(`"${command}"`) || !consoleRuntime.includes(command)) {
+    failures.push(`IPC définition: commande nommée absente (${command})`);
+  }
+}
+// Et il n’en existe pas une cinquième : une commande de plus sur cette porte
+// serait une porte de plus, et le contrat de source la nomme avant qu’elle
+// n’existe.
+const definitionCommands = [
+  ...consoleRuntime.matchAll(/#\[tauri::command\]\nfn (?<name>\w*(?:service_definition|definitions)\w*)\(/gu),
+].map((match) => match.groups.name);
+if (
+  definitionCommands.join(",") !==
+  "review_service_definition,parse_service_definition_paste,read_service_definitions,freeze_service_definition"
+) {
+  failures.push(
+    `lib.rs: la surface de la troisième porte a changé (${definitionCommands.join(",")})`,
+  );
+}
+
+// Geler n’est pas signer. Aucune enveloppe, aucune approbation et aucune fenêtre
+// native ne vit sur ce chemin : la définition est inerte, et la route qui la
+// gèle est une route métier comme les autres.
+for (const forbidden of ["sign_approval", "ApprovalRequest", "native_assistant"]) {
+  if (definitionRuntime.includes(forbidden)) {
+    failures.push(`service_definition.rs: le gel emprunte un chemin d’approbation (${forbidden})`);
+  }
+}
+// Le parseur de collage est local et pur : il n’ouvre rien, n’exécute rien et
+// ne lit aucun fichier.
+for (const forbidden of ["reqwest", "std::fs", "std::process", "Command::new", "std::net"]) {
+  if (definitionRuntime.includes(forbidden)) {
+    failures.push(`service_definition.rs: le parseur de collage n’est plus pur (${forbidden})`);
+  }
+}
+for (const expected of [
+  "fn a_paste_can_never_produce_something_that_is_frozen_by_itself()",
+  "fn a_compose_document_prefills_from_one_service_and_names_the_others()",
+  "fn a_paste_that_is_not_one_of_the_two_shapes_fills_nothing()",
+  "fn a_refused_review_carries_nothing_that_could_be_frozen()",
+  "fn the_panel_names_what_the_machine_will_receive()",
+  "fn the_panel_says_the_absences_as_plainly_as_the_presences()",
+  "fn a_frozen_definition_is_rehashed_before_it_is_displayed()",
+]) {
+  if (!definitionRuntime.includes(expected)) {
+    failures.push(`service_definition.rs: preuve de la troisième porte absente (${expected})`);
+  }
+}
+
+// Le transport : une seule route, aucun chemin par définition, aucune méthode
+// qui muterait un gel, et une borne de requête dérivée de la borne du document
+// plutôt qu’un nombre rond.
+if (!networkRuntime.includes("/v0/service-definitions")) {
+  failures.push("network.rs: la route des définitions gelées est introuvable");
+}
+if (networkRuntime.includes("/v0/service-definitions/")) {
+  failures.push("network.rs: le chemin d’une définition ne doit exister sous aucune méthode");
+}
+if (/"(?:DELETE|PUT|PATCH)"[\s\S]{0,240}?service-definitions/u.test(networkRuntime)) {
+  failures.push("network.rs: rien ne mute ni ne supprime une définition gelée");
+}
+if (
+  !networkRuntime.includes(
+    "const DEFINITION_REQUEST_MAX_BYTES: usize = 2 * MAX_SERVICE_DEFINITION_BYTES + 512;",
+  )
+) {
+  failures.push("network.rs: la borne de requête du gel n’est plus dérivée de celle du document");
+}
+if (!networkRuntime.includes("fn validate_service_definitions(")) {
+  failures.push("network.rs: la projection des définitions n’est plus tenue au contrat");
+}
+// Chaque octet affiché est un octet que cette Console a rehaché : le Controller
+// n’est pas l’autorité sur ce que dit une définition.
+if (
+  (networkRuntime.match(/displayable_definition\(/gu) ?? []).length < 2 ||
+  !definitionRuntime.includes("verify_service_definition_document(")
+) {
+  failures.push("network.rs: une définition affichée doit être rehachée contre son empreinte");
+}
+
+// Le contrat d’éligibilité est affiché en phrases, avant tout gel, et il n’est
+// jamais une case à cocher : le produit ne peut pas faire ce constat à la place
+// de l’utilisateur.
+const eligibilitySentences = [
+  ...serviceViews.matchAll(/^  "(?<sentence>Elle [^"]+)",$/gmu),
+].map((match) => match.groups.sentence);
+if (eligibilitySentences.length !== 7 || new Set(eligibilitySentences).size !== 7) {
+  failures.push(
+    `service-views.tsx: le contrat d’éligibilité doit tenir ses sept phrases (${eligibilitySentences.length})`,
+  );
+}
+if (/type="checkbox"/u.test(serviceViews)) {
+  failures.push("service-views.tsx: l’éligibilité est un constat en phrases, jamais une case");
+}
+
+// Chaque refus nommé par le miroir a sa propre phrase, et il y en a autant que
+// de noms : un refus rendu en code au visage d’un humain serait un refus que
+// personne ne peut corriger.
+function declaredUnionMembers(source, name) {
+  const body = source.match(new RegExp(`export type ${name} =(?<body>[\\s\\S]*?);\\n`, "u"))?.groups
+    ?.body;
+  return [...(body ?? "").matchAll(/"(?<member>[a-z_]+)"/gu)].map((match) => match.groups.member);
+}
+
+function sentencesOfSwitch(source, functionName) {
+  const start = source.indexOf(`function ${functionName}(`);
+  if (start < 0) return new Map();
+  const region = source.slice(start, source.indexOf("\n}\n", start));
+  return new Map(
+    [...region.matchAll(/case "(?<name>[a-z_]+)":\n\s+return "(?<sentence>[^"]+)";/gu)].map(
+      (match) => [match.groups.name, match.groups.sentence],
+    ),
+  );
+}
+
+for (const [union, functionName, expectedCount] of [
+  ["ServiceDefinitionRefusalName", "refusalName", 14],
+  ["PasteNoteName", "pasteNoteSentence", 8],
+]) {
+  const declared = declaredUnionMembers(productModels, union);
+  const sentences = sentencesOfSwitch(serviceViews, functionName);
+  const rendered = declared.map((name) => sentences.get(name));
+  if (
+    declared.length !== expectedCount ||
+    rendered.some((sentence) => !sentence) ||
+    new Set(rendered).size !== declared.length
+  ) {
+    failures.push(
+      `service-views.tsx: chaque ${union} doit avoir sa propre phrase (${declared.length} nommés, ${new Set(rendered).size} phrases)`,
+    );
+  }
+}
+
+// Un collage ne peut que préremplir. La carte du collage n’offre qu’un acte, et
+// ce n’est ni un gel ni une soumission.
+const pasteRegionStart = serviceViews.indexOf("function PasteCard(");
+const pasteRegionEnd = serviceViews.indexOf("function DefinitionForm(");
+const pasteRegion =
+  pasteRegionStart >= 0 && pasteRegionStart < pasteRegionEnd
+    ? serviceViews.slice(pasteRegionStart, pasteRegionEnd)
+    : "";
+const pasteActions = [...pasteRegion.matchAll(/<Button[^>]*>(?<label>[\s\S]*?)<\/Button>/gu)].map(
+  (match) => match.groups.label.trim(),
+);
+if (!pasteRegion || pasteActions.join("|") !== "Préremplir le formulaire") {
+  failures.push(
+    `service-views.tsx: un collage ne peut que préremplir (${pasteActions.join("|")})`,
+  );
+}
+if (/onPaste=|autoSubmit|form\.submit\(/u.test(serviceViews)) {
+  failures.push("service-views.tsx: un collage ne doit jamais déclencher une soumission");
+}
+
+// Le panneau de conséquences est atteint avant tout gel, et le gel n’existe que
+// là : le bouton qui gèle vit dans le panneau et nulle part ailleurs.
+const panelStart = serviceViews.indexOf("function ConsequencesPanel(");
+const panelEnd = serviceViews.indexOf("function FrozenDefinitions(");
+const panelRegion =
+  panelStart >= 0 && panelStart < panelEnd ? serviceViews.slice(panelStart, panelEnd) : "";
+if (!panelRegion || !panelRegion.includes("Geler cette révision")) {
+  failures.push("service-views.tsx: le panneau de conséquences ne porte plus le gel");
+}
+if ((serviceViews.match(/Geler cette révision/gu) ?? []).length !== 1) {
+  failures.push("service-views.tsx: le gel doit n’exister que dans le panneau de conséquences");
+}
+// Les phrases du panneau viennent du miroir : la vue les rend, elle ne les
+// écrit pas. Une Console qui composerait ses propres conséquences pourrait en
+// oublier une.
+if (!panelRegion.includes("review.confirmation_lines.map((line) => (")) {
+  failures.push("service-views.tsx: le panneau doit rendre les lignes que la relecture porte");
+}
+if (!definitionRuntime.includes("fn confirmation_lines(")) {
+  failures.push("service_definition.rs: le patron des lignes de confirmation a disparu");
+}
+// Le document canonique est affiché entier avant le gel : la borne de 8192
+// octets existe en partie pour cela.
+if (!panelRegion.includes("{review.definition_document}")) {
+  failures.push("service-views.tsx: le document gelé doit être affiché entier avant le gel");
+}
+
+// Les octets d’un tiers restent inertes : rendus comme du texte, bornés à leur
+// cadre, isolés du sens de lecture, et jamais dans un attribut actif.
+if (
+  /(?:href|src|style|title|alt|dangerouslySetInnerHTML)=\{[^}]*(?:definition_document|image_repository|\bslug\b)/u.test(
+    serviceViews,
+  )
+) {
+  failures.push("service-views.tsx: un octet de définition atteint un attribut actif");
+}
+const definitionFrame = productScreens.match(
+  /\.yc-definition__slug,\n\.yc-definition__origin,\n\.yc-paste__subjects \{(?<body>[\s\S]*?)\n\}/u,
+)?.groups?.body;
+const documentFrame = productScreens.match(/\.yc-document \{(?<body>[\s\S]*?)\n\}/u)?.groups?.body;
+for (const [name, frame] of [
+  ["yc-definition__slug", definitionFrame],
+  ["yc-document", documentFrame],
+]) {
+  if (
+    !frame ||
+    !["max-width: 100%;", "overflow-wrap: anywhere;", "unicode-bidi: isolate;"].every((bound) =>
+      frame.includes(bound),
+    )
+  ) {
+    failures.push(`screens.css: le cadre inerte de ${name} n’est plus borné ni isolé`);
+  }
+}
+// La date d’un gel est celle que le Controller a frappée : la Console n’a pas
+// d’horloge d’autorité et n’en invente pas une.
+if (/Date\.now\(\)|new Date\(/u.test(serviceViews)) {
+  failures.push("service-views.tsx: la date d’un gel doit rester celle du Controller");
+}
+// Aucune instance n’est inventée. Rien ne projette encore quelle machine
+// exécute quelle révision, et la vue nomme l’absence plutôt que de deviner.
+if (!serviceViews.includes("ce palier ne projette pas encore quelle machine")) {
+  failures.push("service-views.tsx: l’absence d’instances doit être nommée plutôt que devinée");
+}
+
+// La neuvième vue est mesurée par l’oracle de reflow, dans ses deux états, et
+// la doublure du pont IPC répond à ses quatre commandes.
+for (const expected of ['"id": "services",', '"id": "services-consequences",', '"contract_view": 9,']) {
+  if (!reflowOracle.includes(expected)) {
+    failures.push(`reflow-oracle.py: la neuvième vue n’est pas mesurée (${expected})`);
+  }
+}
+for (const command of [
+  "review_service_definition:",
+  "parse_service_definition_paste:",
+  "read_service_definitions:",
+  "freeze_service_definition:",
+]) {
+  if (!reflowFixture.includes(command)) {
+    failures.push(`tests/reflow/tauri-core.ts: la doublure ne répond pas à ${command}`);
+  }
+}
+
 // L’approbation humaine ne doit jamais devenir un oracle de signature. La seule
 // entrée décrit une approbation par ses champs typés ; elle ne reçoit ni octets
 // à signer, ni transcription déjà construite, ni privilège choisi par l’appelant.
@@ -2474,7 +2770,15 @@ for (const bound of [
   "if Self::verify(documents)? != *self {",
   "if self.plan.infrastructure_id() != association.summary.infrastructure_id.as_str() {",
   "operation: approval_operation(self.plan.operation()),",
-  'format!("Profil de service : {}", document.service_profile)',
+  // Le nom d'un service est filé par une seule fonction, parce que le champ que
+  // deux portes partagent ne veut pas dire la même chose des deux côtés : un
+  // profil livré est un profil du produit, et tout le reste est une définition
+  // qu'un humain a écrite. C'est la dette de présentation de #118, tranchée
+  // avec la vue Services plutôt que gardée.
+  "fn service_name_line(service_profile: &str) -> String {",
+  'format!("Profil de service : {service_profile}")',
+  'format!("Service défini : {service_profile}")',
+  "lines.push(service_name_line(&document.service_profile));",
   'format!("Image : {}", document.image_reference)',
   'format!("Digest de l’image : {}", document.image_digest)',
   '"Port local : {SERVICE_LOCAL_ADDRESS}:{}"',
@@ -2543,11 +2847,11 @@ for (const bound of [
 for (const [fragment, expected] of [
   ['format!("Image : {}", document.image_reference)', 4],
   ['format!("Digest de l’image : {}", document.image_digest)', 4],
-  // Les quatre genres de plan qui nomment un profil le montrent. Un service
-  // privé, une archive ou un retour dont le profil aurait disparu des lignes
+  // Les quatre genres de plan qui nomment un service le nomment. Un service
+  // privé, une archive ou un retour dont le nom aurait disparu des lignes
   // passerait une garde de simple présence, puisque le service sans état, lui,
   // le montre toujours.
-  ['format!("Profil de service : {}", document.service_profile)', 4],
+  ["lines.push(service_name_line(&document.service_profile));", 4],
 ]) {
   const occurrences = publicationPlanRuntime.split(fragment).length - 1;
   if (occurrences !== expected) {

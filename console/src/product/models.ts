@@ -27,6 +27,7 @@ export type ViewName =
   | "fleet"
   | "observations"
   | "external"
+  | "services"
   | "profile";
 
 export type AssociationSummary = {
@@ -188,6 +189,129 @@ export type MachineMutationView = {
   inventory_revision: number;
   machine_id: string;
   label: string;
+};
+
+// La définition de service utilisateur est le seul document de ce produit qu’un
+// humain écrit. Rien de ce qui suit ne décrit un effet : ni compte, ni chemin
+// hôte, ni valeur de secret, ni machine. Tout cela est dérivé du slug par la
+// machine qui agit, et aucun champ ci-dessous ne peut le déplacer.
+export type ServiceDefinitionDocument = {
+  schema_version: 1;
+  slug: string;
+  image_repository: string;
+  container_port: number;
+  volumes: string[];
+  tmpfs: string[];
+  environment: string[];
+  secret_keys: string[];
+};
+
+// Ce que l’humain remplit, avant que ce soit une définition. Il n’y a pas de
+// `schema_version` : la Console écrit la seule version qu’elle connaît, et un
+// brouillon qui pourrait en nommer une autre demanderait un document que ce
+// palier ne lit pas.
+export type ServiceDefinitionDraft = Omit<ServiceDefinitionDocument, "schema_version">;
+
+// Le champ d’un refus, et jamais un champ d’écran : « document » nomme le cas où
+// tous les champs tiennent leurs bornes et où le document dépasse la sienne.
+export type ServiceDefinitionFieldName =
+  | "schema_version"
+  | "slug"
+  | "image_repository"
+  | "container_port"
+  | "volumes"
+  | "tmpfs"
+  | "environment"
+  | "secret_keys"
+  | "document";
+
+// La liste fermée des refus que le miroir Rust nomme. Une entrée ajoutée ici
+// sans sa phrase est un trou que le contrat de source rougit : la Console ne
+// rend jamais un refus sans le dire en français.
+export type ServiceDefinitionRefusalName =
+  | "unknown_schema_version"
+  | "slug_grammar"
+  | "slug_reserved"
+  | "image_repository_pinned"
+  | "image_repository_grammar"
+  | "container_port_range"
+  | "list_too_long"
+  | "container_path_grammar"
+  | "mounts_overlap"
+  | "environment_line_shape"
+  | "key_grammar"
+  | "value_grammar"
+  | "key_already_declared"
+  | "document_too_large";
+
+export type ServiceDefinitionFieldRefusal = {
+  field: ServiceDefinitionFieldName;
+  entry: number | null;
+  refusal: ServiceDefinitionRefusalName;
+};
+
+// Les deux états d’un brouillon, et le type interdit le troisième : un brouillon
+// refusé ne porte ni octets, ni empreinte, ni ligne de conséquence, donc rien
+// que la vue puisse soumettre. Le bouton qui gèle n’existe que dans la branche
+// « ready ».
+export type ServiceDefinitionReview =
+  | {
+      state: "refused";
+      schema_version: 1;
+      refusals: ServiceDefinitionFieldRefusal[];
+    }
+  | {
+      state: "ready";
+      schema_version: 1;
+      slug: string;
+      definition_document: string;
+      definition_sha256: string;
+      interpolates_origin_host: boolean;
+      confirmation_lines: string[];
+    };
+
+export type FrozenDefinitionView = {
+  slug: string;
+  definition_sha256: string;
+  frozen_at: string;
+  definition_document: string;
+  document: ServiceDefinitionDocument;
+  interpolates_origin_host: boolean;
+};
+
+// Aucune instance n’apparaît ici, et l’absence est l’état du produit plutôt
+// qu’un oubli de cette projection : rien entre le Controller et la Console ne
+// projette quelle machine exécute quelle révision.
+export type ServiceDefinitionsProjection = {
+  schema_version: 1;
+  definition_revision: number;
+  definitions: FrozenDefinitionView[];
+};
+
+export type PasteSource = "container_command" | "compose_document" | "unrecognised";
+
+export type PasteNoteName =
+  | "nothing_recognised"
+  | "paste_too_large"
+  | "single_service_only"
+  | "image_pin_dropped"
+  | "host_side_dropped"
+  | "unsupported_directive_dropped"
+  | "environment_entry_dropped"
+  | "no_image_found";
+
+export type PasteNote = {
+  note: PasteNoteName;
+  subjects: string[];
+};
+
+// Un collage rend un brouillon et rien d’autre : ni document canonique, ni
+// empreinte, ni quoi que ce soit qui puisse être soumis.
+export type ServiceDefinitionPaste = {
+  schema_version: 1;
+  source: PasteSource;
+  draft: ServiceDefinitionDraft;
+  notes: PasteNote[];
 };
 
 export type PairingInput = {

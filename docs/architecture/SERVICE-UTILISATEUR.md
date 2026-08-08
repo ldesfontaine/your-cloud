@@ -410,6 +410,78 @@ tient cette propriété.
   d'archive ne portent pas. C'est dit ici pour qu'un lecteur ne cherche pas
   une garantie sous-arbre par sous-arbre que rien ne promet.
 
+## Addendum `#120` : ce qu'écrire une définition dans la Console a exigé de décider
+
+Le contrat dit ce qu'une définition est. Offrir de l'écrire à un humain a
+demandé des décisions qu'il ne nommait pas, et elles sont ici.
+
+- **Geler n'est pas signer, et la vue le tient par sa construction.** La
+  définition est inerte, donc le gel n'emprunte aucune enveloppe, ne mint aucune
+  approbation et n'ouvre pas la fenêtre native : c'est une route métier de plus,
+  authentifiée par la session ordinaire. La conséquence pratique est que la
+  trame de consentement de l'assistant n'est pas sur ce chemin, et que la dette
+  connue « trame 4096 < définition 8192 » ne le touche pas. Ce que la borne du
+  document a réellement coûté est ailleurs : la requête de gel est la seule de
+  la Console dont la borne n'est pas les quatre kilobytes communs, et elle est
+  dérivée de la borne du document — `2 × 8192 + 512` — exactement comme celle du
+  Controller.
+- **Le formulaire ne borne rien lui-même.** Les grammaires, les cardinaux, les
+  noms réservés, la règle de chevauchement et l'unique interpolation viennent du
+  miroir Rust par commande Tauri. Pour que la validation en ligne puisse dire
+  *où* et *pourquoi*, le miroir gagne une énumération fermée de refus nommés par
+  champ, construite sur les mêmes prédicats que la validation ; un test tient
+  l'équivalence — une définition n'a aucun refus exactement quand elle décode —
+  sur chaque sujet du module. La Console ne rend jamais un code au visage d'un
+  humain : une phrase par nom, et le contrat de source rougit si un nom perd la
+  sienne.
+- **Le panneau de conséquences est la seule porte du gel.** Il suit le patron
+  des `confirmation_lines` : des phrases qu'un humain approuve comme des
+  conséquences — compte dérivé, foyer, chemin hôte de chaque volume, lignes
+  exactes de la fiche, règle de sortie, contenu d'un futur instantané, sort des
+  secrets à un redéploiement — et jamais des champs qu'il approuverait comme des
+  intentions. Les deux valeurs qu'une définition ne décide pas, l'empreinte de
+  l'image et le port local, sont nommées comme appartenant à un plan plutôt
+  qu'omises. Structurellement, la commande de gel ne peut recevoir que ce que la
+  relecture a produit, et la relecture produit toujours les lignes avec les
+  octets.
+- **Un collage est un clavier.** Le parseur d'une commande `docker run` et d'un
+  sous-ensemble borné de `docker-compose.yml` est local et pur : il n'ouvre rien,
+  n'exécute rien, ne lit aucun fichier et ne soumet rien. Il rend un brouillon et
+  des notes nommées sur ce qu'il a écarté — le tag ou l'empreinte du dépôt, le
+  côté hôte d'une monture ou d'un port, les directives sans champ, les entrées
+  d'environnement sans valeur inerte —, et un compose à plusieurs services ne
+  préremplit que depuis un seul en nommant les autres, comme la limite « un
+  conteneur par service » l'exige. Il est écrit en Rust plutôt qu'en JavaScript
+  pour la même raison que le reste : ce qui est testé dans le LAB est ce qui
+  tourne.
+- **La Console rehache chaque révision avant de l'afficher.** Le Controller
+  garde des octets et une empreinte ; il n'est pas l'autorité sur ce que dit une
+  définition. Chaque entrée d'une liste est vérifiée par la fonction du miroir
+  que l'Auxiliaire utilisera le jour où un plan épingle ce digest, et une liste
+  dont une entrée échoue est refusée entière — en montrer une de moins ferait
+  croire qu'une révision n'a jamais été gelée.
+- **« Profil de service » devient « Service défini » pour un slug
+  utilisateur.** C'était la première dette de présentation de `#118`. Le champ
+  `service_profile` est partagé par deux portes et la réservation des quatre noms
+  suffit à les distinguer : un profil livré est un profil du produit, tout le
+  reste est un document qu'un utilisateur a écrit, et le nommer « profil »
+  l'attribuait à la porte dont il ne vient pas. Les lignes d'archive et de retour
+  disent désormais ce que la vue Services dit ; les profils livrés gardent leur
+  étiquette, et aucune ligne n'est ajoutée ni retirée.
+- **`RequireDefinitionAgreement` n'est pas miroité, et c'est un constat.**
+  C'était la seconde dette de `#118`, conditionnée à ce que la Console tienne une
+  définition à côté d'un plan. Elle ne la tient pas : cette vue écrit et gèle des
+  définitions, et n'affiche aucun plan. Le contrôle croisé reste où il peut être
+  fait — construction par le Controller, revérification par l'Auxiliaire,
+  définition en main — et rejoindra la fenêtre d'approbation le jour où un plan et
+  une définition s'y rencontrent.
+- **Aucune instance n'est affichée, et l'absence est nommée.** Rien entre le
+  Controller et la Console ne projette quelle machine exécute quelle révision :
+  ni `GET /v0/machines`, ni aucune route de ce contrat. La vue le dit plutôt que
+  de deviner un état « déployée » qu'aucune lecture ne soutient. Suivre les
+  instances demandera une projection que ce palier n'a pas écrite, et le câblage
+  plan → UI que `v0.1.0` a laissé ouvert.
+
 ## Ce que la preuve devra constater
 
 La preuve (`#121`) exerce le moteur avec une **application synthétique

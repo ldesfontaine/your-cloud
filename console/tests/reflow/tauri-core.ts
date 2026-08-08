@@ -4,13 +4,20 @@
 // is the product's own code: `src/product/native.ts` keeps its command names and
 // its error mapping, `App.tsx` keeps its view machine, and the stylesheets under
 // `src/design` are the thing under test. Only `invoke` is replaced, because the
-// installed Console reaches its seven views through a Controller and a vault
-// that a layout measurement has no business standing up.
+// installed Console reaches its views through a Controller and a vault that a
+// layout measurement has no business standing up.
 //
 // The payloads are deliberately hostile: labels without a single space, mixed
 // scripts, bidirectional overrides and combining marks, at the length the API
 // contract allows. A layout that survives them survives the ones a Controller
 // will really send.
+//
+// The definitions of the Services view are hostile in the other direction. Their
+// grammar admits no bidirectional override and no combining mark, so the worst
+// case is not a strange byte but a document at the maximum of what the contract
+// accepts: the longest slug, the longest repository, the deepest container paths
+// and the longest inert value. Those are the lengths that widen a card, a
+// consequence panel and a two-column diff.
 
 type Payload = Record<string, unknown>;
 
@@ -31,6 +38,18 @@ const HOSTILE_EXTERNAL_LABEL =
   "Routeur du fournisseur d’accès — " +
   "boitier-pose-par-quelquun-dautre-que-your-cloud-na-jamais-installe-et-ne-gere-pas " +
   "‮tnallievélam‬ — dernier libellé";
+
+// Une définition est bornée par sa grammaire, donc le pire cas de sa vue n'est
+// pas un octet hostile mais un document au maximum de ce que le contrat admet :
+// le plus long slug, le plus long dépôt, la plus longue valeur d'environnement
+// et les chemins les plus profonds. Ce sont ces longueurs-là qui élargissent une
+// carte, un panneau de conséquences et un diff à deux colonnes.
+const LONGEST_SLUG = "definition-notes";
+const LONG_IMAGE_REPOSITORY =
+  "registry.interne.exemple.invalid:5000/equipe-plateforme/applications-metier/" +
+  "service-de-notes-de-laboratoire-sans-abreviation";
+const LONG_ENVIRONMENT_VALUE = `NOTES_BANNIERE=${"contenu-sans-espace-que-rien-ne-coupe-".repeat(6)}fin`;
+const LONG_CONTAINER_PATH = "/srv/donnees/equipe-plateforme/service-de-notes/archives-quotidiennes";
 
 const CONTROLLER_ID = "01J8Z9QK7C4X2M6V0T3B5N8W1D";
 const INFRASTRUCTURE_ID = "01J8Z9QK7C4X2M6V0T3B5N8W2E";
@@ -134,6 +153,57 @@ function consoleStatus(): Payload {
   };
 }
 
+function definitionDocument(volumes: string[], environment: string[]): string {
+  return JSON.stringify({
+    schema_version: 1,
+    slug: LONGEST_SLUG,
+    image_repository: LONG_IMAGE_REPOSITORY,
+    container_port: 8080,
+    volumes,
+    tmpfs: ["/tmp"],
+    environment,
+    secret_keys: ["NOTES_JETON_ADMINISTRATION"],
+  });
+}
+
+function frozenDefinition(
+  digest: string,
+  frozenAt: string,
+  volumes: string[],
+  environment: string[],
+): Payload {
+  const document = definitionDocument(volumes, environment);
+  return {
+    slug: LONGEST_SLUG,
+    definition_sha256: digest,
+    frozen_at: frozenAt,
+    definition_document: document,
+    document: JSON.parse(document),
+    interpolates_origin_host: true,
+  };
+}
+
+// Le panneau de conséquences est la seule chose qu'un humain lit avant de geler,
+// donc c'est lui qui doit tenir : des phrases entières, les plus longues que la
+// dérivation produise, et jamais une abréviation qui ne rendrait le cadre
+// mesurable qu'en cachant ce qu'il doit dire.
+const CONSEQUENCE_LINES: string[] = [
+  `Service défini : ${LONGEST_SLUG}`,
+  "Révision à geler : 4f1c9d0a7b6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c",
+  "Ce que geler fait : le Controller garde ces octets sous cette empreinte. Aucun compte, aucun répertoire, aucune fiche et aucun plan ne naît de ce gel, et aucune machine n’est contactée.",
+  `Compte dérivé sur la machine : your-cloud-user-${LONGEST_SLUG}, créé le jour où un plan de déploiement approuvé pose ce service`,
+  `Foyer dérivé : /var/lib/your-cloud-user-${LONGEST_SLUG}/`,
+  `Dépôt d’image : ${LONG_IMAGE_REPOSITORY}`,
+  `Image exécutée : ${LONG_IMAGE_REPOSITORY}@<empreinte choisie par un plan> — une définition dit d’où les images viennent, jamais laquelle`,
+  `Volume durable : ${LONG_CONTAINER_PATH} dans le conteneur, tenu sur la machine dans /var/lib/your-cloud-user-${LONGEST_SLUG}/volumes${LONG_CONTAINER_PATH}`,
+  "Ligne de la fiche : PublishPort=127.0.0.1:<port local choisi par un plan>:8080 — le service n’écoute que sur la boucle locale de sa machine",
+  "Ligne de la fiche : ReadOnly=true",
+  `Ligne de la fiche : Environment=${LONG_ENVIRONMENT_VALUE}`,
+  `Ligne de la fiche : EnvironmentFile=/var/lib/your-cloud-user-${LONGEST_SLUG}/secrets.env`,
+  "Confinement de sortie : le compte rejoint la table inet your-cloud-egress. Ce service ne parle à personne : sortie refusée hors boucle locale et réponses établies, et aucun champ d’aucun document ne peut y percer un trou.",
+  "Révision suivante : renommer un chemin conteneur monte un répertoire neuf et vide. L’ancien sous-arbre survit sous le foyer ; le déplacer vous appartient, et ce produit ne l’infère jamais.",
+];
+
 const answers: Record<string, () => unknown> = {
   console_status: consoleStatus,
   prepare_console: () => ({
@@ -187,6 +257,65 @@ const answers: Record<string, () => unknown> = {
     ],
   }),
   withdraw_external_element: () => ({ schema_version: 1, external_revision: 8, element_id: "externe-1" }),
+  // La relecture rend toujours un brouillon prêt : la géométrie mesurée est
+  // celle du panneau de conséquences, qui n'est atteignable qu'ainsi. Le
+  // formulaire refusé se mesure par ses phrases de refus, que la même page
+  // affiche sous les champs quand le miroir en nomme.
+  review_service_definition: () => ({
+    state: "ready",
+    schema_version: 1,
+    slug: LONGEST_SLUG,
+    definition_document: definitionDocument(
+      [LONG_CONTAINER_PATH, "/var/lib/notes"],
+      [LONG_ENVIRONMENT_VALUE, "NOTES_ORIGINE={origin_host}"],
+    ),
+    definition_sha256: "4f1c9d0a7b6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c",
+    interpolates_origin_host: true,
+    confirmation_lines: CONSEQUENCE_LINES,
+  }),
+  parse_service_definition_paste: () => ({
+    schema_version: 1,
+    source: "compose_document",
+    draft: {
+      slug: LONGEST_SLUG,
+      image_repository: LONG_IMAGE_REPOSITORY,
+      container_port: 8080,
+      volumes: [LONG_CONTAINER_PATH],
+      tmpfs: ["/tmp"],
+      environment: [LONG_ENVIRONMENT_VALUE],
+      secret_keys: [],
+    },
+    notes: [
+      { note: "single_service_only", subjects: ["web", "base-de-donnees-de-notes", "cache"] },
+      { note: "image_pin_dropped", subjects: [`${LONG_IMAGE_REPOSITORY}:2026.08.1-stable`] },
+      { note: "unsupported_directive_dropped", subjects: ["networks", "deploy", "cap_add"] },
+    ],
+  }),
+  read_service_definitions: () => ({
+    schema_version: 1,
+    definition_revision: 3,
+    definitions: [
+      frozenDefinition(
+        "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+        "2026-08-01T09:14:02.118374Z",
+        [LONG_CONTAINER_PATH],
+        [LONG_ENVIRONMENT_VALUE],
+      ),
+      frozenDefinition(
+        "4f1c9d0a7b6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c",
+        "2026-08-06T18:41:55.902611Z",
+        [LONG_CONTAINER_PATH, "/var/lib/notes"],
+        [LONG_ENVIRONMENT_VALUE, "NOTES_ORIGINE={origin_host}"],
+      ),
+    ],
+  }),
+  freeze_service_definition: () =>
+    frozenDefinition(
+      "4f1c9d0a7b6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c",
+      "2026-08-06T18:41:55.902611Z",
+      [LONG_CONTAINER_PATH, "/var/lib/notes"],
+      [LONG_ENVIRONMENT_VALUE, "NOTES_ORIGINE={origin_host}"],
+    ),
   put_infrastructure: () => ({
     schema_version: 1,
     controller_id: CONTROLLER_ID,

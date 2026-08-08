@@ -190,6 +190,105 @@ where
     Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+/// The field of a definition one refusal belongs to, named in the declaration
+/// order of the document.
+///
+/// It exists so that a form can put a refusal beside the input that caused it
+/// instead of beside the document as a whole. It is the shape of the contract
+/// and never a shape of a screen: nothing here knows that a field is an input,
+/// and a caller that renders none of them still reads the same verdict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceDefinitionField {
+    SchemaVersion,
+    Slug,
+    ImageRepository,
+    ContainerPort,
+    Volumes,
+    Tmpfs,
+    Environment,
+    SecretKeys,
+    /// The whole document rather than one of its fields. A definition whose
+    /// every field is inside its own bounds and which still does not fit the
+    /// bound of the document is refused by the document, and no single field is
+    /// the one to blame.
+    Document,
+}
+
+/// Why one field is outside the contract, as a closed list of named refusals.
+///
+/// A closed list rather than a message: what a human reads is written where the
+/// product speaks to humans, in one sentence per name, and a name added here
+/// without its sentence is a hole a caller can be held against. Nothing in this
+/// module renders a word of French, and nothing in it decides what a refusal
+/// looks like.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceDefinitionRefusal {
+    /// A version this palier does not read.
+    UnknownSchemaVersion,
+    /// Outside the grammar the derived account is bounded by.
+    SlugGrammar,
+    /// One of the four names the product already owns.
+    SlugReserved,
+    /// A repository naming which image rather than where images come from: a
+    /// tag or a digest. It is told apart from a plain malformation because it is
+    /// the most likely mistake a human makes — pasting the reference they pull
+    /// with.
+    ImageRepositoryPinned,
+    /// Outside the grammar of a repository.
+    ImageRepositoryGrammar,
+    /// Outside `1..=65535`.
+    ContainerPortRange,
+    /// More entries than the list admits.
+    ListTooLong,
+    /// Not one absolute, normalised, lower-case container path.
+    ContainerPathGrammar,
+    /// Two mounts where one opens or is the other. Two overlapping mounts would
+    /// be two writes whose order decided the result, and the order is not a
+    /// field.
+    MountsOverlap,
+    /// An environment entry that is not a `KEY=value` line at all.
+    EnvironmentLineShape,
+    /// Outside the one grammar an environment key and a secret key share.
+    KeyGrammar,
+    /// Outside printable ASCII, above its bound, or carrying a brace anywhere
+    /// but in the one interpolation this product has.
+    ValueGrammar,
+    /// A name already taken by another line or by the other list: one key is one
+    /// name in one namespace.
+    KeyAlreadyDeclared,
+    /// Every field is inside its own bounds and the document is still above
+    /// [`MAX_SERVICE_DEFINITION_BYTES`]. The cardinals and the byte bounds are
+    /// separate rules, and a definition has to hold both.
+    DocumentTooLarge,
+}
+
+/// One named refusal, on the field and — inside a list — on the entry it
+/// belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct ServiceDefinitionFieldRefusal {
+    pub field: ServiceDefinitionField,
+    /// The index of the entry inside its list, and `None` for a field that is
+    /// not one.
+    pub entry: Option<usize>,
+    pub refusal: ServiceDefinitionRefusal,
+}
+
+impl ServiceDefinitionFieldRefusal {
+    fn of(
+        field: ServiceDefinitionField,
+        entry: Option<usize>,
+        refusal: ServiceDefinitionRefusal,
+    ) -> Self {
+        Self {
+            field,
+            entry,
+            refusal,
+        }
+    }
+}
+
 impl ServiceDefinitionDocument {
     /// Holds a definition against the whole contract of the palier.
     ///
@@ -201,6 +300,229 @@ impl ServiceDefinitionDocument {
             return Err(ProtocolError::InvalidInput);
         }
         Ok(self)
+    }
+
+    /// Every way this definition is outside the contract, named one by one.
+    ///
+    /// It is the same contract [`Self::validate`] holds a document against, read
+    /// through the same predicates rather than through a second reading of them:
+    /// a definition has no refusal exactly when it validates, and a test states
+    /// that equivalence over every table of this module rather than leaving it
+    /// to be believed. What this adds is *where* and *why*, which is the whole
+    /// of what a form needs to answer a human before they submit anything.
+    ///
+    /// Unlike validation it does not stop at the first refusal: a human who
+    /// fixes one field and discovers the next is being told the contract one
+    /// sentence per attempt, which is a worse way of learning bounds than being
+    /// shown them at once.
+    pub fn refusals(&self) -> Vec<ServiceDefinitionFieldRefusal> {
+        use ServiceDefinitionField as Field;
+        use ServiceDefinitionRefusal as Why;
+
+        let mut refusals = Vec::new();
+        if self.schema_version != SERVICE_DEFINITION_SCHEMA_VERSION {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::SchemaVersion,
+                None,
+                Why::UnknownSchemaVersion,
+            ));
+        }
+        if !canonical_service_slug(&self.slug) {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::Slug,
+                None,
+                Why::SlugGrammar,
+            ));
+        } else if RESERVED_SERVICE_SLUGS.contains(&self.slug.as_str()) {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::Slug,
+                None,
+                Why::SlugReserved,
+            ));
+        }
+        if !canonical_image_repository(&self.image_repository) {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::ImageRepository,
+                None,
+                if image_repository_names_one_image(&self.image_repository) {
+                    Why::ImageRepositoryPinned
+                } else {
+                    Why::ImageRepositoryGrammar
+                },
+            ));
+        }
+        if !(MIN_CONTAINER_PORT..=MAX_CONTAINER_PORT).contains(&self.container_port) {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::ContainerPort,
+                None,
+                Why::ContainerPortRange,
+            ));
+        }
+        self.mount_refusals(&mut refusals);
+        self.environment_refusals(&mut refusals);
+        // The bound of the document is the last thing read, and only when every
+        // field holds: a definition whose cardinals are all licit and whose
+        // bytes are not is refused by the document rather than by a field, and
+        // saying so on a field would send a human to shorten the wrong one.
+        if refusals.is_empty() && self.encode().is_err() {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::Document,
+                None,
+                Why::DocumentTooLarge,
+            ));
+        }
+        refusals
+    }
+
+    /// The two lists of container paths, then the two held against one another
+    /// as one list, in the order [`Self::holds_the_mounts`] reads them.
+    fn mount_refusals(&self, refusals: &mut Vec<ServiceDefinitionFieldRefusal>) {
+        use ServiceDefinitionField as Field;
+        use ServiceDefinitionRefusal as Why;
+
+        if self.volumes.len() > MAX_SERVICE_VOLUMES {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::Volumes,
+                None,
+                Why::ListTooLong,
+            ));
+        }
+        if self.tmpfs.len() > MAX_SERVICE_TMPFS {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::Tmpfs,
+                None,
+                Why::ListTooLong,
+            ));
+        }
+        // The union is what the overlap rule is stated on, so the two lists walk
+        // as one sequence that remembers which side each entry came from.
+        let declared: Vec<(Field, usize, &String)> = self
+            .volumes
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (Field::Volumes, index, path))
+            .chain(
+                self.tmpfs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| (Field::Tmpfs, index, path)),
+            )
+            .collect();
+        let mut accepted: Vec<(Field, usize, Vec<&str>)> = Vec::with_capacity(declared.len());
+        for (field, index, path) in declared {
+            match canonical_container_path(path) {
+                Some(segments) => accepted.push((field, index, segments)),
+                None => refusals.push(ServiceDefinitionFieldRefusal::of(
+                    field,
+                    Some(index),
+                    Why::ContainerPathGrammar,
+                )),
+            }
+        }
+        // An overlap is a property of a pair, and it is reported on the later of
+        // the two entries: the earlier one is the mount that was already
+        // declared, so the entry a human has to change is the one that arrived
+        // beside it.
+        for (position, (field, index, entry)) in accepted.iter().enumerate() {
+            if accepted[..position]
+                .iter()
+                .any(|(_, _, other)| opens_or_equals(entry, other) || opens_or_equals(other, entry))
+            {
+                refusals.push(ServiceDefinitionFieldRefusal::of(
+                    *field,
+                    Some(*index),
+                    Why::MountsOverlap,
+                ));
+            }
+        }
+    }
+
+    /// The inert configuration and the names of the generated secrets, in the
+    /// order [`Self::holds_the_environment`] reads them and against the one
+    /// namespace they share.
+    fn environment_refusals(&self, refusals: &mut Vec<ServiceDefinitionFieldRefusal>) {
+        use ServiceDefinitionField as Field;
+        use ServiceDefinitionRefusal as Why;
+
+        if self.environment.len() > MAX_SERVICE_ENVIRONMENT_LINES {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::Environment,
+                None,
+                Why::ListTooLong,
+            ));
+        }
+        if self.secret_keys.len() > MAX_SERVICE_SECRET_KEYS {
+            refusals.push(ServiceDefinitionFieldRefusal::of(
+                Field::SecretKeys,
+                None,
+                Why::ListTooLong,
+            ));
+        }
+        let mut declared: Vec<&str> =
+            Vec::with_capacity(self.environment.len() + self.secret_keys.len());
+        for (index, line) in self.environment.iter().enumerate() {
+            let Some((key, value)) = line.split_once('=') else {
+                refusals.push(ServiceDefinitionFieldRefusal::of(
+                    Field::Environment,
+                    Some(index),
+                    Why::EnvironmentLineShape,
+                ));
+                continue;
+            };
+            if !canonical_environment_key(key) {
+                refusals.push(ServiceDefinitionFieldRefusal::of(
+                    Field::Environment,
+                    Some(index),
+                    Why::KeyGrammar,
+                ));
+            } else if declared.contains(&key) {
+                refusals.push(ServiceDefinitionFieldRefusal::of(
+                    Field::Environment,
+                    Some(index),
+                    Why::KeyAlreadyDeclared,
+                ));
+            } else {
+                declared.push(key);
+            }
+            if !canonical_environment_value(value) {
+                refusals.push(ServiceDefinitionFieldRefusal::of(
+                    Field::Environment,
+                    Some(index),
+                    Why::ValueGrammar,
+                ));
+            }
+        }
+        for (index, key) in self.secret_keys.iter().enumerate() {
+            if !canonical_environment_key(key) {
+                refusals.push(ServiceDefinitionFieldRefusal::of(
+                    Field::SecretKeys,
+                    Some(index),
+                    Why::KeyGrammar,
+                ));
+            } else if declared.contains(&key.as_str()) {
+                refusals.push(ServiceDefinitionFieldRefusal::of(
+                    Field::SecretKeys,
+                    Some(index),
+                    Why::KeyAlreadyDeclared,
+                ));
+            } else {
+                declared.push(key);
+            }
+        }
+    }
+
+    /// Whether any line of this definition consumes the one interpolation the
+    /// product has.
+    ///
+    /// It is the counterpart of `Document.InterpolatesOriginHost` on the
+    /// Controller side, and it decides a presence rather than a value: a plan
+    /// pinning this definition carries an origin exactly when this answers yes.
+    /// The Console reads it to say, before a freeze, that approving a deployment
+    /// of this revision will mean approving a name.
+    pub fn interpolates_origin_host(&self) -> bool {
+        self.environment
+            .iter()
+            .any(|line| line.contains(ORIGIN_HOST_PLACEHOLDER))
     }
 
     /// Renders the one canonical encoding of a definition.
@@ -478,6 +800,25 @@ pub(crate) fn canonical_image_repository(repository: &str) -> bool {
         return false;
     }
     canonical_registry_host(registry) && canonical_repository_path(path)
+}
+
+/// Whether a rejected repository was rejected for naming *which* image.
+///
+/// It reads the two suffixes [`canonical_image_repository`] refuses before it
+/// reads any grammar — a digest anywhere, a tag on the last component — and it
+/// exists only so that the most likely mistake a human makes can be answered by
+/// the rule they broke instead of by a generic malformation. It decides nothing:
+/// a repository this returns `false` for is not thereby acceptable, and the one
+/// function that admits a repository is still the one above.
+fn image_repository_names_one_image(repository: &str) -> bool {
+    if repository.contains('@') {
+        return true;
+    }
+    let last_component = match repository.rsplit_once('/') {
+        Some((_, last)) => last,
+        None => repository,
+    };
+    last_component.contains(':')
 }
 
 /// The part of a repository that names where the images come from: a lower-case
@@ -2185,5 +2526,275 @@ mod tests {
                 Err(ProtocolError::InvalidInput)
             );
         }
+    }
+
+    /// The one property the named refusals rest on: they are the same contract.
+    ///
+    /// A form that bounded its inputs by a second reading of the grammars would
+    /// drift from the document the Controller freezes, and the drift would show
+    /// up as a definition a human was allowed to write and the Controller
+    /// refused — or, worse, the other way round. So the two readings are held
+    /// against one another on every subject of this module: a definition has no
+    /// refusal exactly when it decodes.
+    ///
+    /// The subjects are the two vectors, every accepted bound, and one document
+    /// per name of the refusal enumeration, so that a name added without a
+    /// subject and a subject that stopped being refused both fail here.
+    #[test]
+    fn a_definition_has_no_named_refusal_exactly_when_it_is_inside_the_contract() {
+        use ServiceDefinitionRefusal as Why;
+
+        for (name, subject, expected) in refusal_subjects() {
+            let named = subject.refusals();
+            assert_eq!(
+                named.is_empty(),
+                decode_service_definition_document(hostile(&subject).as_bytes()).is_ok(),
+                "{name}: the named refusals and the contract disagree ({named:?})"
+            );
+            assert_eq!(named, expected, "{name}: the named refusals drifted");
+        }
+
+        // Every name of the enumeration is exercised above. A name nothing
+        // reaches is a sentence no human will ever read and a rule nothing
+        // holds, so it fails here rather than surviving as decoration.
+        let reached: Vec<Why> = refusal_subjects()
+            .into_iter()
+            .flat_map(|(_, subject, _)| subject.refusals())
+            .map(|refusal| refusal.refusal)
+            .collect();
+        for name in [
+            Why::UnknownSchemaVersion,
+            Why::SlugGrammar,
+            Why::SlugReserved,
+            Why::ImageRepositoryPinned,
+            Why::ImageRepositoryGrammar,
+            Why::ContainerPortRange,
+            Why::ListTooLong,
+            Why::ContainerPathGrammar,
+            Why::MountsOverlap,
+            Why::EnvironmentLineShape,
+            Why::KeyGrammar,
+            Why::ValueGrammar,
+            Why::KeyAlreadyDeclared,
+            Why::DocumentTooLarge,
+        ] {
+            assert!(
+                reached.contains(&name),
+                "{name:?} is named by no subject of this module"
+            );
+        }
+
+        // And the one reading a freeze depends on: which side of the form has to
+        // ask for an origin later. It is a presence rather than a value, and it
+        // is read off the lines rather than off a field.
+        assert!(vector_reference().interpolates_origin_host());
+        assert!(!vector_minimal().interpolates_origin_host());
+        assert!(!ServiceDefinitionDocument {
+            environment: vec!["PLAIN=origin_host".into()],
+            ..vector_reference()
+        }
+        .interpolates_origin_host());
+    }
+
+    /// The subjects of the equivalence above: what each one is, and exactly the
+    /// refusals it must name.
+    fn refusal_subjects() -> Vec<(
+        &'static str,
+        ServiceDefinitionDocument,
+        Vec<ServiceDefinitionFieldRefusal>,
+    )> {
+        use ServiceDefinitionField as Field;
+        use ServiceDefinitionRefusal as Why;
+
+        let at = |field, entry, refusal| ServiceDefinitionFieldRefusal {
+            field,
+            entry,
+            refusal,
+        };
+        vec![
+            ("the reference vector", vector_reference(), Vec::new()),
+            ("the minimal vector", vector_minimal(), Vec::new()),
+            (
+                "eight volumes and eight tmpfs",
+                ServiceDefinitionDocument {
+                    volumes: numbered_paths("/srv/volume", MAX_SERVICE_VOLUMES),
+                    tmpfs: numbered_paths("/run/scratch", MAX_SERVICE_TMPFS),
+                    ..vector_reference()
+                },
+                Vec::new(),
+            ),
+            (
+                "thirty-two lines and sixteen keys",
+                ServiceDefinitionDocument {
+                    environment: numbered_environment(MAX_SERVICE_ENVIRONMENT_LINES),
+                    secret_keys: numbered_keys("SECRET", MAX_SERVICE_SECRET_KEYS),
+                    ..vector_reference()
+                },
+                Vec::new(),
+            ),
+            (
+                "a schema version to come",
+                ServiceDefinitionDocument {
+                    schema_version: SERVICE_DEFINITION_SCHEMA_VERSION + 1,
+                    ..vector_reference()
+                },
+                vec![at(Field::SchemaVersion, None, Why::UnknownSchemaVersion)],
+            ),
+            (
+                "an upper-case slug",
+                ServiceDefinitionDocument {
+                    slug: "Lab-Notes".into(),
+                    ..vector_reference()
+                },
+                vec![at(Field::Slug, None, Why::SlugGrammar)],
+            ),
+            (
+                "a reserved slug",
+                ServiceDefinitionDocument {
+                    slug: RESERVED_SERVICE_SLUGS[1].into(),
+                    ..vector_reference()
+                },
+                vec![at(Field::Slug, None, Why::SlugReserved)],
+            ),
+            (
+                "a repository carrying a tag",
+                ServiceDefinitionDocument {
+                    image_repository: format!("{VECTOR_IMAGE_REPOSITORY}:latest"),
+                    ..vector_reference()
+                },
+                vec![at(Field::ImageRepository, None, Why::ImageRepositoryPinned)],
+            ),
+            (
+                "a repository carrying a digest",
+                ServiceDefinitionDocument {
+                    image_repository: format!("{VECTOR_IMAGE_REPOSITORY}@sha256:0123"),
+                    ..vector_reference()
+                },
+                vec![at(Field::ImageRepository, None, Why::ImageRepositoryPinned)],
+            ),
+            (
+                "a repository without a registry",
+                ServiceDefinitionDocument {
+                    image_repository: "your-cloud/lab-notes".into(),
+                    ..vector_reference()
+                },
+                vec![at(
+                    Field::ImageRepository,
+                    None,
+                    Why::ImageRepositoryGrammar,
+                )],
+            ),
+            (
+                "a container port of zero",
+                ServiceDefinitionDocument {
+                    container_port: 0,
+                    ..vector_reference()
+                },
+                vec![at(Field::ContainerPort, None, Why::ContainerPortRange)],
+            ),
+            (
+                "nine volumes",
+                ServiceDefinitionDocument {
+                    volumes: numbered_paths("/srv/volume", MAX_SERVICE_VOLUMES + 1),
+                    tmpfs: Vec::new(),
+                    ..vector_reference()
+                },
+                vec![at(Field::Volumes, None, Why::ListTooLong)],
+            ),
+            (
+                "seventeen secret keys",
+                ServiceDefinitionDocument {
+                    secret_keys: numbered_keys("SECRET", MAX_SERVICE_SECRET_KEYS + 1),
+                    ..vector_reference()
+                },
+                vec![at(Field::SecretKeys, None, Why::ListTooLong)],
+            ),
+            (
+                "a tmpfs that is not a container path",
+                ServiceDefinitionDocument {
+                    tmpfs: vec!["/srv/notes:ro".into()],
+                    volumes: Vec::new(),
+                    ..vector_reference()
+                },
+                vec![at(Field::Tmpfs, Some(0), Why::ContainerPathGrammar)],
+            ),
+            (
+                "a tmpfs opening a declared volume",
+                ServiceDefinitionDocument {
+                    volumes: vec!["/srv/notes".into()],
+                    tmpfs: vec!["/srv".into()],
+                    ..vector_reference()
+                },
+                vec![at(Field::Tmpfs, Some(0), Why::MountsOverlap)],
+            ),
+            (
+                "an environment entry that is not a line",
+                ServiceDefinitionDocument {
+                    environment: vec!["LAB_NOTES_TITLE".into()],
+                    ..vector_reference()
+                },
+                vec![at(Field::Environment, Some(0), Why::EnvironmentLineShape)],
+            ),
+            (
+                "a lower-case environment key",
+                ServiceDefinitionDocument {
+                    environment: vec!["lab_notes_title=x".into()],
+                    ..vector_reference()
+                },
+                vec![at(Field::Environment, Some(0), Why::KeyGrammar)],
+            ),
+            (
+                "a value carrying an unknown template",
+                ServiceDefinitionDocument {
+                    environment: vec!["LAB_NOTES_TITLE={machine_id}".into()],
+                    ..vector_reference()
+                },
+                vec![at(Field::Environment, Some(0), Why::ValueGrammar)],
+            ),
+            (
+                "a secret key that is already an environment line",
+                ServiceDefinitionDocument {
+                    environment: vec!["LAB_NOTES_TOKEN=x".into()],
+                    secret_keys: vec!["LAB_NOTES_TOKEN".into()],
+                    ..vector_reference()
+                },
+                vec![at(Field::SecretKeys, Some(0), Why::KeyAlreadyDeclared)],
+            ),
+            (
+                "an environment key declared twice",
+                ServiceDefinitionDocument {
+                    environment: vec!["LAB_NOTES_TITLE=x".into(), "LAB_NOTES_TITLE=y".into()],
+                    ..vector_reference()
+                },
+                vec![at(Field::Environment, Some(1), Why::KeyAlreadyDeclared)],
+            ),
+            (
+                "every cardinal licit and the document still too wide",
+                ServiceDefinitionDocument {
+                    environment: (0..MAX_SERVICE_ENVIRONMENT_LINES)
+                        .map(|index| {
+                            format!("LINE_{index}={}", "x".repeat(MAX_ENVIRONMENT_VALUE_BYTES))
+                        })
+                        .collect(),
+                    ..vector_reference()
+                },
+                vec![at(Field::Document, None, Why::DocumentTooLarge)],
+            ),
+            (
+                "a document outside the contract in several places at once",
+                ServiceDefinitionDocument {
+                    slug: RESERVED_SERVICE_SLUGS[0].into(),
+                    container_port: 0,
+                    volumes: vec!["/srv/notes".into()],
+                    tmpfs: vec!["/srv/notes".into()],
+                    ..vector_reference()
+                },
+                vec![
+                    at(Field::Slug, None, Why::SlugReserved),
+                    at(Field::ContainerPort, None, Why::ContainerPortRange),
+                    at(Field::Tmpfs, Some(0), Why::MountsOverlap),
+                ],
+            ),
+        ]
     }
 }

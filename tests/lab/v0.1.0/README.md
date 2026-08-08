@@ -564,10 +564,11 @@ mesure une géométrie. Il répond à #56 pour sa moitié Linux, et à elle seul
 **Ce qui est mesuré.** Le bundle frontend livré, un seul module remplacé : le
 pont IPC Tauri. Les composants React, les feuilles de style et les fontes sont
 ceux du produit ; le moteur est `libwebkit2gtk-4.1`, celui contre lequel le
-binaire Linux est lié. Neuf états — les sept vues contractuelles, l'affichage
-des deux secrets locaux et les éléments externes — à `1280 x 800` et
-`640 x 560`, texte à 100 % puis à 200 %, sur des libellés hostiles. Chaque état
-est atteint en cliquant le chemin qu'un humain suit.
+binaire Linux est lié. Onze états — les sept vues contractuelles, l'affichage
+des deux secrets locaux, les éléments externes, et la vue Services dans ses deux
+états : le formulaire, et le panneau de conséquences qu'un gel traverse — à
+`1280 x 800` et `640 x 560`, texte à 100 % puis à 200 %, sur des libellés
+hostiles. Chaque état est atteint en cliquant le chemin qu'un humain suit.
 
 **L'oracle DOM** asserte, par cas : aucun cadre coupant ne retient de texte plus
 large que lui, aucun contrôle n'en chevauche un autre, aucun ne sort de la
@@ -596,7 +597,7 @@ tests/lab/v0.1.0/console-reflow/prove remove
 
 ### Limites et hygiène
 
-- **Ce n'est pas le paquet installé.** Six des neuf états ne sont atteignables
+- **Ce n'est pas le paquet installé.** Huit des onze états ne sont atteignables
   que derrière un coffre déverrouillé et un Controller vivant ; dresser cette
   chaîne pour mesurer une feuille de style aurait fait dépendre la mesure de
   tout sauf de la feuille de style. Le moteur, le bundle et les tailles de

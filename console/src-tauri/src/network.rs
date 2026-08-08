@@ -1,5 +1,8 @@
-use crate::vault::{
-    parse_recovery_code, AssociationRecord, AssociationSummary, RecoveryControllerProgress,
+use crate::{
+    service_definition::displayable_definition,
+    vault::{
+        parse_recovery_code, AssociationRecord, AssociationSummary, RecoveryControllerProgress,
+    },
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
@@ -32,6 +35,7 @@ use unicode_normalization::UnicodeNormalization;
 use url::Url;
 use uuid::Uuid;
 use x509_parser::{extensions::GeneralName, parse_x509_certificate, pem::parse_x509_pem};
+use your_cloud_bootstrap_protocol::MAX_SERVICE_DEFINITION_BYTES;
 use zeroize::{Zeroize, Zeroizing};
 
 const REQUEST_MAX_BYTES: usize = 4 * 1024;
@@ -41,6 +45,17 @@ const RESPONSE_MAX_BYTES: usize = 128 * 1024;
 // printable ASCII characters, kept exactly as the human wrote them.
 const MAX_EXTERNAL_ELEMENTS: usize = 128;
 const MAX_EXTERNAL_LABEL_BYTES: usize = 64;
+// The frozen definitions are bounded by the Controller at 128 revisions, all
+// slugs taken together, and the listing carries every one of them.
+const MAX_FROZEN_SERVICE_DEFINITIONS: usize = 128;
+// The one request of this Console whose bound is not the common four kilobytes,
+// and it is the Controller's own bound rather than a second number: a definition
+// travels as a JSON string, a canonical definition is printable ASCII in which
+// only the quote and the backslash are escaped, so a document at its bound
+// arrives as at most twice its bytes plus the two other fields of the envelope.
+// Deriving it from the document's bound is what keeps a definition the contract
+// admits from being one this Console could never send.
+const DEFINITION_REQUEST_MAX_BYTES: usize = 2 * MAX_SERVICE_DEFINITION_BYTES + 512;
 const TEMPORARY_RESPONSE_MAX_BYTES: usize = 8 * 1024;
 const ERROR_MAX_BYTES: usize = 1024;
 const CSR_MAX_BYTES: usize = 2 * 1024;
@@ -551,6 +566,98 @@ impl NetworkState {
         let view =
             self.handle_session_response(&association.summary.infrastructure_id, response)?;
         if view.schema_version != 1 || view.element_id != element_id || view.external_revision == 0
+        {
+            return Err(NetworkError::ResponseRefused);
+        }
+        ensure_current(generation, current_generation)?;
+        Ok(view)
+    }
+
+    /// Reads every definition this infrastructure has frozen.
+    ///
+    /// It is a third inventory beside the managed and the declared ones, read by
+    /// the same session and refused by the same rules — and it is read on its own
+    /// revision, because freezing a definition must not move the revision a
+    /// Console caches its machines against.
+    ///
+    /// Every entry is rehashed here before it can be displayed. The Controller
+    /// is not the authority on what a definition says: it stores bytes and a
+    /// digest, and this Console holds the two against one another with the very
+    /// function the Auxiliary uses the day a plan pins that digest.
+    pub(crate) fn read_service_definitions(
+        &mut self,
+        association: &AssociationRecord,
+        generation: u64,
+        current_generation: &AtomicU64,
+    ) -> Result<ServiceDefinitionsView, NetworkError> {
+        let client = association_client(association)?;
+        let token = self.session(association, &client, generation, current_generation)?;
+        let response = send_empty::<ServiceDefinitionsView>(
+            &client,
+            "GET",
+            &format!("{}/v0/service-definitions", association.summary.origin),
+            Some(token.as_str()),
+            &[StatusCode::OK],
+        );
+        let view =
+            self.handle_session_response(&association.summary.infrastructure_id, response)?;
+        validate_service_definitions(&view, association)?;
+        ensure_current(generation, current_generation)?;
+        Ok(view)
+    }
+
+    /// Freezes one definition, and nothing else.
+    ///
+    /// Freezing is not signing. No envelope is built, no approval is minted and
+    /// the native window of the assistant is not on this path: the definition is
+    /// inert, so what travels is the ordinary authenticated request every other
+    /// business route of this Console uses.
+    ///
+    /// The digest is not sent as an authority. It is this Console's own answer,
+    /// computed by the mirror from the very bytes it sends, and the Controller
+    /// refuses the submission when its own answer differs — the cross-check
+    /// between the two implementations of one canonical encoding, done the
+    /// moment a definition enters the product. What comes back is required to be
+    /// the exact document that went out, under the exact digest that was
+    /// displayed: a Controller that froze something else has frozen something
+    /// nobody read.
+    pub(crate) fn freeze_service_definition(
+        &mut self,
+        association: &AssociationRecord,
+        document: &str,
+        digest: &str,
+        generation: u64,
+        current_generation: &AtomicU64,
+    ) -> Result<FrozenServiceDefinitionView, NetworkError> {
+        // The bytes are held against their digest before they leave, by the
+        // mirror rather than by a comparison written here: what is submitted is
+        // a definition of the contract in its one canonical spelling, or nothing
+        // is submitted at all.
+        let parsed = displayable_definition(document, digest).ok_or(NetworkError::InvalidInput)?;
+        let client = association_client(association)?;
+        let token = self.session(association, &client, generation, current_generation)?;
+        let response = send_json_within::<FrozenServiceDefinitionView, _>(
+            &client,
+            "POST",
+            &format!("{}/v0/service-definitions", association.summary.origin),
+            Some(token.as_str()),
+            &ServiceDefinitionFreezeRequest {
+                schema_version: 1,
+                definition_document: document,
+                definition_sha256: digest,
+            },
+            DEFINITION_REQUEST_MAX_BYTES,
+            RESPONSE_MAX_BYTES,
+            &[StatusCode::OK, StatusCode::CREATED],
+        );
+        let view =
+            self.handle_session_response(&association.summary.infrastructure_id, response)?;
+        if view.schema_version != 1
+            || view.definition_revision == 0
+            || view.definition.definition_document != document
+            || view.definition.definition_sha256 != digest
+            || view.definition.slug != parsed.slug
+            || !canonical_timestamp(&view.definition.frozen_at)
         {
             return Err(NetworkError::ResponseRefused);
         }
@@ -1306,6 +1413,61 @@ pub(crate) struct ExternalWithdrawalView {
     pub element_id: String,
 }
 
+/// The frozen definitions, on their own revision.
+///
+/// Nothing here describes an effect, and `deny_unknown_fields` is what keeps
+/// that a property rather than a habit: a Controller that added a machine, a
+/// state, an instance or a date of deployment to this listing would be
+/// describing something a definition is not, and the whole view is refused
+/// rather than one field of it ignored.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ServiceDefinitionsView {
+    pub schema_version: u8,
+    pub controller_id: String,
+    pub infrastructure_id: String,
+    pub definition_revision: u64,
+    pub definitions: Vec<ServiceDefinitionEntryView>,
+}
+
+/// One frozen revision: the exact canonical bytes, the digest they hash to, the
+/// slug they declare and the date this Controller minted.
+///
+/// `slug` is not a second truth beside the document — every reading holds it
+/// against the slug the document itself declares — and it is carried because it
+/// is what a listing groups and sorts on.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ServiceDefinitionEntryView {
+    pub slug: String,
+    pub definition_document: String,
+    pub definition_sha256: String,
+    pub frozen_at: String,
+}
+
+/// What one freeze answers: the revision the inventory now holds, and the
+/// definition exactly as a listing carries it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrozenServiceDefinitionView {
+    pub schema_version: u8,
+    pub definition_revision: u64,
+    pub definition: ServiceDefinitionEntryView,
+}
+
+/// Everything a Console may choose about a freeze, which is the document and its
+/// digest and nothing else.
+///
+/// There is no field for a machine, an account, a host path, a port of a host,
+/// an operation or a date: freezing touches no machine, so a request that could
+/// name one would be a request whose refusal had to be written somewhere.
+#[derive(Serialize)]
+struct ServiceDefinitionFreezeRequest<'a> {
+    schema_version: u8,
+    definition_document: &'a str,
+    definition_sha256: &'a str,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ControllerProblem {
@@ -1393,8 +1555,37 @@ fn send_json<T: DeserializeOwned, B: Serialize>(
     maximum: usize,
     expected_statuses: &[StatusCode],
 ) -> Result<T, NetworkError> {
+    send_json_within(
+        client,
+        method,
+        url,
+        token,
+        body,
+        REQUEST_MAX_BYTES,
+        maximum,
+        expected_statuses,
+    )
+}
+
+/// The same send, with the request bound named by the caller.
+///
+/// It exists for the one route whose bound is not the common one, and the bound
+/// stays an argument rather than becoming a wider default: every other request
+/// of this Console keeps the four kilobytes it has, because one named document
+/// is wider and requests in general are not.
+#[allow(clippy::too_many_arguments)]
+fn send_json_within<T: DeserializeOwned, B: Serialize>(
+    client: &Client,
+    method: &str,
+    url: &str,
+    token: Option<&str>,
+    body: &B,
+    request_maximum: usize,
+    maximum: usize,
+    expected_statuses: &[StatusCode],
+) -> Result<T, NetworkError> {
     let encoded = serde_json::to_vec(body).map_err(|_| NetworkError::ControllerUnavailable)?;
-    if encoded.is_empty() || encoded.len() > REQUEST_MAX_BYTES {
+    if encoded.is_empty() || encoded.len() > request_maximum {
         return Err(NetworkError::InvalidInput);
     }
     let method =
@@ -1799,6 +1990,47 @@ fn validate_external_elements(
             return Err(NetworkError::ResponseRefused);
         }
         previous = Some(key);
+    }
+    Ok(())
+}
+
+/// Holds the frozen definitions to the exact shape the contract projects, and
+/// holds every document to its own digest.
+///
+/// The rehash is the point of this function. A definition is the one document a
+/// plan pins by its digest, so a Controller that served altered bytes under a
+/// frozen digest would be showing a human one revision and handing an Auxiliary
+/// another. The check is the mirror's own, and it is applied to every entry: a
+/// listing this Console cannot verify entirely is a listing it refuses entirely,
+/// because dropping the one revision that failed would show a human a definition
+/// they never froze — or hide one they did.
+///
+/// The slug is held against the document rather than trusted beside it, for the
+/// same reason: it is a key of the listing and never a second truth.
+fn validate_service_definitions(
+    view: &ServiceDefinitionsView,
+    association: &AssociationRecord,
+) -> Result<(), NetworkError> {
+    if view.schema_version != 1
+        || view.controller_id != association.summary.controller_id
+        || view.infrastructure_id != association.summary.infrastructure_id
+        || view.definitions.len() > MAX_FROZEN_SERVICE_DEFINITIONS
+    {
+        return Err(NetworkError::ResponseRefused);
+    }
+    let mut digests = HashSet::with_capacity(view.definitions.len());
+    for entry in &view.definitions {
+        let parsed = displayable_definition(&entry.definition_document, &entry.definition_sha256)
+            .ok_or(NetworkError::ResponseRefused)?;
+        if parsed.slug != entry.slug || !canonical_timestamp(&entry.frozen_at) {
+            return Err(NetworkError::ResponseRefused);
+        }
+        // A revision is its digest. The same digest twice would be one revision
+        // presented as two, and a human counting revisions would be counting a
+        // repetition of the Controller's own state file.
+        if !digests.insert(entry.definition_sha256.as_str()) {
+            return Err(NetworkError::ResponseRefused);
+        }
     }
     Ok(())
 }

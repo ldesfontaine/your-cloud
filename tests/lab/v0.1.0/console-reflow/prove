@@ -9,7 +9,7 @@
 # bridge. It runs in `lab-console`, in WebKitGTK, which is the engine the Linux
 # Console paints with, on a virtual screen.
 #
-# What it does not drive is the installed `.deb`. Six of the nine states measured
+# What it does not drive is the installed `.deb`. Eight of the eleven states measured
 # here are only reachable behind an unlocked vault and a live Controller, and
 # standing that chain up to measure a stylesheet would make the measurement
 # depend on everything except the stylesheet. The engine, the bundle and the
@@ -24,7 +24,7 @@ usage() {
 usage: prove [setup | run | collect | remove | all]
 
   setup    build the fixture bundle and place the harness on lab-console
-  run      drive the nine states at both sizes and both text sizes
+  run      drive the eleven states at both sizes and both text sizes
   collect  bring the captures and the structured result back
   remove   leave the machine as the harness found it
   all      the four above, then publish the report (default)
@@ -111,7 +111,7 @@ setup() {
 }
 
 run_oracle() {
-  announce "measuring nine states at 1280x800 and 640x560, text 100 % and 200 %"
+  announce "measuring eleven states at 1280x800 and 640x560, text 100 % and 200 %"
   on_machine "$remote_harness/run '$(revision)' '$run_id'"
 }
 

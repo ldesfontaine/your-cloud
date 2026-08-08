@@ -11,9 +11,14 @@ import type {
   MachineMutationView,
   MachinesView,
   PairingInput,
+  FrozenDefinitionView,
   PreparedPhraseChange,
   PreparedRecoveryRotation,
   RecoveryRotationProgress,
+  ServiceDefinitionDraft,
+  ServiceDefinitionPaste,
+  ServiceDefinitionReview,
+  ServiceDefinitionsProjection,
 } from "./models";
 
 export type NativeErrorCode =
@@ -120,6 +125,30 @@ export const nativeConsole = {
     namedOperation<ExternalWithdrawalView>("withdraw_external_element", {
       infrastructureId,
       elementId,
+    }),
+  // La validation d’un brouillon n’est jamais écrite ici : elle traverse le
+  // miroir Rust, qui est la même grammaire que celle du Controller. Une Console
+  // qui bornerait ses champs elle-même dériverait du document qui est gelé.
+  reviewServiceDefinition: (draft: ServiceDefinitionDraft) =>
+    namedOperation<ServiceDefinitionReview>("review_service_definition", { draft }),
+  // Un collage ne peut que préremplir. La commande n’a pas d’infrastructure dans
+  // sa signature parce qu’elle ne soumet rien : ce qu’elle rend repasse par la
+  // relecture ci-dessus et par un humain.
+  parseServiceDefinitionPaste: (pasted: string) =>
+    namedOperation<ServiceDefinitionPaste>("parse_service_definition_paste", { pasted }),
+  readServiceDefinitions: (infrastructureId: string) =>
+    namedOperation<ServiceDefinitionsProjection>("read_service_definitions", { infrastructureId }),
+  // Les deux arguments sont exactement ce que la relecture a produit : les
+  // octets affichés et l’empreinte affichée à côté d’eux.
+  freezeServiceDefinition: (
+    infrastructureId: string,
+    definitionDocument: string,
+    definitionSha256: string,
+  ) =>
+    namedOperation<FrozenDefinitionView>("freeze_service_definition", {
+      infrastructureId,
+      definitionDocument,
+      definitionSha256,
     }),
   putInfrastructure: (infrastructureId: string, label: string) =>
     namedOperation<InfrastructureView>("put_infrastructure", { infrastructureId, label }),

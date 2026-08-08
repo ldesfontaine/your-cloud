@@ -52,11 +52,17 @@ CONTROL_SELECTOR = 'button, a[href], input, select, textarea, [tabindex]:not([ta
 
 # The seven contractual views of `docs/objectifs/v1/CONTRAT-V0.0.3.md`, plus the
 # state of the first one that displays the two local secrets, plus the eighth
-# view `docs/architecture/RESPONSABILITE-EXTERNE.md` adds — named there rather
-# than in the older contract, because an increment that rewrote another's
-# contract would erase what that one had proven. Each case
+# view `docs/architecture/RESPONSABILITE-EXTERNE.md` adds and the ninth
+# `docs/architecture/SERVICE-UTILISATEUR.md` adds — each named where it was
+# added rather than in the older contract, because an increment that rewrote
+# another's contract would erase what that one had proven. Each case
 # names the path a human takes to reach it, because a view reached by setting a
 # variable proves nothing about the navigation that leads to it.
+#
+# The ninth view is measured twice, because it has two states a human really
+# reaches and they are not one page: the form they write in, and the panel of
+# consequences they must cross before anything is frozen. Measuring only the
+# first would leave the one screen a freeze depends on unmeasured.
 VIEWS = (
     {
         "id": "local-access",
@@ -121,6 +127,22 @@ VIEWS = (
         "state": "unlocked",
         "clicks": ("Ouvrir", "Éléments externes"),
         "heading": "Éléments externes",
+    },
+    {
+        "id": "services",
+        "contract_view": 9,
+        "state": "unlocked",
+        "clicks": ("Ouvrir", "Services"),
+        "heading": "Services",
+        "requires": ".yc-definition-grid",
+    },
+    {
+        "id": "services-consequences",
+        "contract_view": 9,
+        "state": "unlocked",
+        "clicks": ("Ouvrir", "Services", "Voir ce que la machine recevra"),
+        "heading": "Services",
+        "requires": ".yc-document",
     },
 )
 

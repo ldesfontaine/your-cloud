@@ -55,7 +55,7 @@ use your_cloud_bootstrap_protocol::{
     PRIVATE_SERVICE_DATA_VOLUME, PRIVATE_SERVICE_EGRESS_TABLE,
     PRIVATE_SERVICE_ENVIRONMENT_HARDENING, PRIVATE_SERVICE_ORIGIN_SCHEME,
     PRIVATE_SERVICE_ORIGIN_VARIABLE, RESERVED_SNAPSHOT_SLOT, ROUTE_ISOLATION_HEADERS,
-    SERVICE_LOCAL_ADDRESS,
+    SERVICE_LOCAL_ADDRESS, SERVICE_PROFILE_BENTOPDF, SERVICE_PROFILE_VAULTWARDEN,
 };
 
 /// The one schema of the pairs this palier reads.
@@ -266,6 +266,18 @@ impl PresentedPublicationPlan {
     /// The rollback is named as the plan it is, with what it shares with the
     /// plan spelled out, because a return path a human did not read is a return
     /// path nobody approved.
+    ///
+    /// **The definition a user-service plan pins is not held here.** The check
+    /// that a plan and the definition it names agree — the digest, the slug, the
+    /// repository and the presence of an origin — lives on the Controller that
+    /// builds the pair and on the Auxiliary that performs it, definition in
+    /// hand. This window holds no definition: nothing hands it one, and a check
+    /// written against a document it does not have would be a check that always
+    /// passes. `#118` left the mirroring to `#120` on the condition that the
+    /// Services view made the Console hold a definition beside a plan; it does
+    /// not — it writes and freezes definitions and never displays a plan — so
+    /// the check stays where it can be made, and the day a plan and a definition
+    /// meet in this Console is the day it belongs here.
     pub fn confirmation_lines(&self) -> Vec<String> {
         let mut lines = vec![
             format!("Machine : {}", self.plan.machine_id()),
@@ -273,7 +285,7 @@ impl PresentedPublicationPlan {
         ];
         match &self.plan {
             PlanDocumentV2::WebService(document) => {
-                lines.push(format!("Profil de service : {}", document.service_profile));
+                lines.push(service_name_line(&document.service_profile));
                 lines.push(format!("Image : {}", document.image_reference));
                 lines.push(format!("Digest de l’image : {}", document.image_digest));
                 lines.push(format!(
@@ -304,7 +316,7 @@ impl PresentedPublicationPlan {
                 }
             }
             PlanDocumentV2::PrivateService(document) => {
-                lines.push(format!("Profil de service : {}", document.service_profile));
+                lines.push(service_name_line(&document.service_profile));
                 lines.push(format!("Image : {}", document.image_reference));
                 lines.push(format!("Digest de l’image : {}", document.image_digest));
                 lines.push(format!(
@@ -343,7 +355,7 @@ impl PresentedPublicationPlan {
                 );
             }
             PlanDocumentV2::Snapshot(document) => {
-                lines.push(format!("Profil de service : {}", document.service_profile));
+                lines.push(service_name_line(&document.service_profile));
                 lines.push(format!("Emplacement : {}", document.snapshot_slot));
                 match document.operation {
                     PlanV2Operation::SnapshotService => lines.push(
@@ -363,7 +375,7 @@ impl PresentedPublicationPlan {
                 }
             }
             PlanDocumentV2::Restore(document) => {
-                lines.push(format!("Profil de service : {}", document.service_profile));
+                lines.push(service_name_line(&document.service_profile));
                 lines.push(format!("Emplacement restauré : {}", document.snapshot_slot));
                 lines.push(format!(
                     "Retour : le rollback restaure ce que « {RESERVED_SNAPSHOT_SLOT} » détient, \
@@ -515,6 +527,28 @@ fn approval_operation(operation: PlanV2Operation) -> ApprovalOperation {
         PlanV2Operation::DeployUserService => ApprovalOperation::DeployUserService,
         PlanV2Operation::RemoveUserService => ApprovalOperation::RemoveUserService,
     }
+}
+
+/// How a line files the service a plan names, out of the one field two doors
+/// share.
+///
+/// `service_profile` carries a delivered profile of the product or the slug of a
+/// definition its user wrote, and the four reserved names are what makes the
+/// value alone enough to tell which: a lookup that succeeds on one side only,
+/// rather than a comparison beside a second field. Calling both "profil de
+/// service" was the presentation debt `#118` left to this palier — it named a
+/// document a user wrote after the door it did not come through, and it read as
+/// though the product shipped it.
+///
+/// The wording is the one the Services view and the user-service lines already
+/// use, so that one name reads as one door wherever it appears. Nothing else
+/// changes: the value is displayed verbatim, and no line is added or removed.
+fn service_name_line(service_profile: &str) -> String {
+    if service_profile == SERVICE_PROFILE_BENTOPDF || service_profile == SERVICE_PROFILE_VAULTWARDEN
+    {
+        return format!("Profil de service : {service_profile}");
+    }
+    format!("Service défini : {service_profile}")
 }
 
 fn operation_text(operation: PlanV2Operation) -> &'static str {
@@ -1228,12 +1262,17 @@ mod tests {
         assert_ne!(presented.plan_sha256(), with_origin.plan_sha256());
     }
 
-    /// An archive of a user service reaches the window unchanged.
+    /// An archive of a user service reaches the window unchanged, and is filed
+    /// under the door it really came through.
     ///
     /// `service_profile` is the one field two doors share, so a slug travels
     /// through the archive shape and through its lines exactly as a delivered
     /// profile does: the value is displayed verbatim, and the four reserved
-    /// names are what keeps one name from meaning two things.
+    /// names are what keeps one name from meaning two things. What `#120`
+    /// settled is the label beside it — a definition a user wrote is not a
+    /// profile of the product, and the Services view calls it what this line now
+    /// calls it. The delivered profiles keep their own label, and the test holds
+    /// both.
     #[test]
     fn an_archive_of_a_user_service_is_displayed_like_any_other_archive() {
         let plan = SNAPSHOT_PLAN_DOCUMENT.replace(
@@ -1263,7 +1302,24 @@ mod tests {
         assert_eq!(presented.group(), PlanV2Group::Snapshot);
         assert!(presented
             .confirmation_lines()
-            .contains(&"Profil de service : lab-notes".to_owned()));
+            .contains(&"Service défini : lab-notes".to_owned()));
+        assert!(!presented
+            .confirmation_lines()
+            .concat()
+            .contains("Profil de service"));
+        // And a delivered profile keeps the label it has always had: the two
+        // doors are told apart by the value, and nothing else moved.
+        assert!(PresentedPublicationPlan::verify(&view(
+            SNAPSHOT_PLAN_DOCUMENT,
+            SNAPSHOT_PLAN_SHA256,
+            SNAPSHOT_ROLLBACK_DOCUMENT,
+            SNAPSHOT_ROLLBACK_SHA256,
+        ))
+        .expect("an archive of the delivered private profile")
+        .confirmation_lines()
+        .contains(&format!(
+            "Profil de service : {SERVICE_PROFILE_VAULTWARDEN}"
+        )));
         // And the digest of an archive of a definition is not the digest of an
         // archive of the delivered profile of the same slot.
         assert_ne!(plan_digest, SNAPSHOT_PLAN_SHA256);

@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   ListTree,
   LockKeyhole,
+  PackageOpen,
   ShieldAlert,
   Unplug,
   UserRound,
@@ -20,10 +21,12 @@ import type {
   InfrastructureView,
   MachinesView,
   PairingInput,
+  ServiceDefinitionsProjection,
   ViewName,
 } from "./models";
 import { nativeConsole } from "./native";
 import { ProfileView } from "./profile-view";
+import { ServicesView } from "./service-views";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -36,6 +39,7 @@ const authenticatedNavigation: ReadonlyArray<{
   { view: "fleet", label: "Parc", icon: Boxes },
   { view: "observations", label: "Observations", icon: ListTree },
   { view: "external", label: "Éléments externes", icon: Unplug },
+  { view: "services", label: "Services", icon: PackageOpen },
 ];
 
 export function App() {
@@ -45,6 +49,7 @@ export function App() {
   const [infrastructure, setInfrastructure] = useState<InfrastructureView | null>(null);
   const [machines, setMachines] = useState<MachinesView | null>(null);
   const [external, setExternal] = useState<ExternalElementsView | null>(null);
+  const [definitions, setDefinitions] = useState<ServiceDefinitionsProjection | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [failure, setFailure] = useState<string | null>(null);
   const [associationMode, setAssociationMode] = useState<PairingInput["mode"]>("enrollment");
@@ -80,6 +85,7 @@ export function App() {
     setInfrastructure(null);
     setMachines(null);
     setExternal(null);
+    setDefinitions(null);
     setFailure(null);
   }, []);
 
@@ -204,6 +210,28 @@ export function App() {
     [loadSelected, selectedInfrastructure],
   );
 
+  // Les définitions gelées sont un troisième inventaire, lu à part et sur sa
+  // propre révision : geler une définition ne doit pas déplacer la révision
+  // contre laquelle la Console tient son parc, et une lecture qui les
+  // rassemblerait effacerait cette séparation à l'écran.
+  const loadDefinitions = useCallback(async () => {
+    if (!selectedInfrastructure) return;
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    setLoadState("loading");
+    setFailure(null);
+    try {
+      const next = await nativeConsole.readServiceDefinitions(selectedInfrastructure);
+      if (generation !== requestGeneration.current) return;
+      setDefinitions(next);
+      setLoadState("ready");
+    } catch (error: unknown) {
+      if (generation !== requestGeneration.current) return;
+      setFailure(operationErrorMessage(error));
+      setLoadState("error");
+    }
+  }, [selectedInfrastructure]);
+
   const rotateSelectedDevice = useCallback(async () => {
     if (!selectedInfrastructure) return;
     setLoadState("loading");
@@ -235,6 +263,10 @@ export function App() {
       void loadSelected();
     }
   }, [selectedInfrastructure, view, loadSelected]);
+
+  useEffect(() => {
+    if (selectedInfrastructure && view === "services") void loadDefinitions();
+  }, [selectedInfrastructure, view, loadDefinitions]);
 
   async function lockConsole() {
     await nativeConsole.cancelPendingRequests().catch(() => undefined);
@@ -384,6 +416,15 @@ export function App() {
               loading={loadState === "loading"}
               onRefresh={() => void loadSelected()}
               onWithdraw={withdrawExternalElement}
+            />
+          ) : null}
+          {view === "services" && selectedAssociation ? (
+            <ServicesView
+              infrastructureId={selectedAssociation.infrastructure_id}
+              definitions={definitions}
+              loading={loadState === "loading"}
+              onRefresh={() => void loadDefinitions()}
+              onFroze={() => void loadDefinitions()}
             />
           ) : null}
           {view === "profile" ? (

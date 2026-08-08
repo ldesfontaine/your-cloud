@@ -28,6 +28,12 @@ mod probe_plan;
 // surface against that.
 #[allow(dead_code)]
 mod publication_plan;
+// The third door on the side that writes its one document. Unlike the plan
+// modules above, this one *is* reachable from a command, and it may be: freezing
+// a definition mints no envelope, signs nothing and reaches no native window —
+// the document is inert, and the route that freezes it is a business route like
+// the others.
+mod service_definition;
 mod vault;
 #[cfg(windows)]
 mod windows_security;
@@ -39,6 +45,10 @@ use network::{
     MachinesView, NetworkState, PairingInput,
 };
 use serde::Serialize;
+use service_definition::{
+    FrozenDefinitionView, ServiceDefinitionDraft, ServiceDefinitionPaste, ServiceDefinitionReview,
+    ServiceDefinitionsProjection,
+};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex,
@@ -452,6 +462,114 @@ fn withdraw_external_element(
         .map_err(Into::into)
 }
 
+/// Reads one draft against the mirror, and says what freezing it would mean.
+///
+/// It is local and pure: no session, no network, no state of this Console is
+/// touched, and calling it is exactly as consequential as typing. It is also the
+/// only door to a freeze — the command below can be given nothing this one did
+/// not produce — so the panel of consequences is not something a frontend may
+/// choose to display: it is what the answer carries beside the bytes.
+#[tauri::command]
+fn review_service_definition(draft: ServiceDefinitionDraft) -> ServiceDefinitionReview {
+    service_definition::review_service_definition(&draft)
+}
+
+/// Reads one pasted `docker run` or `docker-compose.yml` into a draft.
+///
+/// It prefills and does nothing else. There is no infrastructure in the
+/// signature and no session behind it, because nothing is submitted: what comes
+/// back has to go through the review above and through a human before any of it
+/// reaches a Controller.
+#[tauri::command]
+fn parse_service_definition_paste(pasted: String) -> ServiceDefinitionPaste {
+    service_definition::parse_service_definition_paste(&pasted)
+}
+
+/// Reads every definition this infrastructure has frozen, rehashed one by one.
+#[tauri::command]
+fn read_service_definitions(
+    infrastructure_id: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<ServiceDefinitionsProjection, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut network = state.network.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    let view =
+        network.read_service_definitions(&association, generation, &state.request_generation)?;
+    drop(network);
+    project_service_definitions(view)
+}
+
+/// Freezes one definition the human read the consequences of.
+///
+/// The two arguments are the two the review produced, and they are held against
+/// one another again here — by the mirror, not by a comparison written here — so
+/// bytes that are not the definition of the displayed digest never leave. A
+/// freeze creates nothing, contacts no machine and signs nothing: it is the one
+/// act of this palier that a human performs without approving a plan, because
+/// there is no effect for a plan to describe.
+#[tauri::command]
+fn freeze_service_definition(
+    infrastructure_id: String,
+    definition_document: String,
+    definition_sha256: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<FrozenDefinitionView, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut network = state.network.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    let view = network.freeze_service_definition(
+        &association,
+        &definition_document,
+        &definition_sha256,
+        generation,
+        &state.request_generation,
+    )?;
+    drop(network);
+    service_definition::frozen_definition_view(
+        &view.definition.slug,
+        &view.definition.definition_document,
+        &view.definition.definition_sha256,
+        &view.definition.frozen_at,
+    )
+    .ok_or(CommandError {
+        code: "response_refused",
+    })
+}
+
+/// Turns the frozen bytes into the fields a view renders, entry by entry.
+///
+/// A listing with one entry this Console cannot verify is refused whole rather
+/// than shortened, exactly as the transport already refuses it: a human reading
+/// a shorter list would believe a revision was never frozen.
+fn project_service_definitions(
+    view: network::ServiceDefinitionsView,
+) -> Result<ServiceDefinitionsProjection, CommandError> {
+    let mut definitions = Vec::with_capacity(view.definitions.len());
+    for entry in &view.definitions {
+        definitions.push(
+            service_definition::frozen_definition_view(
+                &entry.slug,
+                &entry.definition_document,
+                &entry.definition_sha256,
+                &entry.frozen_at,
+            )
+            .ok_or(CommandError {
+                code: "response_refused",
+            })?,
+        );
+    }
+    Ok(ServiceDefinitionsProjection {
+        schema_version: 1,
+        definition_revision: view.definition_revision,
+        definitions,
+    })
+}
+
 #[tauri::command]
 fn logout_session(
     infrastructure_id: String,
@@ -700,6 +818,10 @@ pub fn run() {
             read_machines,
             read_external_elements,
             withdraw_external_element,
+            review_service_definition,
+            parse_service_definition_paste,
+            read_service_definitions,
+            freeze_service_definition,
             put_infrastructure,
             put_machine,
             rotate_device,

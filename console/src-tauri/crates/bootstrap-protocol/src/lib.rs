@@ -52,7 +52,8 @@ pub use plan_v3::{
 };
 pub use service_definition::{
     decode_service_definition_document, verify_service_definition_document,
-    ServiceDefinitionDocument, MAX_CONTAINER_PATH_BYTES, MAX_CONTAINER_PORT,
+    ServiceDefinitionDocument, ServiceDefinitionField, ServiceDefinitionFieldRefusal,
+    ServiceDefinitionRefusal, MAX_CONTAINER_PATH_BYTES, MAX_CONTAINER_PORT,
     MAX_ENVIRONMENT_KEY_CHARS, MAX_ENVIRONMENT_VALUE_BYTES, MAX_IMAGE_REPOSITORY_BYTES,
     MAX_SERVICE_DEFINITION_BYTES, MAX_SERVICE_ENVIRONMENT_LINES, MAX_SERVICE_SECRET_KEYS,
     MAX_SERVICE_SLUG_CHARS, MAX_SERVICE_TMPFS, MAX_SERVICE_VOLUMES, MIN_CONTAINER_PORT,
