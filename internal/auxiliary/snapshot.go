@@ -278,7 +278,8 @@ func restoreService(executor Executor, subject instance) (*Application, bool, er
 			return nil, touched, fmt.Errorf("stop the service before replacing its data: %w", err)
 		}
 	}
-	if err := executor.EnsureServiceData(where.account, where.dataDirectory, where.snapshotDirectory); err != nil {
+	if err := executor.EnsureServiceData(
+		where.account, where.durableDirectories(), where.snapshotDirectory); err != nil {
 		return nil, touched, fmt.Errorf("prepare the durable data of this service: %w", err)
 	}
 	kept, err := executor.ExchangeServiceData(archivePath, where.dataDirectory, reservedPath)

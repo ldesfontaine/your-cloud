@@ -62,7 +62,7 @@ func TestTheFirstPrivateDeploymentPlacesTheServiceAndItsConfinement(t *testing.T
 	// The table in this fake machine's kernel is the one the account identifier it
 	// holds renders, and it was applied rather than only written.
 	if string(executor.nftTables[egressTableFamily+" "+egressTableName]) !=
-		string(renderEgressRules(vaultwardenPlacement, executor.accountIdentifier)) {
+		string(renderEgressRules(confinedAs(vaultwardenPlacement, executor.accountIdentifier))) {
 		t.Fatalf("the confinement in the kernel is not the one this machine renders:\n%s",
 			executor.nftTables[egressTableFamily+" "+egressTableName])
 	}
@@ -142,7 +142,7 @@ func TestADriftedPrivateServiceIsAChangeAndNotAnError(t *testing.T) {
 			executor.drop(egressRulesUnitPath)
 		},
 		"a confinement rendered for another account": func(executor *fakeExecutor) {
-			executor.egressRules = renderEgressRules(vaultwardenPlacement, executor.accountIdentifier+1)
+			executor.egressRules = renderEgressRules(confinedAs(vaultwardenPlacement, executor.accountIdentifier+1))
 			executor.nftTables[egressTableFamily+" "+egressTableName] = executor.egressRules
 		},
 		"a durable directory that vanished": func(executor *fakeExecutor) {
@@ -166,7 +166,7 @@ func TestADriftedPrivateServiceIsAChangeAndNotAnError(t *testing.T) {
 			t.Fatalf("%s left the sheet drifted", name)
 		}
 		if string(executor.egressRules) !=
-			string(renderEgressRules(vaultwardenPlacement, executor.accountIdentifier)) {
+			string(renderEgressRules(confinedAs(vaultwardenPlacement, executor.accountIdentifier))) {
 			t.Fatalf("%s left the confinement drifted:\n%s", name, executor.egressRules)
 		}
 		if !executor.dataPresent {
@@ -253,7 +253,7 @@ func TestAnUpdateLiftsTheConfinementFetchesAndPosesItAgain(t *testing.T) {
 		t.Fatalf("a running service was left unconfined at some instant: %q", executor.effects)
 	}
 	if string(executor.egressRules) !=
-		string(renderEgressRules(vaultwardenPlacement, executor.accountIdentifier)) {
+		string(renderEgressRules(confinedAs(vaultwardenPlacement, executor.accountIdentifier))) {
 		t.Fatalf("the table posed again carries an exception:\n%s", executor.egressRules)
 	}
 	if executor.dataContent != fixtureSecrets {

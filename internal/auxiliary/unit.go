@@ -104,23 +104,32 @@ func renderUnit(document *plan.Document) []byte {
 //     none;
 //   - Pull=never keeps starting the service off the network: the one fetch this
 //     operation performs is explicit, and happens before the sheet is written;
-//   - Volume mounts the profile's one durable write path, read-write, on the
-//     path the image declares as its volume. Both sides are constants of the
-//     placement, so no plan can move a write path and no plan can add a second
-//     one; ReadOnly still holds for everything else, so the container's own
-//     filesystem stays unwritable and the data is the single exception, named;
-//   - Environment carries the profile's closed hardening lines and, last, the
-//     one approved value: the origin this instance answers under, under the
-//     scheme the profile fixes. A profile that declares no environment carries
-//     none, because a line that decides nothing still reads as a line that was
-//     needed;
-//   - no Device, no EnvironmentFile and no extra Network exist here, and no
-//     Volume beyond the profile's own, because no plan has a field that could
-//     describe one.
+//   - Volume mounts the placement's durable write paths, read-write, on the
+//     paths the image declares as its volumes. Both sides of every mount are
+//     decided by the placement — a constant for a delivered profile, a derivation
+//     from the definition's own slug for a user service — so no plan can move a
+//     write path and no plan can add one; ReadOnly still holds for everything
+//     else, so the container's own filesystem stays unwritable and the data is
+//     the single exception, named. A placement that keeps nothing carries none;
+//   - Environment carries the placement's own lines and, last, the one approved
+//     value a profile declaring a prefix appends: the origin this instance
+//     answers under, under the scheme that profile fixes. The third door appends
+//     no such line, because its origin is interpolated into the very lines its
+//     definition declares rather than added beside them. A placement that
+//     declares no environment carries none, because a line that decides nothing
+//     still reads as a line that was needed;
+//   - EnvironmentFile names the one file this machine generated for a placement
+//     that declares secret keys, and it appears only where such keys exist. It is
+//     a path derived from the placement's own home and never a value: no plan and
+//     no definition of this product carries a secret, and this line is how a
+//     value the machine generated reaches a container without being written into
+//     anything a human reads;
+//   - no Device and no extra Network exist here, and no Volume beyond the
+//     placement's own, because no plan has a field that could describe one.
 func renderSheet(where placement, localPort int, originHost string) []byte {
 	data := ""
-	if where.bearsData() {
-		data = "Volume=" + where.dataDirectory + ":" + where.containerDataPath + ":rw\n"
+	for _, mount := range where.volumes {
+		data += "Volume=" + mount.host + ":" + mount.container + ":rw\n"
 	}
 	environment := ""
 	for _, line := range where.environment {
@@ -128,6 +137,9 @@ func renderSheet(where placement, localPort int, originHost string) []byte {
 	}
 	if where.originEnvironmentPrefix != "" {
 		environment += "Environment=" + where.originEnvironmentPrefix + originHost + "\n"
+	}
+	if where.bearsSecrets() {
+		environment += "EnvironmentFile=" + where.environmentFilePath() + "\n"
 	}
 	scratch := ""
 	for _, path := range where.writablePaths {

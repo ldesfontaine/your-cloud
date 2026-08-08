@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/ldesfontaine/your-cloud/internal/plan"
+	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 )
 
 const (
@@ -1073,6 +1074,26 @@ const (
 	serviceArchiveDirectoryMode = 0o700
 	serviceArchiveFileMode      = 0o600
 
+	// serviceSecretDirectoryMode and serviceSecretFileMode hold the values this
+	// machine generates under the service's own account and nobody else.
+	//
+	// The owner is the account rather than root, and it is a necessity rather than
+	// a relaxation: the sheet reads them back through EnvironmentFile= and the
+	// systemd that reads that line is the account's own user manager, so a value
+	// root alone could open would be a service that never starts. What the mode
+	// buys is everything else on the machine — no other account, and no other
+	// container, can enter the directory or open a value.
+	serviceSecretDirectoryMode = 0o700
+	serviceSecretFileMode      = 0o600
+
+	// serviceSecretRandomBytes is how much of the kernel's randomness one
+	// generated value is, and serviceSecretHexBytes is what it takes to write it.
+	// Thirty-two bytes is the length this product already draws for the key of its
+	// private passage, and hexadecimal is the alphabet that cannot carry a
+	// newline, a quote or anything a shell reads.
+	serviceSecretRandomBytes = 32
+	serviceSecretHexBytes    = 2 * serviceSecretRandomBytes
+
 	// archiveTimeout bounds the two effects that walk a whole tree. They are
 	// longer than an ordinary command because they are proportional to the data,
 	// and bounded all the same because an Auxiliary may not hang holding the
@@ -1120,9 +1141,18 @@ func (executor SystemExecutor) ServiceDataPresent(path string) (bool, error) {
 	return true, nil
 }
 
-// EnsureServiceData creates the two directories a data-bearing profile owns,
-// with the two owners the seam's contract fixes.
-func (executor SystemExecutor) EnsureServiceData(account, dataDirectory, snapshotDirectory string) error {
+// EnsureServiceData creates the directories a data-bearing placement owns, with
+// the two owners the seam's contract fixes.
+//
+// The data side is walked in the order it was given, parents first, so that a
+// third door's durable root exists before the volume subtrees under it: a
+// MkdirAll that created a parent on the way would leave that parent with a mode
+// and an owner nobody stated.
+func (executor SystemExecutor) EnsureServiceData(
+	account string,
+	dataDirectories []string,
+	snapshotDirectory string,
+) error {
 	entry, err := user.Lookup(account)
 	if err != nil {
 		return fmt.Errorf("the account %s does not exist on this machine", account)
@@ -1135,18 +1165,20 @@ func (executor SystemExecutor) EnsureServiceData(account, dataDirectory, snapsho
 	if err != nil {
 		return fmt.Errorf("the account %s carries a group this machine cannot read: %w", account, err)
 	}
-	if err := os.MkdirAll(dataDirectory, serviceDataMode); err != nil {
-		return fmt.Errorf("create the service data directory: %w", err)
-	}
-	// The mode and the owner are set rather than assumed, because MkdirAll leaves
-	// an existing directory exactly as it found it: a data directory the engine
-	// had created root-owned before this seam existed is put back under its
-	// account here rather than left as a service that cannot write.
-	if err := os.Chmod(dataDirectory, serviceDataMode); err != nil {
-		return fmt.Errorf("hold the service data directory closed: %w", err)
-	}
-	if err := os.Chown(dataDirectory, identifier, group); err != nil {
-		return fmt.Errorf("give the service data directory to its own account: %w", err)
+	for _, dataDirectory := range dataDirectories {
+		if err := os.MkdirAll(dataDirectory, serviceDataMode); err != nil {
+			return fmt.Errorf("create the service data directory: %w", err)
+		}
+		// The mode and the owner are set rather than assumed, because MkdirAll leaves
+		// an existing directory exactly as it found it: a data directory the engine
+		// had created before this seam existed is put back under its account here
+		// rather than left as a service that cannot write.
+		if err := os.Chmod(dataDirectory, serviceDataMode); err != nil {
+			return fmt.Errorf("hold the service data directory closed: %w", err)
+		}
+		if err := os.Chown(dataDirectory, identifier, group); err != nil {
+			return fmt.Errorf("give the service data directory to its own account: %w", err)
+		}
 	}
 	if err := os.MkdirAll(snapshotDirectory, serviceArchiveDirectoryMode); err != nil {
 		return fmt.Errorf("create the service archive directory: %w", err)
@@ -1155,6 +1187,268 @@ func (executor SystemExecutor) EnsureServiceData(account, dataDirectory, snapsho
 		return fmt.Errorf("hold the service archive directory closed: %w", err)
 	}
 	return nil
+}
+
+// ServiceSecretsPresent reports whether a value exists for every declared key and
+// whether the environment file the sheet reads names exactly those keys.
+//
+// Nothing here carries a value out: the values are asked of the file system and
+// answered by presence alone, and the environment file is read for the names to
+// the left of its separators and never for what is to the right of them. A path
+// that exists and is not an ordinary file is answered as absent rather than as a
+// failure — what the caller does with that answer is reapply the approved plan,
+// and the write below names the case if it really cannot proceed.
+func (executor SystemExecutor) ServiceSecretsPresent(
+	directory, environmentFile string,
+	keys []string,
+) (bool, error) {
+	for _, key := range keys {
+		held, err := regularFilePresent(filepath.Join(directory, key))
+		if err != nil || !held {
+			return false, err
+		}
+	}
+	content, err := os.ReadFile(environmentFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return declaresExactly(content, keys), nil
+}
+
+// declaresExactly reports whether an environment file names one list of keys, in
+// that order and with nothing else. Only the name of each line travels out of
+// this function; what follows the separator is never looked at.
+func declaresExactly(content []byte, keys []string) bool {
+	lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
+	if len(content) == 0 {
+		lines = nil
+	}
+	if len(lines) != len(keys) {
+		return false
+	}
+	for index, line := range lines {
+		name, _, separated := strings.Cut(line, "=")
+		if !separated || name != keys[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func regularFilePresent(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.Mode().IsRegular(), nil
+}
+
+// EnsureServiceSecrets generates what this machine does not hold, keeps what it
+// does, and rewrites the environment file the sheet reads.
+//
+// Three decisions are carried here and each of them is owed an explanation:
+//
+//   - a value is thirty-two bytes of the kernel's own randomness rendered as
+//     lower-case hexadecimal. The alphabet is the point as much as the length: a
+//     value that can only be those sixty-four characters cannot carry a newline
+//     into the environment file below, cannot end an environment line early and
+//     cannot mean anything to a shell — so a generated value is inert wherever it
+//     is read;
+//   - the file is created exclusively, exactly as this machine's own passage key
+//     is. A value that already exists is never replaced, whatever a revision says
+//     and whatever a caller asks: no plan of this product describes the
+//     destruction of a secret, so nothing here performs one, and a redeployment
+//     therefore finds the values the first deployment generated;
+//   - a value this machine did not write is refused rather than used. A file
+//     under this directory holding anything but the exact shape above is not
+//     something this Auxiliary generated, and writing it into an environment file
+//     line by line would let whatever put it there decide what the container's
+//     environment says. The refusal names the key and never the content.
+func (executor SystemExecutor) EnsureServiceSecrets(
+	account, directory, environmentFile string,
+	keys []string,
+) error {
+	entry, err := user.Lookup(account)
+	if err != nil {
+		return fmt.Errorf("the account %s does not exist on this machine", account)
+	}
+	identifier, err := strconv.Atoi(entry.Uid)
+	if err != nil {
+		return fmt.Errorf("the account %s carries an identifier this machine cannot read: %w", account, err)
+	}
+	group, err := strconv.Atoi(entry.Gid)
+	if err != nil {
+		return fmt.Errorf("the account %s carries a group this machine cannot read: %w", account, err)
+	}
+	if err := os.MkdirAll(directory, serviceSecretDirectoryMode); err != nil {
+		return fmt.Errorf("create the service secrets directory: %w", err)
+	}
+	if err := os.Chmod(directory, serviceSecretDirectoryMode); err != nil {
+		return fmt.Errorf("hold the service secrets directory closed: %w", err)
+	}
+	if err := os.Chown(directory, identifier, group); err != nil {
+		return fmt.Errorf("give the service secrets directory to its own account: %w", err)
+	}
+
+	lines := make([]byte, 0, len(keys)*(serviceSecretHexBytes+len("KEY=\n")))
+	for _, key := range keys {
+		value, err := executor.ensureServiceSecret(filepath.Join(directory, key), identifier, group)
+		if err != nil {
+			return fmt.Errorf("hold the generated value of %s: %w", key, err)
+		}
+		lines = append(lines, (key + "=" + value + "\n")...)
+	}
+	return writeAccountFile(environmentFile, lines, identifier, group, serviceSecretFileMode)
+}
+
+// ensureServiceSecret returns the value one key holds on this machine, generating
+// it exactly once and never replacing it.
+func (executor SystemExecutor) ensureServiceSecret(path string, identifier, group int) (string, error) {
+	handle, err := os.OpenFile(path,
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, serviceSecretFileMode)
+	if errors.Is(err, os.ErrExist) {
+		return readServiceSecret(path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("create the generated value: %w", err)
+	}
+	drawn := make([]byte, serviceSecretRandomBytes)
+	if _, err := rand.Read(drawn); err != nil {
+		handle.Close()
+		os.Remove(path)
+		return "", fmt.Errorf("draw the generated value: %w", err)
+	}
+	value := hex.EncodeToString(drawn)
+	if _, err := handle.Write([]byte(value + "\n")); err != nil {
+		handle.Close()
+		os.Remove(path)
+		return "", fmt.Errorf("write the generated value: %w", err)
+	}
+	if err := handle.Sync(); err != nil {
+		handle.Close()
+		os.Remove(path)
+		return "", fmt.Errorf("synchronise the generated value: %w", err)
+	}
+	if err := handle.Close(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("close the generated value: %w", err)
+	}
+	// The mode requested at creation is subject to the process umask, so it is
+	// stated again rather than assumed.
+	if err := os.Chmod(path, serviceSecretFileMode); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("hold the generated value closed: %w", err)
+	}
+	if err := os.Chown(path, identifier, group); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("give the generated value to its own account: %w", err)
+	}
+	return value, nil
+}
+
+// readServiceSecret reads back one value this machine already held, and refuses
+// anything that is not the exact shape this machine writes.
+func readServiceSecret(path string) (string, error) {
+	held, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read the generated value: %w", err)
+	}
+	value := strings.TrimSuffix(string(held), "\n")
+	if len(value) != serviceSecretHexBytes {
+		return "", errors.New("this machine holds a value it did not generate for this key")
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return "", errors.New("this machine holds a value it did not generate for this key")
+	}
+	return value, nil
+}
+
+// writeAccountFile replaces one file the service's own account reads, atomically
+// and under that account.
+//
+// It is the discipline WriteUnitFile follows over another owner, and the owner is
+// the whole difference: what is written here is read back by the account's own
+// systemd, from a file inside that account's own home, so root-owning it would
+// claim a protection the directory above it cannot back.
+func writeAccountFile(path string, content []byte, identifier, group int, mode os.FileMode) error {
+	directory := filepath.Dir(path)
+	temporaryPath := path + ".tmp"
+	if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear the previous temporary file: %w", err)
+	}
+	temporary, err := os.OpenFile(temporaryPath,
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, mode)
+	if err != nil {
+		return fmt.Errorf("create the temporary file: %w", err)
+	}
+	if _, err := temporary.Write(content); err != nil {
+		temporary.Close()
+		os.Remove(temporaryPath)
+		return fmt.Errorf("write the temporary file: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		os.Remove(temporaryPath)
+		return fmt.Errorf("synchronise the temporary file: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		os.Remove(temporaryPath)
+		return fmt.Errorf("close the temporary file: %w", err)
+	}
+	if err := os.Chmod(temporaryPath, mode); err != nil {
+		os.Remove(temporaryPath)
+		return fmt.Errorf("hold the temporary file closed: %w", err)
+	}
+	if err := os.Chown(temporaryPath, identifier, group); err != nil {
+		os.Remove(temporaryPath)
+		return fmt.Errorf("give the temporary file to its own account: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		os.Remove(temporaryPath)
+		return fmt.Errorf("replace the file: %w", err)
+	}
+	return syncDirectory(directory)
+}
+
+// ManagedUserServiceSlugs names the user services this machine holds a sheet for.
+//
+// The homes of the third door are read rather than a record of this product,
+// because there is no such record: what this machine runs is what it holds sheets
+// for. A directory whose name is not a well-formed slug of this door, and a home
+// without the sheet its own service would be described by, are both answered as
+// "not a user service of this machine" — the enumeration reports what is running,
+// not what once was.
+func (executor SystemExecutor) ManagedUserServiceSlugs() ([]string, error) {
+	entries, err := os.ReadDir(userServiceHomeRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	slugs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), UserServiceAccountPrefix) {
+			continue
+		}
+		slug := strings.TrimPrefix(entry.Name(), UserServiceAccountPrefix)
+		if servicedefinition.ValidateSlug(slug) != nil {
+			continue
+		}
+		where := userServicePlacementOfSlug(slug)
+		if _, err := os.Stat(where.unitPath()); err != nil {
+			continue
+		}
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	return slugs, nil
 }
 
 // ServiceArchives names the ordinary slots this machine holds, sorted, and never

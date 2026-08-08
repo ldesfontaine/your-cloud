@@ -107,6 +107,16 @@ type Application struct {
 	// that makes "removing keeps the data, redeploying finds it" something a reader
 	// is told rather than something they have to know.
 	DataPath string
+	// SecretsPath is the directory holding the values this machine generated for a
+	// service that declares any, and it is filled by the two operations of the
+	// third door alone.
+	//
+	// It names a directory and never a value, here as everywhere else: nothing in
+	// this package can obtain one, because the seam that writes them returns none.
+	// A removal fills it for the same reason it fills DataPath — what survives a
+	// removal is stated rather than assumed, and the values a user's service was
+	// given are among the things this product never destroys.
+	SecretsPath string
 	// SnapshotSlot is the one archive an archive operation acted on, and
 	// PreviousSlot is filled by a return alone: it names the reserved slot the
 	// return wrote the replaced state into, so the document that undoes this one is
@@ -250,21 +260,23 @@ func (failure *ControlledFailure) Error() string {
 			failure.Observed.LinkBounds,
 		)
 	}
-	// A data-bearing profile is left holding three things a stateless one has none
-	// of, and after a rollback that failed they are the three a human reads first:
-	// is the data still there, is the account still confined, and does the slot the
-	// operation was writing hold a file. They are added to the sentence rather than
-	// replacing it, because the account, the sheet, the service and the container
-	// are still exactly what such a profile is left holding besides them. The
-	// archive is named present or absent and never opened.
-	if failure.Observed.Data != "" {
+	// A confined placement is left holding things a stateless one has none of, and
+	// after a rollback that failed they are what a human reads first: is the data
+	// still there, is the account still confined, and does the slot the operation
+	// was writing hold a file. They are added to the sentence rather than replacing
+	// it, because the account, the sheet, the service and the container are still
+	// exactly what such a service is left holding besides them. Each of the three
+	// appears only where the operation had one — a user service that keeps no data
+	// is still confined, and a word about data nobody looked at would be neither a
+	// fact nor an admission. The archive is named present or absent, never opened.
+	if failure.Observed.Egress != "" {
 		return fmt.Sprintf(
 			"%s failed after this machine was changed (%v): the approved rollback was attempted and failed in its turn (%v): "+
-				"this machine is left in a partial state, observed as account %s, unit file %s, service %s, container %s, data %s, egress %s%s",
+				"this machine is left in a partial state, observed as account %s, unit file %s, service %s, container %s%s, egress %s%s",
 			failure.Operation, failure.Cause, failure.Rollback,
 			failure.Observed.Account, failure.Observed.UnitFile,
 			failure.Observed.Service, failure.Observed.Container,
-			failure.Observed.Data, failure.Observed.Egress,
+			observedDataClause(failure.Observed.Data), failure.Observed.Egress,
 			observedArchiveClause(failure.Observed.Archive),
 		)
 	}
@@ -277,9 +289,16 @@ func (failure *ControlledFailure) Error() string {
 	)
 }
 
-// observedArchiveClause adds the archive to a sentence only where the operation
-// had one, and adds nothing where it did not: a word about something nobody
-// looked at would be neither a fact nor an admission.
+// observedDataClause and observedArchiveClause add the data and the archive to a
+// sentence only where the operation had one, and add nothing where it did not: a
+// word about something nobody looked at would be neither a fact nor an admission.
+func observedDataClause(data string) string {
+	if data == "" {
+		return ""
+	}
+	return ", data " + data
+}
+
 func observedArchiveClause(archive string) string {
 	if archive == "" {
 		return ""
@@ -318,6 +337,13 @@ const (
 	// operation answers for one file in a directory beside them.
 	kindPrivateService
 	kindArchive
+	// kindUserService is a service of the third door: the same machinery as a
+	// private service, over a placement derived from a definition its user wrote
+	// rather than enumerated by this package. It is a kind of its own and not a
+	// flag on the private one because the two answer for different things — this
+	// one holds any number of volumes, an interpolated environment and generated
+	// values, and its report names all three as things a removal keeps.
+	kindUserService
 )
 
 // instance is one thing this Auxiliary has been approved to act on, once the
@@ -445,6 +471,9 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 	if err != nil {
 		return nil, err
 	}
+	if err := requireDefinitionCarriedByItsOwnDoor(requested, input); err != nil {
+		return nil, err
+	}
 
 	capabilities, err := executor.Capabilities(requested.placement.account)
 	if err != nil {
@@ -487,6 +516,16 @@ func Apply(executor Executor, accepted *approval.Acceptance, input *Input) (*App
 		return concluded(executor, requested, rollback, application, touched, err)
 	case plan.OperationRemovePrivateService:
 		application, touched, err := removePrivateService(executor, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	// The third door runs its own two flows and never the private profile's: what
+	// they place is a placement derived from a definition, and what they leave
+	// behind — every volume, every archive and every generated value — is named by
+	// a report of their own kind.
+	case plan.OperationDeployUserService:
+		application, touched, err := deployUserService(executor, capabilities, requested)
+		return concluded(executor, requested, rollback, application, touched, err)
+	case plan.OperationRemoveUserService:
+		application, touched, err := removeUserService(executor, requested)
 		return concluded(executor, requested, rollback, application, touched, err)
 	case plan.OperationSnapshotService:
 		application, touched, err := snapshotService(executor, requested)
@@ -633,10 +672,11 @@ func probeInstances(accepted *approval.Acceptance, input *Input) (instance, inst
 // The document shapes of schema 2 become the instance kinds here, and this is the
 // only place that mapping exists. Until `#91` landed, the four entrypoint and
 // route operations were refused at this exact point by name; the four shapes of
-// the private profile were refused here too, until `#102` and `#103`. Every shape
-// of this schema is placed now, and what remains is the one refusal that outlived
-// every window: a document shape this package has no placement for is refused
-// before any effect, because there is nowhere for it to be placed.
+// the private profile were refused here too, until `#102` and `#103`, and the
+// third door's own shape until `#119`. Every shape of this schema is placed now,
+// and what remains is the one refusal that outlived every window: a document
+// shape this package has no placement for is refused before any effect, because
+// there is nowhere for it to be placed.
 func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, instance, error) {
 	envelope := accepted.Envelope
 	requested, err := v2DocumentMatching(input.PlanDocument, envelope.PlanSHA256, "plan")
@@ -805,24 +845,34 @@ func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, in
 			},
 			nil
 	case plan.UserServiceDocument:
-		// The window of the third door, named here so that the issue which closes
-		// it has one refusal to replace rather than a silence to notice.
-		//
-		// The approval package now holds these two operations in its closed list
-		// and the Controller builds their pairs, so a human may sign one and this
-		// Auxiliary may be handed a real, valid, canonically frozen pair. Deriving
-		// a placement from a definition — the account, the home, the volumes, the
-		// interpolated environment, the generated secrets and the egress table —
-		// is `#119`, and it needs something no other shape of this schema needs:
-		// the definition's own bytes travelling beside the signed pair, rehashed
-		// and revalidated before this machine is read. Until then each of them is
-		// refused right here: by name, before any effect, and before this machine
-		// is read at all. A window that let one through unread would be this
-		// Auxiliary acting on a contract it does not implement.
-		return instance{}, instance{}, fmt.Errorf(
-			"the approved plan describes %q, which this Auxiliary does not yet perform",
-			requested.OperationName(),
-		)
+		undoing, paired := rollback.(plan.UserServiceDocument)
+		if !paired {
+			return instance{}, instance{}, errMismatchedPair
+		}
+		// The one shape of this product whose plan is not enough to place it. The
+		// definition's own bytes arrived beside the signed pair, and everything
+		// below is this machine refusing to believe anyone about them: they are
+		// decoded, validated and rehashed here, held against the digest the plan
+		// pins, and only then read for the placement they decide.
+		where, err := userServicePlacementFor(subject, input.DefinitionDocument)
+		if err != nil {
+			return instance{}, instance{}, err
+		}
+		// The rollback is already the exact inverse of the plan, which compares the
+		// two documents whole — the pinned revision and the slug included — so the
+		// undoing places the very same service, from the very same definition, and
+		// there is no second derivation for a second document to disagree with.
+		return instance{
+				kind: kindUserService, operation: subject.Operation,
+				placement: where, localPort: subject.LocalPort,
+				originHost: subject.OriginHost,
+			},
+			instance{
+				kind: kindUserService, operation: undoing.Operation,
+				placement: where, localPort: undoing.LocalPort,
+				originHost: undoing.OriginHost,
+			},
+			nil
 	default:
 		// Unreachable while the plan package's closed interface holds exactly the
 		// shapes above, and kept as a refusal rather than a panic so that a further
@@ -1023,20 +1073,23 @@ func privatePlacementFor(document plan.PrivateServiceDocument) (placement, error
 // placed here but holding no durable path has nothing to archive, and saying so
 // before any effect is better than discovering it at a tar.
 //
-// The third door shares this field with the delivered profiles, and the other
-// half of the window lives here: the plan contract now admits a definition's slug
-// where an archive names its service, and deriving the home that slug archives is
-// `#119` together with the deployment itself. A well-formed slug is therefore
-// refused by the name of the window rather than by the name of the private door,
-// so that the issue which closes it has one refusal to replace; a name that is
-// neither a placed profile nor a possible slug keeps the refusal it always had.
+// The third door shares this field with the delivered profiles, and it is placed
+// here by its slug alone. That is not a shortcut: an archive names a service and
+// a slot, and everything it acts on — the home, the volumes root under it, the
+// archives beside it, the sheet the port is read from — derives from the slug,
+// while the definition itself decides only what a *deployment* mounts. So no
+// definition travels beside an archive plan, and none is needed: whether that
+// home holds volumes to archive is a question this machine answers about itself,
+// before any effect.
+//
+// The reservation of the four names at the source is what makes the lookup
+// unambiguous: a well-formed slug is never the name of a delivered profile, and a
+// name that is neither keeps the refusal it always had.
 func archivedPlacementFor(serviceProfile string) (placement, error) {
 	where, known := privateProfilePlacements[serviceProfile]
 	if !known {
 		if servicedefinition.ValidateSlug(serviceProfile) == nil {
-			return placement{}, fmt.Errorf(
-				"plan service_profile %q names a user service definition, which this Auxiliary does not yet perform",
-				serviceProfile)
+			return userServicePlacementOfSlug(serviceProfile), nil
 		}
 		return placement{}, fmt.Errorf(
 			"plan service_profile %q is not one this Auxiliary places behind the private door", serviceProfile)
@@ -1046,6 +1099,58 @@ func archivedPlacementFor(serviceProfile string) (placement, error) {
 			"the %s profile keeps no data on this machine: there is nothing for an archive to name", serviceProfile)
 	}
 	return where, nil
+}
+
+// userServicePlacementFor is where one approved user service lives on this
+// machine, and the whole of what this Auxiliary revalidates about a definition it
+// was handed.
+//
+// Nothing here is believed. The bytes are decoded and validated against the whole
+// contract of a definition, the digest is rebuilt from the parsed fields and held
+// against the one the plan pins, and then the plan and the definition are held
+// against one another by the very function the Controller used at construction:
+// the slug, the repository the image comes from, and the presence of an origin
+// exactly where a line consumes one. A definition altered by one byte carries
+// another digest and is refused right here, before this machine is read at all,
+// while the plan it travelled with stays perfectly valid — which is what makes
+// "the Auxiliary re-derives locally" a property of the documents rather than a
+// promise of whoever handed the two over together.
+//
+// A plan of this door arriving without its definition is refused by name too. It
+// is not a missing option: a placement of the third door cannot be derived at all
+// without the revision, so acting would mean inventing one.
+func userServicePlacementFor(document plan.UserServiceDocument, carried []byte) (placement, error) {
+	if len(carried) == 0 {
+		return placement{}, errors.New(
+			"the approved plan pins a service definition and none travelled with it: a user service cannot be placed without the revision it names")
+	}
+	definition, err := servicedefinition.Verify(carried, document.DefinitionDigest)
+	if err != nil {
+		return placement{}, fmt.Errorf("carried definition: %w", err)
+	}
+	if err := plan.RequireDefinitionAgreement(document, definition); err != nil {
+		return placement{}, err
+	}
+	return userServicePlacementOf(definition, document.ImageDigest, document.OriginHost), nil
+}
+
+// requireDefinitionCarriedByItsOwnDoor refuses a definition that travelled beside
+// a plan pinning none.
+//
+// The third door's own shape has already consumed the one it needs by the time
+// this runs, so what is left to refuse is the other direction: a definition
+// arriving beside a probe, a route, a passage or an archive is a document nothing
+// in this run reads, and a document nothing reads is a document nobody verified.
+// Refusing it is the same rule the contract holds over origin_host — a value
+// approved that no line consumes is an intention without a consequence — read over
+// the input framing instead of over a field.
+func requireDefinitionCarriedByItsOwnDoor(subject instance, input *Input) error {
+	if subject.kind == kindUserService || len(input.DefinitionDocument) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"a service definition travelled beside %q, which pins none: it is refused before any effect",
+		subject.operation)
 }
 
 // documentMatching returns the schema 1 plan a digest names, or a refusal.
@@ -1257,6 +1362,15 @@ func attemptRollback(executor Executor, rollback instance) error {
 	case plan.OperationDeployPrivateService:
 		_, _, err := deployPrivateService(executor, capabilities, rollback)
 		return err
+	case plan.OperationRemoveUserService:
+		_, _, err := removeUserService(executor, rollback)
+		return err
+	// A redeployment run as a rollback finds the data and the generated values the
+	// failed removal kept, because a removal of this door keeps them: what it puts
+	// back is a container, and never a value it would have had to invent.
+	case plan.OperationDeployUserService:
+		_, _, err := deployUserService(executor, capabilities, rollback)
+		return err
 	case plan.OperationDiscardSnapshot:
 		_, _, err := discardSnapshot(executor, rollback)
 		return err
@@ -1345,14 +1459,23 @@ func observe(executor Executor, subject instance) Observation {
 			observed.Fragment = observedUnbacked
 		}
 	}
-	if where.bearsData() {
-		// A data-bearing profile is left holding three things the four words above
+	if where.bearsData() || where.confined {
+		// A data-bearing placement is left holding three things the four words above
 		// cannot say: its data, its confinement, and — for an archive operation —
 		// the archive that was being written. Each is asked separately, because a
 		// human reading a partial state has to know which of the three survived, and
 		// none of them can be inferred from another.
+		//
+		// The confinement is asked of every confined placement and not only of a
+		// data-bearing one, because the third door admits a service that keeps
+		// nothing and is confined all the same: whether such a service is left
+		// running with nothing refusing what it emits is exactly what a human has to
+		// read. The data is asked only where there is data, and a service that keeps
+		// none is left saying nothing about it.
 		observed.Data = observedUnknown
-		if present, err := executor.ServiceDataPresent(where.dataDirectory); err == nil {
+		if !where.bearsData() {
+			observed.Data = ""
+		} else if present, err := executor.ServiceDataPresent(where.dataDirectory); err == nil {
 			observed.Data = observedAbsent
 			if present {
 				observed.Data = observedPresent
@@ -1396,10 +1519,17 @@ func observe(executor Executor, subject instance) Observation {
 		}
 	}
 	if image, err := executor.ContainerImage(where.account, where.containerName); err == nil {
-		switch image {
-		case "":
+		switch {
+		case image == "":
 			observed.Container = observedNone
-		case where.image:
+		// A placement that pins no image is one derived from a slug alone — what an
+		// archive operation acts on — and it has nothing to compare against. Saying
+		// "other" of the container it found would be a claim this operation was
+		// never handed the material for, so what is reported is presence: there is a
+		// container, and this reading does not know which image it came from.
+		case where.image == "":
+			observed.Container = observedPresent
+		case image == where.image:
 			observed.Container = observedPinned
 		default:
 			observed.Container = observedOther

@@ -92,6 +92,12 @@ latéral vaut pour tout le monde, voisins synthétiques compris. Le tirage
 d'image précède la pose de la table ; une mise à jour la dépose, tire,
 la repose — trois effets visibles, jamais une exception silencieuse.
 
+Depuis `SERVICE-UTILISATEUR.md` (`#119`), la table est partagée entre tous
+les comptes confinés de la machine : à un seul compte ses octets sont
+exactement ceux prouvés ici, et pendant un tirage la table des **autres**
+comptes reste posée — le coffre n'est jamais déconfiné par le déploiement
+d'un autre service.
+
 ## Sauvegardes : des emplacements nommés, immuables, hachés
 
 - `snapshot_service` arrête proprement le service, archive `/data` daté et

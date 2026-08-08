@@ -63,11 +63,11 @@ table inet your-cloud-egress {
 	}
 }
 `
-	table := string(renderEgressRules(vaultwardenPlacement, fixtureAccountIdentifier))
+	table := string(renderEgressRules(confinedAs(vaultwardenPlacement, fixtureAccountIdentifier)))
 	if table != expected {
 		t.Fatalf("the confinement table is not the one this contract fixes:\n%s", table)
 	}
-	if table != string(renderEgressRules(vaultwardenPlacement, fixtureAccountIdentifier)) {
+	if table != string(renderEgressRules(confinedAs(vaultwardenPlacement, fixtureAccountIdentifier))) {
 		t.Fatal("the confinement table is not the same bytes twice, so idempotence cannot be read from it")
 	}
 }
@@ -82,7 +82,7 @@ table inet your-cloud-egress {
 // statement, every rule of this one is scoped.
 func TestNoRuleOfTheEgressTableIsWrittenWithoutItsAccountScope(t *testing.T) {
 	t.Parallel()
-	rules := renderEgressRules(vaultwardenPlacement, fixtureAccountIdentifier)
+	rules := renderEgressRules(confinedAs(vaultwardenPlacement, fixtureAccountIdentifier))
 	lines := egressRuleLines(rules)
 	if len(lines) != 3 {
 		t.Fatalf("the confinement table carries %d rules rather than three: %q", len(lines), lines)
@@ -124,8 +124,8 @@ func TestNoRuleOfTheEgressTableIsWrittenWithoutItsAccountScope(t *testing.T) {
 // would be lost if the number were ever frozen into the profile.
 func TestTheConfinedAccountIsReadFromTheMachineAndNeverFromAPlan(t *testing.T) {
 	t.Parallel()
-	first := string(renderEgressRules(vaultwardenPlacement, 993))
-	second := string(renderEgressRules(vaultwardenPlacement, 1042))
+	first := string(renderEgressRules(confinedAs(vaultwardenPlacement, 993)))
+	second := string(renderEgressRules(confinedAs(vaultwardenPlacement, 1042)))
 	if first == second {
 		t.Fatal("two machines with two identifiers rendered one table")
 	}

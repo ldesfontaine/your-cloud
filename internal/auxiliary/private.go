@@ -95,7 +95,14 @@ func deployPrivateService(executor Executor, capabilities Capabilities, subject 
 			return nil, false, fmt.Errorf("read the identifier of the service account: %w", err)
 		}
 	}
-	confinement, err := readEgressBounds(executor, where, identifier)
+	// The confinement of this machine is a table its confined services share, so
+	// what a deployment holds itself against is the table that names them all with
+	// this one among them — never a table of this profile alone.
+	confining, err := confinementJoinedBy(executor, where, identifier)
+	if err != nil {
+		return nil, false, err
+	}
+	confinement, err := readEgressBounds(executor, confining)
 	if err != nil {
 		return nil, false, err
 	}
@@ -138,9 +145,14 @@ func deployPrivateService(executor Executor, capabilities Capabilities, subject 
 		if err != nil {
 			return nil, touched, fmt.Errorf("read the identifier of the service account: %w", err)
 		}
+		confining, err = confinementJoinedBy(executor, where, identifier)
+		if err != nil {
+			return nil, touched, err
+		}
 	}
 
-	if err := executor.EnsureServiceData(where.account, where.dataDirectory, where.snapshotDirectory); err != nil {
+	if err := executor.EnsureServiceData(
+		where.account, where.durableDirectories(), where.snapshotDirectory); err != nil {
 		return nil, touched, fmt.Errorf("prepare the durable data of this service: %w", err)
 	}
 	if active {
@@ -151,15 +163,23 @@ func deployPrivateService(executor Executor, capabilities Capabilities, subject 
 			return nil, touched, fmt.Errorf("stop the drifted service: %w", err)
 		}
 	}
-	if confinement.present() {
-		if err := removeEgressBounds(executor, confinement); err != nil {
-			return nil, touched, err
-		}
+	// The fetch below runs as this service's own account and the table refuses
+	// exactly what fetching needs, so this account leaves the table for the length
+	// of the fetch. What stays posed meanwhile is every *other* confined account of
+	// this machine: no instant of this flow leaves a service somebody else approved
+	// running unconfined, and a machine confining this profile alone reaches exactly
+	// the lift `#102` proved — a table with nobody left in it is a table removed.
+	fetching, err := confinementLeftBy(executor, where)
+	if err != nil {
+		return nil, touched, err
+	}
+	if err := settleEgressBounds(executor, confinement, fetching); err != nil {
+		return nil, touched, err
 	}
 	if err := executor.PullImage(where.account, where.image); err != nil {
 		return nil, touched, fmt.Errorf("fetch the pinned image: %w", err)
 	}
-	if err := poseEgressBounds(executor, where, identifier); err != nil {
+	if err := poseEgressBounds(executor, confining); err != nil {
 		return nil, touched, err
 	}
 	if err := executor.WriteUnitFile(path, desired); err != nil {
@@ -215,11 +235,16 @@ func removePrivateService(executor Executor, subject instance) (*Application, bo
 	if err != nil {
 		return nil, false, fmt.Errorf("read the running image: %w", err)
 	}
-	// The confinement is read without an account identifier, because what a
-	// removal needs to know is which files are there to take away and not whether
-	// they carry the approved bytes: a table somebody edited is removed exactly
-	// like one this Auxiliary wrote.
-	confinement, err := readEgressBounds(executor, where, noAccountIdentifier)
+	// The confinement this machine is to hold afterwards is the one every other
+	// confined account is named in, and it is established before the sheet is taken
+	// away — the reading that produces it is a reading of the sheets. A table
+	// somebody edited is still rewritten exactly like one this Auxiliary wrote: what
+	// is compared is what this machine will hold, not who wrote what it holds.
+	remaining, err := confinementLeftBy(executor, where)
+	if err != nil {
+		return nil, false, err
+	}
+	confinement, err := readEgressBounds(executor, remaining)
 	if err != nil {
 		return nil, false, err
 	}
@@ -231,7 +256,7 @@ func removePrivateService(executor Executor, subject instance) (*Application, bo
 		return nil, false, fmt.Errorf("read the archives this machine holds for this service: %w", err)
 	}
 
-	if !present && !active && image == "" && !confinement.present() {
+	if !present && !active && image == "" && confinement.held {
 		return privateApplication(subject, where, path, ServiceStateAbsent, false, kept), false, nil
 	}
 
@@ -254,13 +279,13 @@ func removePrivateService(executor Executor, subject instance) (*Application, bo
 	if err := executor.RemoveImage(where.account, where.image); err != nil {
 		return nil, touched, fmt.Errorf("remove the pinned image: %w", err)
 	}
-	// The confinement is lifted last, once nothing of the service is left running.
-	// A removal that lifted it first would have an instant holding a running,
-	// unconfined service — the very instant the deployment's own order avoids.
-	if confinement.present() {
-		if err := removeEgressBounds(executor, confinement); err != nil {
-			return nil, touched, err
-		}
+	// This account leaves the table last, once nothing of the service is left
+	// running. A removal that lifted it first would have an instant holding a
+	// running, unconfined service — the very instant the deployment's own order
+	// avoids. Where other confined services remain, the table is rewritten without
+	// this account rather than taken away: what a removal removes is one service.
+	if err := settleEgressBounds(executor, confinement, remaining); err != nil {
+		return nil, touched, err
 	}
 	return privateApplication(subject, where, path, ServiceStateAbsent, true, kept), touched, nil
 }

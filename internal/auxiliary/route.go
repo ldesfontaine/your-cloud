@@ -133,9 +133,9 @@ tls:
 	))
 }
 
-// managedProfiles is the closed list of service profiles this Auxiliary places,
-// both doors together, in one fixed order, so that a check walking them reads the
-// same sheets in the same sequence on every run.
+// managedProfiles names every managed service this machine could be holding a
+// sheet for, the three doors together, in one fixed order, so that a check walking
+// them reads the same sheets in the same sequence on every run.
 //
 // It walks the private door as well as the stateless one because the sentence its
 // one caller implements is "a managed service of this machine is present", and a
@@ -143,16 +143,28 @@ tls:
 // private service in the reference scenario, and a reading that only knew the
 // stateless door would refuse every correct junction of it. Which door approved a
 // profile is decided where a document is turned into an instance, and never here.
-func managedProfiles() []string {
-	profiles := make([]string, 0, len(profilePlacements)+len(privateProfilePlacements))
+//
+// It walks the third door for the same sentence, and this is the one place where
+// the list stops being a constant of this package: which user services a machine
+// runs is a fact of that machine, so the machine is asked. That is exactly what
+// the contract says the publication learns of the third door — nothing of the
+// route's own form changes, and the reading beneath it now knows three doors
+// instead of two.
+func managedProfiles(executor Executor) ([]string, error) {
+	slugs, err := executor.ManagedUserServiceSlugs()
+	if err != nil {
+		return nil, fmt.Errorf("read the user services this machine holds: %w", err)
+	}
+	profiles := make([]string, 0, len(profilePlacements)+len(privateProfilePlacements)+len(slugs))
 	for profile := range profilePlacements {
 		profiles = append(profiles, profile)
 	}
 	for profile := range privateProfilePlacements {
 		profiles = append(profiles, profile)
 	}
+	profiles = append(profiles, slugs...)
 	sort.Strings(profiles)
-	return profiles
+	return profiles, nil
 }
 
 // publishingProfile names the managed service of this machine that publishes one
@@ -172,7 +184,11 @@ func managedProfiles() []string {
 // same answer on every run.
 func publishingProfile(executor Executor, port int) (string, bool, error) {
 	published := "PublishPort=" + loopbackAddress + ":" + strconv.Itoa(port) + ":"
-	for _, profile := range managedProfiles() {
+	profiles, err := managedProfiles(executor)
+	if err != nil {
+		return "", false, err
+	}
+	for _, profile := range profiles {
 		where, _ := placementOf(profile)
 		sheet, present, err := executor.ReadUnitFile(where.unitPath())
 		if err != nil {
@@ -209,12 +225,18 @@ func publishesLoopbackPort(executor Executor, port int) (bool, error) {
 //
 // A port nothing manages is refused here, with nothing touched. So is a port a
 // service of the private door publishes, and that second refusal is the one
-// `#102` left owing: the reading above knows both doors, because the passage
+// `#102` left owing: the reading above knows every door, because the passage
 // legitimately bounds a private service, and a public route reading it unfiltered
 // would have let a name of the entry reach a vault's own loopback port directly —
 // beside the passage the contract publishes it by, and with the isolation headers
 // of another profile on it. What a private service is published by is the
 // passage, and the route that does so lives on the other machine.
+//
+// That refusal names the private door and not "everything but the stateless one",
+// and the difference is the third door: a user service may be published by a local
+// route or by the passage, because which trajectory a service takes is a property
+// of the placement a human approves and not of the door it came through. The
+// refusal above was a decision of the private profile, and it stays that profile's.
 func requireManagedBackend(executor Executor, backendPort int) error {
 	profile, published, err := publishingProfile(executor, backendPort)
 	if err != nil {
@@ -226,7 +248,7 @@ func requireManagedBackend(executor Executor, backendPort int) error {
 			loopbackAddress, backendPort,
 		)
 	}
-	if _, stateless := profilePlacements[profile]; !stateless {
+	if _, private := privateProfilePlacements[profile]; private {
 		return fmt.Errorf(
 			"%s:%d is published by the %s profile, which lives behind the private door: a private service is published by the passage, not by a local route, so this route is refused before any effect",
 			loopbackAddress, backendPort, profile,

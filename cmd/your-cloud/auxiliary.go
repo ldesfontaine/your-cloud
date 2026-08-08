@@ -114,7 +114,16 @@ type auxiliaryReport struct {
 	// archive never appears here and cannot: the data of a vault is not a
 	// conclusion, and no field of this report, of an error or of an observation can
 	// hold a byte of it.
-	DataPath      string   `json:"data_path,omitempty"`
+	DataPath string `json:"data_path,omitempty"`
+	// SecretsPath is the directory holding the values this machine generated for a
+	// user service, and it is filled by the two operations of that door alone.
+	//
+	// It names a directory and never a value: a generated value is born on this
+	// machine, stays on it and enters no document, no report and no observation. A
+	// removal fills it for the reason it fills DataPath — a removal of this product
+	// keeps the data, the archives and the secrets, so the report says which
+	// directories survive rather than leaving a reader to assume either way.
+	SecretsPath   string   `json:"secrets_path,omitempty"`
 	SnapshotSlot  string   `json:"snapshot_slot,omitempty"`
 	PreviousSlot  string   `json:"previous_slot,omitempty"`
 	ArchiveSHA256 string   `json:"archive_sha256,omitempty"`
@@ -296,6 +305,7 @@ func buildAppliedAuxiliaryReport(accepted *approval.Acceptance, application *aux
 	report.PassageState = application.PassageState
 	report.LinkPublicKey = application.LinkPublicKey
 	report.DataPath = application.DataPath
+	report.SecretsPath = application.SecretsPath
 	report.SnapshotSlot = application.SnapshotSlot
 	report.PreviousSlot = application.PreviousSlot
 	report.ArchiveSHA256 = application.ArchiveSHA256
@@ -392,6 +402,14 @@ func renderAuxiliaryReport(writer io.Writer, format string, report auxiliaryRepo
 	// rendered before this palier stays exactly what it was, line for line.
 	if report.DataPath != "" {
 		if _, err := fmt.Fprintf(writer, "data: %s\n", report.DataPath); err != nil {
+			return err
+		}
+	}
+	// The generated values of a user service are named by their directory and by
+	// nothing else, for the reason the data is: what survives a removal is a fact
+	// worth stating. No value appears here, and none can — the line is a path.
+	if report.SecretsPath != "" {
+		if _, err := fmt.Fprintf(writer, "secrets: %s\n", report.SecretsPath); err != nil {
 			return err
 		}
 	}

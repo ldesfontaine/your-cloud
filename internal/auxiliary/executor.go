@@ -275,11 +275,11 @@ type Executor interface {
 	EnableLinkRulesAtBoot() error
 	DisableLinkRulesAtBoot() error
 
-	// The nine methods below are the whole of what a data-bearing profile needs
-	// beyond what a stateless one already asked for, and they are separate from
-	// everything above for one reason: nothing above can create a directory a
-	// container writes to, hold an account's numeric identity, or move a tree of
-	// bytes. Every one of them takes paths that are constants of this package or a
+	// The twelve methods below are the whole of what a data-bearing placement
+	// needs beyond what a stateless one already asked for, and they are separate
+	// from everything above for one reason: nothing above can create a directory a
+	// container writes to, hold an account's numeric identity, generate a value
+	// this machine keeps to itself, or move a tree of bytes. Every one of them takes paths that are constants of this package or a
 	// constant joined with a slot the plan validation has already bounded to a
 	// character set carrying no separator.
 
@@ -298,20 +298,71 @@ type Executor interface {
 	// and the one that tells a deployment which has never run from a deployment
 	// whose data has gone.
 	ServiceDataPresent(path string) (bool, error)
-	// EnsureServiceData creates, in one effect, the two directories a data-bearing
-	// profile owns, and is content with them already existing.
+	// EnsureServiceData creates, in one effect, the directories a data-bearing
+	// placement owns, and is content with them already existing.
 	//
 	// They are created with two different owners and the difference is the whole
 	// point. The data belongs to the service's own account, because a rootless
 	// container's root is that account outside its user namespace and the image
 	// must be able to write its volume; a directory left to root would be a
 	// service that starts and cannot write, or — worse — one the engine creates
-	// itself, root-owned, the first time it is missing. The archives belong to
-	// root alone, because nothing but this Auxiliary ever writes one and a
-	// container escape that reached the account must not be able to read, alter or
-	// destroy the backups of the very data it just escaped from. Both are closed
-	// to every other identity of the machine.
-	EnsureServiceData(account, dataDirectory, snapshotDirectory string) error
+	// itself the first time it is missing, with an owner and a mode nobody decided.
+	// The archives belong to root alone, because nothing but this Auxiliary ever
+	// writes one and a container escape that reached the account must not be able
+	// to read, alter or destroy the backups of the very data it just escaped from.
+	// Both are closed to every other identity of the machine.
+	//
+	// The data side is a list rather than one path because a placement of the third
+	// door has one durable root and one directory per declared volume under it, all
+	// of them the account's. The list is given parents first and every entry of it
+	// is a constant of this package or that root joined with a container path the
+	// definition already bound to normalised, separator-free segments.
+	EnsureServiceData(account string, dataDirectories []string, snapshotDirectory string) error
+
+	// ServiceSecretsPresent reports whether this machine already holds a value for
+	// every key a revision declares, and an environment file naming exactly those
+	// keys and no others.
+	//
+	// It answers presence and names, never a value, and that is not a weaker
+	// question but the only one this package may ask: a generated value never
+	// leaves the machine and enters no document, no report and no observation, so
+	// nothing above this seam could be handed one to compare. Key names are not
+	// values — a definition displays them wherever it is displayed.
+	//
+	// The names are part of the question because they are the one thing about a
+	// revision the sheet cannot say. Two revisions of one service that differ only
+	// by their declared keys render the very same sheet, so a deployment holding
+	// itself against the sheet alone would find "nothing changed" over an
+	// environment file naming the previous revision's keys. An absent value, or a
+	// file naming another set, is an answer and not a failure: it is what tells a
+	// first deployment from a redeployment, and a new revision from a replay.
+	ServiceSecretsPresent(directory, environmentFile string, keys []string) (bool, error)
+	// EnsureServiceSecrets generates what a revision declares and this machine does
+	// not hold, keeps everything it does hold, and rewrites the environment file
+	// the sheet reads.
+	//
+	// It is one effect and not three because it has one invariant: after it, this
+	// machine holds exactly one value per declared key — the value it already had
+	// wherever it had one — and an environment file naming exactly those keys.
+	// Nothing here ever replaces a value: a file that exists is kept whatever a
+	// revision says, the creation is exclusive, and no plan of this product
+	// describes the destruction of a secret, so a key a revision stopped declaring
+	// leaves the environment file and keeps its own file under the home.
+	//
+	// The directory and the values belong to the service's own account, because
+	// the account is what reads them back through the sheet; nothing else on the
+	// machine may enter the directory or open a value.
+	EnsureServiceSecrets(account, directory, environmentFile string, keys []string) error
+
+	// ManagedUserServiceSlugs names the user services this machine holds a sheet
+	// for, sorted, and reports names alone.
+	//
+	// It exists because the third door has no closed list this package could hold:
+	// which user services a machine runs is a fact of that machine, and two
+	// questions of this package genuinely need it — which accounts belong in the
+	// one confinement table, and whether a managed service of this machine
+	// publishes a given loopback port. A machine that holds none answers none.
+	ManagedUserServiceSlugs() ([]string, error)
 
 	// ServiceArchives names the ordinary slots this machine holds for one profile,
 	// sorted, and never the reserved slot: the slot the return mechanism owns is
@@ -355,8 +406,8 @@ type Executor interface {
 	// absent.
 	RemoveServiceArchive(path string) error
 
-	// EgressRules, WriteEgressRules and RemoveEgressRules are the confinement
-	// table of a private service, and they are three methods for the reason the
+	// EgressRules, WriteEgressRules and RemoveEgressRules are the one confinement
+	// table of this machine, and they are three methods for the reason the
 	// passage's own bounds are: what is on disk and what the kernel holds are one
 	// fact, so persisting and applying are one effect and removing is its exact
 	// inverse.

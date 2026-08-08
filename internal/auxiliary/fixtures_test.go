@@ -426,10 +426,25 @@ type fakeExecutor struct {
 	// keeps it, that a redeployment finds the same one, that a return brings a
 	// named one back. A tree would make those the same assertions with more
 	// machinery between them.
-	dataPresent  bool
-	dataContent  string
-	dataEnsured  int
-	dataRestores int
+	dataPresent bool
+	dataContent string
+	dataEnsured int
+	// dataDirectories is every directory a run asked this machine to hold for a
+	// service, in the order it asked. It is a list rather than a count because the
+	// third door derives one directory per declared volume, and what a case has to
+	// read is which paths those were.
+	dataDirectories []string
+	dataRestores    int
+	// secrets is one generated value per key path, and secretEnvironments is the
+	// file each placement's sheet reads them back from.
+	//
+	// They are held apart exactly as the real machine holds them: the values survive
+	// everything, and the environment file is rewritten from the keys of whichever
+	// revision was deployed last. secretsGenerated counts the draws, so "a
+	// redeployment regenerated nothing" is a number rather than an impression.
+	secrets            map[string]string
+	secretEnvironments map[string]string
+	secretsGenerated   int
 	// archives is every archive this fake machine holds, by path, each holding the
 	// data content that was archived into it. Keying by path is what lets a case
 	// assert that the reserved slot was written without the seam that lists
@@ -438,6 +453,7 @@ type fakeExecutor struct {
 	// The confinement table, held exactly as the passage's bounds are: a file, a
 	// kernel that read it, and a unit that would put it back at the next boot.
 	egressRules            []byte
+	egressWrites           [][]byte
 	egressRulesPresent     bool
 	egressRuleApplications int
 	egressAtBoot           bool
@@ -447,15 +463,25 @@ type fakeExecutor struct {
 
 func newFakeExecutor() *fakeExecutor {
 	return &fakeExecutor{
-		capabilities:      capableMachine(),
-		files:             map[string][]byte{},
-		failures:          map[string]error{},
-		tolerated:         map[string]int{},
-		calls:             map[string]int{},
-		nftTables:         map[string][]byte{},
-		archives:          map[string]string{},
-		accountIdentifier: fixtureAccountIdentifier,
+		capabilities:       capableMachine(),
+		files:              map[string][]byte{},
+		failures:           map[string]error{},
+		tolerated:          map[string]int{},
+		calls:              map[string]int{},
+		nftTables:          map[string][]byte{},
+		archives:           map[string]string{},
+		secrets:            map[string]string{},
+		secretEnvironments: map[string]string{},
+		accountIdentifier:  fixtureAccountIdentifier,
 	}
+}
+
+// fixtureSecretValue is what this fake machine draws for one generated value. It
+// is a sentence rather than a plausible secret, so that a test grepping a report,
+// an error or an observation for it can only match if something really did carry
+// a value, and never by coincidence.
+func fixtureSecretValue(draw int) string {
+	return "THIS-GENERATED-VALUE-MUST-NEVER-LEAVE-ITS-MACHINE-" + strconv.Itoa(draw)
 }
 
 const (
@@ -924,17 +950,105 @@ func (executor *fakeExecutor) ServiceDataPresent(path string) (bool, error) {
 	return executor.dataPresent, nil
 }
 
-// EnsureServiceData creates the durable directory and leaves what is already in
-// it exactly as it was, which is the property "a redeployment finds the data" is
+// EnsureServiceData creates the durable directories and leaves what is already in
+// them exactly as it was, which is the property "a redeployment finds the data" is
 // asserted against.
-func (executor *fakeExecutor) EnsureServiceData(account, dataDirectory, snapshotDirectory string) error {
+//
+// Every directory it was asked for is recorded, so that a case can hold the whole
+// list a placement derived: a user service's own volumes root and one directory
+// per declared volume, all of them under the home its slug decides.
+func (executor *fakeExecutor) EnsureServiceData(
+	account string,
+	dataDirectories []string,
+	snapshotDirectory string,
+) error {
 	executor.effects = append(executor.effects, "EnsureServiceData")
 	if err := executor.fail("EnsureServiceData"); err != nil {
 		return err
 	}
 	executor.dataEnsured++
 	executor.dataPresent = true
+	executor.dataDirectories = append(executor.dataDirectories, dataDirectories...)
 	return nil
+}
+
+// ServiceSecretsPresent answers from the values this fake machine holds and from
+// the names its environment file declares — as the real seam does, and for the
+// same reason: no caller of it may be handed a value.
+func (executor *fakeExecutor) ServiceSecretsPresent(
+	directory, environmentFile string,
+	keys []string,
+) (bool, error) {
+	executor.reads = append(executor.reads, "ServiceSecretsPresent")
+	if err := executor.fail("ServiceSecretsPresent"); err != nil {
+		return false, err
+	}
+	for _, key := range keys {
+		if _, held := executor.secrets[directory+"/"+key]; !held {
+			return false, nil
+		}
+	}
+	written, present := executor.secretEnvironments[environmentFile]
+	if !present {
+		return false, nil
+	}
+	return declaresExactly([]byte(written), keys), nil
+}
+
+// EnsureServiceSecrets generates exactly what this fake machine does not hold and
+// keeps everything it does, exactly as the real seam does.
+//
+// The generated value is drawn from a counter rather than from randomness, so that
+// "the same secrets came back" is an assertion about identity and a leak of one
+// into a report or an error would be a string a case can grep for. Refusing to
+// replace an existing value is held here and not above it, so a case proving
+// "never regenerated" is proving the seam.
+func (executor *fakeExecutor) EnsureServiceSecrets(
+	account, directory, environmentFile string,
+	keys []string,
+) error {
+	executor.effects = append(executor.effects, "EnsureServiceSecrets")
+	if err := executor.fail("EnsureServiceSecrets"); err != nil {
+		return err
+	}
+	lines := []string{}
+	for _, key := range keys {
+		path := directory + "/" + key
+		if _, held := executor.secrets[path]; !held {
+			executor.secretsGenerated++
+			executor.secrets[path] = fixtureSecretValue(executor.secretsGenerated)
+		}
+		lines = append(lines, key+"="+executor.secrets[path])
+	}
+	executor.secretEnvironments[environmentFile] = strings.Join(lines, "\n") + "\n"
+	return nil
+}
+
+// ManagedUserServiceSlugs answers from the sheets this machine holds, so that a
+// case which deployed a user service does not also have to declare that this
+// machine runs one.
+func (executor *fakeExecutor) ManagedUserServiceSlugs() ([]string, error) {
+	executor.reads = append(executor.reads, "ManagedUserServiceSlugs")
+	if err := executor.fail("ManagedUserServiceSlugs"); err != nil {
+		return nil, err
+	}
+	slugs := []string{}
+	for path := range executor.files {
+		home, held := strings.CutPrefix(path, userServiceHomeRoot+UserServiceAccountPrefix)
+		if !held {
+			continue
+		}
+		slug, _, split := strings.Cut(home, "/")
+		if !split || servicedefinition.ValidateSlug(slug) != nil {
+			continue
+		}
+		if path != userServicePlacementOfSlug(slug).unitPath() {
+			continue
+		}
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	return slugs, nil
 }
 
 func (executor *fakeExecutor) ServiceArchives(directory string) ([]string, error) {
@@ -1025,11 +1139,17 @@ func (executor *fakeExecutor) EgressRules(path string) ([]byte, bool, error) {
 // WriteEgressRules persists the table and loads it into this fake machine's
 // kernel in the same call, so a run that wrote the file without applying it would
 // leave the two disagreeing — which is exactly what the seam exists to prevent.
+//
+// Every table a run writes is kept, in order, because one property of the shared
+// table is about the instants between the writes: a deployment that lifts its own
+// account for the length of a fetch must never lift somebody else's, and that is
+// read from what was posed meanwhile rather than from what was posed last.
 func (executor *fakeExecutor) WriteEgressRules(path string, content []byte) error {
 	executor.effects = append(executor.effects, "WriteEgressRules")
 	if err := executor.fail("WriteEgressRules"); err != nil {
 		return err
 	}
+	executor.egressWrites = append(executor.egressWrites, content)
 	executor.egressRules = content
 	executor.egressRulesPresent = true
 	executor.egressRuleApplications++
@@ -1186,15 +1306,12 @@ func frozenRestorePair(t *testing.T) plan.Frozen {
 // The pairs of the third door a Controller would have built and transported,
 // together with the archive of a service the same definition describes.
 //
-// They exist for the reason the private profile's fixtures existed before `#102`
-// closed that window: what must be refused is a whole, valid, canonically frozen
-// pair, exactly as a Console would hand it over, rather than an operation string
-// written into a shape this package already places.
-//
 // The definition is the one the servicedefinition package pins as its own
-// reference vector, spelled here as the canonical bytes a Controller froze. The
-// image digest is synthetic and looks it: the third door pins no image, so there
-// is no identity of the product to name here.
+// reference vector, spelled here as the canonical bytes a Controller froze — so
+// that the placement these tests derive is derived from the very document the two
+// implementations hold their vectors against. The image digest is synthetic and
+// looks it: the third door pins no image, so there is no identity of the product
+// to name here.
 const (
 	fixtureUserDefinitionDocument = `{"schema_version":1,"slug":"lab-notes",` +
 		`"image_repository":"registry.lab.your-cloud.test/your-cloud/lab-notes",` +
@@ -1242,6 +1359,102 @@ func frozenUserRestorePair(t *testing.T) plan.Frozen {
 		t.Fatal(err)
 	}
 	return frozenV2(t, pair)
+}
+
+// fixtureUserDefinition is that reference document, decoded, and
+// fixtureUserPlacement is what this Auxiliary derives from it for the instance
+// the fixtures above approve.
+//
+// They are derived rather than spelled out, because the derivation is exactly
+// what these tests are about: a fixture that wrote the account and the host paths
+// by hand would agree with the code by construction and would prove nothing.
+func fixtureUserDefinition(t *testing.T) servicedefinition.Document {
+	t.Helper()
+	definition, err := servicedefinition.Decode([]byte(fixtureUserDefinitionDocument))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return definition
+}
+
+func fixtureUserPlacement(t *testing.T) placement {
+	t.Helper()
+	return userServicePlacementOf(fixtureUserDefinition(t), fixtureUserImageDigest, fixtureUserOriginHost)
+}
+
+// approvedUserService is the nominal schema 2 subject of the third door: the
+// signed pair, and the definition's own bytes travelling beside it exactly as a
+// Console hands them over.
+func approvedUserService(t *testing.T, operation string, port int) (*approval.Acceptance, *Input) {
+	t.Helper()
+	accepted, input := approvedFrozenPair(operation, frozenUserServicePair(t, operation, port))
+	input.DefinitionDocument = []byte(fixtureUserDefinitionDocument)
+	return accepted, input
+}
+
+// approvedUserArchive and approvedUserRestore are the archive operations naming a
+// user service by its slug. No definition travels with them, and that is the
+// contract rather than an omission: what an archive acts on derives from the slug,
+// and the machine answers for the rest.
+func approvedUserArchive(t *testing.T, operation string) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(operation, frozenUserArchivePair(t, operation))
+}
+
+func approvedUserRestore(t *testing.T) (*approval.Acceptance, *Input) {
+	t.Helper()
+	return approvedFrozenPair(plan.OperationRestoreService, frozenUserRestorePair(t))
+}
+
+// userServiceMachine is a machine that can run the flow with the user service's
+// account already created, and nothing of the service on it yet: no sheet, no
+// volume, no generated value, no confinement.
+func userServiceMachine() *fakeExecutor {
+	executor := newFakeExecutor()
+	executor.capabilities.AccountPresent = true
+	executor.capabilities.RootlessPodman = true
+	return executor
+}
+
+// deployedUserServiceMachine is a machine already holding exactly the approved
+// user service: the sheet bytes the interpolated origin and the volumes are
+// embedded in, the running container on the approved image, the volumes with their
+// synthetic content, one generated value per declared key with the environment
+// file beside them, and the confinement this machine's own account identifier
+// renders with the unit that poses it again at boot.
+func deployedUserServiceMachine(t *testing.T, port int) *fakeExecutor {
+	t.Helper()
+	where := fixtureUserPlacement(t)
+	executor := userServiceMachine()
+	executor.hold(where.unitPath(), renderSheet(where, port, fixtureUserOriginHost))
+	executor.active = true
+	executor.image = where.image
+	executor.dataPresent = true
+	executor.dataContent = fixtureSecrets
+	lines := []string{}
+	for _, key := range where.secretKeys {
+		executor.secretsGenerated++
+		executor.secrets[where.secretsDirectory()+"/"+key] = fixtureSecretValue(executor.secretsGenerated)
+		lines = append(lines, key+"="+executor.secrets[where.secretsDirectory()+"/"+key])
+	}
+	executor.secretEnvironments[where.environmentFilePath()] = strings.Join(lines, "\n") + "\n"
+	executor.egressRules = renderEgressRules(confinedAs(where, executor.accountIdentifier))
+	executor.egressRulesPresent = true
+	executor.nftTables[egressTableFamily+" "+egressTableName] = executor.egressRules
+	executor.nftTables[foreignTable] = []byte("table " + foreignTable + " { }")
+	executor.hold(egressRulesUnitPath, renderEgressRulesUnit())
+	executor.egressAtBoot = true
+	return executor
+}
+
+// archivedUserServiceMachine is that same machine holding one ordinary archive of
+// its volumes, whose content is a state other than the one currently deployed.
+func archivedUserServiceMachine(t *testing.T, port int) *fakeExecutor {
+	t.Helper()
+	executor := deployedUserServiceMachine(t, port)
+	where := userServicePlacementOfSlug(fixtureUserSlug)
+	executor.archives[where.archivePath(fixtureSnapshotSlot)] = fixtureRestoredSecrets
+	return executor
 }
 
 func frozenV2(t *testing.T, pair plan.V2Pair) plan.Frozen {
@@ -1654,7 +1867,7 @@ func deployedPrivateMachine(port int) *fakeExecutor {
 // so that every case asserting what a removal takes away is asserting it against
 // a machine that has a ruleset to damage.
 func confinePrivateMachine(executor *fakeExecutor) {
-	executor.egressRules = renderEgressRules(vaultwardenPlacement, executor.accountIdentifier)
+	executor.egressRules = renderEgressRules(confinedAs(vaultwardenPlacement, executor.accountIdentifier))
 	executor.egressRulesPresent = true
 	executor.nftTables[egressTableFamily+" "+egressTableName] = executor.egressRules
 	executor.nftTables[foreignTable] = []byte("table " + foreignTable + " { }")
@@ -1813,3 +2026,11 @@ func joinedLinkMachine(role string) *fakeExecutor {
 // how "retirer la jonction retire la table et rien d'autre" is held against a
 // machine rather than against a sentence.
 const foreignTable = "inet somebody-elses-firewall"
+
+// confinedAs is one placement's account beside the identifier a machine gave it,
+// as the one-account confinement a case describes. It exists so that no case has
+// to spell the shape the rendering takes, and so that a case describing two
+// confined accounts is visibly a different sentence than this one.
+func confinedAs(where placement, identifier int) []confinedAccount {
+	return []confinedAccount{{account: where.account, identifier: identifier}}
+}

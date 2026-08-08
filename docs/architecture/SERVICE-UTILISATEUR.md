@@ -361,6 +361,55 @@ Une application qui ne tient pas ces phrases n'est pas condamnée : elle attend
 un contrat futur qui nommera l'élargissement, ou reste un élément externe que
 le produit représente sans le posséder.
 
+## Addendum `#119` : ce que poser la troisième porte sur une machine a exigé de décider
+
+Le contrat ci-dessus dit quoi. Poser la dérivation et les sept opérations sur
+une machine a demandé des décisions qu'il ne nommait pas, et elles sont ici
+plutôt que seulement dans le code. La fenêtre ouverte par `#118` est close :
+chaque forme de la troisième porte atteint les effets de son propre genre et
+d'aucun autre, et le test qui tenait la fenêtre a été remplacé par celui qui
+tient cette propriété.
+
+- **La définition voyage par sa propre porte, dans les deux sens.** L'entrée
+  de l'Auxiliaire gagne un troisième champ à côté du plan et du rollback, qui
+  porte les octets canoniques exacts de la définition. Une forme de service
+  utilisateur sans définition est refusée en nommant la révision manquante ;
+  une définition à côté de toute autre forme — sonde, route, passage, et
+  **archive** — est refusée avant toute lecture de la machine. Les opérations
+  d'archive n'en portent pas : tout ce qu'elles touchent dérive du slug seul,
+  et la présence de volumes se lit sur la machine, comme le port se lit dans
+  la fiche.
+- **`secrets.env` appartient au compte, pas à root.** C'est le gestionnaire
+  systemd du compte qui lit `EnvironmentFile=`, et un fichier root dans un
+  foyer que le compte possède revendiquerait une protection que le répertoire
+  ne peut pas tenir. Le reste de la propriété suit le contrat : `volumes/` et
+  `secrets/` au compte en `0700`, les archives à root seul.
+- **La table de sortie devient multi-comptes, et c'était sa dette.** Le
+  profil privé avait légué la décision « au palier qui ajoute un second
+  profil confiné » : c'est celui-ci. La table unique rend un bloc de règles
+  par compte confiné ; à un seul compte, ses octets sont exactement ceux que
+  `#102` a prouvés. Il suit que déployer ou retirer n'importe quel service
+  confiné pose la table de **tous** les comptes confinés de la machine, que
+  seul le retrait du dernier emporte les fichiers, et que le tirage d'image
+  pose pendant le fetch la table de **tous les autres** — déployer un service
+  utilisateur ne déconfine jamais le coffre, fût-ce le temps d'un tirage.
+- **Les comptes confinés se découvrent sur la machine, jamais dans un
+  registre.** Une lecture bornée énumère les foyers `your-cloud-user-*` dont
+  la fiche existe ; elle sert aussi la lecture « un service géré de cette
+  machine publie ce port », qui connaît désormais les trois portes.
+- **Des secrets disparus sont une dérive, jamais une continuité** — la règle
+  des données disparues, mot pour mot : la valeur manquante est régénérée et
+  le rapport dit que la machine a changé. « Jamais régénéré » vaut pour une
+  clé dont le fichier existe. Et une valeur que la machine n'a pas générée
+  est refusée à la relecture par sa propre grammaire : un fichier posé à la
+  main n'injectera pas de ligne d'environnement arbitraire par la porte des
+  secrets.
+- **Une restauration ne connaît que la racine des volumes.** L'archive
+  couvre `volumes/` entier et l'échange atomique le rend entier ; la liste
+  des volumes d'une révision appartient à la définition, que les opérations
+  d'archive ne portent pas. C'est dit ici pour qu'un lecteur ne cherche pas
+  une garantie sous-arbre par sous-arbre que rien ne promet.
+
 ## Ce que la preuve devra constater
 
 La preuve (`#121`) exerce le moteur avec une **application synthétique

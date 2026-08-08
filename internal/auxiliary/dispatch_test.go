@@ -8,15 +8,16 @@ package auxiliary
 // closed a window a test named. `#90` added the two managed web service
 // operations, `#91` the four entrypoint and route ones, `#96` the six of the
 // private passage, which were refused by the schema dispatch alone until it
-// landed, and `#102` and `#103` the seven of the private profile. One window is
-// open again: the third door — the two user service operations, and the archive
-// operations naming a definition by its slug — is read but not performed, and
-// `#119` closes it. What this file holds is therefore that every document shape
-// this Auxiliary performs reaches the effects of its own kind and no other, that
-// the shapes it does not perform are refused by name before anything happens, and
-// that no decoder covers for another.
+// landed, `#102` and `#103` the seven of the private profile, and `#119` the five
+// forms of the third door — the two user service operations and the archive
+// operations naming a definition by its slug. No window is open: every operation
+// these three schemas describe is performed. What this file holds is therefore
+// that every document shape reaches the effects of its own kind and no other,
+// that a shape this package has no placement for is refused by name before
+// anything happens, and that no decoder covers for another.
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -584,84 +585,151 @@ func TestAPairWhoseTwoDigestsAreOneDigestIsRefusedBeforeAnythingIsDecoded(t *tes
 	}
 }
 
-// TestEveryThirdDoorOperationIsRefusedByNameBeforeAnyEffect is the window this
-// issue opens, named here so that the issue which closes it has one test to
-// replace rather than a silence to notice.
+// TestEveryThirdDoorOperationIsNowPerformedAndNamesItsOwnInstance is the window
+// this issue closes, and it replaces the test that named that window.
 //
-// The approval package now holds the third door's two operations in its closed
-// list and the Controller builds their pairs, so a human may sign one and this
-// Auxiliary may be handed a real, valid, canonically frozen pair. Performing them
-// is `#119`: the account, the home, the volumes, the interpolated environment,
-// the generated secrets and the egress table are all derived from a definition
-// whose own bytes have to travel beside the signed pair and be rehashed before
-// this machine is read at all. Until then every pair below is refused where the
-// shapes of schema 2 become instances — by name, before any effect, and before
-// this machine is read.
+// Until `#119` the third door's five forms were refused where the shapes of
+// schema 2 become instances, by name and before this machine was read: the
+// approval package holds their operations in its closed list and the Controller
+// builds their pairs, so a human could sign one and this Auxiliary could be handed
+// a real, valid, canonically frozen pair — and it acted on none of them. They are
+// performed now, so what this test holds is the property that refusal used to
+// guard: each of the five reaches the effects of its own kind, announces what its
+// own kind has to announce, and names the instance it acted on rather than any
+// other.
 //
-// The archive rows are the other half of the same window, and they take another
-// path to the same refusal: a snapshot names its service by the field the
-// delivered profiles use, so a definition's slug reaches the placement lookup
-// rather than a shape this package has never seen. Both halves must refuse, or a
-// plan of the third door would reach a home the private door owns.
-func TestEveryThirdDoorOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
+// The five are two halves of one door and they reach it by two different paths: a
+// deployment and a removal arrive as a shape of their own, with the definition's
+// bytes beside them, while the three archive operations arrive through the very
+// field the delivered profiles use — a slug where a profile's name goes. Both
+// halves must land on the home the slug derives, or a plan of the third door
+// would act on a home another door owns, which is precisely what the reservation
+// of the four names exists to make inconstructible.
+func TestEveryThirdDoorOperationIsNowPerformedAndNamesItsOwnInstance(t *testing.T) {
 	t.Parallel()
+	where := fixtureUserPlacement(t)
+	archived := userServicePlacementOfSlug(fixtureUserSlug)
 	for name, subject := range map[string]struct {
 		operation string
-		// named is what the refusal must spell out: the operation for a shape this
-		// package has no placement for, the slug for an archive whose service is a
-		// definition rather than a profile.
-		named  string
-		frozen func(*testing.T) plan.Frozen
+		machine   func(*testing.T) *fakeExecutor
+		approved  func(*testing.T) (*approval.Acceptance, *Input)
+		state     string
+		unitPath  string
+		slot      string
+		digestOf  string
+		secrets   string
 	}{
 		"a user service deployment": {
-			operation: plan.OperationDeployUserService, named: plan.OperationDeployUserService,
-			frozen: func(t *testing.T) plan.Frozen {
-				return frozenUserServicePair(t, plan.OperationDeployUserService, fixturePort)
+			operation: plan.OperationDeployUserService,
+			machine:   func(*testing.T) *fakeExecutor { return userServiceMachine() },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedUserService(t, plan.OperationDeployUserService, fixturePort)
 			},
+			state:    ServiceStateActive,
+			unitPath: where.unitPath(),
+			secrets:  where.secretsDirectory(),
 		},
 		"a user service removal": {
-			operation: plan.OperationRemoveUserService, named: plan.OperationRemoveUserService,
-			frozen: func(t *testing.T) plan.Frozen {
-				return frozenUserServicePair(t, plan.OperationRemoveUserService, fixturePort)
+			operation: plan.OperationRemoveUserService,
+			machine:   func(t *testing.T) *fakeExecutor { return deployedUserServiceMachine(t, fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedUserService(t, plan.OperationRemoveUserService, fixturePort)
 			},
+			state:    ServiceStateAbsent,
+			unitPath: where.unitPath(),
+			secrets:  where.secretsDirectory(),
 		},
 		"a snapshot of a user service": {
-			operation: plan.OperationSnapshotService, named: fixtureUserSlug,
-			frozen: func(t *testing.T) plan.Frozen {
-				return frozenUserArchivePair(t, plan.OperationSnapshotService)
+			operation: plan.OperationSnapshotService,
+			machine:   func(t *testing.T) *fakeExecutor { return deployedUserServiceMachine(t, fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedUserArchive(t, plan.OperationSnapshotService)
 			},
+			slot:     fixtureSnapshotSlot,
+			digestOf: fixtureSecrets,
 		},
 		"a discard of a user service archive": {
-			operation: plan.OperationDiscardSnapshot, named: fixtureUserSlug,
-			frozen: func(t *testing.T) plan.Frozen {
-				return frozenUserArchivePair(t, plan.OperationDiscardSnapshot)
+			operation: plan.OperationDiscardSnapshot,
+			machine:   func(t *testing.T) *fakeExecutor { return archivedUserServiceMachine(t, fixturePort) },
+			approved: func(t *testing.T) (*approval.Acceptance, *Input) {
+				return approvedUserArchive(t, plan.OperationDiscardSnapshot)
 			},
+			slot: fixtureSnapshotSlot,
 		},
 		"a restore of a user service": {
-			operation: plan.OperationRestoreService, named: fixtureUserSlug,
-			frozen: func(t *testing.T) plan.Frozen { return frozenUserRestorePair(t) },
+			operation: plan.OperationRestoreService,
+			machine:   func(t *testing.T) *fakeExecutor { return archivedUserServiceMachine(t, fixturePort) },
+			approved:  func(t *testing.T) (*approval.Acceptance, *Input) { return approvedUserRestore(t) },
+			slot:      fixtureSnapshotSlot,
+			// A return reports the digest of what it *wrote*, which is the archive of
+			// the state it replaced — the one the reserved slot now holds.
+			digestOf: fixtureSecrets,
 		},
 	} {
-		executor := deployedServiceMachine(t, fixturePort)
-		accepted, input := approvedFrozenPair(subject.operation, subject.frozen(t))
+		executor := subject.machine(t)
+		accepted, input := subject.approved(t)
 
 		application, err := Apply(executor, accepted, input)
-		if err == nil {
-			t.Fatalf("%s was applied by an Auxiliary that does not perform it", name)
+		if err != nil {
+			t.Fatalf("%s was refused by an Auxiliary that performs it: %v", name, err)
 		}
-		if application != nil {
-			t.Fatalf("%s returned an application: %+v", name, application)
+		if application.Operation != subject.operation || application.ServiceState != subject.state {
+			t.Fatalf("%s announced another instance or another state: %+v", name, application)
 		}
-		if !strings.Contains(err.Error(), "does not yet perform") {
-			t.Fatalf("%s was refused for another reason than the window: %v", name, err)
+		if !application.Changed {
+			t.Fatalf("%s found nothing to do on a machine that needed it: %+v", name, application)
 		}
-		if !strings.Contains(err.Error(), subject.named) {
-			t.Fatalf("%s was refused without being named: %v", name, err)
+		if application.UnitPath != subject.unitPath {
+			t.Fatalf("%s named the sheet %q rather than %q", name, application.UnitPath, subject.unitPath)
 		}
-		if len(executor.effects) != 0 || len(executor.reads) != 0 {
-			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		if application.SnapshotSlot != subject.slot {
+			t.Fatalf("%s named the slot %q rather than %q", name, application.SnapshotSlot, subject.slot)
+		}
+		if subject.digestOf != "" && application.ArchiveSHA256 != archiveDigest(subject.digestOf) {
+			t.Fatalf("%s wrote an archive and reported no digest for it: %+v", name, application)
+		}
+		if application.ArchiveSHA256 != "" && application.ArchiveSHA256 != archiveDigest(subject.digestOf) {
+			t.Fatalf("%s reported another archive than the one it wrote: %+v", name, application)
+		}
+		// Every one of the five names the durable root of this service, and the two
+		// that were handed the revision name the directory its generated values live
+		// in. An archive was handed none, so it names none: the values it never looked
+		// at are not a conclusion of an operation about a file beside them.
+		if application.DataPath != archived.dataDirectory {
+			t.Fatalf("%s named the data %q rather than %q", name, application.DataPath, archived.dataDirectory)
+		}
+		if application.SecretsPath != subject.secrets {
+			t.Fatalf("%s named the secrets %q rather than %q", name, application.SecretsPath, subject.secrets)
+		}
+		if application.RouteHost != "" || application.FragmentPath != "" || application.LinkPublicKey != "" {
+			t.Fatalf("%s named an instance of another kind: %+v", name, application)
+		}
+		if len(executor.effects) == 0 {
+			t.Fatalf("%s reported a change without touching the machine", name)
+		}
+		// Nothing this door does may carry a generated value out of the machine. The
+		// fake draws sentences rather than plausible secrets exactly so that this can
+		// be a search rather than an inspection.
+		if carried := carriesAGeneratedValue(executor, application); carried != "" {
+			t.Fatalf("%s carried a generated value out of this machine: %s", name, carried)
 		}
 	}
+}
+
+// carriesAGeneratedValue searches everything one applied operation produced for
+// any of the values this machine generated, and names the first it finds.
+//
+// It reads the report whole rather than field by field, because the property is
+// about the report and not about a list of fields somebody kept up to date beside
+// it: a field added later that carried a value would be caught here.
+func carriesAGeneratedValue(executor *fakeExecutor, application *Application) string {
+	rendered := fmt.Sprintf("%+v", *application)
+	for path, value := range executor.secrets {
+		if strings.Contains(rendered, value) {
+			return path
+		}
+	}
+	return ""
 }
 
 // TestEverySchemaTwoOperationIsNowPerformedAndNamesItsOwnInstance is the window

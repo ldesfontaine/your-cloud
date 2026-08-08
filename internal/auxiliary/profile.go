@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	"github.com/ldesfontaine/your-cloud/internal/plan"
+	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 )
 
 const (
@@ -99,6 +100,20 @@ const (
 	contentTypeHTMLDocument = "text/html"
 )
 
+// volumeMount is one durable write path of a managed service: where it lives on
+// this host, and the path the image declares inside its own filesystem.
+//
+// The two are held together rather than as two lists, because a mount is one
+// fact: a host path without the container path it answers is a directory nothing
+// reads, and the reverse is a mount nothing backs. Both sides are decided by the
+// placement — a constant of the product for the delivered profiles, a derivation
+// from the definition's own slug for a user service — so no plan of any door can
+// move a write path or add a second one.
+type volumeMount struct {
+	host      string
+	container string
+}
+
 // placement is everything a managed service owns on a machine beyond the plan
 // that describes it: the account it runs as, the sheet that describes it, the
 // container that sheet declares, the image it is pinned to, and the shape of the
@@ -110,6 +125,13 @@ const (
 // the drift computation — is parameterised by a profile rather than written once
 // per profile. Nothing in it comes from a plan: a plan chooses a profile and one
 // loopback port, and the profile decides everything the plan does not state.
+//
+// The third door fills the very same structure from a definition instead of
+// enumerating it per profile, which is why the fields below say "the placement
+// decides" and never "the profile decides": a user service's account, home,
+// volumes, environment and secrets are derived from the one slug its definition
+// declares, and the derivation is as much a constant of this package as the
+// delivered profiles' own values are.
 type placement struct {
 	// account and home are the identity the service runs as, and the directory
 	// a rootless engine is given for its own storage.
@@ -144,21 +166,32 @@ type placement struct {
 	// none, because a mount that grants nothing still reads as a mount that
 	// was needed.
 	writablePaths []string
-	// dataDirectory, containerDataPath and snapshotDirectory are what a profile
-	// whose data outlives its container has, and what every profile before it has
-	// none of.
+	// dataDirectory, volumes and snapshotDirectory are what a profile whose data
+	// outlives its container has, and what every profile before it has none of.
 	//
-	// They are three constants of the placement and not three fields of a plan:
-	// the rule of the stateless sheets is unchanged — no document of this product
-	// describes a path a machine writes to — and what a data-bearing profile adds
-	// is one such path decided here, mounted read-write on the volume the image
-	// declares, with its archives beside it. A profile that keeps no data names
-	// none of the three, and everything below reads that absence as the whole
-	// statement: there is nothing to mount, nothing to create and nothing to
-	// archive.
+	// They are constants of the placement and not fields of a plan: the rule of
+	// the stateless sheets is unchanged — no document of this product describes a
+	// path a machine writes to — and what a data-bearing placement adds is such
+	// paths decided here, mounted read-write on the paths the image declares, with
+	// the archives beside them. A profile that keeps no data names none of the
+	// three, and everything below reads that absence as the whole statement: there
+	// is nothing to mount, nothing to create and nothing to archive.
+	//
+	// dataDirectory is the *root* of what this service durably holds, and it is
+	// the one directory that is created, archived and reported. The delivered
+	// private profile has one volume and that root is it; a user service has zero
+	// to eight, and the root is the one directory they all live under — so an
+	// archive stays what the contract says it is, a single coherent snapshot of
+	// everything at once, rather than one file per mount whose order would lie.
 	dataDirectory     string
-	containerDataPath string
+	volumes           []volumeMount
 	snapshotDirectory string
+	// secretKeys are the names of the values this machine generates for the
+	// service, and never a value: no field of this package, of a document or of a
+	// report can hold one. A placement that declares none carries no secrets
+	// directory, no environment file and no EnvironmentFile= line in its sheet,
+	// because a line that reads nothing still reads as a line that was needed.
+	secretKeys []string
 	// environment is the closed list of hardening lines the sheet carries, and
 	// originEnvironmentPrefix is the beginning of the one line that carries an
 	// approved value — the origin the instance answers under, appended verbatim.
@@ -185,6 +218,44 @@ type placement struct {
 // is the one question that decides whether a volume, a data directory and an
 // archive exist for it.
 func (where placement) bearsData() bool { return where.dataDirectory != "" }
+
+// bearsSecrets reports whether this placement declares any generated value at
+// all, and it is the one question that decides whether a secrets directory, an
+// environment file and an EnvironmentFile= line exist for it.
+func (where placement) bearsSecrets() bool { return len(where.secretKeys) != 0 }
+
+// secretsDirectory is where the one value of each declared key lives, and
+// environmentFilePath is the file the sheet reads them back from.
+//
+// They are derived from the home rather than held as two more fields, because
+// they are not a choice: a placement that declares keys owns exactly these two
+// paths under its own home, and every caller of them is guarded by bearsSecrets
+// above. Nothing outside this package can name either of them.
+func (where placement) secretsDirectory() string { return where.home + "/secrets" }
+
+func (where placement) environmentFilePath() string { return where.home + "/secrets.env" }
+
+// durableDirectories are every directory the data of this placement needs before
+// the container starts, parents first.
+//
+// It is the root and then each volume's own host path, because a rootless engine
+// given a mount whose host path is missing creates that path itself — and a
+// directory this Auxiliary did not create is a directory whose owner and mode
+// nobody decided. The list is deduplicated, so the delivered private profile,
+// whose single volume *is* the root, still names exactly one directory and
+// reaches exactly the effect `#102` proved.
+func (where placement) durableDirectories() []string {
+	if !where.bearsData() {
+		return nil
+	}
+	directories := []string{where.dataDirectory}
+	for _, mount := range where.volumes {
+		if mount.host != where.dataDirectory {
+			directories = append(directories, mount.host)
+		}
+	}
+	return directories
+}
 
 // archivePath is the one file a named slot owns for this profile.
 //
@@ -287,9 +358,11 @@ var vaultwardenPlacement = placement{
 	// The image writes its own data and nothing else: there is no in-memory
 	// scratch to give it, and a mount that grants nothing still reads as a mount
 	// that was needed.
-	writablePaths:     nil,
-	dataDirectory:     VaultwardenDataDirectory,
-	containerDataPath: VaultwardenContainerDataPath,
+	writablePaths: nil,
+	dataDirectory: VaultwardenDataDirectory,
+	volumes: []volumeMount{
+		{host: VaultwardenDataDirectory, container: VaultwardenContainerDataPath},
+	},
 	snapshotDirectory: VaultwardenSnapshotDirectory,
 	environment: []string{
 		vaultwardenSignupsAllowed,
@@ -323,11 +396,12 @@ var privateProfilePlacements = map[string]placement{
 // ServiceUnitPath is the one file this package writes for one service profile,
 // and reports whether that profile is one this Auxiliary places at all.
 //
-// It answers for both doors, because the question is where a managed service's
-// sheet lives and not which door approved it. What stays closed against itself is
-// the pair of maps below it: a caller that has a private document looks up the
-// private list and a caller that has a stateless one looks up the stateless list,
-// and neither can reach the other's placement.
+// It answers for the three doors, because the question is where a managed
+// service's sheet lives and not which door approved it. What stays closed against
+// itself is the lookup below it: a caller that has a private document looks up the
+// private list, a caller that has a stateless one looks up the stateless list, a
+// caller that has a definition derives from its slug, and none of them can reach
+// another's placement.
 func ServiceUnitPath(serviceProfile string) (string, bool) {
 	where, known := placementOf(serviceProfile)
 	if !known {
@@ -336,18 +410,33 @@ func ServiceUnitPath(serviceProfile string) (string, bool) {
 	return where.unitPath(), true
 }
 
-// placementOf finds one profile in either door's closed list.
+// placementOf finds one managed service of this machine by the name a document
+// calls it: a profile in either door's closed list, or the slug of a user
+// service definition.
 //
-// It is the one place the two lists are read together, and it exists for the two
-// questions that are genuinely about "a managed service of this machine" rather
-// than about a door: where a profile's sheet is, and whether some profile of this
-// machine publishes a given loopback port. Every other caller of a placement
-// comes from a document and looks up the list of that document's own door, which
-// is what keeps the refusal running in both directions.
+// It is the one place the three doors are read together, and it exists for the
+// two questions that are genuinely about "a managed service of this machine"
+// rather than about a door: where a service's sheet is, and whether some service
+// of this machine publishes a given loopback port. Every other caller of a
+// placement comes from a document and looks up the list of that document's own
+// door, which is what keeps the refusal running in every direction.
+//
+// The third door has no closed list to look up, and it needs none: the four
+// reserved slugs make a well-formed slug a name no delivered profile can answer
+// to, and everything the questions above ask of a user service — its account, its
+// home and its sheet — derives from that slug alone. What such a placement
+// deliberately does not carry is the definition's own decisions: no image, no
+// volumes, no environment and no secrets, because those live in a revision this
+// lookup was not handed.
 func placementOf(serviceProfile string) (placement, bool) {
 	if where, known := profilePlacements[serviceProfile]; known {
 		return where, true
 	}
-	where, known := privateProfilePlacements[serviceProfile]
-	return where, known
+	if where, known := privateProfilePlacements[serviceProfile]; known {
+		return where, true
+	}
+	if servicedefinition.ValidateSlug(serviceProfile) != nil {
+		return placement{}, false
+	}
+	return userServicePlacementOfSlug(serviceProfile), true
 }

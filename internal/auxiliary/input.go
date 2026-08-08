@@ -4,27 +4,29 @@
 // The approval package decides whether a human authorised this machine to act.
 // This package decides what acting means, and it is the only place in the
 // product where a plan becomes a file, a service and a container. Its operations
-// are twenty-one: the pinned OCI probe of schema 1, deployed and removed; the
+// are twenty-three: the pinned OCI probe of schema 1, deployed and removed; the
 // managed web service, the public entrypoint and the published route of schema 2;
-// the three pairs of the private passage of schema 3; and the private profile's
+// the three pairs of the private passage of schema 3; the private profile's
 // seven, also of schema 2 — the data-bearing service, the route the passage
 // publishes and the three archive operations, whose return is the one undoing of
-// the product that moves a field instead of reversing the operation. Every one of
-// them is described by a plan document whose digest the approval signed.
+// the product that moves a field instead of reversing the operation; and the
+// third door's two, a service deployed and removed from a definition its user
+// wrote. Every one of them is described by a plan document whose digest the
+// approval signed.
 //
-// The third door of the product is written in schema 2 as well, and this package
-// does not perform it yet. Its two operations — a service deployed and removed
-// from a definition its user wrote — and the archive operations naming such a
-// definition by its slug are refused by name where the shapes become instances,
-// before any effect and before this machine is read at all, until `#119` lands.
-// That window is deliberate and it is tested — an operation this Auxiliary does
-// not perform must refuse, never guess — and it is the same window `#90`, `#91`,
-// `#96`, `#102` and `#103` each opened and closed in turn.
+// The third door is the one whose plan is not enough to act on. A definition is a
+// document of its own, and a plan only ever pins it by digest, so its exact bytes
+// travel beside the signed pair on the same standard input — and this machine
+// rehashes and revalidates them before it reads anything of itself. It trusts
+// neither the transport nor the Controller: it re-derives the account, the home,
+// every host path, the environment and the secrets locally, from the one slug the
+// definition declares.
 //
-// Everything a profile means on a machine — its account, its home, its sheet,
-// its container and its pinned image — lives in one placement per profile rather
-// than in the flow, so the two profiles share one machinery and share nothing on
-// a machine.
+// Everything a managed service means on a machine — its account, its home, its
+// sheet, its container and its pinned image — lives in one placement rather than
+// in the flow. The delivered profiles enumerate theirs and a user service derives
+// its own from a definition, so the three doors share one machinery and share
+// nothing on a machine.
 //
 // Two rules shape everything below. The first is that no plan-derived string
 // ever reaches a shell: every effect goes through the Executor interface as
@@ -44,20 +46,27 @@ import (
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
+	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 	"github.com/ldesfontaine/your-cloud/internal/strictjson"
 )
 
 const (
-	// inputSlack is what the wrapper itself costs beyond the three documents it
+	// inputSlack is what the wrapper itself costs beyond the documents it
 	// carries: its field names, its quoting and the escaping a transport may
-	// apply to the two plan documents it holds as strings.
+	// apply to the plan documents and the definition it holds as strings.
 	inputSlack = 1024
 
 	// MaxInputBytes bounds the whole document read on the standard input before
-	// anything is parsed. It is the sum of the bounds the three carried
-	// documents already have, and not a new freedom: each of them is still held
-	// against its own bound by the package that owns it.
-	MaxInputBytes = approval.MaxSignedApprovalBytes + 2*plan.MaxPlanBytes + inputSlack
+	// anything is parsed. It is the sum of the bounds the carried documents
+	// already have, and not a new freedom: each of them is still held against its
+	// own bound by the package that owns it.
+	//
+	// The definition's own bound is part of that sum because the third door is the
+	// one operation whose plan is not enough to act on: the bytes a plan pins by
+	// digest have to arrive beside it so this machine can rehash them itself. It is
+	// counted once, because one plan pins one revision.
+	MaxInputBytes = approval.MaxSignedApprovalBytes + 2*plan.MaxPlanBytes +
+		servicedefinition.MaxDefinitionBytes + inputSlack
 
 	// wrapperDiscriminator is the field whose presence at the top level says
 	// which of the two closed shapes was sent. The two shapes share no field
@@ -83,27 +92,45 @@ const (
 
 // Input is one accepted shape of the standard input, decoded and bounded.
 //
-// The two plan documents are raw bytes here and nothing more: they have not yet
-// been held against the digests the envelope signed, so nothing in this package
-// reads their content until they have.
+// The plan documents and the definition are raw bytes here and nothing more:
+// they have not yet been held against the digests the envelope signed nor
+// against the digest a plan pins, so nothing in this package reads their content
+// until they have.
 type Input struct {
 	Kind             Kind
 	Signed           *approval.SignedApproval
 	PlanDocument     []byte
 	RollbackDocument []byte
+	// DefinitionDocument is the exact canonical bytes of the service definition a
+	// user service plan pins, or nothing at all.
+	//
+	// It travels beside the signed pair because it is the one thing a plan of the
+	// third door cannot carry: a definition is a document of its own, pinned by
+	// digest, and this machine re-derives that digest from these very bytes before
+	// it reads anything of itself. Which operations may carry it is not decided
+	// here — the shape of the plan decides it, once the two documents have been
+	// held against the digests a human signed.
+	DefinitionDocument []byte
 }
 
 // applyWrapper is the closed schema of the mutating shape.
 //
 // The signed approval is kept as its own received bytes rather than decoded
 // here, so that it goes through exactly the same strict decoding as when it
-// arrives alone. The two plan documents travel as strings carrying their exact
-// canonical bytes, which is the one transport form the contract describes: the
-// machine hashes what it was given instead of re-encoding what it understood.
+// arrives alone. The two plan documents and the definition travel as strings
+// carrying their exact canonical bytes, which is the one transport form the
+// contract describes for each of them: the machine hashes what it was given
+// instead of re-encoding what it understood.
+//
+// The definition is the one field of this wrapper that may be absent, and its
+// absence is not a default: it is what every operation but the third door's two
+// sends, and a carried definition beside any other plan is refused where the
+// shapes become instances rather than tolerated here.
 type applyWrapper struct {
 	SignedApproval json.RawMessage `json:"signed_approval"`
 	Plan           string          `json:"plan"`
 	Rollback       string          `json:"rollback"`
+	Definition     string          `json:"definition"`
 }
 
 // DecodeInput accepts exactly one of the two closed shapes, fully validated.
@@ -142,12 +169,23 @@ func DecodeInput(document []byte) (*Input, error) {
 	if len(wrapper.Rollback) == 0 || len(wrapper.Rollback) > plan.MaxPlanBytes {
 		return nil, fmt.Errorf("carried rollback must contain 1..%d bytes", plan.MaxPlanBytes)
 	}
-	return &Input{
+	// A definition that was sent is bounded here and read nowhere else, by the
+	// bound its own package owns. A definition that was not sent is nothing at all,
+	// and it stays nothing: an empty string is not an empty definition.
+	if len(wrapper.Definition) > servicedefinition.MaxDefinitionBytes {
+		return nil, fmt.Errorf("carried definition must contain 1..%d bytes",
+			servicedefinition.MaxDefinitionBytes)
+	}
+	input := &Input{
 		Kind:             KindApply,
 		Signed:           signed,
 		PlanDocument:     []byte(wrapper.Plan),
 		RollbackDocument: []byte(wrapper.Rollback),
-	}, nil
+	}
+	if wrapper.Definition != "" {
+		input.DefinitionDocument = []byte(wrapper.Definition)
+	}
+	return input, nil
 }
 
 // carriesPlanDocuments reads only the top-level field names, and decides from
