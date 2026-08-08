@@ -234,10 +234,10 @@ func (document Document) Validate() error {
 	if document.SchemaVersion != SchemaVersion {
 		return errors.New("service definition schema version is unsupported")
 	}
-	if err := validateSlug(document.Slug); err != nil {
+	if err := ValidateSlug(document.Slug); err != nil {
 		return err
 	}
-	if err := validateImageRepository(document.ImageRepository); err != nil {
+	if err := ValidateImageRepository(document.ImageRepository); err != nil {
 		return err
 	}
 	if document.ContainerPort < MinContainerPort || document.ContainerPort > MaxContainerPort {
@@ -317,6 +317,33 @@ func (document Document) SHA256() (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// InterpolatesOriginHost reports whether this definition consumes the origin a
+// plan approves.
+//
+// It is the one reading of the placeholder anything outside this package
+// performs, and it exists so that the template stays spelled in exactly one
+// place. A plan of a user service carries origin_host precisely when this answers
+// true — a definition that names the origin makes it a value the container
+// receives, and a definition that does not would turn an approved name into an
+// intention without a consequence. That rule is a cross-check between a plan and
+// the definition it pins, held by the Controller at construction and re-held by
+// the Auxiliary with the definition in hand; both ask this question rather than
+// searching for the sequence themselves.
+//
+// Scanning the whole line is exact rather than approximate: a key is upper-case
+// letters, digits and underscores, so a brace can only ever appear in the value,
+// and validation has already refused every brace that is not the placeholder
+// itself. A definition this package has not validated is outside the contract and
+// answers nothing meaningful here, as everywhere else.
+func (document Document) InterpolatesOriginHost() bool {
+	for _, line := range document.Environment {
+		if strings.Contains(line, OriginHostPlaceholder) {
+			return true
+		}
+	}
+	return false
+}
+
 // withExplicitLists is the one place a list that was never declared becomes an
 // empty one, so that the canonical spelling of a definition does not depend on
 // how its author left a list out.
@@ -335,9 +362,16 @@ func orEmpty(list []string) []string {
 	return list
 }
 
-// validateSlug bounds the one name everything else about the service derives
+// ValidateSlug bounds the one name everything else about the service derives
 // from, and refuses the four names another door already answers to.
-func validateSlug(slug string) error {
+//
+// It is exported because the plan schema needs to state the same rule and must
+// not own a second spelling of it: a plan names a definition by its slug in
+// definition_slug, and an archive operation names one in service_profile beside
+// the closed list of delivered profiles. A second expression that agreed with
+// this one today would be a second expression to keep agreeing with it, and the
+// two would disagree on exactly the day the reserved names changed.
+func ValidateSlug(slug string) error {
 	if !canonicalSlug.MatchString(slug) {
 		return fmt.Errorf(
 			"service definition slug must be 1..%d lower-case letters, digits and hyphens opening on a letter or a digit",
@@ -349,8 +383,13 @@ func validateSlug(slug string) error {
 	return nil
 }
 
-// validateImageRepository requires where the images come from, and refuses to be
+// ValidateImageRepository requires where the images come from, and refuses to be
 // told which one.
+//
+// It is exported for the reason ValidateSlug is: the image_reference of a user
+// service plan must be exactly the repository of the definition it pins, so the
+// plan schema bounds that field by this very rule rather than by a second one
+// that would have to keep agreeing with it.
 //
 // The tag and the digest are refused by their own names before the grammar is
 // read, so that the most likely mistake a human makes — pasting the reference
@@ -358,7 +397,7 @@ func validateSlug(slug string) error {
 // than by a generic malformation. The digest of an instance lives in the plan
 // that deploys it, and updating a service is a new plan whose digest differs,
 // never a silent mutation of what a definition names.
-func validateImageRepository(repository string) error {
+func ValidateImageRepository(repository string) error {
 	if repository == "" || len(repository) > MaxImageRepositoryBytes {
 		return fmt.Errorf("service definition image_repository must contain 1..%d bytes",
 			MaxImageRepositoryBytes)

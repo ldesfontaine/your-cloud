@@ -12,7 +12,9 @@
 //! answer under, the one durable path it writes to, the four lines of its closed
 //! environment and the table that refuses it every outbound flow; a link route
 //! names the host and the peer of the tunnel behind it; an archive names a
-//! profile and a slot, and says in what terms it can and cannot be undone.
+//! profile and a slot, and says in what terms it can and cannot be undone; a user
+//! service names the definition it runs and the exact revision of it, and says
+//! that everything the plan does not carry comes from that revision.
 //!
 //! **Nothing is displayed that has not been verified.**
 //! [`PresentedPublicationPlan`] is the only way to obtain the lines a window
@@ -49,7 +51,7 @@ use serde::Deserialize;
 use your_cloud_bootstrap_protocol::{
     verify_plan_v2_document, ApprovalOperation, PlanDocumentV2, PlanV2Group, PlanV2Operation,
     SignedApprovalV1, ENTRYPOINT_PUBLIC_HTTPS_PORT, ENTRYPOINT_PUBLIC_HTTP_PORT,
-    ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL, LINK_INITIATOR_TUNNEL_ADDRESS,
+    ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL, LINK_INITIATOR_TUNNEL_ADDRESS, ORIGIN_HOST_PLACEHOLDER,
     PRIVATE_SERVICE_DATA_VOLUME, PRIVATE_SERVICE_EGRESS_TABLE,
     PRIVATE_SERVICE_ENVIRONMENT_HARDENING, PRIVATE_SERVICE_ORIGIN_SCHEME,
     PRIVATE_SERVICE_ORIGIN_VARIABLE, RESERVED_SNAPSHOT_SLOT, ROUTE_ISOLATION_HEADERS,
@@ -247,6 +249,20 @@ impl PresentedPublicationPlan {
     /// bring back. A restore says where the return comes from: the reserved slot,
     /// written before any data is touched.
     ///
+    /// A user service is the one plan whose values decide almost nothing, and
+    /// the lines say so. The slug and the revision are what a human really
+    /// approves: the account, the home, the volumes, the environment lines and
+    /// the names of the generated secrets all come from the definition frozen
+    /// under that exact digest, and no field of the plan can move any of them. A
+    /// window that showed the image and the port without naming the revision
+    /// would be showing the two least decisive facts about the service.
+    ///
+    /// Its origin is the one field of the schema a document may or may not
+    /// carry, so both forms are written rather than one being left out: a plan
+    /// that answers under a name and a plan that answers under none are two
+    /// states, and a human must be able to tell them apart on screen as surely
+    /// as their digests do.
+    ///
     /// The rollback is named as the plan it is, with what it shares with the
     /// plan spelled out, because a return path a human did not read is a return
     /// path nobody approved.
@@ -353,6 +369,37 @@ impl PresentedPublicationPlan {
                     "Retour : le rollback restaure ce que « {RESERVED_SNAPSHOT_SLOT} » détient, \
                      écrit avant que la moindre donnée ne soit touchée"
                 ));
+            }
+            PlanDocumentV2::UserService(document) => {
+                lines.push(format!("Service défini : {}", document.definition_slug));
+                lines.push(format!(
+                    "Révision de la définition : {}",
+                    document.definition_digest
+                ));
+                lines.push(format!("Image : {}", document.image_reference));
+                lines.push(format!("Digest de l’image : {}", document.image_digest));
+                lines.push(format!(
+                    "Port local : {SERVICE_LOCAL_ADDRESS}:{}",
+                    document.local_port
+                ));
+                if document.origin_host.is_empty() {
+                    lines.push(format!(
+                        "Origine : aucune, aucune ligne de la définition gelée ne nomme \
+                         {ORIGIN_HOST_PLACEHOLDER}"
+                    ));
+                } else {
+                    lines.push(format!(
+                        "Origine : {}, portée par les lignes de la définition qui nomment \
+                         {ORIGIN_HOST_PLACEHOLDER}",
+                        document.origin_host
+                    ));
+                }
+                lines.push(
+                    "Ce que la révision décide : le compte, le foyer, les volumes, \
+                     l’environnement et les noms de secrets viennent de la définition gelée sous \
+                     cette empreinte, et d’aucun champ de ce plan"
+                        .to_owned(),
+                );
             }
         }
         lines.push(format!(
@@ -465,6 +512,8 @@ fn approval_operation(operation: PlanV2Operation) -> ApprovalOperation {
         PlanV2Operation::SnapshotService => ApprovalOperation::SnapshotService,
         PlanV2Operation::DiscardSnapshot => ApprovalOperation::DiscardSnapshot,
         PlanV2Operation::RestoreService => ApprovalOperation::RestoreService,
+        PlanV2Operation::DeployUserService => ApprovalOperation::DeployUserService,
+        PlanV2Operation::RemoveUserService => ApprovalOperation::RemoveUserService,
     }
 }
 
@@ -483,6 +532,8 @@ fn operation_text(operation: PlanV2Operation) -> &'static str {
         PlanV2Operation::SnapshotService => "sauvegarder les données du service privé",
         PlanV2Operation::DiscardSnapshot => "détruire l’archive nommée",
         PlanV2Operation::RestoreService => "restaurer les données du service privé",
+        PlanV2Operation::DeployUserService => "déployer le service utilisateur",
+        PlanV2Operation::RemoveUserService => "retirer le service utilisateur",
     }
 }
 
@@ -504,6 +555,10 @@ fn rollback_scope_text(group: PlanV2Group) -> &'static str {
         PlanV2Group::Snapshot => "sur la même machine, le même profil et le même emplacement",
         PlanV2Group::Restore => {
             "sur la même machine et le même profil, vers l’emplacement réservé du mécanisme de retour"
+        }
+        PlanV2Group::UserService => {
+            "sur la même machine, la même définition, la même révision, la même image, le même \
+             port et la même origine"
         }
     }
 }
@@ -611,6 +666,47 @@ mod tests {
         r#""service_profile":"vaultwarden","snapshot_slot":"previous"}"#,
     );
 
+    /// The four documents of the third door, byte for byte, under the same rule
+    /// as the six above. The pair without an origin is here because it is the
+    /// one shape of the schema whose conditional field is empty, and what a
+    /// human reads about it has to differ from what they read about the other.
+    const USER_SERVICE_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"deploy_user_service","#,
+        r#""definition_slug":"lab-notes","#,
+        r#""definition_digest":"c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce","#,
+        r#""image_reference":"registry.lab.your-cloud.test/your-cloud/lab-notes","#,
+        r#""image_digest":"sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20","#,
+        r#""local_port":8080,"origin_host":"notes.lab.your-cloud.test"}"#,
+    );
+    const USER_SERVICE_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"remove_user_service","#,
+        r#""definition_slug":"lab-notes","#,
+        r#""definition_digest":"c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce","#,
+        r#""image_reference":"registry.lab.your-cloud.test/your-cloud/lab-notes","#,
+        r#""image_digest":"sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20","#,
+        r#""local_port":8080,"origin_host":"notes.lab.your-cloud.test"}"#,
+    );
+    const MINIMAL_USER_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"deploy_user_service","#,
+        r#""definition_slug":"minimal","#,
+        r#""definition_digest":"faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c","#,
+        r#""image_reference":"registry.lab.your-cloud.test/minimal","#,
+        r#""image_digest":"sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40","#,
+        r#""local_port":8081,"origin_host":""}"#,
+    );
+    const MINIMAL_USER_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"remove_user_service","#,
+        r#""definition_slug":"minimal","#,
+        r#""definition_digest":"faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c","#,
+        r#""image_reference":"registry.lab.your-cloud.test/minimal","#,
+        r#""image_digest":"sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40","#,
+        r#""local_port":8081,"origin_host":""}"#,
+    );
+
     const WEB_SERVICE_PLAN_SHA256: &str =
         "99f6e6401d74583f64e4200e6e47cd365ab299466eebe1c1a7210f260b0366ae";
     const WEB_SERVICE_ROLLBACK_SHA256: &str =
@@ -639,6 +735,14 @@ mod tests {
         "6a6b71a15f969916a426fdfdcefca22ab670935a04459079eb724c18e180aebc";
     const RESTORE_ROLLBACK_SHA256: &str =
         "1be3be0186ff3be565e6c4df4fc5a864a8a28f1c3929d029b3ec6ecb38c11b5a";
+    const USER_SERVICE_PLAN_SHA256: &str =
+        "604b9300bb6f321d53759365cc7064fed1fc9b794b8afdbe811a1742d8133a59";
+    const USER_SERVICE_ROLLBACK_SHA256: &str =
+        "b2737aba239eb3d43326c43e1508687b33ade43ed5fd62a97cfe0866b6deabc8";
+    const MINIMAL_USER_PLAN_SHA256: &str =
+        "305f7fac725f8c7cd0970cd4db3b92af60a339b1cd1fa569b61858865210a753";
+    const MINIMAL_USER_ROLLBACK_SHA256: &str =
+        "bb76c62b75d4fd70d7437e75d82396c5b9ae6df3ef6a65e881ac20a222bcc5d3";
 
     fn view(
         plan_document: &str,
@@ -724,6 +828,24 @@ mod tests {
             RESTORE_PLAN_SHA256,
             RESTORE_ROLLBACK_DOCUMENT,
             RESTORE_ROLLBACK_SHA256,
+        )
+    }
+
+    fn user_service_view() -> PlanPairView {
+        view(
+            USER_SERVICE_PLAN_DOCUMENT,
+            USER_SERVICE_PLAN_SHA256,
+            USER_SERVICE_ROLLBACK_DOCUMENT,
+            USER_SERVICE_ROLLBACK_SHA256,
+        )
+    }
+
+    fn minimal_user_service_view() -> PlanPairView {
+        view(
+            MINIMAL_USER_PLAN_DOCUMENT,
+            MINIMAL_USER_PLAN_SHA256,
+            MINIMAL_USER_ROLLBACK_DOCUMENT,
+            MINIMAL_USER_ROLLBACK_SHA256,
         )
     }
 
@@ -1006,6 +1128,145 @@ mod tests {
             ]
         );
         assert_ne!(presented.plan_sha256(), presented.rollback_sha256());
+    }
+
+    /// The user service names the definition it runs, the exact revision of it,
+    /// and says that everything the plan does not carry comes from that
+    /// revision.
+    ///
+    /// The revision is the line this window exists for. A human who read the
+    /// image and the port and not the digest of the frozen definition would have
+    /// approved an account, a home, a set of volumes, an environment and a list
+    /// of generated secret names without reading any of them — none of which is
+    /// a field of the plan, and all of which the revision decides.
+    #[test]
+    fn a_verified_user_service_pair_displays_the_revision_it_runs() {
+        let presented = PresentedPublicationPlan::verify(&user_service_view()).expect("the vector");
+        assert_eq!(presented.machine_id(), MACHINE);
+        assert_eq!(presented.operation(), PlanV2Operation::DeployUserService);
+        assert_eq!(presented.group(), PlanV2Group::UserService);
+
+        assert_eq!(
+            presented.confirmation_lines(),
+            vec![
+                format!("Machine : {MACHINE}"),
+                "Opération : déployer le service utilisateur".to_owned(),
+                "Service défini : lab-notes".to_owned(),
+                "Révision de la définition : \
+                 c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce"
+                    .to_owned(),
+                "Image : registry.lab.your-cloud.test/your-cloud/lab-notes".to_owned(),
+                "Digest de l’image : \
+                 sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                    .to_owned(),
+                format!("Port local : {SERVICE_LOCAL_ADDRESS}:8080"),
+                "Origine : notes.lab.your-cloud.test, portée par les lignes de la définition qui \
+                 nomment {origin_host}"
+                    .to_owned(),
+                "Ce que la révision décide : le compte, le foyer, les volumes, l’environnement et \
+                 les noms de secrets viennent de la définition gelée sous cette empreinte, et \
+                 d’aucun champ de ce plan"
+                    .to_owned(),
+                "Rollback : retirer le service utilisateur, sur la même machine, la même \
+                 définition, la même révision, la même image, le même port et la même origine"
+                    .to_owned(),
+                format!("Empreinte du plan : {USER_SERVICE_PLAN_SHA256}"),
+                format!("Empreinte du rollback : {USER_SERVICE_ROLLBACK_SHA256}"),
+            ]
+        );
+    }
+
+    /// A user service whose definition consumes no origin says so, rather than
+    /// leaving the line out.
+    ///
+    /// The origin is the one field of this schema a document may or may not
+    /// carry, and the two plans are two states with two digests. A window that
+    /// simply omitted the line would render the two nearly identically, and a
+    /// human comparing what they approved to what runs would have nothing to
+    /// compare.
+    #[test]
+    fn a_user_service_without_an_origin_says_that_it_has_none() {
+        let presented =
+            PresentedPublicationPlan::verify(&minimal_user_service_view()).expect("the vector");
+        assert_eq!(presented.operation(), PlanV2Operation::DeployUserService);
+        assert_eq!(
+            presented.confirmation_lines(),
+            vec![
+                format!("Machine : {MACHINE}"),
+                "Opération : déployer le service utilisateur".to_owned(),
+                "Service défini : minimal".to_owned(),
+                "Révision de la définition : \
+                 faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c"
+                    .to_owned(),
+                "Image : registry.lab.your-cloud.test/minimal".to_owned(),
+                "Digest de l’image : \
+                 sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"
+                    .to_owned(),
+                format!("Port local : {SERVICE_LOCAL_ADDRESS}:8081"),
+                "Origine : aucune, aucune ligne de la définition gelée ne nomme {origin_host}"
+                    .to_owned(),
+                "Ce que la révision décide : le compte, le foyer, les volumes, l’environnement et \
+                 les noms de secrets viennent de la définition gelée sous cette empreinte, et \
+                 d’aucun champ de ce plan"
+                    .to_owned(),
+                "Rollback : retirer le service utilisateur, sur la même machine, la même \
+                 définition, la même révision, la même image, le même port et la même origine"
+                    .to_owned(),
+                format!("Empreinte du plan : {MINIMAL_USER_PLAN_SHA256}"),
+                format!("Empreinte du rollback : {MINIMAL_USER_ROLLBACK_SHA256}"),
+            ]
+        );
+
+        // The two plans really are two on screen as they are in the bytes: the
+        // one line that differs is the one that has to.
+        let with_origin =
+            PresentedPublicationPlan::verify(&user_service_view()).expect("the vector");
+        assert_ne!(
+            presented.confirmation_lines(),
+            with_origin.confirmation_lines()
+        );
+        assert_ne!(presented.plan_sha256(), with_origin.plan_sha256());
+    }
+
+    /// An archive of a user service reaches the window unchanged.
+    ///
+    /// `service_profile` is the one field two doors share, so a slug travels
+    /// through the archive shape and through its lines exactly as a delivered
+    /// profile does: the value is displayed verbatim, and the four reserved
+    /// names are what keeps one name from meaning two things.
+    #[test]
+    fn an_archive_of_a_user_service_is_displayed_like_any_other_archive() {
+        let plan = SNAPSHOT_PLAN_DOCUMENT.replace(
+            &format!(r#""service_profile":"{SERVICE_PROFILE_VAULTWARDEN}""#),
+            r#""service_profile":"lab-notes""#,
+        );
+        let rollback = SNAPSHOT_ROLLBACK_DOCUMENT.replace(
+            &format!(r#""service_profile":"{SERVICE_PROFILE_VAULTWARDEN}""#),
+            r#""service_profile":"lab-notes""#,
+        );
+        let plan_digest = your_cloud_bootstrap_protocol::decode_plan_v2_document(plan.as_bytes())
+            .expect("an archive of a definition is a plan")
+            .sha256()
+            .unwrap();
+        let rollback_digest =
+            your_cloud_bootstrap_protocol::decode_plan_v2_document(rollback.as_bytes())
+                .expect("its destruction is one too")
+                .sha256()
+                .unwrap();
+        let presented = PresentedPublicationPlan::verify(&view(
+            &plan,
+            &plan_digest,
+            &rollback,
+            &rollback_digest,
+        ))
+        .expect("an archive of a user service");
+        assert_eq!(presented.group(), PlanV2Group::Snapshot);
+        assert!(presented
+            .confirmation_lines()
+            .contains(&"Profil de service : lab-notes".to_owned()));
+        // And the digest of an archive of a definition is not the digest of an
+        // archive of the delivered profile of the same slot.
+        assert_ne!(plan_digest, SNAPSHOT_PLAN_SHA256);
     }
 
     /// A pair whose two documents are one document never reaches a window.
@@ -1351,6 +1612,34 @@ mod tests {
                 ApprovalOperation::SnapshotService,
                 ApprovalOperation::DiscardSnapshot,
             ),
+            (
+                // The third door signs like the two others: the envelope names
+                // the operation the document declares and the same mutating
+                // pair, and it has never known that what those digests cover was
+                // written by a user rather than pinned by the product.
+                "user service",
+                user_service_view(),
+                view(
+                    USER_SERVICE_ROLLBACK_DOCUMENT,
+                    USER_SERVICE_ROLLBACK_SHA256,
+                    USER_SERVICE_PLAN_DOCUMENT,
+                    USER_SERVICE_PLAN_SHA256,
+                ),
+                ApprovalOperation::DeployUserService,
+                ApprovalOperation::RemoveUserService,
+            ),
+            (
+                "user service without an origin",
+                minimal_user_service_view(),
+                view(
+                    MINIMAL_USER_ROLLBACK_DOCUMENT,
+                    MINIMAL_USER_ROLLBACK_SHA256,
+                    MINIMAL_USER_PLAN_DOCUMENT,
+                    MINIMAL_USER_PLAN_SHA256,
+                ),
+                ApprovalOperation::DeployUserService,
+                ApprovalOperation::RemoveUserService,
+            ),
         ] {
             let presented = PresentedPublicationPlan::verify(&forward).unwrap();
             let signed = presented
@@ -1502,6 +1791,8 @@ mod tests {
             link_route_view(),
             snapshot_view(),
             restore_view(),
+            user_service_view(),
+            minimal_user_service_view(),
         ] {
             let presented = PresentedPublicationPlan::verify(&pair).unwrap();
             assert!(matches!(
@@ -1563,6 +1854,8 @@ mod tests {
             link_route_view(),
             snapshot_view(),
             restore_view(),
+            user_service_view(),
+            minimal_user_service_view(),
         ] {
             let presented = PresentedPublicationPlan::verify(&pair).unwrap();
             let signed = presented

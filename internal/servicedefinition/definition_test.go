@@ -722,6 +722,63 @@ func TestTheFourReservedSlugsAreRefusedByName(t *testing.T) {
 	}
 }
 
+// TestADefinitionSaysForItselfWhetherItConsumesTheOrigin is the reading a plan
+// of the third door depends on, and the reason the placeholder is spelled in one
+// place.
+//
+// A plan carries origin_host exactly when the definition it pins interpolates
+// one — a name the human approves must be a name the container receives — and
+// that rule is a cross-check the Controller holds at construction and the
+// Auxiliary holds again with the definition in hand. Both ask this question, so
+// what it answers has to be exact rather than nearly right: a value carrying the
+// sequence anywhere is a value that consumes the origin, a key never can carry
+// it, and no other spelling is a template.
+func TestADefinitionSaysForItselfWhetherItConsumesTheOrigin(t *testing.T) {
+	t.Parallel()
+	if !vectorReference().InterpolatesOriginHost() {
+		t.Fatal("the reference definition interpolates the origin and says it does not")
+	}
+	if vectorMinimal().InterpolatesOriginHost() {
+		t.Fatal("a definition with no environment at all claims to consume the origin")
+	}
+
+	for name, environment := range map[string][]string{
+		"the whole value":         {"LAB_NOTES_ORIGIN={origin_host}"},
+		"a value opening on it":   {"LAB_NOTES_ORIGIN={origin_host}/notes"},
+		"a value closing on it":   {"LAB_NOTES_ORIGIN=https://{origin_host}"},
+		"one line among several":  {"LAB_NOTES_TITLE=Notes", "LAB_NOTES_ORIGIN=https://{origin_host}/"},
+		"twice in the same value": {"LAB_NOTES_ORIGIN={origin_host} {origin_host}"},
+	} {
+		document := vectorReference()
+		document.Environment = environment
+		document.SecretKeys = nil
+		if _, err := Decode(hostileDefinitionDocument(t, document)); err != nil {
+			t.Fatalf("%s: the definition under test must be inside the contract: %v", name, err)
+		}
+		if !document.InterpolatesOriginHost() {
+			t.Fatalf("%s: the interpolation was not seen", name)
+		}
+	}
+
+	for name, environment := range map[string][]string{
+		"no line at all":              nil,
+		"an inert value":              {"LAB_NOTES_TITLE=Your Cloud lab notes"},
+		"a value naming the host":     {"LAB_NOTES_ORIGIN=https://notes.lab.your-cloud.test/"},
+		"a value naming origin_host":  {"LAB_NOTES_ORIGIN=origin_host"},
+		"a key that looks like a use": {"ORIGIN_HOST=1"},
+	} {
+		document := vectorReference()
+		document.Environment = environment
+		document.SecretKeys = nil
+		if _, err := Decode(hostileDefinitionDocument(t, document)); err != nil {
+			t.Fatalf("%s: the definition under test must be inside the contract: %v", name, err)
+		}
+		if document.InterpolatesOriginHost() {
+			t.Fatalf("%s: an interpolation was seen where none exists", name)
+		}
+	}
+}
+
 // TestDecodeRefusesEveryDocumentTheStrictDecodingRefuses is the surface no field
 // bound can cover: what is refused before any value of the document is read.
 func TestDecodeRefusesEveryDocumentTheStrictDecodingRefuses(t *testing.T) {

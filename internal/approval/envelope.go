@@ -107,6 +107,21 @@ const (
 	OperationDiscardSnapshot      = "discard_snapshot"
 	OperationRestoreService       = "restore_service"
 
+	// The two operations of the third door. Both mutate, both are described by a
+	// plan document of schema 2 whose digest this envelope signs, and both are
+	// named here in the same closed list as the others rather than derived from
+	// anything: an operation this Auxiliary may act on is a decision written once,
+	// in a list a reader can count.
+	//
+	// They are the first operations of the product whose effects are described by
+	// a document its user wrote. That changes nothing here: this envelope decides
+	// that a human approved two digests for one operation, and it has never known
+	// what those digests cover. Naming them does not make them applicable — until
+	// `#119` lands, an approval of either is refused by the Auxiliary by name,
+	// before any effect.
+	OperationDeployUserService = "deploy_user_service"
+	OperationRemoveUserService = "remove_user_service"
+
 	// PrivilegeReadLocalState allows reading what the machine already holds.
 	PrivilegeReadLocalState = "read_local_state"
 	// PrivilegeMutateLocalState allows changing the machine. The read-only
@@ -147,6 +162,8 @@ var requiredPrivileges = map[string][]string{
 	OperationSnapshotService:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	OperationDiscardSnapshot:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	OperationRestoreService:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationDeployUserService:        {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+	OperationRemoveUserService:        {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 }
 
 // mutatingOperations is the closed list of operations that are allowed to reach
@@ -178,6 +195,11 @@ var mutatingOperations = map[string]struct{}{
 	OperationSnapshotService:      {},
 	OperationDiscardSnapshot:      {},
 	OperationRestoreService:       {},
+	// The third door's two. A user service is deployed and removed by the very
+	// machinery the delivered profiles use, so its operations mutate exactly as
+	// theirs do.
+	OperationDeployUserService: {},
+	OperationRemoveUserService: {},
 }
 
 var (

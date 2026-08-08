@@ -1,26 +1,38 @@
 package plan
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 	"github.com/ldesfontaine/your-cloud/internal/strictjson"
 )
 
 // Schema 2 keeps every procedure of schema 1 — one bounded strict JSON
 // document, one domain-separated binary transcript, a rollback that is a
 // complete inverse document, a pair frozen by the Controller — and describes the
-// operations of the public profile and of the private one. Schema 1 is not
-// reopened by any of it: a probe plan decodes, hashes and freezes exactly as
-// before, and a document of either schema is refused by the decoder of the
-// other.
+// operations of the public profile, of the private one and of the third door,
+// where a service is described by a definition its user wrote rather than by a
+// profile the product pins. Schema 1 is not reopened by any of it: a probe plan
+// decodes, hashes and freezes exactly as before, and a document of either schema
+// is refused by the decoder of the other.
+//
+// The third door is why this file reads the definition package, and it reads it
+// in one direction only: a plan names a definition by its slug and its digest, so
+// the grammar of those two values is stated where the definition owns it rather
+// than spelled a second time here. Nothing of the definition package knows this
+// one, and nothing here reads a definition's content — a plan pins bytes it never
+// opens, and holding a plan against the document it pins is one named function
+// with the definition passed to it.
 //
 // The transcript is laid out per operation group. The fields a group does not
-// have are simply not present rather than written empty, and the operation
-// string inside the transcript is what tells the groups apart:
+// have are simply not present rather than written empty — a field one group's own
+// documents may or may not carry is a different matter, stated below — and the
+// operation string inside the transcript is what tells the groups apart:
 //
 //	domaine  "your-cloud/oci-plan.v2\0"
 //	puis     schema_version   sur 1 octet
@@ -49,6 +61,13 @@ import (
 //	         service_profile, snapshot_slot    en champs préfixés
 //	  restore_service
 //	         service_profile, snapshot_slot    en champs préfixés
+//	  deploy_user_service / remove_user_service
+//	         definition_slug                   en champ préfixé
+//	         definition_digest                 en champ préfixé (32 octets décodés)
+//	         image_reference                   en champ préfixé
+//	         image_digest                      en champ préfixé (32 octets décodés)
+//	         local_port                        en uint32 big-endian
+//	         origin_host                       en champ préfixé, vide s'il est absent
 //
 // The layout is unambiguous across the groups without a group tag, because
 // everything before the operation is at a determined offset: the domain and the
@@ -64,6 +83,27 @@ import (
 // there for: two documents that describe different states never hash the same,
 // even when the values they carry are spelled identically. A test pins that
 // property at the level of the vectors rather than leaving it to be read here.
+//
+// The user service group is the one group carrying a field that is present on
+// some of its documents and absent on others, and the layout writes it anyway:
+// origin_host is always a length-prefixed field, of length zero when the
+// definition does not interpolate the origin. Writing it always is what keeps the
+// tail unambiguous — a field the reader may or may not find would make the end of
+// the transcript depend on a rule the bytes do not carry — and it is the decision
+// the definition's own lists already took, where an empty list is written as a
+// count of zero rather than left out. The empty spelling is unmistakable because
+// no origin the contract accepts is the empty string: a plan carrying no origin
+// and a plan carrying an origin are two lengths and two digests, never two
+// readings of the same bytes. The canonical JSON follows the same rule and always
+// renders the field, so a document that omitted it and one that spelled it empty
+// are one plan with one digest and one canonical spelling — exactly as a
+// definition that left a list out and one that declared it empty are one
+// definition.
+//
+// definition_digest travels as its 32 decoded bytes in a length-prefixed field,
+// as image_digest does. It is the digest of the frozen definition the plan pins,
+// taken over the definition's own transcript under its own domain, so nothing of
+// the two documents' bounds can ever be read through the other's.
 const (
 	// SchemaVersionV2 is the second plan version, and the only one that
 	// describes services, entrypoints and routes.
@@ -134,6 +174,21 @@ const (
 	// before replacing anything, so the document that returns is a restore naming
 	// that reserved slot.
 	OperationRestoreService = "restore_service"
+
+	// OperationDeployUserService asks for one service described by a definition
+	// its user wrote to be present on exactly one machine, at exactly one loopback
+	// port, and OperationRemoveUserService for that exact instance to be absent.
+	//
+	// It is a third door rather than a widening of the second, for the reason the
+	// second was not a widening of the first: nothing about this service is a
+	// constant of the product. The account, the home, the volumes, the environment
+	// and the secret names are derived from a definition the Controller froze and
+	// the plan pins by digest, so the two documents name a definition where the
+	// other doors name a profile — and neither list of profiles can ever answer to
+	// a definition's slug, because those slugs are reserved against exactly the
+	// four names the product already owns.
+	OperationDeployUserService = "deploy_user_service"
+	OperationRemoveUserService = "remove_user_service"
 
 	// ServiceProfileBentoPDF is the one profile of the stateless door. The
 	// profile decides everything the plan does not state — account, unit file,
@@ -209,6 +264,7 @@ const (
 	groupLinkRoute
 	groupSnapshot
 	groupRestore
+	groupUserService
 )
 
 // pinnedImage is one registry-qualified reference and the digest that is the
@@ -227,6 +283,18 @@ var (
 	// dots do not, and are refused beside this expression.
 	canonicalRouteHost = regexp.MustCompile(fmt.Sprintf(`^[a-z0-9][a-z0-9.-]{%d,%d}[a-z0-9]$`,
 		MinRouteHostBytes-2, MaxRouteHostBytes-2))
+
+	// canonicalDefinitionDigest is the one spelling a plan may name a frozen
+	// definition by: thirty-two bytes written as lower-case hexadecimal, bare.
+	//
+	// It carries no `sha256:` prefix, and that is not an oversight beside
+	// image_digest: an image digest is an OCI reference whose algorithm is part of
+	// the value the registry answers to, while a definition digest is this
+	// product's own SHA-256 over its own transcript, spelled exactly as the
+	// approval envelope spells the digests it signs. Two spellings of one value
+	// would be two names for one revision, and every freeze, every plan and every
+	// lookup of a definition is keyed on that name.
+	canonicalDefinitionDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 	// canonicalSnapshotSlot bounds the label one archive is named by: lower-case
 	// letters, digits and hyphens, one to thirty-two characters, opening on a
@@ -260,6 +328,8 @@ var (
 		OperationSnapshotService:      OperationDiscardSnapshot,
 		OperationDiscardSnapshot:      OperationSnapshotService,
 		OperationRestoreService:       OperationRestoreService,
+		OperationDeployUserService:    OperationRemoveUserService,
+		OperationRemoveUserService:    OperationDeployUserService,
 	}
 
 	// operationGroups says which closed field list each operation carries. It is
@@ -279,6 +349,8 @@ var (
 		OperationSnapshotService:      groupSnapshot,
 		OperationDiscardSnapshot:      groupSnapshot,
 		OperationRestoreService:       groupRestore,
+		OperationDeployUserService:    groupUserService,
+		OperationRemoveUserService:    groupUserService,
 	}
 
 	// profileImage and privateProfileImage are the two closed lists of service
@@ -474,6 +546,56 @@ type RestoreDocument struct {
 	SnapshotSlot     string `json:"snapshot_slot"`
 }
 
+// UserServiceDocument is the plan of one service the product does not know: the
+// definition it runs, the revision of that definition, the image of this
+// instance, one loopback port on one machine, and the origin the instance answers
+// under when — and only when — its definition consumes one.
+//
+// It names a definition where the two other service shapes name a profile. A
+// profile decides everything its plan does not state and is a constant of the
+// product; a definition decides the same things and is a document its user wrote,
+// frozen by the Controller and pinned here by definition_digest. The two are the
+// same idea under two authorities, which is why this is a third shape rather than
+// a profile whose name happens to be free-form: the fields differ, so the closed
+// field lists differ.
+//
+// image_reference is here and decides nothing. It must be exactly the repository
+// of the pinned definition — the human approves an origin and an executable
+// identity under their eyes — and image_digest is the identity of this instance,
+// which is the one thing about a user service that a revision does not fix: an
+// update is a new plan whose digest differs, never a silent mutation.
+//
+// origin_host is present exactly when the pinned definition interpolates it. A
+// definition that names {origin_host} makes the origin a value the container
+// receives, so the human approves a service that only works correctly under that
+// name and the name is under their eyes; a definition that does not interpolate
+// it makes the field refused, because an approved value no line consumes would be
+// an intention without a consequence. Neither half of that rule can be held here
+// — validating a plan reads no definition — so it lives in
+// RequireDefinitionAgreement, held at construction by the Controller and re-held
+// by the Auxiliary with the definition in hand.
+//
+// The volumes, the tmpfs, the environment lines, the secret names, the account
+// and the home have no field here and none anywhere else. They are the
+// definition's, and everything touching the machine is derived from its slug by
+// the Auxiliary: the rule of the delivered profiles, unchanged, over a document
+// whose author is the user rather than the product.
+//
+// The declaration order below is the canonical encoding order and the transcript
+// order at once, and no field of a user service plan lives outside it.
+type UserServiceDocument struct {
+	SchemaVersion    int    `json:"schema_version"`
+	InfrastructureID string `json:"infrastructure_id"`
+	MachineID        string `json:"machine_id"`
+	Operation        string `json:"operation"`
+	DefinitionSlug   string `json:"definition_slug"`
+	DefinitionDigest string `json:"definition_digest"`
+	ImageReference   string `json:"image_reference"`
+	ImageDigest      string `json:"image_digest"`
+	LocalPort        int    `json:"local_port"`
+	OriginHost       string `json:"origin_host"`
+}
+
 // V2Pair is one schema 2 plan and the complete document that undoes it.
 //
 // The rollback is a plan in its own right, read, displayed, approved and
@@ -539,6 +661,12 @@ func DecodeV2(document []byte) (V2Document, error) {
 		parsed = shape
 	case groupRestore:
 		var shape RestoreDocument
+		if err := strictDecodePlan(document, &shape); err != nil {
+			return nil, err
+		}
+		parsed = shape
+	case groupUserService:
+		var shape UserServiceDocument
 		if err := strictDecodePlan(document, &shape); err != nil {
 			return nil, err
 		}
@@ -676,8 +804,8 @@ func BuildLinkRoutePair(operation, infrastructureID, machineID, routeHost string
 // The reserved slot is refused here as it is refused by validation, in both
 // directions: it is not a slot a plan names.
 func BuildSnapshotPair(operation, infrastructureID, machineID, serviceProfile, snapshotSlot string) (V2Pair, error) {
-	if _, known := privateProfileImage[serviceProfile]; !known {
-		return V2Pair{}, fmt.Errorf("plan service_profile %q is not one this palier archives", serviceProfile)
+	if err := validateArchivedProfile(serviceProfile); err != nil {
+		return V2Pair{}, err
 	}
 	return buildV2Pair(SnapshotDocument{
 		SchemaVersion:    SchemaVersionV2,
@@ -700,8 +828,8 @@ func BuildSnapshotPair(operation, infrastructureID, machineID, serviceProfile, s
 // direction is refused: that document would undo itself, and a pair whose two
 // halves are one document is not a pair.
 func BuildRestorePair(infrastructureID, machineID, serviceProfile, snapshotSlot string) (V2Pair, error) {
-	if _, known := privateProfileImage[serviceProfile]; !known {
-		return V2Pair{}, fmt.Errorf("plan service_profile %q is not one this palier restores", serviceProfile)
+	if err := validateArchivedProfile(serviceProfile); err != nil {
+		return V2Pair{}, err
 	}
 	if snapshotSlot == ReservedSnapshotSlot {
 		return V2Pair{}, errReservedSnapshotSlot
@@ -714,6 +842,97 @@ func BuildRestorePair(infrastructureID, machineID, serviceProfile, snapshotSlot 
 		ServiceProfile:   serviceProfile,
 		SnapshotSlot:     snapshotSlot,
 	})
+}
+
+// BuildUserServicePair freezes one operation on one instance of a user service
+// together with the complete document that undoes it.
+//
+// The definition is passed whole rather than by name, because three of the plan's
+// fields are read out of it and never chosen by the caller: the slug, the digest
+// of the revision, and the repository the images come from. A caller that could
+// name them could pin one revision while displaying another, or aim a plan at a
+// repository the definition never mentioned — and the human reading the plan
+// would have no way to tell.
+//
+// What the caller does choose is the instance: which image digest runs, on which
+// port, and under which origin. The digest is the one thing a revision
+// deliberately does not fix, and the origin is required to be present exactly
+// when the definition consumes it, which is checked here with the definition in
+// hand.
+func BuildUserServicePair(operation, infrastructureID, machineID string,
+	definition servicedefinition.Document, imageDigest string, localPort int, originHost string) (V2Pair, error) {
+	digest, err := definition.SHA256()
+	if err != nil {
+		return V2Pair{}, fmt.Errorf("plan definition_digest: %w", err)
+	}
+	subject := UserServiceDocument{
+		SchemaVersion:    SchemaVersionV2,
+		InfrastructureID: infrastructureID,
+		MachineID:        machineID,
+		Operation:        operation,
+		DefinitionSlug:   definition.Slug,
+		DefinitionDigest: digest,
+		ImageReference:   definition.ImageRepository,
+		ImageDigest:      imageDigest,
+		LocalPort:        localPort,
+		OriginHost:       originHost,
+	}
+	if err := RequireDefinitionAgreement(subject, definition); err != nil {
+		return V2Pair{}, err
+	}
+	return buildV2Pair(subject)
+}
+
+// RequireDefinitionAgreement holds one user service plan against the definition
+// it pins, and is the whole of what a plan cannot decide about itself.
+//
+// Validating a plan is an offline act: it reads one document and no other, so it
+// can say that origin_host is a well-formed host or absent, and it cannot say
+// whether this definition consumes one. The contract answers that by naming where
+// the rule lives instead — held at construction by the Controller, which has just
+// looked the definition up, and re-held by the Auxiliary, which receives the
+// definition's bytes beside the signed pair and re-derives everything locally
+// rather than trusting the Controller that carried it. This function is that one
+// rule, written once so the two callers cannot come to disagree.
+//
+// The digest is re-derived from the definition rather than compared as a string
+// against what accompanied it: that is what makes "this plan pins these exact
+// bytes" a property of the document rather than a promise of whoever handed the
+// two over together.
+func RequireDefinitionAgreement(document UserServiceDocument, definition servicedefinition.Document) error {
+	if err := document.Validate(); err != nil {
+		return err
+	}
+	digest, err := definition.SHA256()
+	if err != nil {
+		return fmt.Errorf("plan definition_digest: %w", err)
+	}
+	if document.DefinitionDigest != digest {
+		return errors.New("plan definition_digest is not the digest of the definition it travels with")
+	}
+	if document.DefinitionSlug != definition.Slug {
+		return fmt.Errorf("plan definition_slug %q is not the slug the pinned definition declares",
+			document.DefinitionSlug)
+	}
+	// The repository is the definition's and the digest is the instance's. The
+	// equality is the same rule the delivered profiles hold against their pins,
+	// read against a document a user wrote instead of against a constant of the
+	// product.
+	if document.ImageReference != definition.ImageRepository {
+		return errors.New("plan image_reference is not the repository the pinned definition names")
+	}
+	if definition.InterpolatesOriginHost() {
+		if document.OriginHost == "" {
+			return errors.New(
+				"plan origin_host is required because the pinned definition interpolates the origin")
+		}
+		return nil
+	}
+	if document.OriginHost != "" {
+		return errors.New(
+			"plan origin_host is refused because no line of the pinned definition consumes the origin")
+	}
+	return nil
 }
 
 // buildV2Pair holds both directions against the contract before either exists.
@@ -887,6 +1106,53 @@ func (document RestoreDocument) Validate() error {
 	return validateSnapshotSlot(document.SnapshotSlot)
 }
 
+// Validate holds a user service plan against everything one document can be held
+// against on its own.
+//
+// Three of its fields name a definition this package cannot read: the slug, the
+// revision and the repository. What is required here is therefore their shape —
+// the slug grammar the definition package owns, reserved names included, so a
+// plan can never name a definition that could not exist; the one spelling of a
+// revision's digest; and the repository rule, which is where the tag is refused
+// on this side too. Whether they are the shape of the definition actually frozen
+// under that digest is RequireDefinitionAgreement's, with the definition in hand.
+//
+// origin_host is accepted in both of its forms and refused in neither. That is
+// not a weaker rule than the contract's, it is the same rule read where it can be
+// read: presence is required exactly when the definition interpolates, and a
+// document alone knows nothing of the definition. A plan reaching a machine has
+// been through the agreement check twice by then — once at the Controller that
+// built it, once at the Auxiliary that received the definition beside it.
+func (document UserServiceDocument) Validate() error {
+	if err := validateV2Head(document.SchemaVersion, document.InfrastructureID,
+		document.MachineID, document.Operation, groupUserService); err != nil {
+		return err
+	}
+	if err := servicedefinition.ValidateSlug(document.DefinitionSlug); err != nil {
+		return fmt.Errorf("plan definition_slug: %w", err)
+	}
+	if !canonicalDefinitionDigest.MatchString(document.DefinitionDigest) {
+		return errors.New("plan definition_digest must be lower-case hexadecimal SHA-256")
+	}
+	if err := servicedefinition.ValidateImageRepository(document.ImageReference); err != nil {
+		return fmt.Errorf("plan image_reference: %w", err)
+	}
+	// The shape of the image digest is required as it is everywhere else, so that
+	// the transcript may rely on decoding exactly 32 bytes out of the field. There
+	// is no pin to compare it to: which image runs is what a plan of this door
+	// says, and the definition only says where images come from.
+	if !canonicalOCIDigest.MatchString(document.ImageDigest) {
+		return errMalformedImageDigest
+	}
+	if document.LocalPort < MinLocalPort || document.LocalPort > MaxLocalPort {
+		return fmt.Errorf("plan local_port must be within %d..%d", MinLocalPort, MaxLocalPort)
+	}
+	if document.OriginHost == "" {
+		return nil
+	}
+	return validateHostBound("origin_host", document.OriginHost)
+}
+
 // Transcript rebuilds the exact bytes a web service plan digest is taken over,
 // in the layout documented at the head of this file.
 func (document WebServiceDocument) Transcript() ([]byte, error) {
@@ -991,6 +1257,36 @@ func (document RestoreDocument) Transcript() ([]byte, error) {
 	return appendField(transcript, []byte(document.SnapshotSlot)), nil
 }
 
+// Transcript rebuilds the exact bytes a user service plan digest is taken over.
+//
+// The tail is the private door's with the profile replaced by the two fields that
+// name a definition, so a reader holds the two side by side and sees what the
+// third door changes: a plan of this door pins a document instead of naming a
+// constant. The origin closes the tail as it does there, and it is written even
+// when it is absent — a length of zero — so that the end of the transcript never
+// depends on a rule the bytes do not carry.
+func (document UserServiceDocument) Transcript() ([]byte, error) {
+	if err := document.Validate(); err != nil {
+		return nil, err
+	}
+	definition, err := decodeDefinitionDigest(document.DefinitionDigest)
+	if err != nil {
+		return nil, err
+	}
+	image, err := decodeOCIDigest(document.ImageDigest)
+	if err != nil {
+		return nil, err
+	}
+	transcript := appendV2Head(document.SchemaVersion, document.InfrastructureID,
+		document.MachineID, document.Operation)
+	transcript = appendField(transcript, []byte(document.DefinitionSlug))
+	transcript = appendField(transcript, definition)
+	transcript = appendField(transcript, []byte(document.ImageReference))
+	transcript = appendField(transcript, image)
+	transcript = appendUint32(transcript, uint32(document.LocalPort))
+	return appendField(transcript, []byte(document.OriginHost)), nil
+}
+
 func (document WebServiceDocument) Encode() ([]byte, error)     { return encodeV2(document) }
 func (document EntrypointDocument) Encode() ([]byte, error)     { return encodeV2(document) }
 func (document RouteDocument) Encode() ([]byte, error)          { return encodeV2(document) }
@@ -998,6 +1294,7 @@ func (document PrivateServiceDocument) Encode() ([]byte, error) { return encodeV
 func (document LinkRouteDocument) Encode() ([]byte, error)      { return encodeV2(document) }
 func (document SnapshotDocument) Encode() ([]byte, error)       { return encodeV2(document) }
 func (document RestoreDocument) Encode() ([]byte, error)        { return encodeV2(document) }
+func (document UserServiceDocument) Encode() ([]byte, error)    { return encodeV2(document) }
 
 func (document WebServiceDocument) SHA256() (string, error)     { return digestOf(document) }
 func (document EntrypointDocument) SHA256() (string, error)     { return digestOf(document) }
@@ -1006,6 +1303,7 @@ func (document PrivateServiceDocument) SHA256() (string, error) { return digestO
 func (document LinkRouteDocument) SHA256() (string, error)      { return digestOf(document) }
 func (document SnapshotDocument) SHA256() (string, error)       { return digestOf(document) }
 func (document RestoreDocument) SHA256() (string, error)        { return digestOf(document) }
+func (document UserServiceDocument) SHA256() (string, error)    { return digestOf(document) }
 
 func (document WebServiceDocument) OperationName() string     { return document.Operation }
 func (document EntrypointDocument) OperationName() string     { return document.Operation }
@@ -1014,6 +1312,7 @@ func (document PrivateServiceDocument) OperationName() string { return document.
 func (document LinkRouteDocument) OperationName() string      { return document.Operation }
 func (document SnapshotDocument) OperationName() string       { return document.Operation }
 func (document RestoreDocument) OperationName() string        { return document.Operation }
+func (document UserServiceDocument) OperationName() string    { return document.Operation }
 
 func (document WebServiceDocument) Target() Target {
 	return Target{InfrastructureID: document.InfrastructureID, MachineID: document.MachineID}
@@ -1043,6 +1342,10 @@ func (document RestoreDocument) Target() Target {
 	return Target{InfrastructureID: document.InfrastructureID, MachineID: document.MachineID}
 }
 
+func (document UserServiceDocument) Target() Target {
+	return Target{InfrastructureID: document.InfrastructureID, MachineID: document.MachineID}
+}
+
 func (document WebServiceDocument) IsExactInverseOf(other V2Document) bool {
 	return isExactInverseV2(document, other)
 }
@@ -1068,6 +1371,10 @@ func (document SnapshotDocument) IsExactInverseOf(other V2Document) bool {
 }
 
 func (document RestoreDocument) IsExactInverseOf(other V2Document) bool {
+	return isExactInverseV2(document, other)
+}
+
+func (document UserServiceDocument) IsExactInverseOf(other V2Document) bool {
 	return isExactInverseV2(document, other)
 }
 
@@ -1117,6 +1424,15 @@ func (document LinkRouteDocument) inverse() (V2Document, bool) {
 }
 
 func (document SnapshotDocument) inverse() (V2Document, bool) {
+	inverted, known := inverseOperationV2[document.Operation]
+	if !known {
+		return nil, false
+	}
+	document.Operation = inverted
+	return document, true
+}
+
+func (document UserServiceDocument) inverse() (V2Document, bool) {
 	inverted, known := inverseOperationV2[document.Operation]
 	if !known {
 		return nil, false
@@ -1212,18 +1528,50 @@ func validatePinnedImage(reference, digest string, pinned pinnedImage) error {
 // entrypoint, so the entrypoint never has to decide what such a name means.
 func validateRouteHost(host string) error { return validateHostBound("route_host", host) }
 
-// validateArchivedProfile requires a profile whose data is worth archiving, which
-// is the private door's own closed list.
+// validateArchivedProfile requires a name whose data is worth archiving: a
+// profile of the private door's own closed list, or the slug of a user service
+// definition.
 //
-// A stateless profile is refused here and not merely unsupported: it owns no
-// persistent volume, so an archive of it would be an archive of nothing, and a
-// plan that could ask for one would be a plan whose report could never be
-// honest.
+// The two readings share one field and stay unambiguous, because the four names
+// the product owns are exactly the four a definition may not take. A name is
+// therefore found in the closed list or it is a slug — never both, and never a
+// comparison someone has to remember to write.
+//
+// A stateless profile is refused here and not merely unsupported: it is a
+// reserved name the closed list does not hold, so it is neither a data-bearing
+// profile nor a possible slug. It owns no persistent volume, an archive of it
+// would be an archive of nothing, and a plan that could ask for one would be a
+// plan whose report could never be honest.
+//
+// What a slug is admitted as here is exactly a well-formed name, and nothing
+// more. This package reads no definition and no machine, so whether a service by
+// that name was ever deployed, and whether its definition declares a volume at
+// all, are facts the Auxiliary reads on the machine before any effect — a home
+// without a volumes directory is a refusal, as the contract says.
 func validateArchivedProfile(profile string) error {
-	if _, known := privateProfileImage[profile]; !known {
-		return fmt.Errorf("plan service_profile %q holds no data this palier archives", profile)
+	if _, known := privateProfileImage[profile]; known {
+		return nil
+	}
+	if err := servicedefinition.ValidateSlug(profile); err != nil {
+		return fmt.Errorf("plan service_profile %q holds no data this palier archives: %w", profile, err)
 	}
 	return nil
+}
+
+// decodeDefinitionDigest turns the textual field into the 32 bytes the transcript
+// carries, and refuses everything else.
+//
+// It is a second function beside decodeOCIDigest rather than a shared one,
+// because the two fields are two spellings of two different things: an OCI digest
+// announces its algorithm to a registry, a definition digest is this product's
+// own SHA-256 over its own transcript. A single decoder would be a place where
+// one spelling could start being accepted for the other.
+func decodeDefinitionDigest(value string) ([]byte, error) {
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != DigestBytes {
+		return nil, errors.New("plan definition_digest is malformed")
+	}
+	return decoded, nil
 }
 
 // validateSnapshotSlot bounds the one label an archive is named by.

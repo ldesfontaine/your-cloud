@@ -8,10 +8,13 @@ package auxiliary
 // closed a window a test named. `#90` added the two managed web service
 // operations, `#91` the four entrypoint and route ones, `#96` the six of the
 // private passage, which were refused by the schema dispatch alone until it
-// landed, and `#102` and `#103` the seven of the private profile. No window is
-// open: every document shape of the three schemas this package reads is
-// performed. What this file holds is therefore that each of them reaches the
-// effects of its own kind and no other, and that no decoder covers for another.
+// landed, and `#102` and `#103` the seven of the private profile. One window is
+// open again: the third door — the two user service operations, and the archive
+// operations naming a definition by its slug — is read but not performed, and
+// `#119` closes it. What this file holds is therefore that every document shape
+// this Auxiliary performs reaches the effects of its own kind and no other, that
+// the shapes it does not perform are refused by name before anything happens, and
+// that no decoder covers for another.
 
 import (
 	"strconv"
@@ -578,6 +581,86 @@ func TestAPairWhoseTwoDigestsAreOneDigestIsRefusedBeforeAnythingIsDecoded(t *tes
 	}
 	if len(executor.effects) != 0 || len(executor.reads) != 0 {
 		t.Fatalf("it reached the machine: %q %q", executor.effects, executor.reads)
+	}
+}
+
+// TestEveryThirdDoorOperationIsRefusedByNameBeforeAnyEffect is the window this
+// issue opens, named here so that the issue which closes it has one test to
+// replace rather than a silence to notice.
+//
+// The approval package now holds the third door's two operations in its closed
+// list and the Controller builds their pairs, so a human may sign one and this
+// Auxiliary may be handed a real, valid, canonically frozen pair. Performing them
+// is `#119`: the account, the home, the volumes, the interpolated environment,
+// the generated secrets and the egress table are all derived from a definition
+// whose own bytes have to travel beside the signed pair and be rehashed before
+// this machine is read at all. Until then every pair below is refused where the
+// shapes of schema 2 become instances — by name, before any effect, and before
+// this machine is read.
+//
+// The archive rows are the other half of the same window, and they take another
+// path to the same refusal: a snapshot names its service by the field the
+// delivered profiles use, so a definition's slug reaches the placement lookup
+// rather than a shape this package has never seen. Both halves must refuse, or a
+// plan of the third door would reach a home the private door owns.
+func TestEveryThirdDoorOperationIsRefusedByNameBeforeAnyEffect(t *testing.T) {
+	t.Parallel()
+	for name, subject := range map[string]struct {
+		operation string
+		// named is what the refusal must spell out: the operation for a shape this
+		// package has no placement for, the slug for an archive whose service is a
+		// definition rather than a profile.
+		named  string
+		frozen func(*testing.T) plan.Frozen
+	}{
+		"a user service deployment": {
+			operation: plan.OperationDeployUserService, named: plan.OperationDeployUserService,
+			frozen: func(t *testing.T) plan.Frozen {
+				return frozenUserServicePair(t, plan.OperationDeployUserService, fixturePort)
+			},
+		},
+		"a user service removal": {
+			operation: plan.OperationRemoveUserService, named: plan.OperationRemoveUserService,
+			frozen: func(t *testing.T) plan.Frozen {
+				return frozenUserServicePair(t, plan.OperationRemoveUserService, fixturePort)
+			},
+		},
+		"a snapshot of a user service": {
+			operation: plan.OperationSnapshotService, named: fixtureUserSlug,
+			frozen: func(t *testing.T) plan.Frozen {
+				return frozenUserArchivePair(t, plan.OperationSnapshotService)
+			},
+		},
+		"a discard of a user service archive": {
+			operation: plan.OperationDiscardSnapshot, named: fixtureUserSlug,
+			frozen: func(t *testing.T) plan.Frozen {
+				return frozenUserArchivePair(t, plan.OperationDiscardSnapshot)
+			},
+		},
+		"a restore of a user service": {
+			operation: plan.OperationRestoreService, named: fixtureUserSlug,
+			frozen: func(t *testing.T) plan.Frozen { return frozenUserRestorePair(t) },
+		},
+	} {
+		executor := deployedServiceMachine(t, fixturePort)
+		accepted, input := approvedFrozenPair(subject.operation, subject.frozen(t))
+
+		application, err := Apply(executor, accepted, input)
+		if err == nil {
+			t.Fatalf("%s was applied by an Auxiliary that does not perform it", name)
+		}
+		if application != nil {
+			t.Fatalf("%s returned an application: %+v", name, application)
+		}
+		if !strings.Contains(err.Error(), "does not yet perform") {
+			t.Fatalf("%s was refused for another reason than the window: %v", name, err)
+		}
+		if !strings.Contains(err.Error(), subject.named) {
+			t.Fatalf("%s was refused without being named: %v", name, err)
+		}
+		if len(executor.effects) != 0 || len(executor.reads) != 0 {
+			t.Fatalf("%s reached the machine: %q %q", name, executor.effects, executor.reads)
+		}
 	}
 }
 

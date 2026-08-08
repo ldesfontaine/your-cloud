@@ -8,6 +8,7 @@ import (
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
+	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 )
 
 const (
@@ -803,6 +804,25 @@ func serviceInstances(accepted *approval.Acceptance, input *Input) (instance, in
 				routeHost: undoing.RouteHost, backendPort: undoing.BackendPort,
 			},
 			nil
+	case plan.UserServiceDocument:
+		// The window of the third door, named here so that the issue which closes
+		// it has one refusal to replace rather than a silence to notice.
+		//
+		// The approval package now holds these two operations in its closed list
+		// and the Controller builds their pairs, so a human may sign one and this
+		// Auxiliary may be handed a real, valid, canonically frozen pair. Deriving
+		// a placement from a definition — the account, the home, the volumes, the
+		// interpolated environment, the generated secrets and the egress table —
+		// is `#119`, and it needs something no other shape of this schema needs:
+		// the definition's own bytes travelling beside the signed pair, rehashed
+		// and revalidated before this machine is read. Until then each of them is
+		// refused right here: by name, before any effect, and before this machine
+		// is read at all. A window that let one through unread would be this
+		// Auxiliary acting on a contract it does not implement.
+		return instance{}, instance{}, fmt.Errorf(
+			"the approved plan describes %q, which this Auxiliary does not yet perform",
+			requested.OperationName(),
+		)
 	default:
 		// Unreachable while the plan package's closed interface holds exactly the
 		// shapes above, and kept as a refusal rather than a panic so that a further
@@ -1002,9 +1022,22 @@ func privatePlacementFor(document plan.PrivateServiceDocument) (placement, error
 // second check is the one the archive operations genuinely need — a profile
 // placed here but holding no durable path has nothing to archive, and saying so
 // before any effect is better than discovering it at a tar.
+//
+// The third door shares this field with the delivered profiles, and the other
+// half of the window lives here: the plan contract now admits a definition's slug
+// where an archive names its service, and deriving the home that slug archives is
+// `#119` together with the deployment itself. A well-formed slug is therefore
+// refused by the name of the window rather than by the name of the private door,
+// so that the issue which closes it has one refusal to replace; a name that is
+// neither a placed profile nor a possible slug keeps the refusal it always had.
 func archivedPlacementFor(serviceProfile string) (placement, error) {
 	where, known := privateProfilePlacements[serviceProfile]
 	if !known {
+		if servicedefinition.ValidateSlug(serviceProfile) == nil {
+			return placement{}, fmt.Errorf(
+				"plan service_profile %q names a user service definition, which this Auxiliary does not yet perform",
+				serviceProfile)
+		}
 		return placement{}, fmt.Errorf(
 			"plan service_profile %q is not one this Auxiliary places behind the private door", serviceProfile)
 	}

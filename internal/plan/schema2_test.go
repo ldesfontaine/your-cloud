@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 )
 
 const (
@@ -211,7 +213,189 @@ const (
 	// same reason the resolved probe digest is: the plan names one pin and
 	// nothing may stand in for it.
 	otherPinnedDigest = "sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab"
+
+	// The inputs of the third door's two vectors.
+	//
+	// They pin the two definitions the servicedefinition package pins as its own
+	// vectors — the reference one, which interpolates the origin, and the minimal
+	// one, which declares no environment at all — so that the slug, the repository
+	// and the digest of a plan are held against the very document the other
+	// package froze rather than against a second invention. A drift in either
+	// package fails on both sides rather than on neither.
+	//
+	// The two image digests are synthetic and deliberately look it: the third door
+	// pins no image, so there is no real digest to name here, and thirty-two bytes
+	// counting from one and from thirty-three are values a reader recognises as
+	// the test's own rather than mistaking for an identity of the product.
+	vectorUserServiceSlug    = "lab-notes"
+	vectorUserServiceDigest  = "c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce"
+	vectorUserImageReference = "registry.lab.your-cloud.test/your-cloud/lab-notes"
+	vectorUserImageDigest    = "sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	vectorUserLocalPort      = 8080
+	vectorUserOriginHost     = "notes.lab.your-cloud.test"
+	vectorMinimalSlug        = "minimal"
+	vectorMinimalDigest      = "faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c"
+	vectorMinimalReference   = "registry.lab.your-cloud.test/minimal"
+	vectorMinimalImageDigest = "sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"
+	vectorMinimalUserPort    = 8081
+	vectorMinimalUserOrigin  = ""
+
+	// The four canonical documents of the third door's vectors, byte for byte,
+	// under the same rule as every group before them.
+	//
+	// The minimal pair renders `"origin_host":""` rather than omitting the field.
+	// That is the canonical spelling of a plan whose definition does not consume
+	// an origin, and it is pinned here for exactly that reason: a document that
+	// left the field out and this one are the same plan with the same digest, and
+	// this is the one spelling they both freeze to.
+	vectorUserServicePlanDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"deploy_user_service",` +
+		`"definition_slug":"lab-notes",` +
+		`"definition_digest":"c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce",` +
+		`"image_reference":"registry.lab.your-cloud.test/your-cloud/lab-notes",` +
+		`"image_digest":"sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",` +
+		`"local_port":8080,"origin_host":"notes.lab.your-cloud.test"}`
+	vectorUserServiceRollbackDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"remove_user_service",` +
+		`"definition_slug":"lab-notes",` +
+		`"definition_digest":"c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce",` +
+		`"image_reference":"registry.lab.your-cloud.test/your-cloud/lab-notes",` +
+		`"image_digest":"sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",` +
+		`"local_port":8080,"origin_host":"notes.lab.your-cloud.test"}`
+	vectorMinimalUserPlanDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"deploy_user_service",` +
+		`"definition_slug":"minimal",` +
+		`"definition_digest":"faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c",` +
+		`"image_reference":"registry.lab.your-cloud.test/minimal",` +
+		`"image_digest":"sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",` +
+		`"local_port":8081,"origin_host":""}`
+	vectorMinimalUserRollbackDocument = `{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2",` +
+		`"machine_id":"lab-machine-1","operation":"remove_user_service",` +
+		`"definition_slug":"minimal",` +
+		`"definition_digest":"faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c",` +
+		`"image_reference":"registry.lab.your-cloud.test/minimal",` +
+		`"image_digest":"sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",` +
+		`"local_port":8081,"origin_host":""}`
+
+	// The four transcripts of the third door, byte for byte, under the same
+	// obligation on the Rust side, which pins the same vectors from its own
+	// encoder in `plan_v2.rs`.
+	//
+	// The minimal pair closes on `00000000`: the origin is a length-prefixed field
+	// of length zero rather than an absence, which is what keeps the end of the
+	// tail from depending on a rule the bytes do not carry.
+	vectorUserServicePlanTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d31000000136465706c6f795f75736572" +
+		"5f73657276696365000000096c61622d6e6f74657300000020c0f30d7c7f8635" +
+		"d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce00000031726567" +
+		"69737472792e6c61622e796f75722d636c6f75642e746573742f796f75722d63" +
+		"6c6f75642f6c61622d6e6f746573000000200102030405060708090a0b0c0d0e" +
+		"0f101112131415161718191a1b1c1d1e1f2000001f90000000196e6f7465732e" +
+		"6c61622e796f75722d636c6f75642e74657374"
+	vectorUserServiceRollbackTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d310000001372656d6f76655f75736572" +
+		"5f73657276696365000000096c61622d6e6f74657300000020c0f30d7c7f8635" +
+		"d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce00000031726567" +
+		"69737472792e6c61622e796f75722d636c6f75642e746573742f796f75722d63" +
+		"6c6f75642f6c61622d6e6f746573000000200102030405060708090a0b0c0d0e" +
+		"0f101112131415161718191a1b1c1d1e1f2000001f90000000196e6f7465732e" +
+		"6c61622e796f75722d636c6f75642e74657374"
+	vectorMinimalUserPlanTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d31000000136465706c6f795f75736572" +
+		"5f73657276696365000000076d696e696d616c00000020faf14b5c09ce831694" +
+		"66632fe2d37063453fe924154b6cc265b62fdd6aebd95c000000247265676973" +
+		"7472792e6c61622e796f75722d636c6f75642e746573742f6d696e696d616c00" +
+		"0000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d" +
+		"3e3f4000001f9100000000"
+	vectorMinimalUserRollbackTranscriptHex = "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134" +
+		"653435662d636565612d343136372d613862312d316637626430613066346332" +
+		"0000000d6c61622d6d616368696e652d310000001372656d6f76655f75736572" +
+		"5f73657276696365000000076d696e696d616c00000020faf14b5c09ce831694" +
+		"66632fe2d37063453fe924154b6cc265b62fdd6aebd95c000000247265676973" +
+		"7472792e6c61622e796f75722d636c6f75642e746573742f6d696e696d616c00" +
+		"0000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d" +
+		"3e3f4000001f9100000000"
+
+	// The four digests of the third door, under the same rule.
+	vectorUserServicePlanSHA256     = "604b9300bb6f321d53759365cc7064fed1fc9b794b8afdbe811a1742d8133a59"
+	vectorUserServiceRollbackSHA256 = "b2737aba239eb3d43326c43e1508687b33ade43ed5fd62a97cfe0866b6deabc8"
+	vectorMinimalUserPlanSHA256     = "305f7fac725f8c7cd0970cd4db3b92af60a339b1cd1fa569b61858865210a753"
+	vectorMinimalUserRollbackSHA256 = "bb76c62b75d4fd70d7437e75d82396c5b9ae6df3ef6a65e881ac20a222bcc5d3"
 )
+
+// The two definitions the third door's vectors pin, as the exact canonical bytes
+// the servicedefinition package froze them as.
+//
+// They are spelled here rather than imported as values, because what the two
+// packages must agree on is bytes: a definition this package parses out of these
+// strings is the definition that package renders out of its own fields, or the
+// vectors below stop matching.
+const (
+	vectorReferenceDefinitionDocument = `{"schema_version":1,"slug":"lab-notes",` +
+		`"image_repository":"registry.lab.your-cloud.test/your-cloud/lab-notes",` +
+		`"container_port":8080,"volumes":["/srv/notes","/var/lib/lab-notes"],` +
+		`"tmpfs":["/tmp"],"environment":["LAB_NOTES_TITLE=Your Cloud lab notes",` +
+		`"LAB_NOTES_ORIGIN=https://{origin_host}/","LAB_NOTES_READ_ONLY=1"],` +
+		`"secret_keys":["LAB_NOTES_ADMIN_TOKEN"]}`
+	vectorMinimalDefinitionDocument = `{"schema_version":1,"slug":"minimal",` +
+		`"image_repository":"registry.lab.your-cloud.test/minimal","container_port":80,` +
+		`"volumes":[],"tmpfs":[],"environment":[],"secret_keys":[]}`
+)
+
+// vectorReferenceDefinition and vectorMinimalDefinition parse the two documents
+// above, so that a builder test names a definition the way the Controller does:
+// by handing over the whole frozen document rather than three of its fields.
+func vectorReferenceDefinition(t *testing.T) servicedefinition.Document {
+	t.Helper()
+	return decodedDefinition(t, vectorReferenceDefinitionDocument)
+}
+
+func vectorMinimalDefinition(t *testing.T) servicedefinition.Document {
+	t.Helper()
+	return decodedDefinition(t, vectorMinimalDefinitionDocument)
+}
+
+func decodedDefinition(t *testing.T, document string) servicedefinition.Document {
+	t.Helper()
+	parsed, err := servicedefinition.Decode([]byte(document))
+	if err != nil {
+		t.Fatalf("the pinned definition is outside its own contract: %v", err)
+	}
+	return parsed
+}
+
+func vectorUserService() UserServiceDocument {
+	return UserServiceDocument{
+		SchemaVersion:    SchemaVersionV2,
+		InfrastructureID: vectorInfrastructure,
+		MachineID:        vectorMachine,
+		Operation:        OperationDeployUserService,
+		DefinitionSlug:   vectorUserServiceSlug,
+		DefinitionDigest: vectorUserServiceDigest,
+		ImageReference:   vectorUserImageReference,
+		ImageDigest:      vectorUserImageDigest,
+		LocalPort:        vectorUserLocalPort,
+		OriginHost:       vectorUserOriginHost,
+	}
+}
+
+func vectorMinimalUserService() UserServiceDocument {
+	return UserServiceDocument{
+		SchemaVersion:    SchemaVersionV2,
+		InfrastructureID: vectorInfrastructure,
+		MachineID:        vectorMachine,
+		Operation:        OperationDeployUserService,
+		DefinitionSlug:   vectorMinimalSlug,
+		DefinitionDigest: vectorMinimalDigest,
+		ImageReference:   vectorMinimalReference,
+		ImageDigest:      vectorMinimalImageDigest,
+		LocalPort:        vectorMinimalUserPort,
+		OriginHost:       vectorMinimalUserOrigin,
+	}
+}
 
 func vectorWebService() WebServiceDocument {
 	return WebServiceDocument{
@@ -441,6 +625,41 @@ func TestDeterministicSchemaTwoVectorsAreHeldWithTheRustSide(t *testing.T) {
 			rollbackSHA256:     vectorRestoreRollbackSHA256,
 			transcriptLength:   126,
 		},
+		{
+			// The third door, built the way the Controller builds it: the definition
+			// whole, and only the instance chosen beside it.
+			group: "user service",
+			build: func() (V2Pair, error) {
+				return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+					vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+					vectorUserLocalPort, vectorUserOriginHost)
+			},
+			planDocument:       vectorUserServicePlanDocument,
+			rollbackDocument:   vectorUserServiceRollbackDocument,
+			planTranscript:     vectorUserServicePlanTranscriptHex,
+			rollbackTranscript: vectorUserServiceRollbackTranscriptHex,
+			planSHA256:         vectorUserServicePlanSHA256,
+			rollbackSHA256:     vectorUserServiceRollbackSHA256,
+			transcriptLength:   275,
+		},
+		{
+			// The same door over a definition that consumes no origin. Its transcript
+			// is forty bytes shorter and closes on a length of zero rather than on
+			// nothing, which is the whole of the conditional field's encoding.
+			group: "user service without an origin",
+			build: func() (V2Pair, error) {
+				return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+					vectorMachine, vectorMinimalDefinition(t), vectorMinimalImageDigest,
+					vectorMinimalUserPort, vectorMinimalUserOrigin)
+			},
+			planDocument:       vectorMinimalUserPlanDocument,
+			rollbackDocument:   vectorMinimalUserRollbackDocument,
+			planTranscript:     vectorMinimalUserPlanTranscriptHex,
+			rollbackTranscript: vectorMinimalUserRollbackTranscriptHex,
+			planSHA256:         vectorMinimalUserPlanSHA256,
+			rollbackSHA256:     vectorMinimalUserRollbackSHA256,
+			transcriptLength:   235,
+		},
 	} {
 		pair, err := subject.build()
 		if err != nil {
@@ -515,6 +734,14 @@ func TestNoTwoSchemaTwoDigestsCollideAcrossOperationGroups(t *testing.T) {
 		"snapshot discard":           vectorSnapshotRollbackSHA256,
 		"restore":                    vectorRestorePlanSHA256,
 		"restore of the return slot": vectorRestoreRollbackSHA256,
+		// The third door's two pairs. The second of them carries no origin, so it
+		// is also what proves that an absent field does not collapse two documents
+		// into one digest: the same definition deployed with and without an origin
+		// would be two states, and they are two digests.
+		"user service deployment":                vectorUserServicePlanSHA256,
+		"user service removal":                   vectorUserServiceRollbackSHA256,
+		"user service deployment with no origin": vectorMinimalUserPlanSHA256,
+		"user service removal with no origin":    vectorMinimalUserRollbackSHA256,
 	} {
 		if other, collision := seen[digest]; collision {
 			t.Fatalf("%s and %s name the same digest", name, other)
@@ -791,6 +1018,47 @@ func TestChangingAnySingleFieldChangesTheSchemaTwoDigest(t *testing.T) {
 		}
 	}
 	requireEveryWireFieldIsHeld(t, vectorRestorePlanDocument, keysOf(restore))
+
+	userService := map[string]func(*UserServiceDocument){
+		"infrastructure_id": func(d *UserServiceDocument) { d.InfrastructureID = otherInfrastructure },
+		"machine_id":        func(d *UserServiceDocument) { d.MachineID = "lab-machine-2" },
+		"operation":         func(d *UserServiceDocument) { d.Operation = OperationRemoveUserService },
+		"local_port":        func(d *UserServiceDocument) { d.LocalPort = vectorUserLocalPort + 1 },
+		"schema_version":    func(d *UserServiceDocument) { d.SchemaVersion = SchemaVersion },
+		"definition_slug":   func(d *UserServiceDocument) { d.DefinitionSlug = vectorMinimalSlug },
+		"definition_digest": func(d *UserServiceDocument) { d.DefinitionDigest = vectorMinimalDigest },
+		"image_reference":   func(d *UserServiceDocument) { d.ImageReference = "ghcr.io/attacker/lab-notes" },
+		"image_digest":      func(d *UserServiceDocument) { d.ImageDigest = otherPinnedDigest },
+		"origin_host":       func(d *UserServiceDocument) { d.OriginHost = "other.lab.your-cloud.test" },
+	}
+	userReference := rawUserServiceTranscript(t, vectorUserService())
+	for field, mutate := range userService {
+		moved := vectorUserService()
+		mutate(&moved)
+		if bytes.Equal(rawUserServiceTranscript(t, moved), userReference) {
+			t.Fatalf("user service %s is outside the hashed bytes", field)
+		}
+	}
+	requireEveryWireFieldIsHeld(t, vectorUserServicePlanDocument, keysOf(userService))
+
+	// Removing the origin altogether is the mutation this group has and no other
+	// does, and it must move the digest as much as changing it does: a service
+	// deployed under a name and the same service deployed under none are two
+	// states, so they can never be one set of hashed bytes.
+	withoutOrigin := vectorUserService()
+	withoutOrigin.OriginHost = ""
+	if bytes.Equal(rawUserServiceTranscript(t, withoutOrigin), userReference) {
+		t.Fatal("dropping the origin of a user service left the hashed bytes where they were")
+	}
+	// And the same in the other direction, from the vector that carries none, so
+	// that the empty field is proven to be written rather than skipped.
+	minimalReference := rawUserServiceTranscript(t, vectorMinimalUserService())
+	withOrigin := vectorMinimalUserService()
+	withOrigin.OriginHost = vectorUserOriginHost
+	if bytes.Equal(rawUserServiceTranscript(t, withOrigin), minimalReference) {
+		t.Fatal("adding an origin to a user service left the hashed bytes where they were")
+	}
+	requireEveryWireFieldIsHeld(t, vectorMinimalUserPlanDocument, keysOf(userService))
 }
 
 // The raw transcripts below rebuild the layout for documents Validate refuses,
@@ -851,6 +1119,18 @@ func rawRestoreTranscript(document RestoreDocument) []byte {
 		document.MachineID, document.Operation)
 	transcript = appendField(transcript, []byte(document.ServiceProfile))
 	return appendField(transcript, []byte(document.SnapshotSlot))
+}
+
+func rawUserServiceTranscript(t *testing.T, document UserServiceDocument) []byte {
+	t.Helper()
+	transcript := appendV2Head(document.SchemaVersion, document.InfrastructureID,
+		document.MachineID, document.Operation)
+	transcript = appendField(transcript, []byte(document.DefinitionSlug))
+	transcript = appendField(transcript, decodedHex(t, document.DefinitionDigest))
+	transcript = appendField(transcript, []byte(document.ImageReference))
+	transcript = appendField(transcript, decodedHex(t, strings.TrimPrefix(document.ImageDigest, "sha256:")))
+	transcript = appendUint32(transcript, uint32(document.LocalPort))
+	return appendField(transcript, []byte(document.OriginHost))
 }
 
 func keysOf[V any](table map[string]V) map[string]struct{} {
@@ -1217,6 +1497,13 @@ func TestDecodeV2RefusesEveryLinkRouteDocumentOutsideTheContract(t *testing.T) {
 // possibility of returning; a restore naming it decodes, because that is exactly
 // what the signed rollback of a restore is. The asymmetry is the contract, and it
 // is stated here rather than left to be inferred.
+//
+// service_profile is the one field of this schema two doors share, and the table
+// holds both readings: the delivered profile the closed list names, and the slug
+// of a user definition. What keeps the two unambiguous is the reservation of the
+// four names the product owns — so `bentopdf` is refused here as a profile that
+// archives nothing and as a slug no definition may take, by one lookup that fails
+// rather than by two rules.
 func TestDecodeV2RefusesEverySnapshotAndRestoreOutsideTheContract(t *testing.T) {
 	t.Parallel()
 	for name, document := range map[string]string{
@@ -1227,6 +1514,31 @@ func TestDecodeV2RefusesEverySnapshotAndRestoreOutsideTheContract(t *testing.T) 
 	} {
 		if _, err := DecodeV2([]byte(document)); err != nil {
 			t.Fatalf("%s must decode: %v", name, err)
+		}
+	}
+
+	// A definition's slug is a name these three operations now accept, because
+	// the third door shares this field with the delivered profiles. What is
+	// accepted is a well-formed name and nothing more: whether a service by that
+	// name was ever deployed, and whether its definition declares a volume at all,
+	// are facts of a machine that this package reads nowhere.
+	for name, profile := range map[string]string{
+		"the reference definition": vectorUserServiceSlug,
+		"a shortest slug":          "a",
+		"a longest slug":           strings.Repeat("a", 16),
+	} {
+		for _, operation := range []string{OperationSnapshotService, OperationDiscardSnapshot} {
+			document := vectorSnapshot()
+			document.Operation = operation
+			document.ServiceProfile = profile
+			if _, err := DecodeV2(hostilePlanDocument(t, document)); err != nil {
+				t.Fatalf("a %s of %s was refused: %v", operation, name, err)
+			}
+		}
+		document := vectorRestore()
+		document.ServiceProfile = profile
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err != nil {
+			t.Fatalf("a restore of %s was refused: %v", name, err)
 		}
 	}
 
@@ -1265,18 +1577,23 @@ func TestDecodeV2RefusesEverySnapshotAndRestoreOutsideTheContract(t *testing.T) 
 	}
 
 	for name, mutate := range map[string]func(*SnapshotDocument){
-		"schema 1 version":      func(d *SnapshotDocument) { d.SchemaVersion = SchemaVersion },
-		"absent schema":         func(d *SnapshotDocument) { d.SchemaVersion = 0 },
-		"upper-case UUID":       func(d *SnapshotDocument) { d.InfrastructureID = strings.ToUpper(vectorInfrastructure) },
-		"traversal machine":     func(d *SnapshotDocument) { d.MachineID = "../../etc/shadow" },
-		"unknown operation":     func(d *SnapshotDocument) { d.Operation = "archive_service" },
-		"deploy operation":      func(d *SnapshotDocument) { d.Operation = OperationDeployPrivateService },
-		"link route operation":  func(d *SnapshotDocument) { d.Operation = OperationPublishLinkRoute },
-		"empty operation":       func(d *SnapshotDocument) { d.Operation = "" },
-		"the stateless profile": func(d *SnapshotDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
-		"unknown profile":       func(d *SnapshotDocument) { d.ServiceProfile = "vaultwarden-lite" },
-		"empty profile":         func(d *SnapshotDocument) { d.ServiceProfile = "" },
-		"the reserved slot":     func(d *SnapshotDocument) { d.SnapshotSlot = ReservedSnapshotSlot },
+		"schema 1 version":          func(d *SnapshotDocument) { d.SchemaVersion = SchemaVersion },
+		"absent schema":             func(d *SnapshotDocument) { d.SchemaVersion = 0 },
+		"upper-case UUID":           func(d *SnapshotDocument) { d.InfrastructureID = strings.ToUpper(vectorInfrastructure) },
+		"traversal machine":         func(d *SnapshotDocument) { d.MachineID = "../../etc/shadow" },
+		"unknown operation":         func(d *SnapshotDocument) { d.Operation = "archive_service" },
+		"deploy operation":          func(d *SnapshotDocument) { d.Operation = OperationDeployPrivateService },
+		"link route operation":      func(d *SnapshotDocument) { d.Operation = OperationPublishLinkRoute },
+		"empty operation":           func(d *SnapshotDocument) { d.Operation = "" },
+		"the stateless profile":     func(d *SnapshotDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"the probe's reserved name": func(d *SnapshotDocument) { d.ServiceProfile = "probe" },
+		"the entry's reserved name": func(d *SnapshotDocument) { d.ServiceProfile = "entrypoint" },
+		"a name no slug could be":   func(d *SnapshotDocument) { d.ServiceProfile = "vaultwarden-lite-2" },
+		"an upper-case name":        func(d *SnapshotDocument) { d.ServiceProfile = "Vaultwarden" },
+		"a dotted name":             func(d *SnapshotDocument) { d.ServiceProfile = "vault.warden" },
+		"a traversal name":          func(d *SnapshotDocument) { d.ServiceProfile = "../../etc" },
+		"empty profile":             func(d *SnapshotDocument) { d.ServiceProfile = "" },
+		"the reserved slot":         func(d *SnapshotDocument) { d.SnapshotSlot = ReservedSnapshotSlot },
 	} {
 		document := vectorSnapshot()
 		mutate(&document)
@@ -1299,17 +1616,19 @@ func TestDecodeV2RefusesEverySnapshotAndRestoreOutsideTheContract(t *testing.T) 
 	}
 
 	for name, mutate := range map[string]func(*RestoreDocument){
-		"schema 1 version":      func(d *RestoreDocument) { d.SchemaVersion = SchemaVersion },
-		"absent schema":         func(d *RestoreDocument) { d.SchemaVersion = 0 },
-		"non version 4 UUID":    func(d *RestoreDocument) { d.InfrastructureID = "8f14e45f-ceea-1167-a8b1-1f7bd0a0f4c2" },
-		"too short machine":     func(d *RestoreDocument) { d.MachineID = "ab" },
-		"unknown operation":     func(d *RestoreDocument) { d.Operation = "rollback_service" },
-		"deploy operation":      func(d *RestoreDocument) { d.Operation = OperationDeployPrivateService },
-		"public route":          func(d *RestoreDocument) { d.Operation = OperationPublishRoute },
-		"empty operation":       func(d *RestoreDocument) { d.Operation = "" },
-		"the stateless profile": func(d *RestoreDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
-		"unknown profile":       func(d *RestoreDocument) { d.ServiceProfile = "vaultwarden-lite" },
-		"empty profile":         func(d *RestoreDocument) { d.ServiceProfile = "" },
+		"schema 1 version":          func(d *RestoreDocument) { d.SchemaVersion = SchemaVersion },
+		"absent schema":             func(d *RestoreDocument) { d.SchemaVersion = 0 },
+		"non version 4 UUID":        func(d *RestoreDocument) { d.InfrastructureID = "8f14e45f-ceea-1167-a8b1-1f7bd0a0f4c2" },
+		"too short machine":         func(d *RestoreDocument) { d.MachineID = "ab" },
+		"unknown operation":         func(d *RestoreDocument) { d.Operation = "rollback_service" },
+		"deploy operation":          func(d *RestoreDocument) { d.Operation = OperationDeployPrivateService },
+		"public route":              func(d *RestoreDocument) { d.Operation = OperationPublishRoute },
+		"empty operation":           func(d *RestoreDocument) { d.Operation = "" },
+		"the stateless profile":     func(d *RestoreDocument) { d.ServiceProfile = ServiceProfileBentoPDF },
+		"the probe's reserved name": func(d *RestoreDocument) { d.ServiceProfile = "probe" },
+		"a name no slug could be":   func(d *RestoreDocument) { d.ServiceProfile = "vaultwarden-lite-2" },
+		"an upper-case name":        func(d *RestoreDocument) { d.ServiceProfile = "Vaultwarden" },
+		"empty profile":             func(d *RestoreDocument) { d.ServiceProfile = "" },
 	} {
 		document := vectorRestore()
 		mutate(&document)
@@ -1322,6 +1641,330 @@ func TestDecodeV2RefusesEverySnapshotAndRestoreOutsideTheContract(t *testing.T) 
 		document.SnapshotSlot = slot
 		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
 			t.Fatalf("a restore naming %s was accepted", name)
+		}
+	}
+}
+
+// TestDecodeV2RefusesEveryUserServiceDocumentOutsideTheContract is the hostile
+// table of the third door.
+//
+// Three of its fields name a definition this package never reads, so what is
+// proven here is exactly what a document can be held to alone: the slug grammar
+// the definition package owns — reserved names and all — the one spelling of a
+// revision's digest, and the repository rule that refuses a tag on this side too.
+// The origin is the one field accepted in two forms, and both are exercised: the
+// rule that decides between them needs the definition, and lives beside this
+// table in TestAUserServicePlanIsHeldAgainstTheDefinitionItPins.
+func TestDecodeV2RefusesEveryUserServiceDocumentOutsideTheContract(t *testing.T) {
+	t.Parallel()
+	for name, document := range map[string]string{
+		"a deployment":                vectorUserServicePlanDocument,
+		"a removal":                   vectorUserServiceRollbackDocument,
+		"a deployment with no origin": vectorMinimalUserPlanDocument,
+		"a removal with no origin":    vectorMinimalUserRollbackDocument,
+	} {
+		if _, err := DecodeV2([]byte(document)); err != nil {
+			t.Fatalf("%s must decode: %v", name, err)
+		}
+	}
+
+	// A document that leaves the empty origin out entirely is the same plan under
+	// the same digest, and re-encoding it returns the one canonical spelling. That
+	// is the whole latitude a transport has over the conditional field.
+	omitted := strings.Replace(vectorMinimalUserPlanDocument, `,"origin_host":""`, "", 1)
+	decoded, err := DecodeV2([]byte(omitted))
+	if err != nil {
+		t.Fatalf("a document omitting an empty origin was refused: %v", err)
+	}
+	digest, err := decoded.SHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != vectorMinimalUserPlanSHA256 {
+		t.Fatalf("omitting an empty origin changed the plan digest: %s", digest)
+	}
+	reencoded, err := decoded.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(reencoded) != vectorMinimalUserPlanDocument {
+		t.Fatalf("an omitted origin did not return to its canonical spelling:\n%s", reencoded)
+	}
+
+	for _, port := range []int{MinLocalPort, MaxLocalPort} {
+		document := vectorUserService()
+		document.LocalPort = port
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err != nil {
+			t.Fatalf("the bound %d of the port range was refused: %v", port, err)
+		}
+	}
+
+	for name, mutate := range map[string]func(*UserServiceDocument){
+		"schema 1 version":    func(d *UserServiceDocument) { d.SchemaVersion = SchemaVersion },
+		"absent schema":       func(d *UserServiceDocument) { d.SchemaVersion = 0 },
+		"upper-case UUID":     func(d *UserServiceDocument) { d.InfrastructureID = strings.ToUpper(vectorInfrastructure) },
+		"traversal machine":   func(d *UserServiceDocument) { d.MachineID = "../../etc/shadow" },
+		"unknown operation":   func(d *UserServiceDocument) { d.Operation = "start_user_service" },
+		"private operation":   func(d *UserServiceDocument) { d.Operation = OperationDeployPrivateService },
+		"stateless operation": func(d *UserServiceDocument) { d.Operation = OperationDeployWebService },
+		"snapshot operation":  func(d *UserServiceDocument) { d.Operation = OperationSnapshotService },
+		"empty operation":     func(d *UserServiceDocument) { d.Operation = "" },
+
+		// The four reserved names are the whole of what keeps one name designating
+		// one door, and a plan may not spell them here any more than a definition
+		// may take them.
+		"the stateless profile as a slug": func(d *UserServiceDocument) { d.DefinitionSlug = ServiceProfileBentoPDF },
+		"the private profile as a slug":   func(d *UserServiceDocument) { d.DefinitionSlug = ServiceProfileVaultwarden },
+		"the probe's reserved name":       func(d *UserServiceDocument) { d.DefinitionSlug = "probe" },
+		"the entry's reserved name":       func(d *UserServiceDocument) { d.DefinitionSlug = "entrypoint" },
+		"an empty slug":                   func(d *UserServiceDocument) { d.DefinitionSlug = "" },
+		"an upper-case slug":              func(d *UserServiceDocument) { d.DefinitionSlug = "Lab-Notes" },
+		"a slug one character too long":   func(d *UserServiceDocument) { d.DefinitionSlug = strings.Repeat("a", 17) },
+		"a dotted slug":                   func(d *UserServiceDocument) { d.DefinitionSlug = "lab.notes" },
+		"a traversal slug":                func(d *UserServiceDocument) { d.DefinitionSlug = "../../etc" },
+		"a slug opening on a hyphen":      func(d *UserServiceDocument) { d.DefinitionSlug = "-lab-notes" },
+
+		"an empty definition digest":     func(d *UserServiceDocument) { d.DefinitionDigest = "" },
+		"an upper-case digest":           func(d *UserServiceDocument) { d.DefinitionDigest = strings.ToUpper(vectorUserServiceDigest) },
+		"a truncated digest":             func(d *UserServiceDocument) { d.DefinitionDigest = vectorUserServiceDigest[:63] },
+		"a digest spelled as an OCI one": func(d *UserServiceDocument) { d.DefinitionDigest = "sha256:" + vectorUserServiceDigest },
+		"a non hexadecimal digest":       func(d *UserServiceDocument) { d.DefinitionDigest = strings.Repeat("z", 64) },
+
+		"an empty repository":         func(d *UserServiceDocument) { d.ImageReference = "" },
+		"a repository carrying a tag": func(d *UserServiceDocument) { d.ImageReference = vectorUserImageReference + ":latest" },
+		"a repository carrying a digest": func(d *UserServiceDocument) {
+			d.ImageReference = vectorUserImageReference + "@" + vectorUserImageDigest
+		},
+		"a repository with no registry": func(d *UserServiceDocument) { d.ImageReference = "lab-notes" },
+		"an upper-case repository":      func(d *UserServiceDocument) { d.ImageReference = "registry.lab.your-cloud.test/Lab-Notes" },
+
+		"an empty image digest":    func(d *UserServiceDocument) { d.ImageDigest = "" },
+		"a bare image digest":      func(d *UserServiceDocument) { d.ImageDigest = strings.Repeat("a", 64) },
+		"an upper-case image":      func(d *UserServiceDocument) { d.ImageDigest = "sha256:" + strings.Repeat("A", 64) },
+		"another digest algorithm": func(d *UserServiceDocument) { d.ImageDigest = "sha512:" + strings.Repeat("a", 64) },
+		"a truncated image digest": func(d *UserServiceDocument) { d.ImageDigest = "sha256:" + strings.Repeat("a", 63) },
+
+		"a privileged port":   func(d *UserServiceDocument) { d.LocalPort = 443 },
+		"an absent port":      func(d *UserServiceDocument) { d.LocalPort = 0 },
+		"a negative port":     func(d *UserServiceDocument) { d.LocalPort = -1 },
+		"a port above range":  func(d *UserServiceDocument) { d.LocalPort = MaxLocalPort + 1 },
+		"a port beyond int16": func(d *UserServiceDocument) { d.LocalPort = 70000 },
+
+		"a wildcard origin":             func(d *UserServiceDocument) { d.OriginHost = "*.lab.your-cloud.test" },
+		"an upper-case origin":          func(d *UserServiceDocument) { d.OriginHost = "Notes.lab.your-cloud.test" },
+		"an origin with a trailing dot": func(d *UserServiceDocument) { d.OriginHost = "notes.lab.your-cloud.test." },
+		"an origin with empty labels":   func(d *UserServiceDocument) { d.OriginHost = "notes..lab.your-cloud.test" },
+		"an origin carrying a port":     func(d *UserServiceDocument) { d.OriginHost = "notes.lab.your-cloud.test:443" },
+		"an origin carrying a rule":     func(d *UserServiceDocument) { d.OriginHost = "notes.lab.test`)||Host(`evil.test" },
+		"an origin carrying a break":    func(d *UserServiceDocument) { d.OriginHost = "notes.lab.test\nevil.test" },
+	} {
+		document := vectorUserService()
+		mutate(&document)
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("a user service naming %s was accepted", name)
+		}
+		removal := vectorUserService()
+		removal.Operation = OperationRemoveUserService
+		mutate(&removal)
+		if _, err := DecodeV2(hostilePlanDocument(t, removal)); err == nil {
+			t.Fatalf("a user service removal naming %s was accepted", name)
+		}
+	}
+}
+
+// TestAUserServicePlanIsHeldAgainstTheDefinitionItPins is the cross-check the
+// contract names, and the one rule of this door a document cannot carry alone.
+//
+// Validating a plan reads one document; agreeing with a definition reads two. The
+// second act is held at construction by the Controller, which has the frozen
+// definition in hand, and again by the Auxiliary, which receives the definition's
+// bytes beside the signed pair and trusts neither the transport nor the
+// Controller. Both call this one function, so the two cannot come to disagree —
+// and this test is what says so before either of them exists.
+func TestAUserServicePlanIsHeldAgainstTheDefinitionItPins(t *testing.T) {
+	t.Parallel()
+	reference := vectorReferenceDefinition(t)
+	minimal := vectorMinimalDefinition(t)
+
+	if !reference.InterpolatesOriginHost() {
+		t.Fatal("the reference definition must consume the origin, or this test proves nothing")
+	}
+	if minimal.InterpolatesOriginHost() {
+		t.Fatal("the minimal definition must consume no origin, or this test proves nothing")
+	}
+	if err := RequireDefinitionAgreement(vectorUserService(), reference); err != nil {
+		t.Fatalf("the nominal plan does not agree with the definition it pins: %v", err)
+	}
+	if err := RequireDefinitionAgreement(vectorMinimalUserService(), minimal); err != nil {
+		t.Fatalf("the nominal plan without an origin was refused: %v", err)
+	}
+
+	for name, subject := range map[string]struct {
+		document   UserServiceDocument
+		definition servicedefinition.Document
+	}{
+		// A digest that names another revision is the refusal the whole door rests
+		// on: a plan displaying one document and pinning another would let a human
+		// approve bytes they never read.
+		"a plan pinning another revision": {
+			document: func() UserServiceDocument {
+				document := vectorUserService()
+				document.DefinitionDigest = vectorMinimalDigest
+				return document
+			}(),
+			definition: reference,
+		},
+		"a definition that is not the one pinned": {
+			document:   vectorUserService(),
+			definition: minimal,
+		},
+		"a plan filed under another slug": {
+			document: func() UserServiceDocument {
+				document := vectorUserService()
+				document.DefinitionSlug = "notes"
+				return document
+			}(),
+			definition: reference,
+		},
+		// The repository is the definition's, and a plan naming another one is a
+		// plan whose image comes from somewhere the human never approved.
+		"a plan naming another repository": {
+			document: func() UserServiceDocument {
+				document := vectorUserService()
+				document.ImageReference = "ghcr.io/attacker/lab-notes"
+				return document
+			}(),
+			definition: reference,
+		},
+		"a plan without the origin its definition interpolates": {
+			document: func() UserServiceDocument {
+				document := vectorUserService()
+				document.OriginHost = ""
+				return document
+			}(),
+			definition: reference,
+		},
+		"a plan carrying an origin its definition consumes nowhere": {
+			document: func() UserServiceDocument {
+				document := vectorMinimalUserService()
+				document.OriginHost = vectorUserOriginHost
+				return document
+			}(),
+			definition: minimal,
+		},
+		// Agreement never stands in for validation: a document outside the contract
+		// is refused here too, rather than accepted because it matches a definition.
+		"a plan outside its own contract": {
+			document: func() UserServiceDocument {
+				document := vectorUserService()
+				document.LocalPort = 443
+				return document
+			}(),
+			definition: reference,
+		},
+		"a definition outside its own contract": {
+			document:   vectorUserService(),
+			definition: servicedefinition.Document{},
+		},
+	} {
+		if err := RequireDefinitionAgreement(subject.document, subject.definition); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+
+	// A revision that changes one byte changes the digest, so a plan built against
+	// the old revision no longer agrees with the new one. That is what makes
+	// "each instance shows the exact revision it runs" a property rather than a
+	// hope.
+	revised := reference
+	revised.ContainerPort++
+	if err := RequireDefinitionAgreement(vectorUserService(), revised); err == nil {
+		t.Fatal("a plan agreed with a revision it does not pin")
+	}
+}
+
+// TestTheThreeDoorsRefuseOneAnotherInEveryDirection is the closure the contract
+// asks for by name: a definition passes through no door of the delivered
+// profiles, and a delivered profile passes through no door of the definitions.
+//
+// The refusal is a lookup that fails rather than a comparison anyone had to
+// write, and it is the reservation of the four names at the source that makes it
+// so. This test walks it in both directions so that a table changed on one side
+// alone fails here rather than on a machine.
+func TestTheThreeDoorsRefuseOneAnotherInEveryDirection(t *testing.T) {
+	t.Parallel()
+	for _, slug := range []string{vectorUserServiceSlug, vectorMinimalSlug, "blog"} {
+		if _, err := BuildWebServicePair(OperationDeployWebService, vectorInfrastructure,
+			vectorMachine, slug, vectorLocalPort); err == nil {
+			t.Fatalf("the stateless door built a plan for the definition %q", slug)
+		}
+		if _, err := BuildPrivateServicePair(OperationDeployPrivateService, vectorInfrastructure,
+			vectorMachine, slug, vectorPrivateLocalPort, vectorOriginHost); err == nil {
+			t.Fatalf("the private door built a plan for the definition %q", slug)
+		}
+	}
+	for _, profile := range []string{ServiceProfileBentoPDF, ServiceProfileVaultwarden} {
+		document := vectorUserService()
+		document.DefinitionSlug = profile
+		if _, err := DecodeV2(hostilePlanDocument(t, document)); err == nil {
+			t.Fatalf("the third door accepted a plan naming the delivered profile %q", profile)
+		}
+		// And the builder cannot even be asked: a definition may not take one of
+		// those names, so no frozen definition can carry it.
+		if err := servicedefinition.ValidateSlug(profile); err == nil {
+			t.Fatalf("a definition may be written under the delivered profile %q", profile)
+		}
+	}
+}
+
+// TestEverySchemaTwoOperationDecodesIntoItsOwnShape is the exhaustive dispatch of
+// this schema, held against the closed table rather than against a list a reader
+// has to keep in step with it.
+//
+// An operation added to operationGroups without a canonical document here fails
+// on the count; one added without a decoding case falls through DecodeV2's own
+// refusal; and one whose case builds the wrong shape fails on the assertion. The
+// three failures are the three ways a closed registry can be left half-extended.
+func TestEverySchemaTwoOperationDecodesIntoItsOwnShape(t *testing.T) {
+	t.Parallel()
+	documents := map[string]struct {
+		document string
+		shape    V2Document
+	}{
+		OperationDeployWebService:     {vectorWebServicePlanDocument, WebServiceDocument{}},
+		OperationRemoveWebService:     {vectorWebServiceRollbackDocument, WebServiceDocument{}},
+		OperationDeployEntrypoint:     {vectorEntrypointPlanDocument, EntrypointDocument{}},
+		OperationRemoveEntrypoint:     {vectorEntrypointRollbackDocument, EntrypointDocument{}},
+		OperationPublishRoute:         {vectorRoutePlanDocument, RouteDocument{}},
+		OperationRetireRoute:          {vectorRouteRollbackDocument, RouteDocument{}},
+		OperationDeployPrivateService: {vectorPrivateServicePlanDocument, PrivateServiceDocument{}},
+		OperationRemovePrivateService: {vectorPrivateServiceRollbackDocument, PrivateServiceDocument{}},
+		OperationPublishLinkRoute:     {vectorLinkRoutePlanDocument, LinkRouteDocument{}},
+		OperationRetireLinkRoute:      {vectorLinkRouteRollbackDocument, LinkRouteDocument{}},
+		OperationSnapshotService:      {vectorSnapshotPlanDocument, SnapshotDocument{}},
+		OperationDiscardSnapshot:      {vectorSnapshotRollbackDocument, SnapshotDocument{}},
+		OperationRestoreService:       {vectorRestorePlanDocument, RestoreDocument{}},
+		OperationDeployUserService:    {vectorUserServicePlanDocument, UserServiceDocument{}},
+		OperationRemoveUserService:    {vectorUserServiceRollbackDocument, UserServiceDocument{}},
+	}
+	if len(documents) != len(operationGroups) {
+		t.Fatalf("this table covers %d operations and the schema describes %d",
+			len(documents), len(operationGroups))
+	}
+	for operation := range operationGroups {
+		subject, covered := documents[operation]
+		if !covered {
+			t.Fatalf("operation %q has no canonical document in this table", operation)
+		}
+		decoded, err := DecodeV2([]byte(subject.document))
+		if err != nil {
+			t.Fatalf("operation %q does not decode: %v", operation, err)
+		}
+		if decoded.OperationName() != operation {
+			t.Fatalf("the document of %q decoded as %q", operation, decoded.OperationName())
+		}
+		if fmt.Sprintf("%T", decoded) != fmt.Sprintf("%T", subject.shape) {
+			t.Fatalf("operation %q decoded into %T rather than %T", operation, decoded, subject.shape)
 		}
 	}
 }
@@ -1397,6 +2040,29 @@ func TestNoSchemaTwoDocumentBorrowsAFieldOfAnotherOperation(t *testing.T) {
 		"a restore carrying a second slot":             withExtraField(vectorRestorePlanDocument, `"snapshot_slot":"previous"`),
 		"a restore carrying a local port":              withExtraField(vectorRestorePlanDocument, `"local_port":8080`),
 
+		// The third door names a definition where the two others name a profile,
+		// so a field of either vocabulary crossing into the other is the whole of
+		// what this group has to refuse — and it is refused as an unknown field of
+		// the shape the operation selected, before its value is read.
+		"a user service carrying a profile":      withExtraField(vectorUserServicePlanDocument, `"service_profile":"vaultwarden"`),
+		"a user service carrying a slot":         withExtraField(vectorUserServicePlanDocument, `"snapshot_slot":"nightly"`),
+		"a user service carrying a route host":   withExtraField(vectorUserServicePlanDocument, `"route_host":"evil.test"`),
+		"a user service carrying a volume":       withExtraField(vectorUserServicePlanDocument, `"volumes":["/srv/notes"]`),
+		"a user service carrying environment":    withExtraField(vectorUserServicePlanDocument, `"environment":["LAB_NOTES_TITLE=x"]`),
+		"a user service carrying a secret":       withExtraField(vectorUserServicePlanDocument, `"secrets":{"LAB_NOTES_ADMIN_TOKEN":"hunter2"}`),
+		"a user service carrying a host path":    withExtraField(vectorUserServicePlanDocument, `"home":"/var/lib/your-cloud-user-lab-notes"`),
+		"a user service carrying an account":     withExtraField(vectorUserServicePlanDocument, `"account":"root"`),
+		"a user service carrying the definition": withExtraField(vectorUserServicePlanDocument, `"definition_document":"{}"`),
+		"a user service repeating its origin":    withExtraField(vectorUserServicePlanDocument, `"origin_host":"evil.test"`),
+		"a user service repeating its digest":    withExtraField(vectorUserServicePlanDocument, `"definition_digest":"`+vectorMinimalDigest+`"`),
+		"a user service without its slug":        strings.Replace(vectorUserServicePlanDocument, `"definition_slug":"lab-notes",`, "", 1),
+		"a user service without its digest":      strings.Replace(vectorUserServicePlanDocument, `"definition_digest":"`+vectorUserServiceDigest+`",`, "", 1),
+		"a user service without its image":       strings.Replace(vectorUserServicePlanDocument, `"image_reference":"`+vectorUserImageReference+`",`, "", 1),
+		"a user service claiming a private door": strings.Replace(vectorUserServicePlanDocument, `"deploy_user_service"`, `"deploy_private_service"`, 1),
+		"a private service claiming the third":   strings.Replace(vectorPrivateServicePlanDocument, `"deploy_private_service"`, `"deploy_user_service"`, 1),
+		"a snapshot claiming the third door":     strings.Replace(vectorSnapshotPlanDocument, `"snapshot_service"`, `"deploy_user_service"`, 1),
+		"an oversized user service origin":       strings.Replace(vectorUserServicePlanDocument, vectorUserOriginHost, strings.Repeat("a", MaxPlanBytes), 1),
+
 		"an empty document":                       "",
 		"two values":                              vectorRoutePlanDocument + "{}",
 		"an array of documents":                   "[" + vectorRoutePlanDocument + "]",
@@ -1432,6 +2098,7 @@ func TestSchemaOneAndSchemaTwoRefuseOneAnother(t *testing.T) {
 		"a link route plan":      vectorLinkRoutePlanDocument,
 		"a snapshot plan":        vectorSnapshotPlanDocument,
 		"a restore plan":         vectorRestorePlanDocument,
+		"a user service plan":    vectorUserServicePlanDocument,
 	} {
 		if _, err := Decode([]byte(document)); err == nil {
 			t.Fatalf("the schema 1 decoder accepted %s", name)
@@ -1556,6 +2223,47 @@ func TestASchemaTwoPlanSurvivesTransportAndReturnsTheSameBytes(t *testing.T) {
 }`, ReservedSnapshotSlot, vectorPrivateProfile,
 				OperationRestoreService, vectorMachine, vectorInfrastructure),
 		},
+		"user service": {
+			canonical: vectorUserServicePlanDocument,
+			digest:    vectorUserServicePlanSHA256,
+			reshaped: fmt.Sprintf(`{
+  "origin_host": %q,
+  "local_port": %d,
+  "image_digest": %q,
+  "image_reference": %q,
+  "definition_digest": %q,
+  "definition_slug": %q,
+  "operation": %q,
+  "machine_id": %q,
+  "infrastructure_id": %q,
+  "schema_version": 2
+}`, vectorUserOriginHost, vectorUserLocalPort, vectorUserImageDigest, vectorUserImageReference,
+				vectorUserServiceDigest, vectorUserServiceSlug,
+				OperationDeployUserService, vectorMachine, vectorInfrastructure),
+		},
+		// A definition that consumes no origin leaves the field empty, and a
+		// transport that drops it altogether carries the same plan: the digest is
+		// rebuilt from the fields, and an absent origin and an empty one are one
+		// value. That is the same latitude the definition's own empty lists have,
+		// and it stops exactly there — the Controller emits one spelling, the one
+		// pinned above.
+		"user service without an origin": {
+			canonical: vectorMinimalUserPlanDocument,
+			digest:    vectorMinimalUserPlanSHA256,
+			reshaped: fmt.Sprintf(`{
+  "local_port": %d,
+  "image_digest": %q,
+  "image_reference": %q,
+  "definition_digest": %q,
+  "definition_slug": %q,
+  "operation": %q,
+  "machine_id": %q,
+  "infrastructure_id": %q,
+  "schema_version": 2
+}`, vectorMinimalUserPort, vectorMinimalImageDigest, vectorMinimalReference,
+				vectorMinimalDigest, vectorMinimalSlug,
+				OperationDeployUserService, vectorMachine, vectorInfrastructure),
+		},
 	} {
 		decoded, err := DecodeV2([]byte(subject.canonical))
 		if err != nil {
@@ -1658,6 +2366,34 @@ func TestTheRollbackOfASchemaTwoPairIsTheOtherPairItself(t *testing.T) {
 		// asymmetric in what it means, and symmetric in what it builds: the
 		// rollback of a discard is a snapshot of the same slot, and what that
 		// snapshot will archive is the state the machine holds when it runs.
+		"user service": {
+			forward: func() (V2Pair, error) {
+				return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+					vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+					vectorUserLocalPort, vectorUserOriginHost)
+			},
+			reverse: func() (V2Pair, error) {
+				return BuildUserServicePair(OperationRemoveUserService, vectorInfrastructure,
+					vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+					vectorUserLocalPort, vectorUserOriginHost)
+			},
+		},
+		// The same pair over a definition that consumes no origin, so that the
+		// inversion is proven to leave the conditional field exactly where it was:
+		// a removal names the same instance as the deployment it undoes, origin
+		// included and origin absent alike.
+		"user service without an origin": {
+			forward: func() (V2Pair, error) {
+				return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+					vectorMachine, vectorMinimalDefinition(t), vectorMinimalImageDigest,
+					vectorMinimalUserPort, vectorMinimalUserOrigin)
+			},
+			reverse: func() (V2Pair, error) {
+				return BuildUserServicePair(OperationRemoveUserService, vectorInfrastructure,
+					vectorMachine, vectorMinimalDefinition(t), vectorMinimalImageDigest,
+					vectorMinimalUserPort, vectorMinimalUserOrigin)
+			},
+		},
 		"snapshot": {
 			forward: func() (V2Pair, error) {
 				return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
@@ -1984,6 +2720,66 @@ func TestSchemaTwoBuildersRefuseEveryInstanceOutsideTheContract(t *testing.T) {
 		"a restore pair on a malformed machine": func() (V2Pair, error) {
 			return BuildRestorePair(vectorInfrastructure, "LAB", vectorPrivateProfile, vectorSnapshotSlot)
 		},
+		"an archive pair on a name no slug could be": func() (V2Pair, error) {
+			return BuildSnapshotPair(OperationSnapshotService, vectorInfrastructure,
+				vectorMachine, "vaultwarden-lite-2", vectorSnapshotSlot)
+		},
+		"a restore pair on a reserved name": func() (V2Pair, error) {
+			return BuildRestorePair(vectorInfrastructure, vectorMachine, "entrypoint", vectorSnapshotSlot)
+		},
+		"a user pair on a stateless operation": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployWebService, vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+				vectorUserLocalPort, vectorUserOriginHost)
+		},
+		"a user pair on a private operation": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployPrivateService, vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+				vectorUserLocalPort, vectorUserOriginHost)
+		},
+		"a user pair on an unknown operation": func() (V2Pair, error) {
+			return BuildUserServicePair("start_user_service", vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+				vectorUserLocalPort, vectorUserOriginHost)
+		},
+		"a user pair on a definition outside its own contract": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+				vectorMachine, servicedefinition.Document{}, vectorUserImageDigest,
+				vectorUserLocalPort, vectorUserOriginHost)
+		},
+		"a user pair on a malformed image digest": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), "sha256:not-a-digest",
+				vectorUserLocalPort, vectorUserOriginHost)
+		},
+		"a user pair without an image digest": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), "",
+				vectorUserLocalPort, vectorUserOriginHost)
+		},
+		"a user pair on a privileged port": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+				443, vectorUserOriginHost)
+		},
+		// The two directions of the conditional field, at the one place the rule
+		// can be held: an origin an interpolating definition needs and the caller
+		// left out, and an origin a definition consumes nowhere.
+		"a user pair without the origin its definition interpolates": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+				vectorUserLocalPort, "")
+		},
+		"a user pair carrying an origin its definition consumes nowhere": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+				vectorMachine, vectorMinimalDefinition(t), vectorMinimalImageDigest,
+				vectorMinimalUserPort, vectorUserOriginHost)
+		},
+		"a user pair on a wildcard origin": func() (V2Pair, error) {
+			return BuildUserServicePair(OperationDeployUserService, vectorInfrastructure,
+				vectorMachine, vectorReferenceDefinition(t), vectorUserImageDigest,
+				vectorUserLocalPort, "*.lab.your-cloud.test")
+		},
 	} {
 		if _, err := build(); err == nil {
 			t.Fatalf("%s built a pair", name)
@@ -2054,8 +2850,19 @@ func TestTheImagesOfThisPalierArePinnedByDigestAlone(t *testing.T) {
 		t.Fatal("the stateless profile is described by the private door")
 	}
 
-	if len(inverseOperationV2) != 13 || len(operationGroups) != 13 {
-		t.Fatalf("schema 2 describes exactly thirteen operations, not %d and %d",
+	// The third door pins no image at all, and that is a decision rather than an
+	// omission: the repository is the definition's and the digest is the
+	// instance's, so a table here would be a third authority over a value the
+	// product does not own.
+	if _, pinned := profileImage[vectorUserServiceSlug]; pinned {
+		t.Fatal("a definition's slug is described by the stateless door")
+	}
+	if _, pinned := privateProfileImage[vectorUserServiceSlug]; pinned {
+		t.Fatal("a definition's slug is described by the private door")
+	}
+
+	if len(inverseOperationV2) != 15 || len(operationGroups) != 15 {
+		t.Fatalf("schema 2 describes exactly fifteen operations, not %d and %d",
 			len(inverseOperationV2), len(operationGroups))
 	}
 	for operation, inverse := range inverseOperationV2 {

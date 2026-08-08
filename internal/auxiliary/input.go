@@ -4,21 +4,22 @@
 // The approval package decides whether a human authorised this machine to act.
 // This package decides what acting means, and it is the only place in the
 // product where a plan becomes a file, a service and a container. Its operations
-// are fourteen, in seven inverse pairs: the pinned OCI probe of schema 1,
-// deployed and removed; the managed web service, the public entrypoint and the
-// published route of schema 2; and the three pairs of the private passage of
-// schema 3 — each in its own two directions, all described by a plan document
-// whose digest the approval signed.
+// are twenty-one: the pinned OCI probe of schema 1, deployed and removed; the
+// managed web service, the public entrypoint and the published route of schema 2;
+// the three pairs of the private passage of schema 3; and the private profile's
+// seven, also of schema 2 — the data-bearing service, the route the passage
+// publishes and the three archive operations, whose return is the one undoing of
+// the product that moves a field instead of reversing the operation. Every one of
+// them is described by a plan document whose digest the approval signed.
 //
-// The seven operations of the private profile are written in schema 2 as well:
-// the data-bearing service, the route the passage publishes, and the three
-// archive operations. An approval may already name one of them, because the
-// approval package holds the closed list of what a human may sign and that list
-// is now complete. This package does not perform them: a pair carrying one of
-// those four document shapes is refused by name where the shapes become
-// instances, before any effect and before this machine is read at all, until
-// `#102` and `#103` land. That window is deliberate and it is tested — an
-// operation this Auxiliary does not perform must refuse, never guess.
+// The third door of the product is written in schema 2 as well, and this package
+// does not perform it yet. Its two operations — a service deployed and removed
+// from a definition its user wrote — and the archive operations naming such a
+// definition by its slug are refused by name where the shapes become instances,
+// before any effect and before this machine is read at all, until `#119` lands.
+// That window is deliberate and it is tested — an operation this Auxiliary does
+// not perform must refuse, never guess — and it is the same window `#90`, `#91`,
+// `#96`, `#102` and `#103` each opened and closed in turn.
 //
 // Everything a profile means on a machine — its account, its home, its sheet,
 // its container and its pinned image — lives in one placement per profile rather

@@ -402,6 +402,8 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		OperationSnapshotService:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 		OperationDiscardSnapshot:          {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 		OperationRestoreService:           {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationDeployUserService:        {PrivilegeMutateLocalState, PrivilegeReadLocalState},
+		OperationRemoveUserService:        {PrivilegeMutateLocalState, PrivilegeReadLocalState},
 	}
 	if len(requiredPrivileges) != len(expected) {
 		t.Fatalf("this palier performs %d operations, not %d", len(expected), len(requiredPrivileges))
@@ -470,6 +472,9 @@ func TestTheMutatingPrivilegeIsRequiredByExactlyTheOperationsThatMutate(t *testi
 		OperationSnapshotService:      plan.OperationSnapshotService,
 		OperationDiscardSnapshot:      plan.OperationDiscardSnapshot,
 		OperationRestoreService:       plan.OperationRestoreService,
+
+		OperationDeployUserService: plan.OperationDeployUserService,
+		OperationRemoveUserService: plan.OperationRemoveUserService,
 	} {
 		if operation != spelling {
 			t.Fatalf("the approval spells %q where the plan spells %q", operation, spelling)

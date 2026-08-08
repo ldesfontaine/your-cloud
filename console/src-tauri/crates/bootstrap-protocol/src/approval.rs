@@ -76,7 +76,9 @@ pub const MAX_SIGNED_APPROVAL_BYTES: usize = 1_024;
 /// link and the two junctions that bound it, and the seven operations of the
 /// private profile are the ones that describe a service whose data outlives its
 /// container, the name that publishes it through the passage, and the archives
-/// of its data. Each of them belongs to an exact pair of a plan and its
+/// of its data, and the two operations of the third door are the ones that
+/// describe a service whose definition its user wrote. Each of them belongs to an
+/// exact pair of a plan and its
 /// rollback — what each describes is the plan document whose digest the envelope
 /// names, never anything the envelope itself could spell. An operation name
 /// outside this list has no variant, so an envelope naming an installation, an
@@ -107,6 +109,18 @@ pub enum ApprovalOperation {
     SnapshotService,
     DiscardSnapshot,
     RestoreService,
+    /// The two operations of the third door. Both mutate, both are described by
+    /// a plan document of schema 2 whose digest this envelope signs, and both are
+    /// named in the same closed list as the others rather than derived from
+    /// anything: an operation an Auxiliary may act on is a decision written once,
+    /// in a list a reader can count.
+    ///
+    /// They are the first operations of the product whose effects are described
+    /// by a document its user wrote. That changes nothing here: this envelope
+    /// decides that a human approved two digests for one operation, and it has
+    /// never known what those digests cover.
+    DeployUserService,
+    RemoveUserService,
 }
 
 impl ApprovalOperation {
@@ -134,6 +148,8 @@ impl ApprovalOperation {
             Self::SnapshotService => "snapshot_service",
             Self::DiscardSnapshot => "discard_snapshot",
             Self::RestoreService => "restore_service",
+            Self::DeployUserService => "deploy_user_service",
+            Self::RemoveUserService => "remove_user_service",
         }
     }
 
@@ -153,7 +169,9 @@ impl ApprovalOperation {
     /// of the private profile are there too, and the archives are the case worth
     /// naming: a snapshot stops the service, writes an archive and restarts it,
     /// so it mutates the machine as much as a deployment does, whatever the word
-    /// "backup" suggests.
+    /// "backup" suggests. The two of the third door are there too: a user service
+    /// is deployed and removed by the very machinery the delivered profiles use,
+    /// so its operations mutate exactly as theirs do.
     pub fn required_privileges(self) -> &'static [ApprovalPrivilege] {
         match self {
             Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],
@@ -177,7 +195,9 @@ impl ApprovalOperation {
             | Self::RetireLinkRoute
             | Self::SnapshotService
             | Self::DiscardSnapshot
-            | Self::RestoreService => &[
+            | Self::RestoreService
+            | Self::DeployUserService
+            | Self::RemoveUserService => &[
                 ApprovalPrivilege::MutateLocalState,
                 ApprovalPrivilege::ReadLocalState,
             ],
@@ -702,10 +722,10 @@ mod tests {
         );
     }
 
-    /// The twenty-two operations this palier's envelope may name, in
+    /// The twenty-four operations this palier's envelope may name, in
     /// declaration order. Holding the list in one place is what keeps the tests
-    /// below from silently covering twenty-one of twenty-two.
-    const DECLARED_OPERATIONS: [ApprovalOperation; 22] = [
+    /// below from silently covering twenty-three of twenty-four.
+    const DECLARED_OPERATIONS: [ApprovalOperation; 24] = [
         ApprovalOperation::DiagnoseProtocolReadOnly,
         ApprovalOperation::DeployOciProbe,
         ApprovalOperation::RemoveOciProbe,
@@ -728,11 +748,13 @@ mod tests {
         ApprovalOperation::SnapshotService,
         ApprovalOperation::DiscardSnapshot,
         ApprovalOperation::RestoreService,
+        ApprovalOperation::DeployUserService,
+        ApprovalOperation::RemoveUserService,
     ];
 
-    /// The twenty-one operations that describe a state of a machine, which is
+    /// The twenty-three operations that describe a state of a machine, which is
     /// every declared operation but the read-only diagnostic.
-    const MUTATING_OPERATIONS: [ApprovalOperation; 21] = [
+    const MUTATING_OPERATIONS: [ApprovalOperation; 23] = [
         ApprovalOperation::DeployOciProbe,
         ApprovalOperation::RemoveOciProbe,
         ApprovalOperation::DeployWebService,
@@ -754,6 +776,8 @@ mod tests {
         ApprovalOperation::SnapshotService,
         ApprovalOperation::DiscardSnapshot,
         ApprovalOperation::RestoreService,
+        ApprovalOperation::DeployUserService,
+        ApprovalOperation::RemoveUserService,
     ];
 
     #[test]
@@ -790,6 +814,8 @@ mod tests {
             (ApprovalOperation::SnapshotService, "snapshot_service"),
             (ApprovalOperation::DiscardSnapshot, "discard_snapshot"),
             (ApprovalOperation::RestoreService, "restore_service"),
+            (ApprovalOperation::DeployUserService, "deploy_user_service"),
+            (ApprovalOperation::RemoveUserService, "remove_user_service"),
         ] {
             assert_eq!(
                 serde_json::to_value(operation).unwrap(),
@@ -809,7 +835,7 @@ mod tests {
             );
             names.push(operation.as_str());
         }
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 24);
         for (privilege, wire_name) in [
             (ApprovalPrivilege::ReadLocalState, "read_local_state"),
             (ApprovalPrivilege::MutateLocalState, "mutate_local_state"),
@@ -844,11 +870,11 @@ mod tests {
         }
         assert!(canonical_privileges(&DECLARED));
 
-        // Held for the twenty-two operations rather than for the three of the
+        // Held for the twenty-four operations rather than for the three of the
         // first palier: the invariant is about every list this side can sign,
         // and an operation added without being listed here would be one whose
         // privilege order nobody checked.
-        assert_eq!(DECLARED_OPERATIONS.len(), 22);
+        assert_eq!(DECLARED_OPERATIONS.len(), 24);
         for operation in DECLARED_OPERATIONS {
             let required = operation.required_privileges();
             assert!(
@@ -861,7 +887,7 @@ mod tests {
     /// Each operation carries exactly its own privileges, and the read-only one
     /// still refuses to mutate whatever else its envelope carries.
     ///
-    /// The equality runs both ways, for each of the twenty-one operations that
+    /// The equality runs both ways, for each of the twenty-three operations that
     /// describe a state: the diagnostic cannot be given the mutating pair, and
     /// none of them can be given the reading privilege alone or the mutating one
     /// alone. Naming an operation is therefore the whole of asking for a power

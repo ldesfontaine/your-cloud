@@ -406,6 +406,7 @@ func TestControllerExternalElementsProduceNoPlanInEitherDirection(t *testing.T) 
 		"/v0/probe-plans", "/v0/service-plans", "/v0/entrypoint-plans", "/v0/route-plans",
 		"/v0/link-plans", "/v0/listener-peer-plans", "/v0/initiator-peer-plans",
 		"/v0/private-service-plans", "/v0/link-route-plans", "/v0/snapshot-plans", "/v0/restore-plans",
+		"/v0/user-service-plans",
 	} {
 		body := `{"schema_version":2,"machine_id":"lab-machine-1","element_id":"` + declared.Element.ElementID + `"}`
 		response := fixture.request(http.MethodPost, route, body, "application/json", bearer, fixture.certificate)

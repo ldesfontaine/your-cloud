@@ -418,9 +418,16 @@ func TestControllerServiceDefinitionsRefuseAFreezeTheListingCouldNotCarry(t *tes
 // In one direction, no plan route of the delivered doors can name a definition:
 // neither `definition_document` nor `definition_sha256` is a field of any of their
 // schemas, so a request carrying one is refused by the strict decoding before its
-// value is read. In the other, freezing changes nothing about the plans a machine
-// can receive — the plan a machine could build before the freeze is the plan it
-// builds after it, byte for byte.
+// value is read. In the other, freezing changes nothing about the plans of those
+// doors — the plan a machine could build before the freeze is the plan it builds
+// after it, byte for byte.
+//
+// `/v0/user-service-plans` is deliberately absent from the list below, and it is
+// the one route for which the second sentence does not hold: a definition exists
+// to be pinned, and that route is where the pinning happens. It still produces
+// nothing here, because a plan of the third door is born of a human asking for
+// one — freezing a definition builds no plan on any route, which is what the
+// reference plan at the end of this test says.
 func TestControllerServiceDefinitionsProduceNoPlanInEitherDirection(t *testing.T) {
 	fixture := newControllerHTTPFixture(t)
 	attachProbeMachine(t, fixture, "lab-machine-1")

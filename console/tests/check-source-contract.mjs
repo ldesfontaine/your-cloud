@@ -2276,6 +2276,32 @@ for (const bound of [
   "#[serde(deny_unknown_fields)]\npub struct LinkRoutePlanDocumentV2 {",
   "#[serde(deny_unknown_fields)]\npub struct SnapshotPlanDocumentV2 {",
   "#[serde(deny_unknown_fields)]\npub struct RestorePlanDocumentV2 {",
+  // La troisième porte : une forme fermée de plus, qui nomme une définition là
+  // où les deux autres nomment un profil livré. Le slug et le dépôt sont tenus
+  // par la grammaire du module des définitions plutôt que par une seconde
+  // écrite ici, et la révision est lue par le lecteur de digest de l'enveloppe
+  // — jamais par celui d'un digest OCI, qui porte son algorithme.
+  "#[serde(deny_unknown_fields)]\npub struct UserServicePlanDocumentV2 {",
+  "!canonical_definition_slug(&self.definition_slug)",
+  "decode_digest(&self.definition_digest).is_none()",
+  "!canonical_image_repository(&self.image_reference)",
+  "append_field(&mut transcript, self.definition_slug.as_bytes())?;",
+  "append_field(&mut transcript, &definition)?;",
+  // L'origine du service utilisateur est écrite même absente : une longueur de
+  // zéro, jamais un champ que le lecteur peut ne pas trouver.
+  "fn canonical_user_service_origin(origin: &str) -> bool {",
+  "origin.is_empty() || canonical_route_host(origin)",
+  "!canonical_user_service_origin(&self.origin_host)",
+  // Les archives partagent un champ avec la troisième porte, et la réservation
+  // des quatre noms du produit est ce qui garde une lecture unique : un nom est
+  // dans la liste fermée, ou c'est un slug, jamais les deux.
+  "fn archives_data(service_profile: &str) -> bool {",
+  "private_profile_image(service_profile).is_some() || canonical_definition_slug(service_profile)",
+  "Self::DeployUserService | Self::RemoveUserService => PlanV2Group::UserService,",
+  "Self::DeployUserService => Self::RemoveUserService,",
+  "Self::RemoveUserService => Self::DeployUserService,",
+  'Self::DeployUserService => "deploy_user_service",',
+  'Self::RemoveUserService => "remove_user_service",',
   // Les queues de transcription des quatre groupes : l'origine ajoutée après le
   // port, l'emplacement après le profil.
   "append_field(&mut transcript, self.origin_host.as_bytes())?;",
@@ -2316,13 +2342,16 @@ for (const bound of [
 // une garde de présence passerait encore si l'un des deux groupes cessait de
 // hacher son image.
 for (const [fragment, expected] of [
-  ["append_field(&mut transcript, self.image_reference.as_bytes())?;", 3],
-  ["append_field(&mut transcript, &image)?;", 3],
+  ["append_field(&mut transcript, self.image_reference.as_bytes())?;", 4],
+  ["append_field(&mut transcript, &image)?;", 4],
   // Les deux formes qui nomment un emplacement le hachent chacune, et les deux
   // seules ; les deux qui archivent tiennent chacune la liste privée des
   // profils, parce qu'un profil sans volume n'a rien à archiver.
   ["append_field(&mut transcript, self.snapshot_slot.as_bytes())?;", 2],
-  ["private_profile_image(&self.service_profile).is_none()", 2],
+  // Les deux formes qui portent une origine la hachent chacune en fin de queue,
+  // et les deux seules ; celle de la troisième porte l'écrit même vide.
+  ["append_field(&mut transcript, self.origin_host.as_bytes())?;", 2],
+  ["!archives_data(&self.service_profile)", 2],
   ["!canonical_snapshot_slot(&self.snapshot_slot)", 2],
   // Le refus de l'emplacement réservé est écrit une fois et une seule : dans la
   // forme des archives. L'écrire aussi dans le retour interdirait le rollback
@@ -2379,7 +2408,7 @@ for (const bound of [
   'Self::PublishRoute => "publish_route",',
   'Self::RetireRoute => "retire_route",',
   "Self::DiagnoseProtocolReadOnly => &[ApprovalPrivilege::ReadLocalState],",
-  "| Self::DeployWebService\n            | Self::RemoveWebService\n            | Self::DeployEntrypoint\n            | Self::RemoveEntrypoint\n            | Self::PublishRoute\n            | Self::RetireRoute\n            | Self::PrepareLink\n            | Self::WithdrawLink\n            | Self::AttachLinkPeer\n            | Self::DetachLinkPeer\n            | Self::JoinLinkPeer\n            | Self::LeaveLinkPeer\n            | Self::DeployPrivateService\n            | Self::RemovePrivateService\n            | Self::PublishLinkRoute\n            | Self::RetireLinkRoute\n            | Self::SnapshotService\n            | Self::DiscardSnapshot\n            | Self::RestoreService => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
+  "| Self::DeployWebService\n            | Self::RemoveWebService\n            | Self::DeployEntrypoint\n            | Self::RemoveEntrypoint\n            | Self::PublishRoute\n            | Self::RetireRoute\n            | Self::PrepareLink\n            | Self::WithdrawLink\n            | Self::AttachLinkPeer\n            | Self::DetachLinkPeer\n            | Self::JoinLinkPeer\n            | Self::LeaveLinkPeer\n            | Self::DeployPrivateService\n            | Self::RemovePrivateService\n            | Self::PublishLinkRoute\n            | Self::RetireLinkRoute\n            | Self::SnapshotService\n            | Self::DiscardSnapshot\n            | Self::RestoreService\n            | Self::DeployUserService\n            | Self::RemoveUserService => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
 ]) {
   if (!approvalProtocol.includes(bound)) {
     failures.push(`approval.rs (protocole): opération du profil public absente (${bound})`);
@@ -2413,10 +2442,22 @@ for (const bound of [
   'Self::SnapshotService => "snapshot_service",',
   'Self::DiscardSnapshot => "discard_snapshot",',
   'Self::RestoreService => "restore_service",',
-  "| Self::SnapshotService\n            | Self::DiscardSnapshot\n            | Self::RestoreService => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
+  "| Self::SnapshotService\n            | Self::DiscardSnapshot\n            | Self::RestoreService\n            | Self::DeployUserService\n            | Self::RemoveUserService => &[\n                ApprovalPrivilege::MutateLocalState,\n                ApprovalPrivilege::ReadLocalState,\n            ],",
 ]) {
   if (!approvalProtocol.includes(bound)) {
     failures.push(`approval.rs (protocole): opération du profil privé absente (${bound})`);
+  }
+}
+// Les deux opérations de la troisième porte existent dans la même enveloppe et y
+// demandent la même paire mutante. Les nommer ne les rend pas applicables :
+// l'enveloppe décide qu'un humain a approuvé deux empreintes pour une opération,
+// et elle n'a jamais su ce que ces empreintes couvrent.
+for (const bound of [
+  'Self::DeployUserService => "deploy_user_service",',
+  'Self::RemoveUserService => "remove_user_service",',
+]) {
+  if (!approvalProtocol.includes(bound)) {
+    failures.push(`approval.rs (protocole): opération de la troisième porte absente (${bound})`);
   }
 }
 // La Console ne possède pas plus de ré-encodeur canonique au schéma 2 qu'au
@@ -2477,6 +2518,20 @@ for (const bound of [
   'format!("Emplacement restauré : {}", document.snapshot_slot)',
   '"Retour : le rollback restaure ce que « {RESERVED_SNAPSHOT_SLOT} » détient, \\',
   "écrit avant que la moindre donnée ne soit touchée",
+  // La troisième porte : ce qu'un humain approuve vraiment est la définition et
+  // sa révision, parce que le compte, le foyer, les volumes, l'environnement et
+  // les noms de secrets en viennent et d'aucun champ du plan. L'origine est le
+  // seul champ du schéma qu'un document peut porter ou non, donc les deux formes
+  // sont écrites : une fenêtre qui omettrait la ligne rendrait deux états
+  // presque identiques.
+  'format!("Service défini : {}", document.definition_slug)',
+  '"Révision de la définition : {}",',
+  "if document.origin_host.is_empty() {",
+  '"Origine : aucune, aucune ligne de la définition gelée ne nomme \\',
+  '"Origine : {}, portée par les lignes de la définition qui nomment \\',
+  "{ORIGIN_HOST_PLACEHOLDER}",
+  '"Ce que la révision décide : le compte, le foyer, les volumes, \\',
+  "cette empreinte, et d’aucun champ de ce plan",
 ]) {
   if (!publicationPlanRuntime.includes(bound)) {
     failures.push(`publication_plan.rs: garde du plan présenté absente (${bound})`);
@@ -2486,8 +2541,8 @@ for (const bound of [
 // digest. Comme au-dessus, c'est compté : un service dont l'image aurait
 // disparu de ses lignes passerait une garde de simple présence.
 for (const [fragment, expected] of [
-  ['format!("Image : {}", document.image_reference)', 3],
-  ['format!("Digest de l’image : {}", document.image_digest)', 3],
+  ['format!("Image : {}", document.image_reference)', 4],
+  ['format!("Digest de l’image : {}", document.image_digest)', 4],
   // Les quatre genres de plan qui nomment un profil le montrent. Un service
   // privé, une archive ou un retour dont le profil aurait disparu des lignes
   // passerait une garde de simple présence, puisque le service sans état, lui,

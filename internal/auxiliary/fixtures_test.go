@@ -16,6 +16,7 @@ import (
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
+	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 )
 
 const (
@@ -1176,6 +1177,67 @@ func frozenRestorePair(t *testing.T) plan.Frozen {
 	t.Helper()
 	pair, err := plan.BuildRestorePair(fixtureInfrastructure, fixtureMachine,
 		plan.ServiceProfileVaultwarden, fixtureSnapshotSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV2(t, pair)
+}
+
+// The pairs of the third door a Controller would have built and transported,
+// together with the archive of a service the same definition describes.
+//
+// They exist for the reason the private profile's fixtures existed before `#102`
+// closed that window: what must be refused is a whole, valid, canonically frozen
+// pair, exactly as a Console would hand it over, rather than an operation string
+// written into a shape this package already places.
+//
+// The definition is the one the servicedefinition package pins as its own
+// reference vector, spelled here as the canonical bytes a Controller froze. The
+// image digest is synthetic and looks it: the third door pins no image, so there
+// is no identity of the product to name here.
+const (
+	fixtureUserDefinitionDocument = `{"schema_version":1,"slug":"lab-notes",` +
+		`"image_repository":"registry.lab.your-cloud.test/your-cloud/lab-notes",` +
+		`"container_port":8080,"volumes":["/srv/notes","/var/lib/lab-notes"],` +
+		`"tmpfs":["/tmp"],"environment":["LAB_NOTES_TITLE=Your Cloud lab notes",` +
+		`"LAB_NOTES_ORIGIN=https://{origin_host}/","LAB_NOTES_READ_ONLY=1"],` +
+		`"secret_keys":["LAB_NOTES_ADMIN_TOKEN"]}`
+	fixtureUserSlug        = "lab-notes"
+	fixtureUserImageDigest = "sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	fixtureUserOriginHost  = "notes.lab.your-cloud.test"
+)
+
+func frozenUserServicePair(t *testing.T, operation string, port int) plan.Frozen {
+	t.Helper()
+	definition, err := servicedefinition.Decode([]byte(fixtureUserDefinitionDocument))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := plan.BuildUserServicePair(operation, fixtureInfrastructure, fixtureMachine,
+		definition, fixtureUserImageDigest, port, fixtureUserOriginHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV2(t, pair)
+}
+
+// frozenUserArchivePair is the other half of the same window: the three archive
+// operations name a service by its slug, and a definition's slug is a value their
+// documents now admit.
+func frozenUserArchivePair(t *testing.T, operation string) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildSnapshotPair(operation, fixtureInfrastructure, fixtureMachine,
+		fixtureUserSlug, fixtureSnapshotSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frozenV2(t, pair)
+}
+
+func frozenUserRestorePair(t *testing.T) plan.Frozen {
+	t.Helper()
+	pair, err := plan.BuildRestorePair(fixtureInfrastructure, fixtureMachine,
+		fixtureUserSlug, fixtureSnapshotSlot)
 	if err != nil {
 		t.Fatal(err)
 	}

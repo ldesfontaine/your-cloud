@@ -265,6 +265,39 @@ func (store *ServiceDefinitionStore) Freeze(
 	return frozen, candidate.DefinitionRevision, true, nil
 }
 
+// FrozenDefinition returns the definition frozen under exactly this slug and this
+// digest, and reports that this Controller holds no such revision otherwise.
+//
+// The pair is the key rather than the digest alone, and that is the whole
+// difference between this lookup and a search. A plan names both, and a digest
+// frozen under another slug is a revision of another service: accepting it
+// because the bytes exist somewhere would let a plan display one name while
+// pinning another document, and the human approves what the plan displays.
+//
+// The bytes are parsed here rather than handed over as a string, because a caller
+// of this function is about to hold a plan against the definition it pins and
+// needs the definition, not its transport form. The parse cannot fail on a
+// revision this store holds — every read and every commit validates the whole
+// inventory — and a failure is reported as an absence rather than swallowed: a
+// definition this Controller can no longer read is a definition no plan may pin.
+func (store *ServiceDefinitionStore) FrozenDefinition(slug, digest string) (servicedefinition.Document, bool) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	index := serviceDefinitionSearch(store.state.Definitions, slug, digest)
+	if index >= len(store.state.Definitions) {
+		return servicedefinition.Document{}, false
+	}
+	held := store.state.Definitions[index]
+	if held.Slug != slug || held.Digest != digest {
+		return servicedefinition.Document{}, false
+	}
+	parsed, err := servicedefinition.Verify([]byte(held.Document), held.Digest)
+	if err != nil {
+		return servicedefinition.Document{}, false
+	}
+	return parsed, true
+}
+
 func (store *ServiceDefinitionStore) commit(candidate ServiceDefinitionInventory) error {
 	if err := validateServiceDefinitionInventory(candidate); err != nil {
 		return err

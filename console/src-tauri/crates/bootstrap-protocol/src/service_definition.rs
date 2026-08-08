@@ -285,8 +285,7 @@ impl ServiceDefinitionDocument {
     /// Nothing here looks at a machine, and nothing here has an effect.
     fn holds_the_contract(&self) -> bool {
         self.schema_version == SERVICE_DEFINITION_SCHEMA_VERSION
-            && canonical_service_slug(&self.slug)
-            && !RESERVED_SERVICE_SLUGS.contains(&self.slug.as_str())
+            && canonical_definition_slug(&self.slug)
             && canonical_image_repository(&self.image_repository)
             && (MIN_CONTAINER_PORT..=MAX_CONTAINER_PORT).contains(&self.container_port)
             && self.holds_the_mounts()
@@ -428,7 +427,25 @@ fn canonical_service_slug(slug: &str) -> bool {
         .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
+/// The whole of what a definition may be filed under: the grammar above, and
+/// none of the four names the product already owns.
+///
+/// It is one function rather than two conditions written side by side, because
+/// the plan schema of the third door reads the very same rule: a plan naming a
+/// definition may never name something no definition could exist under, and an
+/// archive naming a slug may never name one of the four either. Spelling it once
+/// is what keeps the two sides from drifting into two grammars for one name.
+pub(crate) fn canonical_definition_slug(slug: &str) -> bool {
+    canonical_service_slug(slug) && !RESERVED_SERVICE_SLUGS.contains(&slug)
+}
+
 /// Requires where the images come from, and refuses to be told which one.
+///
+/// It is shared with the plan schema of the third door for the reason
+/// [`canonical_definition_slug`] is: the `image_reference` of a user service plan
+/// must be exactly the repository of the definition it pins, so that field is
+/// bounded by this very rule rather than by a second one that would have to keep
+/// agreeing with it.
 ///
 /// The tag and the digest are refused before the grammar is read, so that the
 /// most likely mistake a human makes — pasting the reference they pull with — is
@@ -436,7 +453,7 @@ fn canonical_service_slug(slug: &str) -> bool {
 /// instance lives in the plan that deploys it, and updating a service is a new
 /// plan whose digest differs, never a silent mutation of what a definition
 /// names.
-fn canonical_image_repository(repository: &str) -> bool {
+pub(crate) fn canonical_image_repository(repository: &str) -> bool {
     if repository.is_empty() || repository.len() > MAX_IMAGE_REPOSITORY_BYTES {
         return false;
     }

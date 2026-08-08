@@ -1,16 +1,25 @@
-//! The plans of the public profile and of the private one, on the side that
-//! displays them.
+//! The plans of the public profile, of the private one and of the third door,
+//! on the side that displays them.
 //!
 //! Schema 2 keeps every procedure of schema 1 — one bounded strict JSON
 //! document, one domain-separated binary transcript, a rollback that is a
 //! complete inverse document, a pair frozen by the Controller, a signature by
 //! the Console, a re-verification by the Auxiliary — and describes the
-//! operations of the public profile and of the private one: six of them in
-//! three inverse pairs for the public profile, six more in three pairs for the
-//! private one, and a return whose undoing is a document of its own operation.
-//! Each carries its own closed field list. Schema 1 is not reopened by any of
-//! it: a probe plan decodes, hashes and verifies exactly as before, and a
-//! document of either schema is refused by the decoder of the other.
+//! operations of the public profile, of the private one and of the third door,
+//! where a service is described by a definition its user wrote rather than by a
+//! profile the product pins: six of them in three inverse pairs for the public
+//! profile, six more in three pairs for the private one, a return whose undoing
+//! is a document of its own operation, and two for the third door. Each carries
+//! its own closed field list. Schema 1 is not reopened by any of it: a probe plan
+//! decodes, hashes and verifies exactly as before, and a document of either
+//! schema is refused by the decoder of the other.
+//!
+//! The third door is why this module reads the definition module, and it reads
+//! it in one direction only: a plan names a definition by its slug and its
+//! digest, so the grammar of those two values is stated where the definition owns
+//! it rather than spelled a second time here. Nothing here reads a definition's
+//! content — a plan pins bytes it never opens — and holding a plan against the
+//! document it pins is not this side's act at all: see the note below the layout.
 //!
 //! **The operation is the discriminator.** It is read first, by a pass that
 //! reads nothing else, and the document is then held against exactly the closed
@@ -27,8 +36,9 @@
 //! two disagree.
 //!
 //! The transcript is laid out per operation group. The fields a group does not
-//! have are simply not present rather than written empty, and the operation
-//! string inside the transcript is what tells the groups apart:
+//! have are simply not present rather than written empty — a field one group's
+//! own documents may or may not carry is a different matter, stated below — and
+//! the operation string inside the transcript is what tells the groups apart:
 //!
 //! ```text
 //! domain  "your-cloud/oci-plan.v2\0"
@@ -58,6 +68,13 @@
 //!         service_profile, snapshot_slot       as prefixed fields
 //!   restore_service
 //!         service_profile, snapshot_slot       as prefixed fields
+//!   deploy_user_service / remove_user_service
+//!         definition_slug                      as a prefixed field
+//!         definition_digest (32 decoded bytes) as a prefixed field
+//!         image_reference                      as a prefixed field
+//!         image_digest (32 decoded bytes)      as a prefixed field
+//!         local_port                           as a uint32 big-endian
+//!         origin_host                          as a prefixed field, empty when absent
 //! ```
 //!
 //! The layout is unambiguous across the groups without a group tag, because
@@ -75,9 +92,45 @@
 //! hash the same, even when the values they carry are spelled identically. The
 //! vectors below pin that property rather than leaving it to be read here.
 //!
+//! The user service group is the one group carrying a field that is present on
+//! some of its documents and absent on others, and the layout writes it anyway:
+//! `origin_host` is always a length-prefixed field, of length zero when the
+//! definition does not interpolate the origin. Writing it always is what keeps
+//! the tail unambiguous — a field the reader may or may not find would make the
+//! end of the transcript depend on a rule the bytes do not carry — and it is the
+//! decision the definition's own lists already took, where an empty list is
+//! written as a count of zero rather than left out. The empty spelling is
+//! unmistakable because no origin the contract accepts is the empty string: a
+//! plan carrying no origin and a plan carrying an origin are two lengths and two
+//! digests, never two readings of the same bytes. The canonical JSON follows the
+//! same rule and always renders the field, so a document that omitted it and one
+//! that spelled it empty are one plan with one digest — which is why this side
+//! accepts both spellings and rebuilds the same transcript out of either.
+//!
+//! `definition_digest` travels as its 32 decoded bytes in a length-prefixed
+//! field, as `image_digest` does. It is the digest of the frozen definition the
+//! plan pins, taken over the definition's own transcript under its own domain, so
+//! nothing of the two documents' bounds can ever be read through the other's. It
+//! carries no `sha256:` prefix, and that is not an oversight beside the image
+//! digest: an image digest is an OCI reference whose algorithm is part of the
+//! value a registry answers to, while a definition digest is this product's own
+//! SHA-256, spelled exactly as the approval envelope spells the digests it signs
+//! — and it is read here by that very reader rather than by a second one.
+//!
+//! **Whether a plan agrees with the definition it pins is not decided here.**
+//! Validating a plan is an offline act over one document: this side can say that
+//! `origin_host` is a well-formed host or absent, and it cannot say whether the
+//! pinned definition consumes one, because it holds no definition. That
+//! cross-check — the digest re-derived from the definition's own bytes, the slug,
+//! the repository, and the presence of the origin — is `RequireDefinitionAgreement`
+//! on the Auxiliary side, held at construction by the Controller that has just
+//! looked the definition up and re-held by the Auxiliary that receives the
+//! definition beside the signed pair. The Console receives a frozen pair and no
+//! definition, so a rule written here would be a rule with nothing to read.
+//!
 //! **The transcript is the counterpart of the one written on the Auxiliary
 //! side.** The two are held against one another by deterministic vectors on both
-//! sides rather than by reading. The fourteen vectors below are the very ones
+//! sides rather than by reading. The eighteen vectors below are the very ones
 //! pinned in `internal/plan/schema2_test.go`.
 
 use crate::{
@@ -86,6 +139,7 @@ use crate::{
         decode_image_digest, encode_lower_hex, MAX_PLAN_DOCUMENT_BYTES, MAX_PLAN_LOCAL_PORT,
         MIN_PLAN_LOCAL_PORT, PLAN_DIGEST_BYTES,
     },
+    service_definition::{canonical_definition_slug, canonical_image_repository},
     ProtocolError,
 };
 use serde::{Deserialize, Serialize};
@@ -254,6 +308,7 @@ pub enum PlanV2Group {
     LinkRoute,
     Snapshot,
     Restore,
+    UserService,
 }
 
 /// The closed list of states this palier can describe.
@@ -311,6 +366,20 @@ pub enum PlanV2Operation {
     /// the current state into the reserved slot before replacing anything, so the
     /// document that returns is a restore naming that reserved slot.
     RestoreService,
+    /// One service described by a definition its user wrote is present on
+    /// exactly one machine, at exactly one loopback port, and its inverse asks
+    /// for that exact instance to be absent.
+    ///
+    /// It is a third door rather than a widening of the second, for the reason
+    /// the second was not a widening of the first: nothing about this service is
+    /// a constant of the product. The account, the home, the volumes, the
+    /// environment and the secret names are derived from a definition the
+    /// Controller froze and the plan pins by digest, so the two documents name a
+    /// definition where the other doors name a profile — and neither list of
+    /// profiles can ever answer to a definition's slug, because those slugs are
+    /// reserved against exactly the four names the product already owns.
+    DeployUserService,
+    RemoveUserService,
 }
 
 impl PlanV2Operation {
@@ -329,6 +398,8 @@ impl PlanV2Operation {
             Self::SnapshotService => "snapshot_service",
             Self::DiscardSnapshot => "discard_snapshot",
             Self::RestoreService => "restore_service",
+            Self::DeployUserService => "deploy_user_service",
+            Self::RemoveUserService => "remove_user_service",
         }
     }
 
@@ -353,6 +424,8 @@ impl PlanV2Operation {
             Self::SnapshotService => Self::DiscardSnapshot,
             Self::DiscardSnapshot => Self::SnapshotService,
             Self::RestoreService => Self::RestoreService,
+            Self::DeployUserService => Self::RemoveUserService,
+            Self::RemoveUserService => Self::DeployUserService,
         }
     }
 
@@ -366,6 +439,7 @@ impl PlanV2Operation {
             Self::PublishLinkRoute | Self::RetireLinkRoute => PlanV2Group::LinkRoute,
             Self::SnapshotService | Self::DiscardSnapshot => PlanV2Group::Snapshot,
             Self::RestoreService => PlanV2Group::Restore,
+            Self::DeployUserService | Self::RemoveUserService => PlanV2Group::UserService,
         }
     }
 }
@@ -408,11 +482,6 @@ fn profile_image(service_profile: &str) -> Option<PinnedImage> {
 }
 
 /// The closed list of service profiles of the private door, under the same rule.
-///
-/// It is also the list of profiles this palier archives: a profile without a
-/// persistent volume has nothing to snapshot, so an archive of it would be an
-/// archive of nothing and a plan that could ask for one would be a plan whose
-/// report could never be honest.
 fn private_profile_image(service_profile: &str) -> Option<PinnedImage> {
     match service_profile {
         SERVICE_PROFILE_VAULTWARDEN => Some(PinnedImage {
@@ -421,6 +490,28 @@ fn private_profile_image(service_profile: &str) -> Option<PinnedImage> {
         }),
         _ => None,
     }
+}
+
+/// Whether a name is one an archive operation may be filed under: a profile of
+/// the private door's own closed list, or the slug of a user service definition.
+///
+/// The two readings share one field and stay unambiguous, because the four names
+/// the product owns are exactly the four a definition may not take. A name is
+/// therefore found in the closed list or it is a slug — never both, and never a
+/// comparison someone has to remember to write.
+///
+/// A stateless profile is refused here and not merely unsupported: it is a
+/// reserved name the closed list does not hold, so it is neither a data-bearing
+/// profile nor a possible slug. It owns no persistent volume, an archive of it
+/// would be an archive of nothing, and a plan that could ask for one would be a
+/// plan whose report could never be honest.
+///
+/// What a slug is admitted as here is exactly a well-formed name, and nothing
+/// more. This side reads no definition and no machine, so whether a service by
+/// that name was ever deployed, and whether its definition declares a volume at
+/// all, are facts the Auxiliary reads on the machine before any effect.
+fn archives_data(service_profile: &str) -> bool {
+    private_profile_image(service_profile).is_some() || canonical_definition_slug(service_profile)
 }
 
 /// The plan of one managed web service: one profile, the image that profile
@@ -578,9 +669,75 @@ pub struct RestorePlanDocumentV2 {
     pub snapshot_slot: String,
 }
 
+/// The plan of one service the product does not know: the definition it runs,
+/// the revision of that definition, the image of this instance, one loopback
+/// port on one machine, and the origin the instance answers under when — and
+/// only when — its definition consumes one.
+///
+/// It names a definition where the two other service shapes name a profile. A
+/// profile decides everything its plan does not state and is a constant of the
+/// product; a definition decides the same things and is a document its user
+/// wrote, frozen by the Controller and pinned here by `definition_digest`. The
+/// two are the same idea under two authorities, which is why this is a third
+/// shape rather than a profile whose name happens to be free-form: the fields
+/// differ, so the closed field lists differ.
+///
+/// `image_reference` is here and decides nothing. It must be exactly the
+/// repository of the pinned definition — the human approves an origin and an
+/// executable identity under their eyes — and `image_digest` is the identity of
+/// this instance, which is the one thing about a user service that a revision
+/// does not fix: an update is a new plan whose digest differs, never a silent
+/// mutation.
+///
+/// `origin_host` is present exactly when the pinned definition interpolates it,
+/// and this side accepts both of its forms because it holds no definition to
+/// decide between them. That is not a weaker rule than the contract's, it is the
+/// same rule read where it can be read: the agreement between a plan and the
+/// definition it pins is held by the Controller that built the pair and again by
+/// the Auxiliary that receives the definition beside it.
+///
+/// The volumes, the tmpfs, the environment lines, the secret names, the account
+/// and the home have no field here and none anywhere else. They are the
+/// definition's, and everything touching the machine is derived from its slug by
+/// the Auxiliary: the rule of the delivered profiles, unchanged, over a document
+/// whose author is the user rather than the product.
+///
+/// The declaration order below is the canonical encoding order and the
+/// transcript order at once, and no field of a user service plan lives outside
+/// it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserServicePlanDocumentV2 {
+    pub schema_version: u8,
+    pub infrastructure_id: String,
+    pub machine_id: String,
+    pub operation: PlanV2Operation,
+    /// The name of the definition this instance runs, under the definition
+    /// module's own grammar, reserved names refused.
+    pub definition_slug: String,
+    /// The revision pinned: sixty-four lower-case hexadecimal characters, bare.
+    pub definition_digest: String,
+    /// The repository the pinned definition names, without a tag.
+    pub image_reference: String,
+    /// `sha256:` followed by sixty-four lower-case hexadecimal characters.
+    pub image_digest: String,
+    /// The port the service listens on, on [`SERVICE_LOCAL_ADDRESS`] alone.
+    pub local_port: u32,
+    /// The exact origin the instance answers under, bounded as a route host is,
+    /// and empty when the pinned definition consumes none.
+    ///
+    /// A document that leaves the field out altogether is the same plan under
+    /// the same digest — an absent origin and an empty one are one value, and
+    /// the transcript writes a length of zero for both. It is the same latitude
+    /// the definition's own empty lists have, and it stops exactly there: the
+    /// Controller emits one spelling, the one that renders the field.
+    #[serde(default)]
+    pub origin_host: String,
+}
+
 /// One plan of schema 2, whatever its operation group.
 ///
-/// The list is closed to the seven shapes above: an eighth field list is a
+/// The list is closed to the eight shapes above: a ninth field list is a
 /// decision taken here — beside the transcript it would need and beside the
 /// inverse it must have — rather than a shape a caller could hand in.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -592,6 +749,7 @@ pub enum PlanDocumentV2 {
     LinkRoute(LinkRoutePlanDocumentV2),
     Snapshot(SnapshotPlanDocumentV2),
     Restore(RestorePlanDocumentV2),
+    UserService(UserServicePlanDocumentV2),
 }
 
 impl WebServicePlanDocumentV2 {
@@ -869,6 +1027,10 @@ impl SnapshotPlanDocumentV2 {
     /// over the return mechanism's slot, or a discard destroying it, would be a
     /// plan that removes the possibility of returning — and it must be refused
     /// whoever wrote the bytes.
+    ///
+    /// `service_profile` is the one field two doors share: it holds a profile of
+    /// the private door or the slug of a user service definition, and
+    /// [`archives_data`] is where the two readings stay one unambiguous lookup.
     pub fn validate(self) -> Result<Self, ProtocolError> {
         if !valid_v2_head(
             self.schema_version,
@@ -876,7 +1038,7 @@ impl SnapshotPlanDocumentV2 {
             &self.machine_id,
             self.operation,
             PlanV2Group::Snapshot,
-        ) || private_profile_image(&self.service_profile).is_none()
+        ) || !archives_data(&self.service_profile)
             || !canonical_snapshot_slot(&self.snapshot_slot)
             || self.snapshot_slot == RESERVED_SNAPSHOT_SLOT
         {
@@ -927,7 +1089,7 @@ impl RestorePlanDocumentV2 {
             &self.machine_id,
             self.operation,
             PlanV2Group::Restore,
-        ) || private_profile_image(&self.service_profile).is_none()
+        ) || !archives_data(&self.service_profile)
             || !canonical_snapshot_slot(&self.snapshot_slot)
         {
             return Err(ProtocolError::InvalidInput);
@@ -975,6 +1137,93 @@ impl RestorePlanDocumentV2 {
     }
 }
 
+impl UserServicePlanDocumentV2 {
+    /// Holds a user service plan against everything one document can be held
+    /// against on its own.
+    ///
+    /// Three of its fields name a definition this module cannot read: the slug,
+    /// the revision and the repository. What is required here is therefore their
+    /// shape — the slug grammar the definition module owns, reserved names
+    /// included, so a plan can never name a definition that could not exist; the
+    /// one spelling of a revision's digest, read by the very reader an approval
+    /// envelope reads its own digests with; and the repository rule, which is
+    /// where the tag is refused on this side too.
+    ///
+    /// The shape of the image digest is required as it is everywhere else, so
+    /// that the transcript may rely on decoding exactly thirty-two bytes out of
+    /// the field. There is no pin to compare it to: which image runs is what a
+    /// plan of this door says, and the definition only says where images come
+    /// from.
+    ///
+    /// The origin is accepted in both of its forms and refused in neither.
+    /// Presence is required exactly when the definition interpolates, and a
+    /// document alone knows nothing of the definition; a pair reaching this side
+    /// has been through the agreement check at the Controller that built it, and
+    /// goes through it again at the Auxiliary that receives the definition beside
+    /// it.
+    pub fn validate(self) -> Result<Self, ProtocolError> {
+        if !valid_v2_head(
+            self.schema_version,
+            &self.infrastructure_id,
+            &self.machine_id,
+            self.operation,
+            PlanV2Group::UserService,
+        ) || !canonical_definition_slug(&self.definition_slug)
+            || decode_digest(&self.definition_digest).is_none()
+            || !canonical_image_repository(&self.image_reference)
+            || decode_image_digest(&self.image_digest).is_none()
+            || !(MIN_PLAN_LOCAL_PORT..=MAX_PLAN_LOCAL_PORT).contains(&self.local_port)
+            || !canonical_user_service_origin(&self.origin_host)
+        {
+            return Err(ProtocolError::InvalidInput);
+        }
+        Ok(self)
+    }
+
+    /// The exact bytes a user service plan digest is taken over.
+    ///
+    /// The tail is the private door's with the profile replaced by the two fields
+    /// that name a definition, so a reader holds the two side by side and sees
+    /// what the third door changes: a plan of this door pins a document instead
+    /// of naming a constant. The origin closes the tail as it does there, and it
+    /// is written even when it is absent — a length of zero — so that the end of
+    /// the transcript never depends on a rule the bytes do not carry.
+    pub fn transcript(&self) -> Result<Vec<u8>, ProtocolError> {
+        let definition =
+            decode_digest(&self.definition_digest).ok_or(ProtocolError::InvalidInput)?;
+        let image = decode_image_digest(&self.image_digest).ok_or(ProtocolError::InvalidInput)?;
+        let mut transcript = v2_head(
+            self.schema_version,
+            &self.infrastructure_id,
+            &self.machine_id,
+            self.operation,
+        )?;
+        append_field(&mut transcript, self.definition_slug.as_bytes())?;
+        append_field(&mut transcript, &definition)?;
+        append_field(&mut transcript, self.image_reference.as_bytes())?;
+        append_field(&mut transcript, &image)?;
+        transcript.extend_from_slice(&self.local_port.to_be_bytes());
+        append_field(&mut transcript, self.origin_host.as_bytes())?;
+        Ok(transcript)
+    }
+
+    fn inverted(&self) -> Self {
+        Self {
+            operation: self.operation.inverse(),
+            ..self.clone()
+        }
+    }
+
+    /// Whether `rollback` is the complete document that undoes this plan.
+    ///
+    /// The two documents are compared whole, origin included and origin absent
+    /// alike: a removal names the same instance as the deployment it undoes, or
+    /// it is a second plan rather than an undoing.
+    pub fn is_undone_by(&self, rollback: &Self) -> bool {
+        self.inverted() == *rollback
+    }
+}
+
 impl PlanDocumentV2 {
     /// Holds the document against the whole contract of the palier, profile and
     /// pinned image included.
@@ -987,6 +1236,7 @@ impl PlanDocumentV2 {
             Self::LinkRoute(document) => Self::LinkRoute(document.validate()?),
             Self::Snapshot(document) => Self::Snapshot(document.validate()?),
             Self::Restore(document) => Self::Restore(document.validate()?),
+            Self::UserService(document) => Self::UserService(document.validate()?),
         })
     }
 
@@ -1006,6 +1256,7 @@ impl PlanDocumentV2 {
             Self::LinkRoute(document) => document.transcript(),
             Self::Snapshot(document) => document.transcript(),
             Self::Restore(document) => document.transcript(),
+            Self::UserService(document) => document.transcript(),
         }
     }
 
@@ -1031,6 +1282,7 @@ impl PlanDocumentV2 {
             Self::LinkRoute(document) => document.operation,
             Self::Snapshot(document) => document.operation,
             Self::Restore(document) => document.operation,
+            Self::UserService(document) => document.operation,
         }
     }
 
@@ -1047,6 +1299,7 @@ impl PlanDocumentV2 {
             Self::LinkRoute(document) => &document.infrastructure_id,
             Self::Snapshot(document) => &document.infrastructure_id,
             Self::Restore(document) => &document.infrastructure_id,
+            Self::UserService(document) => &document.infrastructure_id,
         }
     }
 
@@ -1059,6 +1312,7 @@ impl PlanDocumentV2 {
             Self::LinkRoute(document) => &document.machine_id,
             Self::Snapshot(document) => &document.machine_id,
             Self::Restore(document) => &document.machine_id,
+            Self::UserService(document) => &document.machine_id,
         }
     }
 
@@ -1079,6 +1333,7 @@ impl PlanDocumentV2 {
             (Self::LinkRoute(plan), Self::LinkRoute(inverse)) => plan.is_undone_by(inverse),
             (Self::Snapshot(plan), Self::Snapshot(inverse)) => plan.is_undone_by(inverse),
             (Self::Restore(plan), Self::Restore(inverse)) => plan.is_undone_by(inverse),
+            (Self::UserService(plan), Self::UserService(inverse)) => plan.is_undone_by(inverse),
             _ => false,
         }
     }
@@ -1118,6 +1373,9 @@ pub fn decode_plan_v2_document(document: &[u8]) -> Result<PlanDocumentV2, Protoc
             serde_json::from_slice(document).map_err(|_| ProtocolError::InvalidInput)?,
         ),
         PlanV2Group::Restore => PlanDocumentV2::Restore(
+            serde_json::from_slice(document).map_err(|_| ProtocolError::InvalidInput)?,
+        ),
+        PlanV2Group::UserService => PlanDocumentV2::UserService(
             serde_json::from_slice(document).map_err(|_| ProtocolError::InvalidInput)?,
         ),
     };
@@ -1247,6 +1505,17 @@ fn canonical_route_host(host: &str) -> bool {
 /// profile owns has no business carrying: a slot cannot climb, cannot hide and
 /// cannot be two spellings of the same archive. Whether the reserved slot is one
 /// a given document may name is decided by that document's own group, not here.
+/// The two forms the origin of a user service plan is accepted in, and no third.
+///
+/// A well-formed host is the origin the instance answers under; the empty string
+/// is the absence of one, spelled the way the transcript spells it. No origin the
+/// contract accepts is empty, so the two are never two readings of one value —
+/// and which of the two a given plan must carry is decided by the definition it
+/// pins, which this side does not hold.
+fn canonical_user_service_origin(origin: &str) -> bool {
+    origin.is_empty() || canonical_route_host(origin)
+}
+
 fn canonical_snapshot_slot(slot: &str) -> bool {
     let bytes = slot.as_bytes();
     if bytes.len() < MIN_SNAPSHOT_SLOT_BYTES || bytes.len() > MAX_SNAPSHOT_SLOT_BYTES {
@@ -1264,6 +1533,7 @@ fn canonical_snapshot_slot(slot: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service_definition::MAX_SERVICE_SLUG_CHARS;
 
     const INFRASTRUCTURE: &str = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2";
     const OTHER_INFRASTRUCTURE: &str = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3";
@@ -1370,6 +1640,101 @@ mod tests {
         r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
         r#""machine_id":"lab-machine-1","operation":"restore_service","#,
         r#""service_profile":"vaultwarden","snapshot_slot":"previous"}"#,
+    );
+
+    /// The inputs of the third door's two vectors.
+    ///
+    /// They pin the two definitions the definition module pins as its own
+    /// vectors — the reference one, which interpolates the origin, and the
+    /// minimal one, which declares no environment at all — so that the slug, the
+    /// repository and the digest of a plan are held against the very document
+    /// that module froze rather than against a second invention. A drift in
+    /// either fails on both sides rather than on neither.
+    ///
+    /// The two image digests are synthetic and deliberately look it: the third
+    /// door pins no image, so there is no real digest to name here, and
+    /// thirty-two bytes counting from one and from thirty-three are values a
+    /// reader recognises as the test's own rather than mistaking for an identity
+    /// of the product.
+    const USER_SERVICE_SLUG: &str = "lab-notes";
+    const USER_SERVICE_DEFINITION_DIGEST: &str =
+        "c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce";
+    const USER_SERVICE_IMAGE_REFERENCE: &str = "registry.lab.your-cloud.test/your-cloud/lab-notes";
+    const USER_SERVICE_IMAGE_DIGEST: &str =
+        "sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+    const USER_SERVICE_ORIGIN_HOST: &str = "notes.lab.your-cloud.test";
+    const MINIMAL_SLUG: &str = "minimal";
+    const MINIMAL_DEFINITION_DIGEST: &str =
+        "faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c";
+    const MINIMAL_IMAGE_REFERENCE: &str = "registry.lab.your-cloud.test/minimal";
+    const MINIMAL_IMAGE_DIGEST: &str =
+        "sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40";
+    const MINIMAL_USER_PORT: u32 = 8_081;
+
+    /// The two definitions the third door's vectors pin, as the exact canonical
+    /// bytes the definition module froze them as.
+    ///
+    /// They are spelled here rather than built as values, because what the two
+    /// contracts must agree on is bytes: a definition this test parses out of
+    /// these strings is the definition whose digest the plans below pin, or the
+    /// cross-check fails.
+    const REFERENCE_DEFINITION_DOCUMENT: &str = concat!(
+        r#"{"schema_version":1,"slug":"lab-notes","#,
+        r#""image_repository":"registry.lab.your-cloud.test/your-cloud/lab-notes","#,
+        r#""container_port":8080,"volumes":["/srv/notes","/var/lib/lab-notes"],"#,
+        r#""tmpfs":["/tmp"],"environment":["LAB_NOTES_TITLE=Your Cloud lab notes","#,
+        r#""LAB_NOTES_ORIGIN=https://{origin_host}/","LAB_NOTES_READ_ONLY=1"],"#,
+        r#""secret_keys":["LAB_NOTES_ADMIN_TOKEN"]}"#,
+    );
+    const MINIMAL_DEFINITION_DOCUMENT: &str = concat!(
+        r#"{"schema_version":1,"slug":"minimal","#,
+        r#""image_repository":"registry.lab.your-cloud.test/minimal","container_port":80,"#,
+        r#""volumes":[],"tmpfs":[],"environment":[],"secret_keys":[]}"#,
+    );
+
+    /// The four canonical documents of the third door's vectors, byte for byte,
+    /// under the same rule as every group before them.
+    ///
+    /// The minimal pair renders `"origin_host":""` rather than omitting the
+    /// field. That is the canonical spelling of a plan whose definition does not
+    /// consume an origin, and it is pinned here for exactly that reason: a
+    /// document that left the field out and this one are the same plan with the
+    /// same digest, and this is the one spelling they both freeze to.
+    const USER_SERVICE_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"deploy_user_service","#,
+        r#""definition_slug":"lab-notes","#,
+        r#""definition_digest":"c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce","#,
+        r#""image_reference":"registry.lab.your-cloud.test/your-cloud/lab-notes","#,
+        r#""image_digest":"sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20","#,
+        r#""local_port":8080,"origin_host":"notes.lab.your-cloud.test"}"#,
+    );
+    const USER_SERVICE_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"remove_user_service","#,
+        r#""definition_slug":"lab-notes","#,
+        r#""definition_digest":"c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce","#,
+        r#""image_reference":"registry.lab.your-cloud.test/your-cloud/lab-notes","#,
+        r#""image_digest":"sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20","#,
+        r#""local_port":8080,"origin_host":"notes.lab.your-cloud.test"}"#,
+    );
+    const MINIMAL_USER_PLAN_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"deploy_user_service","#,
+        r#""definition_slug":"minimal","#,
+        r#""definition_digest":"faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c","#,
+        r#""image_reference":"registry.lab.your-cloud.test/minimal","#,
+        r#""image_digest":"sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40","#,
+        r#""local_port":8081,"origin_host":""}"#,
+    );
+    const MINIMAL_USER_ROLLBACK_DOCUMENT: &str = concat!(
+        r#"{"schema_version":2,"infrastructure_id":"8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2","#,
+        r#""machine_id":"lab-machine-1","operation":"remove_user_service","#,
+        r#""definition_slug":"minimal","#,
+        r#""definition_digest":"faf14b5c09ce83169466632fe2d37063453fe924154b6cc265b62fdd6aebd95c","#,
+        r#""image_reference":"registry.lab.your-cloud.test/minimal","#,
+        r#""image_digest":"sha256:2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40","#,
+        r#""local_port":8081,"origin_host":""}"#,
     );
 
     /// The six transcripts, byte for byte, copied literally from
@@ -1483,6 +1848,55 @@ mod tests {
         "766963650000000b7661756c7477617264656e0000000870726576696f7573",
     );
 
+    /// The four transcripts of the third door, byte for byte, under the same
+    /// obligation.
+    ///
+    /// The minimal pair closes on `00000000`: the origin is a length-prefixed
+    /// field of length zero rather than an absence, which is what keeps the end
+    /// of the tail from depending on a rule the bytes do not carry.
+    const USER_SERVICE_PLAN_TRANSCRIPT_HEX: &str = concat!(
+        "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134",
+        "653435662d636565612d343136372d613862312d316637626430613066346332",
+        "0000000d6c61622d6d616368696e652d31000000136465706c6f795f75736572",
+        "5f73657276696365000000096c61622d6e6f74657300000020c0f30d7c7f8635",
+        "d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce00000031726567",
+        "69737472792e6c61622e796f75722d636c6f75642e746573742f796f75722d63",
+        "6c6f75642f6c61622d6e6f746573000000200102030405060708090a0b0c0d0e",
+        "0f101112131415161718191a1b1c1d1e1f2000001f90000000196e6f7465732e",
+        "6c61622e796f75722d636c6f75642e74657374",
+    );
+    const USER_SERVICE_ROLLBACK_TRANSCRIPT_HEX: &str = concat!(
+        "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134",
+        "653435662d636565612d343136372d613862312d316637626430613066346332",
+        "0000000d6c61622d6d616368696e652d310000001372656d6f76655f75736572",
+        "5f73657276696365000000096c61622d6e6f74657300000020c0f30d7c7f8635",
+        "d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce00000031726567",
+        "69737472792e6c61622e796f75722d636c6f75642e746573742f796f75722d63",
+        "6c6f75642f6c61622d6e6f746573000000200102030405060708090a0b0c0d0e",
+        "0f101112131415161718191a1b1c1d1e1f2000001f90000000196e6f7465732e",
+        "6c61622e796f75722d636c6f75642e74657374",
+    );
+    const MINIMAL_USER_PLAN_TRANSCRIPT_HEX: &str = concat!(
+        "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134",
+        "653435662d636565612d343136372d613862312d316637626430613066346332",
+        "0000000d6c61622d6d616368696e652d31000000136465706c6f795f75736572",
+        "5f73657276696365000000076d696e696d616c00000020faf14b5c09ce831694",
+        "66632fe2d37063453fe924154b6cc265b62fdd6aebd95c000000247265676973",
+        "7472792e6c61622e796f75722d636c6f75642e746573742f6d696e696d616c00",
+        "0000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d",
+        "3e3f4000001f9100000000",
+    );
+    const MINIMAL_USER_ROLLBACK_TRANSCRIPT_HEX: &str = concat!(
+        "796f75722d636c6f75642f6f63692d706c616e2e763200020000002438663134",
+        "653435662d636565612d343136372d613862312d316637626430613066346332",
+        "0000000d6c61622d6d616368696e652d310000001372656d6f76655f75736572",
+        "5f73657276696365000000076d696e696d616c00000020faf14b5c09ce831694",
+        "66632fe2d37063453fe924154b6cc265b62fdd6aebd95c000000247265676973",
+        "7472792e6c61622e796f75722d636c6f75642e746573742f6d696e696d616c00",
+        "0000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d",
+        "3e3f4000001f9100000000",
+    );
+
     /// The six digests an approval envelope of these vectors names as
     /// `plan_sha256` and `rollback_sha256`, in the exact spelling that envelope
     /// requires.
@@ -1516,6 +1930,16 @@ mod tests {
         "6a6b71a15f969916a426fdfdcefca22ab670935a04459079eb724c18e180aebc";
     const RESTORE_ROLLBACK_SHA256: &str =
         "1be3be0186ff3be565e6c4df4fc5a864a8a28f1c3929d029b3ec6ecb38c11b5a";
+
+    /// The four digests of the third door, under the same rule.
+    const USER_SERVICE_PLAN_SHA256: &str =
+        "604b9300bb6f321d53759365cc7064fed1fc9b794b8afdbe811a1742d8133a59";
+    const USER_SERVICE_ROLLBACK_SHA256: &str =
+        "b2737aba239eb3d43326c43e1508687b33ade43ed5fd62a97cfe0866b6deabc8";
+    const MINIMAL_USER_PLAN_SHA256: &str =
+        "305f7fac725f8c7cd0970cd4db3b92af60a339b1cd1fa569b61858865210a753";
+    const MINIMAL_USER_ROLLBACK_SHA256: &str =
+        "bb76c62b75d4fd70d7437e75d82396c5b9ae6df3ef6a65e881ac20a222bcc5d3";
 
     /// The two digests of a route of the public profile carrying exactly the
     /// host and the port of the link route vectors above.
@@ -1628,6 +2052,79 @@ mod tests {
         }
     }
 
+    fn user_service() -> UserServicePlanDocumentV2 {
+        UserServicePlanDocumentV2 {
+            schema_version: PLAN_V2_SCHEMA_VERSION,
+            infrastructure_id: INFRASTRUCTURE.into(),
+            machine_id: MACHINE.into(),
+            operation: PlanV2Operation::DeployUserService,
+            definition_slug: USER_SERVICE_SLUG.into(),
+            definition_digest: USER_SERVICE_DEFINITION_DIGEST.into(),
+            image_reference: USER_SERVICE_IMAGE_REFERENCE.into(),
+            image_digest: USER_SERVICE_IMAGE_DIGEST.into(),
+            local_port: PORT,
+            origin_host: USER_SERVICE_ORIGIN_HOST.into(),
+        }
+    }
+
+    /// The same door over a definition that consumes no origin, which is the one
+    /// document of the schema whose conditional field is empty.
+    fn minimal_user_service() -> UserServicePlanDocumentV2 {
+        UserServicePlanDocumentV2 {
+            schema_version: PLAN_V2_SCHEMA_VERSION,
+            infrastructure_id: INFRASTRUCTURE.into(),
+            machine_id: MACHINE.into(),
+            operation: PlanV2Operation::DeployUserService,
+            definition_slug: MINIMAL_SLUG.into(),
+            definition_digest: MINIMAL_DEFINITION_DIGEST.into(),
+            image_reference: MINIMAL_IMAGE_REFERENCE.into(),
+            image_digest: MINIMAL_IMAGE_DIGEST.into(),
+            local_port: MINIMAL_USER_PORT,
+            origin_host: String::new(),
+        }
+    }
+
+    /// The fifteen operations this schema declares, in declaration order.
+    ///
+    /// Holding the list in one place is what keeps a registry from being
+    /// half-extended: the exhaustive dispatch below counts its own table against
+    /// this one, so an operation added to the enum without a canonical document
+    /// fails on the count rather than on a machine.
+    const DECLARED_OPERATIONS: [PlanV2Operation; 15] = [
+        PlanV2Operation::DeployWebService,
+        PlanV2Operation::RemoveWebService,
+        PlanV2Operation::DeployEntrypoint,
+        PlanV2Operation::RemoveEntrypoint,
+        PlanV2Operation::PublishRoute,
+        PlanV2Operation::RetireRoute,
+        PlanV2Operation::DeployPrivateService,
+        PlanV2Operation::RemovePrivateService,
+        PlanV2Operation::PublishLinkRoute,
+        PlanV2Operation::RetireLinkRoute,
+        PlanV2Operation::SnapshotService,
+        PlanV2Operation::DiscardSnapshot,
+        PlanV2Operation::RestoreService,
+        PlanV2Operation::DeployUserService,
+        PlanV2Operation::RemoveUserService,
+    ];
+
+    /// The name of the shape a document decoded into.
+    ///
+    /// It is an exhaustive match rather than a comparison of debug strings, so a
+    /// shape added to [`PlanDocumentV2`] without a line here does not compile.
+    fn shape_name(document: &PlanDocumentV2) -> &'static str {
+        match document {
+            PlanDocumentV2::WebService(_) => "WebService",
+            PlanDocumentV2::Entrypoint(_) => "Entrypoint",
+            PlanDocumentV2::Route(_) => "Route",
+            PlanDocumentV2::PrivateService(_) => "PrivateService",
+            PlanDocumentV2::LinkRoute(_) => "LinkRoute",
+            PlanDocumentV2::Snapshot(_) => "Snapshot",
+            PlanDocumentV2::Restore(_) => "Restore",
+            PlanDocumentV2::UserService(_) => "UserService",
+        }
+    }
+
     /// Encodes a document without validating it, which is what a hostile case
     /// needs: the refusal under test must come from the decoding rather than
     /// from something refusing to produce the bytes in the first place.
@@ -1737,6 +2234,32 @@ mod tests {
                 RESTORE_ROLLBACK_SHA256,
                 126_usize,
             ),
+            (
+                // The third door, whose tail is the private one's with the
+                // profile replaced by the two fields that name a definition.
+                "user service",
+                USER_SERVICE_PLAN_DOCUMENT,
+                USER_SERVICE_ROLLBACK_DOCUMENT,
+                USER_SERVICE_PLAN_TRANSCRIPT_HEX,
+                USER_SERVICE_ROLLBACK_TRANSCRIPT_HEX,
+                USER_SERVICE_PLAN_SHA256,
+                USER_SERVICE_ROLLBACK_SHA256,
+                275_usize,
+            ),
+            (
+                // The same door over a definition that consumes no origin. Its
+                // transcript is forty bytes shorter and closes on a length of
+                // zero rather than on nothing, which is the whole of the
+                // conditional field's encoding.
+                "user service without an origin",
+                MINIMAL_USER_PLAN_DOCUMENT,
+                MINIMAL_USER_ROLLBACK_DOCUMENT,
+                MINIMAL_USER_PLAN_TRANSCRIPT_HEX,
+                MINIMAL_USER_ROLLBACK_TRANSCRIPT_HEX,
+                MINIMAL_USER_PLAN_SHA256,
+                MINIMAL_USER_ROLLBACK_SHA256,
+                235_usize,
+            ),
         ] {
             let plan = decode_plan_v2_document(plan_document.as_bytes())
                 .unwrap_or_else(|_| panic!("{group}: the nominal document"));
@@ -1810,6 +2333,19 @@ mod tests {
         assert_eq!(hostile(&snapshot().inverted()), SNAPSHOT_ROLLBACK_DOCUMENT);
         assert_eq!(hostile(&restore()), RESTORE_PLAN_DOCUMENT);
         assert_eq!(hostile(&restore().inverted()), RESTORE_ROLLBACK_DOCUMENT);
+        assert_eq!(hostile(&user_service()), USER_SERVICE_PLAN_DOCUMENT);
+        assert_eq!(
+            hostile(&user_service().inverted()),
+            USER_SERVICE_ROLLBACK_DOCUMENT
+        );
+        // The empty origin is rendered rather than skipped, which is what makes
+        // the canonical spelling of a plan that carries none a fact of this side
+        // too and not only of the Controller's encoder.
+        assert_eq!(hostile(&minimal_user_service()), MINIMAL_USER_PLAN_DOCUMENT);
+        assert_eq!(
+            hostile(&minimal_user_service().inverted()),
+            MINIMAL_USER_ROLLBACK_DOCUMENT
+        );
     }
 
     /// No two of the fourteen vectors, nor the schema 1 vector, name the same
@@ -1840,6 +2376,15 @@ mod tests {
             SNAPSHOT_ROLLBACK_SHA256,
             RESTORE_PLAN_SHA256,
             RESTORE_ROLLBACK_SHA256,
+            // The third door's two pairs. The second of them carries no origin,
+            // so it is also what proves that an absent field does not collapse
+            // two documents into one digest: the same definition deployed with
+            // and without an origin would be two states, and they are two
+            // digests.
+            USER_SERVICE_PLAN_SHA256,
+            USER_SERVICE_ROLLBACK_SHA256,
+            MINIMAL_USER_PLAN_SHA256,
+            MINIMAL_USER_ROLLBACK_SHA256,
         ] {
             assert!(!seen.contains(&digest), "{digest} is named twice");
             seen.push(digest);
@@ -2367,6 +2912,122 @@ mod tests {
             covered.push(field);
         }
         require_every_wire_field_is_held(&hostile(&restore()), &covered);
+
+        let reference = user_service().transcript().unwrap();
+        let mut covered: Vec<&str> = Vec::new();
+        for (field, moved) in [
+            (
+                "schema_version",
+                UserServicePlanDocumentV2 {
+                    schema_version: 1,
+                    ..user_service()
+                },
+            ),
+            (
+                "infrastructure_id",
+                UserServicePlanDocumentV2 {
+                    infrastructure_id: OTHER_INFRASTRUCTURE.into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "machine_id",
+                UserServicePlanDocumentV2 {
+                    machine_id: "lab-machine-2".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "operation",
+                UserServicePlanDocumentV2 {
+                    operation: PlanV2Operation::RemoveUserService,
+                    ..user_service()
+                },
+            ),
+            (
+                "definition_slug",
+                UserServicePlanDocumentV2 {
+                    definition_slug: MINIMAL_SLUG.into(),
+                    ..user_service()
+                },
+            ),
+            (
+                // The revision is the whole of what "this instance runs those
+                // exact bytes" means, so it has to be inside the hashed bytes:
+                // otherwise two revisions of one definition would be one plan.
+                "definition_digest",
+                UserServicePlanDocumentV2 {
+                    definition_digest: MINIMAL_DEFINITION_DIGEST.into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "image_reference",
+                UserServicePlanDocumentV2 {
+                    image_reference: "ghcr.io/attacker/lab-notes".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "image_digest",
+                UserServicePlanDocumentV2 {
+                    image_digest: OTHER_PINNED_DIGEST.into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "local_port",
+                UserServicePlanDocumentV2 {
+                    local_port: PORT + 1,
+                    ..user_service()
+                },
+            ),
+            (
+                "origin_host",
+                UserServicePlanDocumentV2 {
+                    origin_host: "other.lab.your-cloud.test".into(),
+                    ..user_service()
+                },
+            ),
+        ] {
+            assert_ne!(
+                moved.transcript().unwrap(),
+                reference,
+                "user service {field} is outside the hashed bytes"
+            );
+            covered.push(field);
+        }
+        require_every_wire_field_is_held(&hostile(&user_service()), &covered);
+
+        // Removing the origin altogether is the mutation this group has and no
+        // other does, and it must move the digest as much as changing it does: a
+        // service deployed under a name and the same service deployed under none
+        // are two states, so they can never be one set of hashed bytes.
+        assert_ne!(
+            UserServicePlanDocumentV2 {
+                origin_host: String::new(),
+                ..user_service()
+            }
+            .transcript()
+            .unwrap(),
+            reference,
+            "dropping the origin of a user service left the hashed bytes where they were"
+        );
+        // And the same in the other direction, from the vector that carries
+        // none, so that the empty field is proven to be written rather than
+        // skipped.
+        let minimal_reference = minimal_user_service().transcript().unwrap();
+        assert_ne!(
+            UserServicePlanDocumentV2 {
+                origin_host: USER_SERVICE_ORIGIN_HOST.into(),
+                ..minimal_user_service()
+            }
+            .transcript()
+            .unwrap(),
+            minimal_reference,
+            "adding an origin to a user service left the hashed bytes where they were"
+        );
+        require_every_wire_field_is_held(&hostile(&minimal_user_service()), &covered);
     }
 
     /// Every field the wire document carries is one of the ones that was moved.
@@ -3454,6 +4115,671 @@ mod tests {
         }
     }
 
+    /// The hostile table of the third door.
+    ///
+    /// Three of its fields name a definition this module never reads, so what is
+    /// proven here is exactly what a document can be held to alone: the slug
+    /// grammar the definition module owns — reserved names and all — the one
+    /// spelling of a revision's digest, and the repository rule that refuses a
+    /// tag on this side too. The origin is the one field accepted in two forms,
+    /// and both are exercised; the rule that decides between them needs the
+    /// definition, which this side never holds.
+    #[test]
+    fn decoding_refuses_every_user_service_document_outside_the_contract() {
+        for document in [
+            USER_SERVICE_PLAN_DOCUMENT,
+            USER_SERVICE_ROLLBACK_DOCUMENT,
+            MINIMAL_USER_PLAN_DOCUMENT,
+            MINIMAL_USER_ROLLBACK_DOCUMENT,
+        ] {
+            assert!(
+                decode_plan_v2_document(document.as_bytes()).is_ok(),
+                "a nominal document was refused"
+            );
+        }
+
+        // A document that leaves the empty origin out entirely is the same plan
+        // under the same digest. That is the whole latitude a transport has over
+        // the conditional field.
+        let omitted = MINIMAL_USER_PLAN_DOCUMENT.replace(r##","origin_host":"""##, "");
+        let decoded = decode_plan_v2_document(omitted.as_bytes())
+            .expect("a document omitting an empty origin is the same plan");
+        assert_eq!(decoded.sha256().unwrap(), MINIMAL_USER_PLAN_SHA256);
+        assert_eq!(
+            decoded,
+            decode_plan_v2_document(MINIMAL_USER_PLAN_DOCUMENT.as_bytes()).unwrap()
+        );
+
+        for port in [MIN_PLAN_LOCAL_PORT, MAX_PLAN_LOCAL_PORT] {
+            let accepted = UserServicePlanDocumentV2 {
+                local_port: port,
+                ..user_service()
+            };
+            assert!(
+                decode_plan_v2_document(hostile(&accepted).as_bytes()).is_ok(),
+                "the bound {port} of the port range was refused"
+            );
+        }
+
+        for (name, moved) in [
+            (
+                "schema 1 version",
+                UserServicePlanDocumentV2 {
+                    schema_version: 1,
+                    ..user_service()
+                },
+            ),
+            (
+                "absent schema",
+                UserServicePlanDocumentV2 {
+                    schema_version: 0,
+                    ..user_service()
+                },
+            ),
+            (
+                "upper-case UUID",
+                UserServicePlanDocumentV2 {
+                    infrastructure_id: INFRASTRUCTURE.to_ascii_uppercase(),
+                    ..user_service()
+                },
+            ),
+            (
+                "traversal machine",
+                UserServicePlanDocumentV2 {
+                    machine_id: "../../etc/shadow".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "a private operation",
+                UserServicePlanDocumentV2 {
+                    operation: PlanV2Operation::DeployPrivateService,
+                    ..user_service()
+                },
+            ),
+            (
+                "a stateless operation",
+                UserServicePlanDocumentV2 {
+                    operation: PlanV2Operation::DeployWebService,
+                    ..user_service()
+                },
+            ),
+            (
+                "a snapshot operation",
+                UserServicePlanDocumentV2 {
+                    operation: PlanV2Operation::SnapshotService,
+                    ..user_service()
+                },
+            ),
+            // The four reserved names are the whole of what keeps one name
+            // designating one door, and a plan may not spell them here any more
+            // than a definition may take them.
+            (
+                "the stateless profile as a slug",
+                UserServicePlanDocumentV2 {
+                    definition_slug: SERVICE_PROFILE_BENTOPDF.into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "the private profile as a slug",
+                UserServicePlanDocumentV2 {
+                    definition_slug: SERVICE_PROFILE_VAULTWARDEN.into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "the probe's reserved name",
+                UserServicePlanDocumentV2 {
+                    definition_slug: "probe".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "the entry's reserved name",
+                UserServicePlanDocumentV2 {
+                    definition_slug: "entrypoint".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an empty slug",
+                UserServicePlanDocumentV2 {
+                    definition_slug: String::new(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an upper-case slug",
+                UserServicePlanDocumentV2 {
+                    definition_slug: "Lab-Notes".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "a slug one character too long",
+                UserServicePlanDocumentV2 {
+                    definition_slug: "a".repeat(MAX_SERVICE_SLUG_CHARS + 1),
+                    ..user_service()
+                },
+            ),
+            (
+                "a dotted slug",
+                UserServicePlanDocumentV2 {
+                    definition_slug: "lab.notes".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "a traversal slug",
+                UserServicePlanDocumentV2 {
+                    definition_slug: "../../etc".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "a slug opening on a hyphen",
+                UserServicePlanDocumentV2 {
+                    definition_slug: "-lab-notes".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an empty definition digest",
+                UserServicePlanDocumentV2 {
+                    definition_digest: String::new(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an upper-case digest",
+                UserServicePlanDocumentV2 {
+                    definition_digest: USER_SERVICE_DEFINITION_DIGEST.to_ascii_uppercase(),
+                    ..user_service()
+                },
+            ),
+            (
+                "a truncated digest",
+                UserServicePlanDocumentV2 {
+                    definition_digest: USER_SERVICE_DEFINITION_DIGEST[..63].into(),
+                    ..user_service()
+                },
+            ),
+            (
+                // The two spellings are two names for one revision, and every
+                // freeze, plan and lookup is keyed on exactly one of them.
+                "a digest spelled as an OCI one",
+                UserServicePlanDocumentV2 {
+                    definition_digest: format!("sha256:{USER_SERVICE_DEFINITION_DIGEST}"),
+                    ..user_service()
+                },
+            ),
+            (
+                "a non hexadecimal digest",
+                UserServicePlanDocumentV2 {
+                    definition_digest: "z".repeat(64),
+                    ..user_service()
+                },
+            ),
+            (
+                "an empty repository",
+                UserServicePlanDocumentV2 {
+                    image_reference: String::new(),
+                    ..user_service()
+                },
+            ),
+            (
+                "a repository carrying a tag",
+                UserServicePlanDocumentV2 {
+                    image_reference: format!("{USER_SERVICE_IMAGE_REFERENCE}:latest"),
+                    ..user_service()
+                },
+            ),
+            (
+                "a repository carrying a digest",
+                UserServicePlanDocumentV2 {
+                    image_reference: format!(
+                        "{USER_SERVICE_IMAGE_REFERENCE}@{USER_SERVICE_IMAGE_DIGEST}"
+                    ),
+                    ..user_service()
+                },
+            ),
+            (
+                "a repository with no registry",
+                UserServicePlanDocumentV2 {
+                    image_reference: "lab-notes".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an upper-case repository",
+                UserServicePlanDocumentV2 {
+                    image_reference: "registry.lab.your-cloud.test/Lab-Notes".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an empty image digest",
+                UserServicePlanDocumentV2 {
+                    image_digest: String::new(),
+                    ..user_service()
+                },
+            ),
+            (
+                "a bare image digest",
+                UserServicePlanDocumentV2 {
+                    image_digest: "a".repeat(64),
+                    ..user_service()
+                },
+            ),
+            (
+                "an upper-case image digest",
+                UserServicePlanDocumentV2 {
+                    image_digest: format!("sha256:{}", "A".repeat(64)),
+                    ..user_service()
+                },
+            ),
+            (
+                "another digest algorithm",
+                UserServicePlanDocumentV2 {
+                    image_digest: format!("sha512:{}", "a".repeat(64)),
+                    ..user_service()
+                },
+            ),
+            (
+                "a truncated image digest",
+                UserServicePlanDocumentV2 {
+                    image_digest: format!("sha256:{}", "a".repeat(63)),
+                    ..user_service()
+                },
+            ),
+            (
+                "a privileged port",
+                UserServicePlanDocumentV2 {
+                    local_port: 443,
+                    ..user_service()
+                },
+            ),
+            (
+                "an absent port",
+                UserServicePlanDocumentV2 {
+                    local_port: 0,
+                    ..user_service()
+                },
+            ),
+            (
+                "a port above the range",
+                UserServicePlanDocumentV2 {
+                    local_port: MAX_PLAN_LOCAL_PORT + 1,
+                    ..user_service()
+                },
+            ),
+            (
+                "a port beyond a sixteen bit one",
+                UserServicePlanDocumentV2 {
+                    local_port: 70_000,
+                    ..user_service()
+                },
+            ),
+            (
+                "a wildcard origin",
+                UserServicePlanDocumentV2 {
+                    origin_host: "*.lab.your-cloud.test".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an upper-case origin",
+                UserServicePlanDocumentV2 {
+                    origin_host: "Notes.lab.your-cloud.test".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an origin with a trailing dot",
+                UserServicePlanDocumentV2 {
+                    origin_host: "notes.lab.your-cloud.test.".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an origin with empty labels",
+                UserServicePlanDocumentV2 {
+                    origin_host: "notes..lab.your-cloud.test".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an origin carrying a port",
+                UserServicePlanDocumentV2 {
+                    origin_host: "notes.lab.your-cloud.test:443".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an origin carrying a routing rule",
+                UserServicePlanDocumentV2 {
+                    origin_host: "notes.lab.test`)||Host(`evil.test".into(),
+                    ..user_service()
+                },
+            ),
+            (
+                "an origin carrying a line break",
+                UserServicePlanDocumentV2 {
+                    origin_host: "notes.lab.test\nevil.test".into(),
+                    ..user_service()
+                },
+            ),
+        ] {
+            assert_eq!(
+                decode_plan_v2_document(hostile(&moved).as_bytes()),
+                Err(ProtocolError::InvalidInput),
+                "a user service naming {name} was accepted"
+            );
+            // The same malformation in the other direction, so that the removal
+            // is never the looser of the two readings. The cases that move the
+            // operation itself are already in the other direction and are left
+            // alone rather than overwritten into a valid document.
+            if moved.operation == PlanV2Operation::DeployUserService {
+                let removal = UserServicePlanDocumentV2 {
+                    operation: PlanV2Operation::RemoveUserService,
+                    ..moved
+                };
+                assert_eq!(
+                    decode_plan_v2_document(hostile(&removal).as_bytes()),
+                    Err(ProtocolError::InvalidInput),
+                    "a user service removal naming {name} was accepted"
+                );
+            }
+        }
+
+        // The operation itself is read before any of the above, so a name this
+        // schema does not declare selects no shape at all.
+        for document in [
+            r#"{"operation":"start_user_service"}"#,
+            r#"{"operation":"deploy_user_services"}"#,
+        ] {
+            assert_eq!(
+                decode_plan_v2_document(document.as_bytes()),
+                Err(ProtocolError::InvalidInput)
+            );
+        }
+    }
+
+    /// The revision a vector pins really is the digest of the definition it
+    /// names, computed here rather than copied.
+    ///
+    /// It is what makes the two contracts one: the plan module pins a value, the
+    /// definition module derives it from its own transcript, and a byte moved in
+    /// either fails here rather than producing plans that pin a revision nobody
+    /// can produce.
+    #[test]
+    fn the_revision_a_user_service_pins_is_the_digest_of_its_definition() {
+        for (document, digest, repository, slug) in [
+            (
+                REFERENCE_DEFINITION_DOCUMENT,
+                USER_SERVICE_DEFINITION_DIGEST,
+                USER_SERVICE_IMAGE_REFERENCE,
+                USER_SERVICE_SLUG,
+            ),
+            (
+                MINIMAL_DEFINITION_DOCUMENT,
+                MINIMAL_DEFINITION_DIGEST,
+                MINIMAL_IMAGE_REFERENCE,
+                MINIMAL_SLUG,
+            ),
+        ] {
+            let definition =
+                crate::service_definition::decode_service_definition_document(document.as_bytes())
+                    .expect("the pinned definition is inside its own contract");
+            assert_eq!(definition.sha256().unwrap(), digest);
+            assert_eq!(definition.encode().unwrap(), document);
+            assert_eq!(definition.slug, slug);
+            assert_eq!(definition.image_repository, repository);
+        }
+
+        // And a revision that changes one byte is another revision, which is
+        // what makes "each instance shows the exact revision it runs" a property
+        // rather than a hope.
+        let revised =
+            MINIMAL_DEFINITION_DOCUMENT.replace(r#""container_port":80"#, r#""container_port":81"#);
+        let revised =
+            crate::service_definition::decode_service_definition_document(revised.as_bytes())
+                .unwrap();
+        assert_ne!(revised.sha256().unwrap(), MINIMAL_DEFINITION_DIGEST);
+    }
+
+    /// The three doors refuse one another in every direction.
+    ///
+    /// A definition passes through no door of the delivered profiles, and a
+    /// delivered profile passes through no door of the definitions. The refusal
+    /// is a lookup that fails rather than a comparison anyone had to write, and
+    /// it is the reservation of the four names at the source that makes it so.
+    #[test]
+    fn the_three_doors_refuse_one_another_in_every_direction() {
+        for slug in [USER_SERVICE_SLUG, MINIMAL_SLUG, "blog"] {
+            for document in [
+                hostile(&WebServicePlanDocumentV2 {
+                    service_profile: slug.into(),
+                    ..web_service()
+                }),
+                hostile(&PrivateServicePlanDocumentV2 {
+                    service_profile: slug.into(),
+                    ..private_service()
+                }),
+            ] {
+                assert_eq!(
+                    decode_plan_v2_document(document.as_bytes()),
+                    Err(ProtocolError::InvalidInput),
+                    "a delivered door accepted the definition {slug}"
+                );
+            }
+            assert!(profile_image(slug).is_none(), "{slug} was pinned");
+            assert!(private_profile_image(slug).is_none(), "{slug} was pinned");
+        }
+        for profile in [SERVICE_PROFILE_BENTOPDF, SERVICE_PROFILE_VAULTWARDEN] {
+            assert_eq!(
+                decode_plan_v2_document(
+                    hostile(&UserServicePlanDocumentV2 {
+                        definition_slug: profile.into(),
+                        ..user_service()
+                    })
+                    .as_bytes()
+                ),
+                Err(ProtocolError::InvalidInput),
+                "the third door accepted the delivered profile {profile}"
+            );
+            // And no definition can ever be written under that name, so no
+            // frozen definition can carry it either.
+            assert!(!canonical_definition_slug(profile));
+        }
+    }
+
+    /// The archives open to the third door without changing shape.
+    ///
+    /// `service_profile` is the one field two doors share: it holds a profile of
+    /// the private door's closed list or the slug of a user service definition,
+    /// and the four reserved names are what keeps the two readings from ever
+    /// naming the same thing. What a slug is admitted as here is a well-formed
+    /// name and nothing more — whether a service by that name was ever deployed
+    /// is a fact of a machine this side reads nowhere.
+    #[test]
+    fn an_archive_names_a_delivered_profile_or_a_definition_and_nothing_else() {
+        for name in [USER_SERVICE_SLUG, MINIMAL_SLUG, "a", &"a".repeat(16)] {
+            for document in [
+                hostile(&SnapshotPlanDocumentV2 {
+                    service_profile: name.into(),
+                    ..snapshot()
+                }),
+                hostile(&SnapshotPlanDocumentV2 {
+                    operation: PlanV2Operation::DiscardSnapshot,
+                    service_profile: name.into(),
+                    ..snapshot()
+                }),
+                hostile(&RestorePlanDocumentV2 {
+                    service_profile: name.into(),
+                    ..restore()
+                }),
+            ] {
+                assert!(
+                    decode_plan_v2_document(document.as_bytes()).is_ok(),
+                    "an archive of the definition {name} was refused"
+                );
+            }
+        }
+
+        for name in [
+            SERVICE_PROFILE_BENTOPDF,
+            "probe",
+            "entrypoint",
+            "vaultwarden-lite-2",
+            "Vaultwarden",
+            "vault.warden",
+            "../../etc",
+            "",
+        ] {
+            for document in [
+                hostile(&SnapshotPlanDocumentV2 {
+                    service_profile: name.into(),
+                    ..snapshot()
+                }),
+                hostile(&RestorePlanDocumentV2 {
+                    service_profile: name.into(),
+                    ..restore()
+                }),
+            ] {
+                assert_eq!(
+                    decode_plan_v2_document(document.as_bytes()),
+                    Err(ProtocolError::InvalidInput),
+                    "an archive named {name}"
+                );
+            }
+        }
+
+        // The existing vectors are untouched by the widening: a profile of the
+        // private door is still found in the closed list rather than read as a
+        // slug that happens to be spelled the same.
+        assert!(archives_data(SERVICE_PROFILE_VAULTWARDEN));
+        assert!(private_profile_image(SERVICE_PROFILE_VAULTWARDEN).is_some());
+        assert_eq!(
+            decode_plan_v2_document(SNAPSHOT_PLAN_DOCUMENT.as_bytes())
+                .unwrap()
+                .sha256()
+                .unwrap(),
+            SNAPSHOT_PLAN_SHA256
+        );
+    }
+
+    /// Every operation of this schema decodes into its own shape, held against
+    /// the declared list rather than against a table a reader has to keep in
+    /// step with it.
+    ///
+    /// An operation added to [`DECLARED_OPERATIONS`] without a canonical
+    /// document here fails on the count; one added without a decoding case falls
+    /// through the decoder's own refusal; and one whose case builds the wrong
+    /// shape fails on the assertion. The three failures are the three ways a
+    /// closed registry can be left half-extended.
+    #[test]
+    fn every_schema_two_operation_decodes_into_its_own_shape() {
+        let documents = [
+            (
+                PlanV2Operation::DeployWebService,
+                WEB_SERVICE_PLAN_DOCUMENT,
+                "WebService",
+            ),
+            (
+                PlanV2Operation::RemoveWebService,
+                WEB_SERVICE_ROLLBACK_DOCUMENT,
+                "WebService",
+            ),
+            (
+                PlanV2Operation::DeployEntrypoint,
+                ENTRYPOINT_PLAN_DOCUMENT,
+                "Entrypoint",
+            ),
+            (
+                PlanV2Operation::RemoveEntrypoint,
+                ENTRYPOINT_ROLLBACK_DOCUMENT,
+                "Entrypoint",
+            ),
+            (PlanV2Operation::PublishRoute, ROUTE_PLAN_DOCUMENT, "Route"),
+            (
+                PlanV2Operation::RetireRoute,
+                ROUTE_ROLLBACK_DOCUMENT,
+                "Route",
+            ),
+            (
+                PlanV2Operation::DeployPrivateService,
+                PRIVATE_SERVICE_PLAN_DOCUMENT,
+                "PrivateService",
+            ),
+            (
+                PlanV2Operation::RemovePrivateService,
+                PRIVATE_SERVICE_ROLLBACK_DOCUMENT,
+                "PrivateService",
+            ),
+            (
+                PlanV2Operation::PublishLinkRoute,
+                LINK_ROUTE_PLAN_DOCUMENT,
+                "LinkRoute",
+            ),
+            (
+                PlanV2Operation::RetireLinkRoute,
+                LINK_ROUTE_ROLLBACK_DOCUMENT,
+                "LinkRoute",
+            ),
+            (
+                PlanV2Operation::SnapshotService,
+                SNAPSHOT_PLAN_DOCUMENT,
+                "Snapshot",
+            ),
+            (
+                PlanV2Operation::DiscardSnapshot,
+                SNAPSHOT_ROLLBACK_DOCUMENT,
+                "Snapshot",
+            ),
+            (
+                PlanV2Operation::RestoreService,
+                RESTORE_PLAN_DOCUMENT,
+                "Restore",
+            ),
+            (
+                PlanV2Operation::DeployUserService,
+                USER_SERVICE_PLAN_DOCUMENT,
+                "UserService",
+            ),
+            (
+                PlanV2Operation::RemoveUserService,
+                USER_SERVICE_ROLLBACK_DOCUMENT,
+                "UserService",
+            ),
+        ];
+        assert_eq!(
+            documents.len(),
+            DECLARED_OPERATIONS.len(),
+            "this table covers {} operations and the schema declares {}",
+            documents.len(),
+            DECLARED_OPERATIONS.len()
+        );
+        for operation in DECLARED_OPERATIONS {
+            let (_, document, shape) = documents
+                .iter()
+                .find(|(covered, _, _)| *covered == operation)
+                .unwrap_or_else(|| {
+                    panic!("operation {operation:?} has no canonical document in this table")
+                });
+            let decoded = decode_plan_v2_document(document.as_bytes())
+                .unwrap_or_else(|_| panic!("operation {operation:?} does not decode"));
+            assert_eq!(decoded.operation(), operation);
+            assert_eq!(
+                shape_name(&decoded),
+                *shape,
+                "operation {operation:?} decoded into another shape"
+            );
+            assert_eq!(decoded.group(), operation.group());
+        }
+    }
+
     /// What the discriminator exists for.
     ///
     /// The operation is read first, and the document is then held against
@@ -3726,6 +5052,110 @@ mod tests {
                     r#""tls_certificate":"-----BEGIN CERTIFICATE-----""#,
                 ),
             ),
+            // The third door names a definition where the two others name a
+            // profile, so a field of either vocabulary crossing into the other
+            // is the whole of what this group has to refuse — and it is refused
+            // as an unknown field of the shape the operation selected, before
+            // its value is read.
+            (
+                "a user service carrying a profile",
+                with_extra_member(
+                    USER_SERVICE_PLAN_DOCUMENT,
+                    r#""service_profile":"vaultwarden""#,
+                ),
+            ),
+            (
+                "a user service carrying a slot",
+                with_extra_member(USER_SERVICE_PLAN_DOCUMENT, r#""snapshot_slot":"nightly""#),
+            ),
+            (
+                "a user service carrying a route host",
+                with_extra_member(USER_SERVICE_PLAN_DOCUMENT, r#""route_host":"evil.test""#),
+            ),
+            (
+                "a user service carrying a volume",
+                with_extra_member(USER_SERVICE_PLAN_DOCUMENT, r#""volumes":["/srv/notes"]"#),
+            ),
+            (
+                "a user service carrying environment",
+                with_extra_member(
+                    USER_SERVICE_PLAN_DOCUMENT,
+                    r#""environment":["LAB_NOTES_TITLE=x"]"#,
+                ),
+            ),
+            (
+                "a user service carrying a secret",
+                with_extra_member(
+                    USER_SERVICE_PLAN_DOCUMENT,
+                    r#""secrets":{"LAB_NOTES_ADMIN_TOKEN":"hunter2"}"#,
+                ),
+            ),
+            (
+                "a user service carrying a host path",
+                with_extra_member(
+                    USER_SERVICE_PLAN_DOCUMENT,
+                    r#""home":"/var/lib/your-cloud-user-lab-notes""#,
+                ),
+            ),
+            (
+                "a user service carrying an account",
+                with_extra_member(USER_SERVICE_PLAN_DOCUMENT, r#""account":"root""#),
+            ),
+            (
+                "a user service carrying the definition itself",
+                with_extra_member(USER_SERVICE_PLAN_DOCUMENT, r#""definition_document":"{}""#),
+            ),
+            (
+                "a user service repeating its origin",
+                with_extra_member(USER_SERVICE_PLAN_DOCUMENT, r#""origin_host":"evil.test""#),
+            ),
+            (
+                "a user service repeating its revision",
+                with_extra_member(
+                    USER_SERVICE_PLAN_DOCUMENT,
+                    &format!(r#""definition_digest":"{MINIMAL_DEFINITION_DIGEST}""#),
+                ),
+            ),
+            (
+                "a user service without its slug",
+                USER_SERVICE_PLAN_DOCUMENT
+                    .replace(&format!(r#""definition_slug":"{USER_SERVICE_SLUG}","#), ""),
+            ),
+            (
+                "a user service without its revision",
+                USER_SERVICE_PLAN_DOCUMENT.replace(
+                    &format!(r#""definition_digest":"{USER_SERVICE_DEFINITION_DIGEST}","#),
+                    "",
+                ),
+            ),
+            (
+                "a user service without its image",
+                USER_SERVICE_PLAN_DOCUMENT.replace(
+                    &format!(r#""image_reference":"{USER_SERVICE_IMAGE_REFERENCE}","#),
+                    "",
+                ),
+            ),
+            (
+                "a user service claiming the private door",
+                USER_SERVICE_PLAN_DOCUMENT
+                    .replace(r#""deploy_user_service""#, r#""deploy_private_service""#),
+            ),
+            (
+                "a private service claiming the third door",
+                PRIVATE_SERVICE_PLAN_DOCUMENT
+                    .replace(r#""deploy_private_service""#, r#""deploy_user_service""#),
+            ),
+            (
+                "a snapshot claiming the third door",
+                SNAPSHOT_PLAN_DOCUMENT.replace(r#""snapshot_service""#, r#""deploy_user_service""#),
+            ),
+            (
+                "an oversized user service origin",
+                USER_SERVICE_PLAN_DOCUMENT.replace(
+                    USER_SERVICE_ORIGIN_HOST,
+                    &"a".repeat(MAX_PLAN_DOCUMENT_BYTES),
+                ),
+            ),
             ("an empty document", String::new()),
             ("two values", format!("{ROUTE_PLAN_DOCUMENT}{{}}")),
             ("an array of documents", format!("[{ROUTE_PLAN_DOCUMENT}]")),
@@ -3769,6 +5199,7 @@ mod tests {
             LINK_ROUTE_PLAN_DOCUMENT,
             SNAPSHOT_PLAN_DOCUMENT,
             RESTORE_PLAN_DOCUMENT,
+            USER_SERVICE_PLAN_DOCUMENT,
         ] {
             assert_eq!(
                 crate::plan::decode_plan_document(document.as_bytes()),
@@ -3859,6 +5290,37 @@ mod tests {
                 ),
                 RESTORE_ROLLBACK_SHA256,
             ),
+            (
+                format!(
+                    "{{\n  \"origin_host\": \"{USER_SERVICE_ORIGIN_HOST}\",\n  \
+                     \"local_port\": {PORT},\n  \
+                     \"image_digest\": \"{USER_SERVICE_IMAGE_DIGEST}\",\n  \
+                     \"image_reference\": \"{USER_SERVICE_IMAGE_REFERENCE}\",\n  \
+                     \"definition_digest\": \"{USER_SERVICE_DEFINITION_DIGEST}\",\n  \
+                     \"definition_slug\": \"{USER_SERVICE_SLUG}\",\n  \
+                     \"operation\": \"deploy_user_service\",\n  \
+                     \"machine_id\": \"{MACHINE}\",\n  \
+                     \"infrastructure_id\": \"{INFRASTRUCTURE}\",\n  \"schema_version\": 2\n}}"
+                ),
+                USER_SERVICE_PLAN_SHA256,
+            ),
+            (
+                // A definition that consumes no origin leaves the field empty,
+                // and a transport that drops it altogether carries the same
+                // plan: the digest is rebuilt from the fields, and an absent
+                // origin and an empty one are one value.
+                format!(
+                    "{{\n  \"local_port\": {MINIMAL_USER_PORT},\n  \
+                     \"image_digest\": \"{MINIMAL_IMAGE_DIGEST}\",\n  \
+                     \"image_reference\": \"{MINIMAL_IMAGE_REFERENCE}\",\n  \
+                     \"definition_digest\": \"{MINIMAL_DEFINITION_DIGEST}\",\n  \
+                     \"definition_slug\": \"{MINIMAL_SLUG}\",\n  \
+                     \"operation\": \"deploy_user_service\",\n  \
+                     \"machine_id\": \"{MACHINE}\",\n  \
+                     \"infrastructure_id\": \"{INFRASTRUCTURE}\",\n  \"schema_version\": 2\n}}"
+                ),
+                MINIMAL_USER_PLAN_SHA256,
+            ),
         ] {
             let reordered = decode_plan_v2_document(reshaped.as_bytes())
                 .expect("a reindented document is the same plan");
@@ -3911,6 +5373,16 @@ mod tests {
             ),
             ("a truncated digest", WEB_SERVICE_PLAN_DOCUMENT, "99f6"),
             ("an empty digest", WEB_SERVICE_PLAN_DOCUMENT, ""),
+            (
+                "a user service presented under the digest of its removal",
+                USER_SERVICE_PLAN_DOCUMENT,
+                USER_SERVICE_ROLLBACK_SHA256,
+            ),
+            (
+                "a user service presented under the digest of another instance",
+                USER_SERVICE_PLAN_DOCUMENT,
+                MINIMAL_USER_PLAN_SHA256,
+            ),
         ] {
             assert_eq!(
                 verify_plan_v2_document(document.as_bytes(), expected),
@@ -3918,6 +5390,29 @@ mod tests {
                 "{name} was accepted"
             );
         }
+
+        // One byte moved inside a document is another plan, and no longer the
+        // one its escort claims. The alteration below is a single character of
+        // the origin — the smallest change a transport can make that a reader
+        // would never notice — and it is refused before anything displays it.
+        let mut altered = USER_SERVICE_PLAN_DOCUMENT.as_bytes().to_vec();
+        let index = USER_SERVICE_PLAN_DOCUMENT
+            .find(USER_SERVICE_ORIGIN_HOST)
+            .expect("the vector carries its origin");
+        altered[index] = b'm';
+        assert_eq!(
+            verify_plan_v2_document(&altered, USER_SERVICE_PLAN_SHA256),
+            Err(ProtocolError::InvalidInput)
+        );
+        // It is still a well-formed plan on its own, which is exactly why the
+        // digest and not the grammar is what refuses it.
+        assert_ne!(
+            decode_plan_v2_document(&altered)
+                .expect("the altered document is a plan of its own")
+                .sha256()
+                .unwrap(),
+            USER_SERVICE_PLAN_SHA256
+        );
     }
 
     /// What makes a rollback a plan rather than a promise, in each of the three
@@ -4077,6 +5572,68 @@ mod tests {
             machine_id: "lab-machine-2".into(),
             ..entrypoint().inverted()
         }));
+
+        // The third door, in both directions and over both of its vectors: the
+        // removal names the same instance as the deployment it undoes, origin
+        // included and origin absent alike.
+        for (plan, rollback) in [
+            (USER_SERVICE_PLAN_DOCUMENT, USER_SERVICE_ROLLBACK_DOCUMENT),
+            (MINIMAL_USER_PLAN_DOCUMENT, MINIMAL_USER_ROLLBACK_DOCUMENT),
+        ] {
+            let plan = decode_plan_v2_document(plan.as_bytes()).unwrap();
+            let rollback = decode_plan_v2_document(rollback.as_bytes()).unwrap();
+            assert!(plan.is_undone_by(&rollback));
+            assert!(rollback.is_undone_by(&plan));
+            assert!(!plan.is_undone_by(&plan));
+            assert_ne!(plan.sha256().unwrap(), rollback.sha256().unwrap());
+        }
+        // And the two instances never undo one another, however alike the two
+        // documents are shaped.
+        assert!(
+            !decode_plan_v2_document(USER_SERVICE_PLAN_DOCUMENT.as_bytes())
+                .unwrap()
+                .is_undone_by(
+                    &decode_plan_v2_document(MINIMAL_USER_ROLLBACK_DOCUMENT.as_bytes()).unwrap()
+                )
+        );
+
+        for forged in [
+            UserServicePlanDocumentV2 {
+                definition_digest: MINIMAL_DEFINITION_DIGEST.into(),
+                ..user_service().inverted()
+            },
+            UserServicePlanDocumentV2 {
+                definition_slug: MINIMAL_SLUG.into(),
+                ..user_service().inverted()
+            },
+            UserServicePlanDocumentV2 {
+                image_digest: OTHER_PINNED_DIGEST.into(),
+                ..user_service().inverted()
+            },
+            UserServicePlanDocumentV2 {
+                origin_host: String::new(),
+                ..user_service().inverted()
+            },
+            UserServicePlanDocumentV2 {
+                local_port: PORT + 1,
+                ..user_service().inverted()
+            },
+            UserServicePlanDocumentV2 {
+                operation: PlanV2Operation::DeployUserService,
+                ..user_service().inverted()
+            },
+        ] {
+            assert!(
+                !user_service().is_undone_by(&forged),
+                "a rollback that targets another instance is not a rollback"
+            );
+        }
+        assert!(
+            !minimal_user_service().is_undone_by(&UserServicePlanDocumentV2 {
+                origin_host: USER_SERVICE_ORIGIN_HOST.into(),
+                ..minimal_user_service().inverted()
+            })
+        );
     }
 
     /// The decisions of the contract, kept testable rather than merely written:
@@ -4152,23 +5709,8 @@ mod tests {
         }
         assert!(private_profile_image(SERVICE_PROFILE_VAULTWARDEN).is_some());
 
-        const DECLARED: [PlanV2Operation; 13] = [
-            PlanV2Operation::DeployWebService,
-            PlanV2Operation::RemoveWebService,
-            PlanV2Operation::DeployEntrypoint,
-            PlanV2Operation::RemoveEntrypoint,
-            PlanV2Operation::PublishRoute,
-            PlanV2Operation::RetireRoute,
-            PlanV2Operation::DeployPrivateService,
-            PlanV2Operation::RemovePrivateService,
-            PlanV2Operation::PublishLinkRoute,
-            PlanV2Operation::RetireLinkRoute,
-            PlanV2Operation::SnapshotService,
-            PlanV2Operation::DiscardSnapshot,
-            PlanV2Operation::RestoreService,
-        ];
         let mut names: Vec<&str> = Vec::new();
-        for operation in DECLARED {
+        for operation in DECLARED_OPERATIONS {
             assert_eq!(operation.inverse().inverse(), operation);
             // The restore is the one operation whose undoing is itself, because
             // what its undoing moves is the slot rather than the verb. Every
@@ -4206,6 +5748,8 @@ mod tests {
                 "snapshot_service",
                 "discard_snapshot",
                 "restore_service",
+                "deploy_user_service",
+                "remove_user_service",
             ]
         );
     }
