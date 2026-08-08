@@ -1156,10 +1156,16 @@ l'utilisateur dans les limites nommées de son contrat
 contrat est la « modification explicite et nouvelle validation » que la liste
 ci-dessus exige avant d'approcher un catalogue : la capacité reste bornée —
 elle n'accepte pas arbitrairement tout service — et rien n'entre pour autant
-dans `v0.1.0`. Le petit parcours SSO OpenID Connect de Vaultwarden, demandé
-plus tôt pour ce jalon, passe à un jalon ultérieur sans changer de réserve :
-fournisseur, placement et récupération seront choisis à son cadrage, et rien
-n'est installé par défaut.
+dans `v0.1.0`. Le jalon est contracté en issues dans la
+[milestone `v0.1.1` — Services utilisateur](https://github.com/ldesfontaine/your-cloud/milestone/8)
+(`#115` à `#121`), dont l'issue de contrat
+[`#115`](https://github.com/ldesfontaine/your-cloud/issues/115) porte cette
+revalidation ; rien ne s'implémente avant qu'elle soit validée, et rien de
+`v0.1.1` ne commence avant le candidat attesté de `v0.1.0`. Le petit parcours
+SSO OpenID Connect de Vaultwarden, demandé plus tôt pour ce jalon, passe à un
+jalon ultérieur **non numéroté** sans changer de réserve : fournisseur,
+placement et récupération seront choisis à son cadrage, et rien n'est installé
+par défaut.
 
 ## Paramètres fixés au bon incrément
 
