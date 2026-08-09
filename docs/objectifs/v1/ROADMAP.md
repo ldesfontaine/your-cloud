@@ -173,7 +173,7 @@ simplement la roadmap de `v0.1.0` d'oublier la direction déjà validée.
 | Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif v0.1.0](README.md) |
 | Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif v0.1.0](README.md) |
 | Sécurité et preuves | Justification OWASP et NIS2 proportionnée, refus hostiles, secrets synthétiques, artefacts épinglés, rapport visuel et aucune revendication de conformité | Conserver le moindre privilège, les mises à jour séparées, la révocation, les SBOM, la provenance et les risques résiduels visibles | [Qualité](../../contribution/QUALITE.md) et [cap](../../projet/CAP.md) |
-| Premier jalon après `v0.1.0` | Hors de `v0.1.0` | `v0.1.1` « Services utilisateur » : définitions bornées, gelées et hachées par le Controller, épinglées par digest dans des plans approuvés ([contrat](../../architecture/SERVICE-UTILISATEUR.md)), contractée en issues (`#115`–`#121`) ; le SSO OpenID Connect de Vaultwarden reste un jalon ultérieur non numéroté | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
+| Premier jalon après `v0.1.0` | Hors de `v0.1.0` | `v0.1.1` « Services utilisateur » : définitions bornées, gelées et hachées par le Controller, épinglées par digest dans des plans approuvés ([contrat](../../architecture/SERVICE-UTILISATEUR.md)), contractée en issues (`#115`–`#121`), puis `v0.1.2` « La Console aux commandes » : le trajet réel Console → machine → rapport ([contrat](../../architecture/TRAJET-DE-COMMANDE.md)), issues `#122`–`#128` ; le SSO OpenID Connect de Vaultwarden reste un jalon ultérieur non numéroté | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
 
 ## Incrément prouvé : `v0.0.1`
 
@@ -698,7 +698,15 @@ issues dans la
 (`#115`–`#121`). La `v0.1.1` ne sera pas déclarée atteinte avant le candidat
 attesté de `v0.1.0`. Le petit parcours SSO OpenID Connect de Vaultwarden, demandé plus
 tôt pour la `v0.1.1`, passe à un jalon ultérieur non numéroté sans changer de
-réserve. Ni l'un ni l'autre ne font partie de la présente roadmap.
+réserve. La `v0.1.2` « La Console aux commandes » suit : le chemin réel entre la
+Console et une machine — construction, consentement dans une fenêtre séparée,
+soumission de l'approbation signée, lancement de l'Auxiliaire par l'identité de
+la machine et rapport lu jusqu'à l'humain —, contracté dans
+[`TRAJET-DE-COMMANDE.md`](../../architecture/TRAJET-DE-COMMANDE.md) et en issues
+`#122`–`#128`. Sa preuve `#128` est la première tenue par la règle « aucune
+fixture sur le trajet produit » de
+[`QUALITE.md`](../../contribution/QUALITE.md). Aucun de ces jalons ne fait
+partie de la présente roadmap.
 
 ## Points volontairement non décidés
 

@@ -231,6 +231,33 @@ action ; elles ne justifient aucune abstraction anticipée :
 - Distinguer explicitement ce qui est documenté, implémenté et réellement
   prouvé.
 
+## Preuves et fixtures
+
+Une fixture est légitime pour isoler un contrat, provoquer un cas hostile
+impossible à obtenir autrement ou remplacer une dépendance extérieure au
+produit. Elle cesse de l'être dès qu'elle remplace **un composant du produit
+sur le trajet que la preuve prétend prouver** : la preuve devient alors verte
+sur un chemin que personne n'a construit, et l'absence se découvre au palier
+suivant plutôt qu'à celui qui l'a créée.
+
+- **Nommer chaque fixture qui remplace un composant du produit.** Le rapport
+  LAB dit lequel, pourquoi, et ce que la preuve cesse de couvrir de ce fait ; le
+  commentaire de fermeture de l'issue reprend cette dette au lieu de la laisser
+  dans le seul rapport. Une fixture nommée est une dette ; une fixture tue est
+  une fausse preuve.
+- **Chaque milestone porte au moins une preuve à trajet produit complet, sans
+  fixture.** Tous les maillons du parcours qu'elle prouve y sont exercés par les
+  binaires réellement livrés. Son rapport liste ce que les preuves antérieures
+  remplaçaient par une fixture sur ce même trajet, et cette liste doit être
+  vide à la fermeture.
+- **Une fixture qui remplace un composant du produit ne se substitue jamais à
+  la preuve de ce composant.** Elle peut précéder cette preuve dans le temps ;
+  elle ne peut ni la remplacer, ni justifier de la reporter indéfiniment.
+- **Nommer aussi ce que le pilotage lui-même ne prouve pas.** Un harnais qui
+  conduit une interface, un dialogue natif ou une machine atteste ce que son
+  mécanisme peut atteindre : le rapport dit lequel a été employé et ce qu'il ne
+  remplace pas.
+
 ## Condition de sortie d'un changement
 
 Un changement est terminé seulement lorsque :
@@ -246,4 +273,6 @@ Un changement est terminé seulement lorsque :
    les limites réelles ;
 7. la justification OWASP et NIS2 proportionnée est relue avec ses tests
    hostiles et son risque résiduel ;
-8. le changement est compréhensible avant l'ouverture du chantier suivant.
+8. le changement est compréhensible avant l'ouverture du chantier suivant ;
+9. toute fixture qui remplace un composant du produit sur le trajet prouvé est
+   nommée comme dette dans le rapport LAB et dans le commentaire de fermeture.

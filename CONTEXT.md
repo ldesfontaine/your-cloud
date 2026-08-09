@@ -147,6 +147,14 @@ _Avoid_: « catalogue », car aucune liste d'applications n'est fournie ni promi
 **Révision**:
 Nouveau gel d'une définition de service sous le même nom, qui coexiste avec les gels précédents sans jamais les remplacer ni les effacer. Chaque instance déployée nomme la révision exacte qu'elle exécute.
 
+**Consentement**:
+Ce qu'une surface séparée de l'interface recueille auprès de l'humain et rend : la preuve qu'il a lu et accepté les phrases exactes qui décrivent un plan et son retour. Il ne prouve jamais que ces phrases décrivent fidèlement le plan ; cette fidélité est prouvée par le composant qui a dérivé les phrases et re-dérivée sur la machine.
+_Avoid_: « confirmation de l'interface », car la surface qui affiche le reste du produit n'est pas celle qui recueille le consentement.
+
+**Rapport d'exécution**:
+Conclusion que la machine rend après une opération approuvée : ce qu'elle a vérifié, ce qu'elle a changé et ce qui survit. Il appartient à la machine et jamais à ce qui a transporté le plan ; son absence est un état affiché, jamais un succès supposé.
+_Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliqué.
+
 ## Relationships
 
 - Une **Infrastructure** regroupe des **Machines** et leurs **Services**.
@@ -200,6 +208,13 @@ Nouveau gel d'une définition de service sous le même nom, qui coexiste avec le
 - Un **Profil de service** est fourni et borné par Your Cloud ; une
   **Définition de service** est rédigée par l'utilisateur dans des bornes que
   Your Cloud fixe. Les deux familles ne partagent jamais un nom.
+- Un **Consentement** précède toute approbation d'un **Plan d'action** ; il est
+  recueilli hors de la surface qui affiche le reste du produit, et il nomme la
+  paire qu'il confirme.
+- Un **Rapport d'exécution** vient de l'**Auxiliaire local** qui a agi. Le
+  **Controller** le lit, le refuse s'il ne nomme pas cette machine, cette
+  opération et cette séquence, et affiche « lancé, non rapporté » plutôt que de
+  supposer un résultat.
 - Une panne de la **Console**, du **Controller** ou du **Relay** ne doit pas
   arrêter un **Service** déjà déployé.
 
