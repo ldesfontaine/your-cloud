@@ -367,6 +367,9 @@ const approvalProtocol = await readSourceText(
 const planProtocol = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "plan.rs"),
 );
+const approvalConsentProtocol = await readSourceText(
+  join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "approval_consent.rs"),
+);
 const approvalRuntime = await readSourceText(join(consoleRoot, "src-tauri", "src", "approval.rs"));
 const planV2Protocol = await readSourceText(
   join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "src", "plan_v2.rs"),
@@ -2441,6 +2444,129 @@ for (const forbidden of ["SigningKey", "signing_key", "private_key", "secret", "
 for (const forbidden of ["ed25519", "signature ="]) {
   if (bootstrapProtocolManifest.includes(forbidden)) {
     failures.push(`bootstrap-protocol: dépendance de signature interdite (${forbidden})`);
+  }
+}
+
+// La fenêtre native rend des phrases, jamais les documents. Le consentement
+// porte les lignes que le cœur a dérivées des deux documents qu'il avait déjà
+// vérifiés, plus les deux empreintes, et rien d'autre : un plan, un rollback ou
+// une définition dans cette trame ferait de la fenêtre un second vérificateur
+// dont les deux dérivations pourraient diverger.
+for (const bound of [
+  "pub confirmation_lines: Vec<String>,",
+  "pub plan_sha256: String,",
+  "pub rollback_sha256: String,",
+]) {
+  if (!approvalConsentProtocol.includes(bound)) {
+    failures.push(`approval_consent.rs: le consentement ne porte plus (${bound})`);
+  }
+}
+for (const forbidden of [
+  "plan_document",
+  "rollback_document",
+  "definition_document",
+  "SigningKey",
+  "signing_key",
+  "private_key",
+  "secret",
+  "Signer",
+]) {
+  if (approvalConsentProtocol.includes(forbidden)) {
+    failures.push(`approval_consent.rs: la fenêtre reçoit autre chose que des phrases (${forbidden})`);
+  }
+}
+// La borne de trame est dérivée des champs et n'est pas celle de l'amorçage :
+// élargir la trame du scope pour y loger un consentement relâcherait une borne
+// sur un document qui n'en a jamais besoin.
+if (
+  !approvalConsentProtocol.includes(
+    "pub const MAX_APPROVAL_CONSENT_FRAME_BYTES: usize = MAX_APPROVAL_CONSENT_LINES",
+  ) ||
+  !approvalConsentProtocol.includes(
+    "* (MAX_APPROVAL_CONSENT_LINE_BYTES + APPROVAL_CONSENT_LINE_ENCODING_BYTES)",
+  ) ||
+  !approvalConsentProtocol.includes("+ APPROVAL_CONSENT_FIXED_BYTES;")
+) {
+  failures.push("approval_consent.rs: la borne de trame n’est plus dérivée de ses champs");
+}
+if (!bootstrapProtocol.includes("pub const MAX_ASSISTANT_SCOPE_FRAME_BYTES: usize = 4_096;")) {
+  failures.push("bootstrap-protocol: la trame d’amorçage a été élargie au lieu d’être laissée");
+}
+// Les deux dernières phrases sont les deux empreintes, et une réponse ne
+// confirme qu'en les nommant. Sans ce couplage, l'écho de la fenêtre porterait
+// sur des valeurs que l'humain n'a jamais eues sous les yeux.
+if (
+  !approvalConsentProtocol.includes(
+    "previous.ends_with(plan_sha256) && last.ends_with(rollback_sha256)",
+  )
+) {
+  failures.push("approval_consent.rs: la queue des phrases n’est plus tenue aux deux empreintes");
+}
+if (
+  !approvalConsentProtocol.includes("if confirms != names_a_pair || confirms == names_nothing {")
+) {
+  failures.push("approval_consent.rs: un refus pourrait nommer une paire, ou une confirmation aucune");
+}
+// Une phrase qui pourrait réordonner ou rallonger la fenêtre n'y entre pas —
+// les contrôles, les douze marques bidirectionnelles dont l'ALM que is_control
+// ne voit pas, les deux séparateurs de ligne qui n'en sont pas, et les deux
+// caractères que l'encodage JSON échappe, sans lesquels la borne de trame ne
+// serait plus un octet encodé par octet de phrase.
+if (
+  !approvalConsentProtocol.includes("character.is_control()") ||
+  !approvalConsentProtocol.includes("'\\u{202a}'..='\\u{202e}'") ||
+  !approvalConsentProtocol.includes("'\\u{2066}'..='\\u{2069}'") ||
+  !approvalConsentProtocol.includes("'\\u{200e}' | '\\u{200f}' | '\\u{061c}'") ||
+  !approvalConsentProtocol.includes("'\\u{2028}' | '\\u{2029}'") ||
+  !approvalConsentProtocol.includes("| '\"' | '\\\\'")
+) {
+  failures.push("approval_consent.rs: le texte affiché n’est plus tenu contre le réordonnancement");
+}
+
+// Côté cœur : le consentement nomme l'infrastructure de l'association, jamais
+// une infrastructure choisie par l'appelant, et une réponse est comparée au
+// consentement que ce côté a construit. La ligne qui lit l'association existe
+// aussi dans sign_approval : elle est donc comptée, pas seulement trouvée —
+// une occurrence unique serait la signature seule, et un build_consent qui
+// recopierait une infrastructure de l'appelant passerait inaperçu.
+const associationInfrastructureReads =
+  approvalRuntime.split("infrastructure_id: association.summary.infrastructure_id.clone(),")
+    .length - 1;
+if (
+  !approvalRuntime.includes("pub fn build_consent(") ||
+  associationInfrastructureReads < 2 ||
+  !approvalRuntime.includes("pub fn consent_confirms(") ||
+  !approvalRuntime.includes("if outcome.request_id != consent.request_id {") ||
+  !approvalRuntime.includes(
+    "}) if plan_sha256 == consent.plan_sha256 && rollback_sha256 == consent.rollback_sha256",
+  )
+) {
+  failures.push("approval.rs: la fenêtre n’est plus liée au consentement que ce côté a construit");
+}
+if (
+  !/pub\s+struct\s+ConsentRequest<'a>\s*\{[\s\S]*?\n\}/u
+    .exec(approvalRuntime)?.[0]
+    ?.includes("confirmation_lines: &'a [String],") ||
+  /pub\s+struct\s+ConsentRequest<'a>\s*\{[\s\S]*?\n\}/u
+    .exec(approvalRuntime)?.[0]
+    ?.match(/\b(infrastructure_id|plan_document|rollback_document|signature|privileges)\b/u)
+) {
+  failures.push("approval.rs: la demande de consentement laisse choisir un champ dérivé");
+}
+// Les trois portes de plan ouvrent leur fenêtre et lisent sa réponse par le
+// même chemin : une porte qui minterait sa confirmation autrement serait une
+// approbation sans fenêtre.
+for (const [name, runtime] of [
+  ["probe_plan.rs", probePlanRuntime],
+  ["publication_plan.rs", publicationPlanRuntime],
+  ["link_plan.rs", linkPlanRuntime],
+]) {
+  if (
+    !runtime.includes("pub fn consent(") ||
+    !runtime.includes("pub fn confirmed_by(") ||
+    !runtime.includes("|| !consent_confirms(consent, outcome)")
+  ) {
+    failures.push(`${name}: le plan n’est plus confirmé par une fenêtre native`);
   }
 }
 

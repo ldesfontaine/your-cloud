@@ -40,14 +40,18 @@
 //! which lines a human is shown.
 
 use crate::{
-    approval::{sign_approval, ApprovalError, ApprovalRequest},
+    approval::{
+        build_consent, consent_confirms, sign_approval, ApprovalError, ApprovalRequest,
+        ConsentRequest,
+    },
     vault::AssociationRecord,
 };
 use serde::Deserialize;
 use your_cloud_bootstrap_protocol::{
-    verify_plan_v3_document, ApprovalOperation, LinkRole, PlanDocumentV3, PlanV3Group,
-    PlanV3Operation, SignedApprovalV1, LINK_INITIATOR_TUNNEL_ADDRESS, LINK_INTERFACE_NAME,
-    LINK_KEEPALIVE_SECONDS, LINK_LISTENER_TUNNEL_ADDRESS, LINK_LISTEN_PORT, LINK_NFTABLES_TABLE,
+    verify_plan_v3_document, ApprovalConsentOutcomeV1, ApprovalConsentV1, ApprovalOperation,
+    LinkRole, PlanDocumentV3, PlanV3Group, PlanV3Operation, SignedApprovalV1,
+    LINK_INITIATOR_TUNNEL_ADDRESS, LINK_INTERFACE_NAME, LINK_KEEPALIVE_SECONDS,
+    LINK_LISTENER_TUNNEL_ADDRESS, LINK_LISTEN_PORT, LINK_NFTABLES_TABLE,
 };
 
 /// The one schema of the pairs this palier reads.
@@ -302,6 +306,57 @@ impl PresentedLinkPlan {
             plan_sha256: self.plan_sha256.clone(),
             rollback_sha256: self.rollback_sha256.clone(),
         }
+    }
+
+    /// The document the native confirmation window is given for this plan.
+    ///
+    /// It carries the sentences above and the two digests this side computed,
+    /// and no document: the window renders what a human must read, and the pair
+    /// stays here, where it was verified. A plan of another infrastructure never
+    /// reaches a window at all, for the same reason it never reaches a
+    /// signature.
+    pub fn consent(
+        &self,
+        association: &AssociationRecord,
+        request_id: &str,
+        remaining_millis: u64,
+    ) -> Result<ApprovalConsentV1, LinkPlanError> {
+        if self.plan.infrastructure_id() != association.summary.infrastructure_id.as_str() {
+            return Err(LinkPlanError::ForeignInfrastructure);
+        }
+        let confirmation_lines = self.confirmation_lines();
+        Ok(build_consent(
+            association,
+            ConsentRequest {
+                request_id,
+                machine_id: self.plan.machine_id(),
+                operation: approval_operation(self.plan.operation()),
+                plan_sha256: &self.plan_sha256,
+                rollback_sha256: &self.rollback_sha256,
+                confirmation_lines: &confirmation_lines,
+                remaining_millis,
+            },
+        )?)
+    }
+
+    /// The confirmation a window answer produces, and a refusal for everything
+    /// else.
+    ///
+    /// The consent is held against this presentation before the answer is even
+    /// looked at, so an answer to a window opened on another pair cannot be
+    /// laundered through a presentation of this one.
+    pub fn confirmed_by(
+        &self,
+        consent: &ApprovalConsentV1,
+        outcome: &ApprovalConsentOutcomeV1,
+    ) -> LinkPlanConfirmation {
+        if consent.plan_sha256 != self.plan_sha256
+            || consent.rollback_sha256 != self.rollback_sha256
+            || !consent_confirms(consent, outcome)
+        {
+            return LinkPlanConfirmation::Refused;
+        }
+        self.confirmed()
     }
 
     /// Signs the approval of this confirmed plan, and refuses everything else.

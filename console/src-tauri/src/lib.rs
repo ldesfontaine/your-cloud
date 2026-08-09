@@ -1,8 +1,10 @@
-// The approval path is signed here and verified by the Auxiliary end to end,
-// but the native window that must display and confirm a plan before it is
-// emitted belongs to the palier that adds the command. Nothing in the command
-// surface below reaches this module, which is exactly what "no free signature
-// is exposed to the frontend" means for now.
+// The approval path is signed here and verified by the Auxiliary end to end.
+// This module also holds the two halves of the consent that must precede a
+// signature: the document a native window is given, and the reading of the
+// document it answers with. What is still missing is the window itself and the
+// command that opens it, and both belong to the palier that adds them. Nothing
+// in the command surface below reaches this module, which is exactly what "no
+// free signature is exposed to the frontend" means for now.
 #[allow(dead_code)]
 mod approval;
 mod bootstrap;

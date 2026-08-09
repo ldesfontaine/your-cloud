@@ -44,18 +44,22 @@
 //! route is still the other plan, because the two hash differently.
 
 use crate::{
-    approval::{sign_approval, ApprovalError, ApprovalRequest},
+    approval::{
+        build_consent, consent_confirms, sign_approval, ApprovalError, ApprovalRequest,
+        ConsentRequest,
+    },
     vault::AssociationRecord,
 };
 use serde::Deserialize;
 use your_cloud_bootstrap_protocol::{
-    verify_plan_v2_document, ApprovalOperation, PlanDocumentV2, PlanV2Group, PlanV2Operation,
-    SignedApprovalV1, ENTRYPOINT_PUBLIC_HTTPS_PORT, ENTRYPOINT_PUBLIC_HTTP_PORT,
-    ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL, LINK_INITIATOR_TUNNEL_ADDRESS, ORIGIN_HOST_PLACEHOLDER,
-    PRIVATE_SERVICE_DATA_VOLUME, PRIVATE_SERVICE_EGRESS_TABLE,
-    PRIVATE_SERVICE_ENVIRONMENT_HARDENING, PRIVATE_SERVICE_ORIGIN_SCHEME,
-    PRIVATE_SERVICE_ORIGIN_VARIABLE, RESERVED_SNAPSHOT_SLOT, ROUTE_ISOLATION_HEADERS,
-    SERVICE_LOCAL_ADDRESS, SERVICE_PROFILE_BENTOPDF, SERVICE_PROFILE_VAULTWARDEN,
+    verify_plan_v2_document, ApprovalConsentOutcomeV1, ApprovalConsentV1, ApprovalOperation,
+    PlanDocumentV2, PlanV2Group, PlanV2Operation, SignedApprovalV1, ENTRYPOINT_PUBLIC_HTTPS_PORT,
+    ENTRYPOINT_PUBLIC_HTTP_PORT, ENTRYPOINT_UNPRIVILEGED_PORT_SYSCTL,
+    LINK_INITIATOR_TUNNEL_ADDRESS, ORIGIN_HOST_PLACEHOLDER, PRIVATE_SERVICE_DATA_VOLUME,
+    PRIVATE_SERVICE_EGRESS_TABLE, PRIVATE_SERVICE_ENVIRONMENT_HARDENING,
+    PRIVATE_SERVICE_ORIGIN_SCHEME, PRIVATE_SERVICE_ORIGIN_VARIABLE, RESERVED_SNAPSHOT_SLOT,
+    ROUTE_ISOLATION_HEADERS, SERVICE_LOCAL_ADDRESS, SERVICE_PROFILE_BENTOPDF,
+    SERVICE_PROFILE_VAULTWARDEN,
 };
 
 /// The one schema of the pairs this palier reads.
@@ -436,6 +440,57 @@ impl PresentedPublicationPlan {
         }
     }
 
+    /// The document the native confirmation window is given for this plan.
+    ///
+    /// It carries the sentences above and the two digests this side computed,
+    /// and no document: the window renders what a human must read, and the pair
+    /// stays here, where it was verified. A plan of another infrastructure never
+    /// reaches a window at all, for the same reason it never reaches a
+    /// signature.
+    pub fn consent(
+        &self,
+        association: &AssociationRecord,
+        request_id: &str,
+        remaining_millis: u64,
+    ) -> Result<ApprovalConsentV1, PublicationPlanError> {
+        if self.plan.infrastructure_id() != association.summary.infrastructure_id.as_str() {
+            return Err(PublicationPlanError::ForeignInfrastructure);
+        }
+        let confirmation_lines = self.confirmation_lines();
+        Ok(build_consent(
+            association,
+            ConsentRequest {
+                request_id,
+                machine_id: self.plan.machine_id(),
+                operation: approval_operation(self.plan.operation()),
+                plan_sha256: &self.plan_sha256,
+                rollback_sha256: &self.rollback_sha256,
+                confirmation_lines: &confirmation_lines,
+                remaining_millis,
+            },
+        )?)
+    }
+
+    /// The confirmation a window answer produces, and a refusal for everything
+    /// else.
+    ///
+    /// The consent is held against this presentation before the answer is even
+    /// looked at, so an answer to a window opened on another pair cannot be
+    /// laundered through a presentation of this one.
+    pub fn confirmed_by(
+        &self,
+        consent: &ApprovalConsentV1,
+        outcome: &ApprovalConsentOutcomeV1,
+    ) -> PublicationPlanConfirmation {
+        if consent.plan_sha256 != self.plan_sha256
+            || consent.rollback_sha256 != self.rollback_sha256
+            || !consent_confirms(consent, outcome)
+        {
+            return PublicationPlanConfirmation::Refused;
+        }
+        self.confirmed()
+    }
+
     /// Signs the approval of this confirmed plan, and refuses everything else.
     ///
     /// The documents are re-verified here from the bytes that are still in
@@ -603,9 +658,10 @@ mod tests {
     use crate::vault::AssociationSummary;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use your_cloud_bootstrap_protocol::{
-        ApprovalPrivilege, BENTOPDF_IMAGE_DIGEST, BENTOPDF_IMAGE_REFERENCE,
-        ENTRYPOINT_IMAGE_DIGEST, ENTRYPOINT_IMAGE_REFERENCE, SERVICE_PROFILE_BENTOPDF,
-        SERVICE_PROFILE_VAULTWARDEN, VAULTWARDEN_IMAGE_DIGEST, VAULTWARDEN_IMAGE_REFERENCE,
+        ApprovalConsentOutcomeKind, ApprovalPrivilege, BENTOPDF_IMAGE_DIGEST,
+        BENTOPDF_IMAGE_REFERENCE, ENTRYPOINT_IMAGE_DIGEST, ENTRYPOINT_IMAGE_REFERENCE,
+        SERVICE_PROFILE_BENTOPDF, SERVICE_PROFILE_VAULTWARDEN, VAULTWARDEN_IMAGE_DIGEST,
+        VAULTWARDEN_IMAGE_REFERENCE,
     };
 
     const INFRASTRUCTURE: &str = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2";
@@ -1889,6 +1945,77 @@ mod tests {
                     ApprovalError::InvalidRequest
                 ))
             ));
+        }
+    }
+
+    /// Every family of this palier really opens a window, and only its own
+    /// answer closes it.
+    ///
+    /// The ten pairs below are the widest presentations the product writes —
+    /// the private service alone is sixteen sentences — so this is what says the
+    /// consent bounds hold the real copy rather than a short example of it. A
+    /// family whose lines outgrew the frame would fail here, before a human ever
+    /// met an `invalid_input` where a plan should have been.
+    #[test]
+    fn every_family_opens_a_window_that_only_its_own_answer_closes() {
+        const CONSENT_REQUEST_ID: &str = "00112233445566778899aabbccddeeff";
+        let record = association(INFRASTRUCTURE);
+        let pairs = [
+            service_view(),
+            entrypoint_view(),
+            route_view(),
+            private_service_view(),
+            link_route_view(),
+            snapshot_view(),
+            discard_view(),
+            restore_view(),
+            user_service_view(),
+            minimal_user_service_view(),
+        ];
+
+        let mut consents = Vec::new();
+        for pair in &pairs {
+            let presented = PresentedPublicationPlan::verify(pair).expect("a pinned vector");
+            let consent = presented
+                .consent(&record, CONSENT_REQUEST_ID, 120_000)
+                .expect("every family fits the consent bounds");
+            assert_eq!(consent.confirmation_lines, presented.confirmation_lines());
+            assert_eq!(consent.plan_sha256, presented.plan_sha256());
+            assert_eq!(consent.rollback_sha256, presented.rollback_sha256());
+            // Neither document crosses the frame: the window reads sentences.
+            let rendered = serde_json::to_string(&consent).unwrap();
+            assert!(!rendered.contains(&pair.plan_document));
+            assert!(!rendered.contains(&pair.rollback_document));
+
+            assert_eq!(
+                presented.confirmed_by(&consent, &consent.confirmed()),
+                presented.confirmed()
+            );
+            assert_eq!(
+                presented.confirmed_by(
+                    &consent,
+                    &ApprovalConsentOutcomeV1::without_confirmation(
+                        CONSENT_REQUEST_ID,
+                        ApprovalConsentOutcomeKind::Refused,
+                    ),
+                ),
+                PublicationPlanConfirmation::Refused
+            );
+            consents.push((presented, consent));
+        }
+
+        // No family's window closes another family's plan, in either direction.
+        for (index, (presented, _)) in consents.iter().enumerate() {
+            for (other, (_, consent)) in consents.iter().enumerate() {
+                if index == other {
+                    continue;
+                }
+                assert_eq!(
+                    presented.confirmed_by(consent, &consent.confirmed()),
+                    PublicationPlanConfirmation::Refused,
+                    "the window of pair {other} confirmed pair {index}"
+                );
+            }
         }
     }
 

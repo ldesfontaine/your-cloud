@@ -31,13 +31,16 @@
 //! without a caller able to name a digest whose preimage nobody read.
 
 use crate::{
-    approval::{sign_approval, ApprovalError, ApprovalRequest},
+    approval::{
+        build_consent, consent_confirms, sign_approval, ApprovalError, ApprovalRequest,
+        ConsentRequest,
+    },
     vault::AssociationRecord,
 };
 use serde::Deserialize;
 use your_cloud_bootstrap_protocol::{
-    verify_plan_document, ApprovalOperation, PlanDocumentV1, PlanOperation, SignedApprovalV1,
-    PROBE_LOCAL_ADDRESS,
+    verify_plan_document, ApprovalConsentOutcomeV1, ApprovalConsentV1, ApprovalOperation,
+    PlanDocumentV1, PlanOperation, SignedApprovalV1, PROBE_LOCAL_ADDRESS,
 };
 
 /// The one schema of the pair this palier reads.
@@ -218,6 +221,59 @@ impl PresentedProbePlan {
         }
     }
 
+    /// The document the native confirmation window is given for this plan.
+    ///
+    /// It carries the sentences above and the two digests this side computed,
+    /// and no document: the window renders what a human must read, and the pair
+    /// stays here, where it was verified. A plan of another infrastructure never
+    /// reaches a window at all, for the same reason it never reaches a
+    /// signature.
+    pub fn consent(
+        &self,
+        association: &AssociationRecord,
+        request_id: &str,
+        remaining_millis: u64,
+    ) -> Result<ApprovalConsentV1, ProbePlanError> {
+        if self.plan.infrastructure_id != association.summary.infrastructure_id {
+            return Err(ProbePlanError::ForeignInfrastructure);
+        }
+        let confirmation_lines = self.confirmation_lines();
+        Ok(build_consent(
+            association,
+            ConsentRequest {
+                request_id,
+                machine_id: &self.plan.machine_id,
+                operation: approval_operation(self.plan.operation),
+                plan_sha256: &self.plan_sha256,
+                rollback_sha256: &self.rollback_sha256,
+                confirmation_lines: &confirmation_lines,
+                remaining_millis,
+            },
+        )?)
+    }
+
+    /// The confirmation a window answer produces, and a refusal for everything
+    /// else.
+    ///
+    /// The consent is held against this presentation before the answer is even
+    /// looked at, so an answer to a window opened on another pair cannot be
+    /// laundered through a presentation of this one. What comes back is the
+    /// ordinary [`ProbePlanConfirmation`], which [`Self::sign`] already refuses
+    /// unless it names these exact two digests.
+    pub fn confirmed_by(
+        &self,
+        consent: &ApprovalConsentV1,
+        outcome: &ApprovalConsentOutcomeV1,
+    ) -> ProbePlanConfirmation {
+        if consent.plan_sha256 != self.plan_sha256
+            || consent.rollback_sha256 != self.rollback_sha256
+            || !consent_confirms(consent, outcome)
+        {
+            return ProbePlanConfirmation::Refused;
+        }
+        self.confirmed()
+    }
+
     /// Signs the approval of this confirmed plan, and refuses everything else.
     ///
     /// The documents are re-verified here from the bytes that are still in
@@ -311,12 +367,13 @@ mod tests {
     use crate::vault::AssociationSummary;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use your_cloud_bootstrap_protocol::{
-        ApprovalPrivilege, PROBE_IMAGE_DIGEST, PROBE_IMAGE_REFERENCE,
+        ApprovalConsentOutcomeKind, ApprovalPrivilege, PROBE_IMAGE_DIGEST, PROBE_IMAGE_REFERENCE,
     };
 
     const INFRASTRUCTURE: &str = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2";
     const MACHINE: &str = "lab-machine-1";
     const ISSUED_AT: u64 = 1_780_000_000;
+    const CONSENT_REQUEST_ID: &str = "00112233445566778899aabbccddeeff";
 
     /// The shared vector of the plan encoding, byte for byte. The very same
     /// documents and digests are pinned in
@@ -650,6 +707,94 @@ mod tests {
                 Err(ProbePlanError::Approval(ApprovalError::InvalidRequest))
             ));
         }
+    }
+
+    /// The whole path a human really travels, in one test.
+    ///
+    /// A verified pair becomes the document a native window is given; the
+    /// window answers; and only an answer that confirms *this* pair produces a
+    /// signature. The two ends of that path are already asserted elsewhere —
+    /// what is asserted here is that they are joined, and that nothing joins
+    /// them except a window.
+    #[test]
+    fn only_a_window_answer_on_this_pair_leads_to_a_signature() {
+        let record = association(INFRASTRUCTURE);
+        let presented = PresentedProbePlan::verify(&view()).unwrap();
+        let consent = presented
+            .consent(&record, CONSENT_REQUEST_ID, 120_000)
+            .expect("a verified pair opens a window");
+
+        // The window is given the sentences and the two digests, and neither
+        // document: what it renders is what a human reads, not what a machine
+        // will receive.
+        assert_eq!(consent.confirmation_lines, presented.confirmation_lines());
+        assert_eq!(consent.plan_sha256, PLAN_SHA256);
+        assert_eq!(consent.rollback_sha256, ROLLBACK_SHA256);
+        assert_eq!(consent.machine_id, MACHINE);
+        assert_eq!(consent.infrastructure_id, INFRASTRUCTURE);
+        let rendered = serde_json::to_string(&consent).unwrap();
+        assert!(!rendered.contains(PLAN_DOCUMENT));
+        assert!(!rendered.contains(ROLLBACK_DOCUMENT));
+        assert!(!rendered.contains(&record.human_private_seed));
+
+        // Its confirmation is the one the signing path already accepts.
+        let confirmation = presented.confirmed_by(&consent, &consent.confirmed());
+        assert_eq!(confirmation, presented.confirmed());
+        let signed = presented
+            .sign(&record, &view(), &confirmation, request())
+            .expect("a window-confirmed plan is signed");
+        assert_eq!(signed.envelope.plan_sha256, PLAN_SHA256);
+        assert_eq!(signed.envelope.rollback_sha256, ROLLBACK_SHA256);
+
+        // Every other answer refuses, and a refusal signs nothing.
+        for kind in [
+            ApprovalConsentOutcomeKind::Refused,
+            ApprovalConsentOutcomeKind::Cancelled,
+            ApprovalConsentOutcomeKind::Expired,
+            ApprovalConsentOutcomeKind::Unavailable,
+        ] {
+            let answered = ApprovalConsentOutcomeV1::without_confirmation(CONSENT_REQUEST_ID, kind);
+            let refused = presented.confirmed_by(&consent, &answered);
+            assert_eq!(refused, ProbePlanConfirmation::Refused, "{kind:?}");
+            assert!(matches!(
+                presented.sign(&record, &view(), &refused, request()),
+                Err(ProbePlanError::UnconfirmedPlan)
+            ));
+        }
+
+        // A window opened on the reverse pair is a window about another plan,
+        // and its confirmation does not carry over.
+        let reverse = ProbePlanView {
+            plan_document: ROLLBACK_DOCUMENT.to_owned(),
+            plan_sha256: ROLLBACK_SHA256.to_owned(),
+            rollback_document: PLAN_DOCUMENT.to_owned(),
+            rollback_sha256: PLAN_SHA256.to_owned(),
+            ..view()
+        };
+        let reverse_presented = PresentedProbePlan::verify(&reverse).unwrap();
+        let reverse_consent = reverse_presented
+            .consent(&record, CONSENT_REQUEST_ID, 120_000)
+            .unwrap();
+        assert_eq!(
+            presented.confirmed_by(&reverse_consent, &reverse_consent.confirmed()),
+            ProbePlanConfirmation::Refused
+        );
+        // Nor does an answer meant for this pair confirm the reverse one.
+        assert_eq!(
+            reverse_presented.confirmed_by(&consent, &consent.confirmed()),
+            ProbePlanConfirmation::Refused
+        );
+
+        // A plan of another infrastructure opens no window at all, for the same
+        // reason it reaches no signature.
+        assert!(matches!(
+            presented.consent(
+                &association("8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3"),
+                CONSENT_REQUEST_ID,
+                120_000,
+            ),
+            Err(ProbePlanError::ForeignInfrastructure)
+        ));
     }
 
     /// Nothing this module produces carries key material.

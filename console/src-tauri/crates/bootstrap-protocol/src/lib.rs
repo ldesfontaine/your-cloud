@@ -1,4 +1,5 @@
 mod approval;
+mod approval_consent;
 mod monotonic;
 mod plan;
 mod plan_v2;
@@ -19,6 +20,12 @@ pub use approval::{
     APPROVAL_PUBLIC_KEY_BYTES, APPROVAL_SCHEMA_VERSION, APPROVAL_SIGNATURE_BYTES,
     APPROVAL_TRANSCRIPT_DOMAIN, MAX_APPROVAL_LIFETIME_SECONDS, MAX_APPROVAL_MACHINE_BYTES,
     MAX_APPROVAL_PRIVILEGES, MAX_SIGNED_APPROVAL_BYTES,
+};
+pub use approval_consent::{
+    ApprovalConsentDecision, ApprovalConsentOutcomeKind, ApprovalConsentOutcomeV1,
+    ApprovalConsentV1, APPROVAL_CONSENT_SCHEMA_VERSION, MAX_APPROVAL_CONSENT_FRAME_BYTES,
+    MAX_APPROVAL_CONSENT_LINES, MAX_APPROVAL_CONSENT_LINE_BYTES,
+    MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES,
 };
 pub use monotonic::{monotonic_nanos, MonotonicClockError};
 pub use plan::{

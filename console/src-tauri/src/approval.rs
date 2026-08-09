@@ -30,6 +30,14 @@
 //! and this module digests them. A caller therefore cannot bind the approval to
 //! a digest whose preimage nobody displayed.
 //!
+//! Beside the signature, this module builds the one document the native
+//! confirmation window is given — [`build_consent`] — and reads the one
+//! document it answers with — [`consent_confirms`]. They live here rather than
+//! beside the window because the infrastructure they name is read from the
+//! association, exactly as the envelope's is, and because what a window may be
+//! asked to display has to be decided in the same place that decides what may
+//! be signed.
+//!
 //! No Tauri command reaches this module in this palier: the approval path is
 //! signed and verified end to end, but the confirmation window that must
 //! precede it belongs to the palier that adds the command. `check-source-contract`
@@ -41,7 +49,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::Signer;
 use sha2::{Digest, Sha256};
 use your_cloud_bootstrap_protocol::{
-    ApprovalEnvelopeV1, ApprovalOperation, SignedApprovalV1, APPROVAL_SCHEMA_VERSION,
+    ApprovalConsentDecision, ApprovalConsentOutcomeV1, ApprovalConsentV1, ApprovalEnvelopeV1,
+    ApprovalOperation, SignedApprovalV1, APPROVAL_CONSENT_SCHEMA_VERSION, APPROVAL_SCHEMA_VERSION,
     MAX_APPROVAL_LIFETIME_SECONDS,
 };
 
@@ -142,12 +151,95 @@ pub fn sign_approval(
     .map_err(|_| ApprovalError::InvalidRequest)
 }
 
+/// One consent window, described by the presentation it comes from.
+///
+/// There is deliberately no `infrastructure_id` here, for the same reason
+/// [`ApprovalRequest`] has none: it is read from the association below, so a
+/// window can never be opened about an installation this Console is not
+/// associated to. There is no plan document and no rollback document either —
+/// the window renders what a human must read, and the two documents stay on
+/// this side, where they were verified.
+#[derive(Clone, Copy, Debug)]
+pub struct ConsentRequest<'a> {
+    /// Correlates the window, its answer and the session that opened it.
+    pub request_id: &'a str,
+    pub machine_id: &'a str,
+    pub operation: ApprovalOperation,
+    /// The digest this side computed from the plan it parsed, never one it was
+    /// handed.
+    pub plan_sha256: &'a str,
+    /// The same, for the rollback of that plan.
+    pub rollback_sha256: &'a str,
+    /// The sentences the presentation produced, in its own order. The last two
+    /// end with the two digests above, and the shared contract refuses a
+    /// consent whose tail does not.
+    pub confirmation_lines: &'a [String],
+    /// What is left of the lease the caller opened, in milliseconds. The
+    /// supervisor recomputes it against its own deadline before the frame is
+    /// written, so this can be shortened on the way out and never renewed.
+    pub remaining_millis: u64,
+}
+
+/// Builds the one document the native confirmation window is given.
+///
+/// It refuses everything the shared contract refuses, which is what stops a
+/// window from ever rendering a sentence that could reorder itself, a tail that
+/// does not end on the two digests, or a machine identifier that could mean a
+/// path.
+pub fn build_consent(
+    association: &AssociationRecord,
+    request: ConsentRequest<'_>,
+) -> Result<ApprovalConsentV1, ApprovalError> {
+    ApprovalConsentV1 {
+        schema_version: APPROVAL_CONSENT_SCHEMA_VERSION,
+        request_id: request.request_id.to_owned(),
+        // Read from the association, never from the request, exactly as the
+        // envelope's is.
+        infrastructure_id: association.summary.infrastructure_id.clone(),
+        machine_id: request.machine_id.to_owned(),
+        operation: request.operation,
+        plan_sha256: request.plan_sha256.to_owned(),
+        rollback_sha256: request.rollback_sha256.to_owned(),
+        confirmation_lines: request.confirmation_lines.to_vec(),
+        // The supervisor stamps the shared monotonic clock at spawn. Naming a
+        // moment here would be naming one this process cannot hold the helper
+        // to.
+        issued_at_monotonic_nanos: 0,
+        remaining_millis: request.remaining_millis,
+    }
+    .validate()
+    .map_err(|_| ApprovalError::InvalidRequest)
+}
+
+/// Whether one window answer really confirms one consent.
+///
+/// Three things must hold at once, and any of them failing means the answer is
+/// about something else: the answer names the request the consent was opened
+/// for, it is a confirmation rather than one of the four refusals, and the two
+/// digests it echoes are the two the consent carried. The comparison is made
+/// against the consent this side built — never against the answer's own claim
+/// about what it saw.
+pub fn consent_confirms(consent: &ApprovalConsentV1, outcome: &ApprovalConsentOutcomeV1) -> bool {
+    if outcome.request_id != consent.request_id {
+        return false;
+    }
+    matches!(
+        outcome.decision(),
+        Some(ApprovalConsentDecision::Confirmed {
+            plan_sha256,
+            rollback_sha256,
+        }) if plan_sha256 == consent.plan_sha256 && rollback_sha256 == consent.rollback_sha256
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::vault::AssociationSummary;
     use ed25519_dalek::{Signature, SigningKey, Verifier};
-    use your_cloud_bootstrap_protocol::ApprovalPrivilege;
+    use your_cloud_bootstrap_protocol::{
+        ApprovalConsentOutcomeKind, ApprovalPrivilege, MAX_APPROVAL_CONSENT_LINE_BYTES,
+    };
 
     const INFRASTRUCTURE: &str = "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c2";
     const MACHINE: &str = "lab-machine-1";
@@ -331,6 +423,170 @@ mod tests {
             vec![ApprovalPrivilege::ReadLocalState]
         );
         assert!(!signed.envelope.is_mutating());
+    }
+
+    const CONSENT_REQUEST_ID: &str = "00112233445566778899aabbccddeeff";
+    const CONSENT_PLAN: &str = "2d50d2bc935ce6c56ef14fbfae93d670d5fdb9ca735315e5a26760d818dd5b0e";
+    const CONSENT_ROLLBACK: &str =
+        "e953fb5f9d8423be61cad4a06d571e200977dd183f53c12d5a897746ad80497a";
+
+    fn consent_lines() -> Vec<String> {
+        vec![
+            format!("Machine : {MACHINE}"),
+            "Opération : déployer la sonde de validation".to_owned(),
+            format!("Empreinte du plan : {CONSENT_PLAN}"),
+            format!("Empreinte du rollback : {CONSENT_ROLLBACK}"),
+        ]
+    }
+
+    fn consent_request(lines: &[String]) -> ConsentRequest<'_> {
+        ConsentRequest {
+            request_id: CONSENT_REQUEST_ID,
+            machine_id: MACHINE,
+            operation: ApprovalOperation::DeployOciProbe,
+            plan_sha256: CONSENT_PLAN,
+            rollback_sha256: CONSENT_ROLLBACK,
+            confirmation_lines: lines,
+            remaining_millis: 120_000,
+        }
+    }
+
+    /// The window is given the infrastructure of the association and the
+    /// sentences of the presentation, and nothing a caller could aim elsewhere.
+    #[test]
+    fn a_consent_names_the_associated_infrastructure_and_the_displayed_pair() {
+        let lines = consent_lines();
+        let consent = build_consent(
+            &association(INFRASTRUCTURE, [1_u8; 32]),
+            consent_request(&lines),
+        )
+        .expect("nominal consent");
+
+        assert_eq!(consent.infrastructure_id, INFRASTRUCTURE);
+        assert_eq!(consent.machine_id, MACHINE);
+        assert_eq!(consent.plan_sha256, CONSENT_PLAN);
+        assert_eq!(consent.rollback_sha256, CONSENT_ROLLBACK);
+        assert_eq!(consent.confirmation_lines, lines);
+        // The moment is the supervisor's to stamp, not this side's to claim.
+        assert_eq!(consent.issued_at_monotonic_nanos, 0);
+
+        // The infrastructure is not in the request at all, so it is varied
+        // where it really comes from.
+        let other = build_consent(
+            &association("8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3", [1_u8; 32]),
+            consent_request(&lines),
+        )
+        .unwrap();
+        assert_eq!(
+            other.infrastructure_id,
+            "8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3"
+        );
+    }
+
+    /// Nothing the shared contract refuses ever becomes a window.
+    #[test]
+    fn a_presentation_outside_the_contract_opens_no_window() {
+        let record = association(INFRASTRUCTURE, [1_u8; 32]);
+        let reordering = vec![
+            "Machine : \u{202e}1-enihcam-bal".to_owned(),
+            format!("Empreinte du plan : {CONSENT_PLAN}"),
+            format!("Empreinte du rollback : {CONSENT_ROLLBACK}"),
+        ];
+        let untailed = vec![
+            format!("Machine : {MACHINE}"),
+            format!("Empreinte du plan : {CONSENT_PLAN}"),
+            "Approuver".to_owned(),
+        ];
+        let overlong = vec![
+            "a".repeat(MAX_APPROVAL_CONSENT_LINE_BYTES + 1),
+            format!("Empreinte du plan : {CONSENT_PLAN}"),
+            format!("Empreinte du rollback : {CONSENT_ROLLBACK}"),
+        ];
+        for hostile in [&reordering, &untailed, &overlong] {
+            assert!(matches!(
+                build_consent(&record, consent_request(hostile)),
+                Err(ApprovalError::InvalidRequest)
+            ));
+        }
+
+        let lines = consent_lines();
+        for hostile in [
+            ConsentRequest {
+                machine_id: "../../etc/shadow",
+                ..consent_request(&lines)
+            },
+            ConsentRequest {
+                request_id: "forged",
+                ..consent_request(&lines)
+            },
+            ConsentRequest {
+                remaining_millis: 0,
+                ..consent_request(&lines)
+            },
+            // A pair whose two digests are one is not a pair, and its two last
+            // lines would read the same.
+            ConsentRequest {
+                rollback_sha256: CONSENT_PLAN,
+                ..consent_request(&lines)
+            },
+        ] {
+            assert!(matches!(
+                build_consent(&record, hostile),
+                Err(ApprovalError::InvalidRequest)
+            ));
+        }
+    }
+
+    /// An answer confirms this consent, or it confirms nothing.
+    #[test]
+    fn only_a_confirmation_of_these_exact_digests_is_read_as_one() {
+        let lines = consent_lines();
+        let consent = build_consent(
+            &association(INFRASTRUCTURE, [1_u8; 32]),
+            consent_request(&lines),
+        )
+        .unwrap();
+
+        assert!(consent_confirms(&consent, &consent.confirmed()));
+
+        for refusal in [
+            ApprovalConsentOutcomeKind::Refused,
+            ApprovalConsentOutcomeKind::Cancelled,
+            ApprovalConsentOutcomeKind::Expired,
+            ApprovalConsentOutcomeKind::Unavailable,
+        ] {
+            let answered =
+                ApprovalConsentOutcomeV1::without_confirmation(CONSENT_REQUEST_ID, refusal);
+            assert!(!consent_confirms(&consent, &answered), "{refusal:?}");
+        }
+
+        // A confirmation of another request, of another pair, of the same pair
+        // reversed, or of a pair the contract refuses.
+        for hostile in [
+            ApprovalConsentOutcomeV1 {
+                request_id: "ffeeddccbbaa99887766554433221100".to_owned(),
+                ..consent.confirmed()
+            },
+            ApprovalConsentOutcomeV1 {
+                confirmed_plan_sha256: CONSENT_ROLLBACK.to_owned(),
+                confirmed_rollback_sha256: CONSENT_PLAN.to_owned(),
+                ..consent.confirmed()
+            },
+            ApprovalConsentOutcomeV1 {
+                confirmed_plan_sha256: "0".repeat(64),
+                ..consent.confirmed()
+            },
+            ApprovalConsentOutcomeV1 {
+                confirmed_plan_sha256: CONSENT_PLAN.to_ascii_uppercase(),
+                ..consent.confirmed()
+            },
+            ApprovalConsentOutcomeV1 {
+                schema_version: 2,
+                ..consent.confirmed()
+            },
+        ] {
+            assert!(!consent_confirms(&consent, &hostile));
+        }
     }
 
     #[test]
