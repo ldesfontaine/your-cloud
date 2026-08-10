@@ -745,6 +745,22 @@ même, `windows-personal-transport-contract` exige un périmètre `YOUR_CLOUD_LA
 nommant une cible réelle. Nommer une suite sur la ligne de commande la joue
 malgré tout : demander une suite par son nom, c'est demander à la voir essayer.
 
+**Ce que la session 0 empêche est plus étroit qu'il n'y paraît, et cela aussi
+est mesuré.** Le 10 août 2026, la même session SSH — station
+`Service-0x0-61163$`, `SessionId` 0 — a rendu un raster parfaitement composé :
+`msedge` `151.0.4129.72` en `--headless=new` a peint une page aux trois bandes
+franches, et la capture rapatriée porte exactement ces trois couleurs, aucun
+pixel noir, une dominante à `0,35`. Le pilote aussi répond : `msedgedriver`
+`151.0.4129.72` démarre, ouvre une session, accepte `window/rect`, navigue,
+exécute du script et rend une capture de `616 x 421` où les trois bandes se
+retrouvent. Ce qu'une session 0 refuse est donc de déclarer une fenêtre
+*visible*, jamais de composer ni de capturer un rendu — la distinction décide
+ce qu'une future mesure de reflow sous WebView2 peut atteindre par ce
+transport, et évite d'attribuer à la station de fenêtres un empêchement
+qu'elle n'oppose pas. La correction de viewport que l'oracle Linux applique
+déjà reste nécessaire ici : `window/rect` pose la fenêtre et non la zone
+peinte.
+
 Elle ne devient pas une autorité d'attestation. La CI hébergée conserve ce
 rôle : la porte native `workflow_dispatch` sur le candidat de palier reste
 exigée pour fermer un palier, selon le [contrat CI](../contribution/CI.md). Une
