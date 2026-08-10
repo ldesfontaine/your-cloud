@@ -509,9 +509,13 @@ documentée et reproductible dans le LAB approprié.
   volontairement fait rougir les deux gardes séparément. La cause était une
   requête de média : ses unités relatives sont mesurées sur la taille de texte
   initiale du navigateur, jamais sur celle de la page, donc le seuil compact ne
-  suivait pas le zoom. Limite qui commande la lecture du reste : **c'est le
-  bundle frontend dans WebKitGTK, pas le paquet installé sous Tauri**, et
-  Windows n'est pas mesuré.
+  suivait pas le zoom. Le 10 août 2026, le même harnais construit en plus le
+  `.deb` hors ligne sur la machine, l'installe et mesure **le processus réel**
+  par `tauri-driver` sur les états d'avant l'association — 16 cas, vraie
+  création de coffre par l'interface comprise, onze états et 44 cas côté
+  bundle au même run. Limite qui commande la lecture du reste : **les vues
+  d'après l'association restent mesurées sur le bundle, hors du processus
+  installé**, et Windows n'est pas mesuré.
 - [`v0.1.0` — audit d'endpoints déclarés, sans mutation et sans scan](v0.1.0-endpoint-audit.md) :
   passage `quick` du 6 août 2026 pour #36, à la révision `aac5d843`. La lecture
   seule est **prouvée et non affirmée** : l'empreinte de la machine auditée —

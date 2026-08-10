@@ -78,12 +78,17 @@ séparément par #56.
 La moitié Linux de #56 est depuis prouvée dans le LAB par
 [`tests/lab/v0.1.0/console-reflow/prove`](../../tests/lab/v0.1.0/console-reflow/prove),
 dont le rapport est
-[`v0.1.0` — reflow sans coupe au zoom texte 200 %](../lab/v0.1.0-console-reflow-200.md).
-Ce passage mesure le bundle frontend dans WebKitGTK — le moteur du binaire
-Linux, pas le processus Tauri qui l'héberge — sur les neuf états du frontend, à
+[`v0.1.0` — reflow sans coupe au zoom texte 200 %](../lab/v0.1.0-console-reflow-200.md),
+par deux pilotes aux mêmes oracles. Le pilote fixture mesure le bundle frontend
+dans WebKitGTK — le moteur du binaire Linux — sur les onze états du frontend, à
 `1280 x 800` et `640 x 560`, texte à 100 % puis à 200 %, avec des libellés
-hostiles. La moitié Windows, sous WebView2 et sur le même candidat installé,
-reste due et garde #56 ouverte.
+hostiles : 44 cas. Depuis le 10 août 2026, le pilote installé construit le
+`.deb` hors ligne sur `lab-console`, l'installe, et conduit le processus du
+produit par `tauri-driver` sur les états qu'un Controller n'est pas nécessaire
+pour atteindre — accès local, secrets générés, infrastructures après une vraie
+création de coffre menée par l'interface, association : 16 cas. Les vues
+d'après l'association restent mesurées par le seul pilote fixture, et la
+moitié Windows, sous WebView2, reste due et garde #56 ouverte.
 
 ## Vocabulaire de travail
 
