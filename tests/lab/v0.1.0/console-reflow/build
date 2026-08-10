@@ -36,10 +36,14 @@ echo "  npm ci --offline (from the cache the recipe warmed)"
 npm ci --offline --no-audit --no-fund --loglevel=error
 
 echo "  tauri build --bundles deb (offline, one job)"
+# The kept build tree accumulates one bundle per version it ever produced,
+# and a directory holding two candidates is exactly what the uniqueness guard
+# below exists to refuse. The bundle output is cheap to recreate — the costly
+# caches live under target/ and are not touched — so it is emptied first.
+rm -rf src-tauri/target/release/bundle/deb
 npm run --silent tauri -- build --bundles deb
 
-mapfile -t candidates < <(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -newer package.json 2>/dev/null; find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' 2>/dev/null)
-mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | awk 'NF' | sort -u)
+mapfile -t candidates < <(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' 2>/dev/null)
 [[ ${#candidates[@]} -eq 1 ]] || fail "expected exactly one .deb, found ${#candidates[@]}: ${candidates[*]-none}"
 deb=${candidates[0]}
 
