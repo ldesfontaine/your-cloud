@@ -20,7 +20,8 @@ usage() {
   cat >&2 <<'EOF'
 usage: provision-lab [lab-console | lab-machine-1 | lab-vps | all]
 
-  lab-console    swap, GTK build dependencies and the pinned Rust toolchain
+  lab-console    swap, GTK build dependencies, the pinned Rust, Node and
+                 tauri-driver toolchains, and the warmed cargo and npm caches
   lab-machine-1  the pinned Go toolchain and the rootless container ground
   lab-vps        the same ground plus slirp4netns, for the public profile
   all            the three above, in that order (default)
@@ -56,10 +57,16 @@ note() { printf '  %-46s %s\n' "$1" "$2"; }
 # a compiler the gate never runs.
 rust_version=$(sed -n 's/^ *RUSTUP_TOOLCHAIN: *"\([0-9.]*\)".*/\1/p' "$workflow" | head -1)
 go_version=$(sed -n 's/^ *go-version: *"\([0-9.]*\)".*/\1/p' "$workflow" | head -1)
+node_version=$(sed -n 's/^ *node-version: *"\([0-9.]*\)".*/\1/p' "$workflow" | head -1)
+tauri_driver_version=$(sed -n 's/.*install tauri-driver --version \([0-9.]*\).*/\1/p' "$workflow" | head -1)
 [[ "$rust_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || fail "cannot read the pinned Rust toolchain from the workflow"
 [[ "$go_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || fail "cannot read the pinned Go toolchain from the workflow"
+[[ "$node_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || fail "cannot read the pinned Node toolchain from the workflow"
+[[ "$tauri_driver_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || fail "cannot read the pinned tauri-driver from the workflow"
 
 # The mandatory inventory guard: read the LAB before mutating any of it.
 guard() {
@@ -78,7 +85,7 @@ guard() {
 remote() { "$labctl" ssh "$1" -- "$2"; }
 
 provision_console() {
-  step "lab-console — swap, GTK build dependencies, Rust $rust_version"
+  step "lab-console — swap, GTK build dependencies, Rust $rust_version, Node $node_version"
   guard lab-console
 
   # The crate depends on `gtk`, whose compilation is killed by the OOM reaper
@@ -103,7 +110,7 @@ provision_console() {
   # provisioned before the list grew passes the old guard and would silently
   # keep its old surface, which is exactly the drift this file exists to
   # prevent.
-  if remote lab-console "test -x /usr/bin/WebKitWebDriver"; then
+  if remote lab-console "test -x /usr/bin/patchelf"; then
     note "build dependencies" "already installed"
   else
     # The WebKit and rsvg lines are what the console crate itself links
@@ -124,12 +131,16 @@ provision_console() {
     # measures the frontend's geometry in that engine rather than in a second
     # one, because a layout that reflows in Chromium and not in WebKitGTK would
     # be a green that says nothing about the product.
+    # `patchelf` is what the Tauri bundler runs on the binary it packages: the
+    # reflow proof now builds the installable `.deb` on this machine, and a
+    # bundling step that cannot rewrite the loader path stops the build.
     remote lab-console "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
       && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         build-essential pkg-config libgtk-3-dev gdb \
         libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
         webkit2gtk-driver \
         xvfb dbus-x11 xdotool imagemagick lsof \
+        patchelf \
         >/dev/null"
     note "build dependencies" "installed"
   fi
@@ -139,10 +150,50 @@ provision_console() {
   # personal-access proof drives a real native window, `xdotool` and `import`
   # because that proof probes and photographs it, `WebKitWebDriver` because the
   # reflow proof drives the frontend in the engine the product ships with.
-  for tool in gdb xvfb-run xdotool import WebKitWebDriver; do
+  for tool in gdb xvfb-run xdotool import WebKitWebDriver patchelf; do
     remote lab-console "command -v $tool >/dev/null" \
       || fail "$tool is absent after installation"
   done
+
+  # The Node toolchain the frontend builds with, pinned to the hosted gate's
+  # own number for the same reason Rust and Go are. The reflow proof builds the
+  # installable `.deb` on this machine, and that build begins with the
+  # frontend: no Node, no candidate. Installed like Go: unpacked under
+  # /usr/local, then linked where a plain ssh command looks.
+  if remote lab-console "/usr/local/node/bin/node --version 2>/dev/null | grep -qx 'v$node_version'"; then
+    note "Node $node_version" "already installed"
+  else
+    remote lab-console "curl -fsSL -o /tmp/node.txz \
+        https://nodejs.org/dist/v$node_version/node-v$node_version-linux-x64.tar.xz \
+      && rm -rf /usr/local/node /tmp/node-unpack \
+      && install -d /tmp/node-unpack \
+      && tar -C /tmp/node-unpack -xJf /tmp/node.txz \
+      && mv /tmp/node-unpack/node-v$node_version-linux-x64 /usr/local/node \
+      && rm -rf /tmp/node.txz /tmp/node-unpack"
+    note "Node $node_version" "installed"
+  fi
+  remote lab-console "ln -sfn /usr/local/node/bin/node /usr/local/bin/node \
+    && ln -sfn /usr/local/node/bin/npm /usr/local/bin/npm \
+    && ln -sfn /usr/local/node/bin/npx /usr/local/bin/npx"
+  remote lab-console "command -v node >/dev/null && command -v npm >/dev/null" \
+    || fail "node is absent from the PATH of a plain command"
+  note observed "$(remote lab-console 'node --version') / npm $(remote lab-console 'npm --version')"
+
+  # The WebDriver bridge the installed-candidate measurement drives the `.deb`
+  # with, pinned to the exact version the hosted gate installs. It is a cargo
+  # install, so it uses the network here at provision time, exactly like rustup
+  # above — never at proof time.
+  # `tauri-driver` answers no `--version`; the version cargo installed is read
+  # from cargo's own ledger instead.
+  if remote lab-console ". /root/.cargo/env \
+      && cargo install --list 2>/dev/null | grep -q '^tauri-driver v$tauri_driver_version:'"; then
+    note "tauri-driver $tauri_driver_version" "already installed"
+  else
+    remote lab-console ". /root/.cargo/env \
+      && cargo +$rust_version install tauri-driver --version $tauri_driver_version --locked --quiet"
+    note "tauri-driver $tauri_driver_version" "installed"
+  fi
+  note observed "$(remote lab-console ". /root/.cargo/env && cargo install --list | grep '^tauri-driver '")"
 
   if remote lab-console ". /root/.cargo/env 2>/dev/null && cargo +$rust_version --version >/dev/null 2>&1"; then
     note "Rust $rust_version" "already installed"
@@ -190,6 +241,27 @@ provision_console() {
     note "crate registry" "warmed from the versioned lock"
   fi
   note observed "$(remote lab-console "ls /root/.cargo/registry/cache/*/ | wc -l") crates cached"
+
+  # The npm cache the frontend build reads, warmed here for the reason the
+  # crate registry is: every harness that builds the candidate runs
+  # `npm ci --offline`, so the build proves it pulls nothing from a network at
+  # the moment it runs — which requires the packages to be on the machine
+  # already. `npm ci` resolves them from the lock the repository versions into
+  # `~/.npm`, the copy of the manifest is removed, and what stays is the cache
+  # a later `--offline` install reads.
+  if remote lab-console "test -d /root/.npm/_cacache"; then
+    note "npm cache" "already warmed"
+  else
+    local npm_warm=/root/npm-warm
+    remote lab-console "rm -rf $npm_warm && install -d -m 0700 $npm_warm"
+    "$labctl" copy-to lab-console "$root/console/package.json" "$npm_warm/package.json" >/dev/null
+    "$labctl" copy-to lab-console "$root/console/package-lock.json" "$npm_warm/package-lock.json" >/dev/null
+    remote lab-console "cd $npm_warm \
+      && npm ci --no-audit --no-fund --loglevel=error >/dev/null"
+    remote lab-console "rm -rf $npm_warm"
+    note "npm cache" "warmed from the versioned lock"
+  fi
+  note observed "$(remote lab-console "du -sh /root/.npm/_cacache 2>/dev/null | cut -f1") npm cache"
 }
 
 # ensure_go places the pinned toolchain a proof compiles the product with. It is
@@ -366,4 +438,5 @@ case "$target" in
     ;;
 esac
 
-printf '\nPROVISION_LAB_OK rust=%s go=%s\n' "$rust_version" "$go_version"
+printf '\nPROVISION_LAB_OK rust=%s go=%s node=%s tauri-driver=%s\n' \
+  "$rust_version" "$go_version" "$node_version" "$tauri_driver_version"

@@ -9,5 +9,9 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-exec dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" \
+# The X server's own errors are kept: when it dies, `xvfb-run` tears the
+# clients down by signal and nothing else survives to say why.
+install -d -m 0755 "$here/output"
+exec dbus-run-session -- xvfb-run -a -e "$here/output/xvfb-errors.log" \
+  -s "-screen 0 1280x1024x24 -noreset" \
   env NO_AT_BRIDGE=1 "$here/inside" "$@"

@@ -1,33 +1,38 @@
 #!/usr/bin/env bash
 # Prove that the Console frontend reflows without cutting anything, at both
-# contractual window sizes, with the text at 100 % and at 200 %, on labels a
-# hostile Controller could really send. Issue #56, contract
-# `docs/objectifs/v1/CONTRAT-V0.0.3.md`.
+# contractual window sizes, with the text at 100 % and at 200 %. Issue #56,
+# contract `docs/objectifs/v1/CONTRAT-V0.0.3.md`.
 #
-# What it drives is the shipped frontend bundle — the same React tree, the same
-# stylesheets, the same fonts — with exactly one module replaced: the Tauri IPC
-# bridge. It runs in `lab-console`, in WebKitGTK, which is the engine the Linux
-# Console paints with, on a virtual screen.
+# Two pilots measure with the same two oracles, and they answer two different
+# questions. The `fixture` pilot drives the shipped frontend bundle — the same
+# React tree, the same stylesheets, the same fonts, one module replaced: the
+# Tauri IPC bridge — in WebKitGTK on a virtual screen, across all eleven
+# states, on labels a hostile Controller could send and the product's own
+# validation would refuse. The `installed` pilot builds the `.deb` on this
+# machine, installs it, and drives the product's own process through
+# `tauri-driver`: it measures the states a Controller is not needed for —
+# the local access view, the panel of generated secrets, the infrastructures
+# view and the association view.
 #
-# What it does not drive is the installed `.deb`. Eight of the eleven states measured
-# here are only reachable behind an unlocked vault and a live Controller, and
-# standing that chain up to measure a stylesheet would make the measurement
-# depend on everything except the stylesheet. The engine, the bundle and the
-# window sizes are the product's; the process that hosts them is not. The
-# installed-binary captures stay the hosted gate's job, and the Windows half of
-# #56 stays open.
+# What still escapes both pilots is named by the report: the post-association
+# views inside the installed process — reachable only behind a live
+# Controller, and measured here by the fixture pilot alone — and the whole
+# Windows half of #56.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
 usage() {
   cat >&2 <<'EOF'
-usage: prove [setup | run | collect | remove | all]
+usage: prove [setup | run | sync | build | run-installed | collect | remove | all]
 
-  setup    build the fixture bundle and place the harness on lab-console
-  run      drive the eleven states at both sizes and both text sizes
-  collect  bring the captures and the structured result back
-  remove   leave the machine as the harness found it
-  all      the four above, then publish the report (default)
+  setup          build the fixture bundle and place the harness on lab-console
+  run            drive the eleven fixture states at both sizes and text sizes
+  sync           place the console sources for the candidate build
+  build          build the .deb offline on the machine and install it
+  run-installed  drive the installed candidate on the pre-association states
+  collect        bring the captures and the structured results back
+  remove         uninstall the candidate and leave the machine honest
+  all            everything above, then publish the report (default)
 
 The machine must already exist, be running and be provisioned:
 
@@ -40,7 +45,7 @@ EOF
 command=${1:-all}
 [[ $# -le 1 ]] || usage
 case "$command" in
-  setup | run | collect | remove | all) ;;
+  setup | run | sync | build | run-installed | collect | remove | all) ;;
   *) usage ;;
 esac
 
@@ -50,6 +55,7 @@ labctl="$root/tools/labctl"
 target_vm=lab-console
 expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-console-reflow
+remote_sources=/root/your-cloud-console-build
 result_root="$root/tests/artifacts/proofs/console-reflow"
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 workdir=$(mktemp -d)
@@ -98,7 +104,7 @@ setup() {
   announce "placing the harness on $target_vm"
   on_machine "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
   local script
-  for script in inside run remove reflow-oracle.py; do
+  for script in inside run build remove reflow-oracle.py; do
     "$labctl" copy-to "$target_vm" "$harness/$script" "$remote_harness/$script" >/dev/null
     on_machine "chmod 0700 $remote_harness/$script"
   done
@@ -111,22 +117,54 @@ setup() {
 }
 
 run_oracle() {
-  announce "measuring eleven states at 1280x800 and 640x560, text 100 % and 200 %"
-  on_machine "$remote_harness/run '$(revision)' '$run_id'"
+  announce "fixture pilot — eleven states at 1280x800 and 640x560, text 100 % and 200 %"
+  on_machine "$remote_harness/run '$(revision)' '$run_id' fixture"
+}
+
+sync_sources() {
+  announce "placing the console sources for the candidate build"
+  inventory "$target_vm" >/dev/null
+  tar czf "$workdir/sources.tgz" -C "$root" \
+    --exclude=console/node_modules \
+    --exclude=console/dist \
+    --exclude=console/dist-reflow \
+    --exclude=console/src-tauri/target \
+    --exclude=console/src-tauri/binaries \
+    console
+  # `-m` re-stamps every file to now, so the build caches that survive under
+  # `target/` can never mistake an older synced file for an already-built one.
+  on_machine "install -d -m 0700 $remote_sources"
+  "$labctl" copy-to "$target_vm" "$workdir/sources.tgz" "$remote_sources/sources.tgz" >/dev/null
+  on_machine "tar xzf $remote_sources/sources.tgz -C $remote_sources -m --strip-components=1 \
+    && rm -f $remote_sources/sources.tgz"
+  echo "  sources placed: $(on_machine "find $remote_sources -type f -not -path '*/target/*' -not -path '*/node_modules/*' | wc -l") files"
+}
+
+build_candidate() {
+  announce "building and installing the candidate on $target_vm (offline, one job)"
+  on_machine "$remote_harness/build"
+}
+
+run_installed() {
+  announce "installed pilot — pre-association states at both sizes and text sizes"
+  on_machine "$remote_harness/run '$(revision)' '$run_id' installed"
 }
 
 collect() {
-  announce "collecting the captures and the structured result"
+  announce "collecting the captures and the structured results"
   install -d -m 0755 "$workdir/output"
   "$labctl" copy-from "$target_vm" "$remote_harness/output" "$workdir/collected" >/dev/null
   local produced="$workdir/collected"
   [[ -d "$produced" ]] || produced="$workdir/collected/output"
-  [[ -f "$produced/reflow-result.json" ]] || fail "no structured result came back"
+  local results
+  results=$(find "$produced" -name reflow-result.json | wc -l)
+  [[ "$results" -ge 1 ]] || fail "no structured result came back"
   install -d -m 0755 "$result_root/$run_id"
   cp -a "$produced/." "$result_root/$run_id/"
   chmod -R u+rw "$result_root/$run_id"
+  echo "  results:  $results"
   echo "  captures: $(find "$result_root/$run_id" -name '*.png' | wc -l)"
-  echo "  result:   $result_root/$run_id/reflow-result.json"
+  echo "  under:    $result_root/$run_id/"
 }
 
 publish() {
@@ -138,21 +176,29 @@ publish() {
     echo "contract: docs/objectifs/v1/CONTRAT-V0.0.3.md"
     echo "run: $run_id"
     echo "revision: $(revision)"
-    echo "machine: $target_vm (WebKitGTK on Xvfb)"
+    echo "machine: $target_vm (WebKitGTK on Xvfb; installed pilot through tauri-driver)"
     echo "outcome: $([[ $status -eq 0 ]] && echo pass || echo red)"
     echo "finished_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     cat <<'DEBTS'
 
 what this proof does not claim, whatever its outcome:
-  - it measures the frontend bundle in WebKitGTK, not the installed `.deb`
-    running under Tauri. The engine and the stylesheets are the product's; the
-    process that hosts them is not;
+  - the fixture pilot measures the frontend bundle in WebKitGTK, with the
+    Tauri IPC bridge replaced; the installed pilot measures the product's own
+    installed process, but only on the states a Controller is not needed for:
+    local access, the generated secrets panel, infrastructures, association.
+    The post-association views under the installed process stay measured by
+    the fixture pilot alone, until a proof stands the real chain up;
+  - the installed pilot withholds the capture of the secrets panel, because
+    the panel really displays freshly generated secret material; its raster
+    guard for that state stays with the fixture pilot;
   - it says nothing about Windows. The same measurement under WebView2 on the
     `windows-eval` machine is the other half of #56 and is not run here;
   - it measures reflow, clipping, overlap, reachability, keyboard order and
     focus visibility. It is not a claim of WCAG 2.2 AA conformance;
-  - the labels it exercises are hostile by construction, not exhaustive. A
-    Controller can always send a string no fixture anticipated.
+  - the labels the fixture exercises are hostile by construction, not
+    exhaustive, and the installed pilot's labels are only what the product
+    itself renders on a fresh machine. A Controller can always send a string
+    no fixture anticipated.
 
 DEBTS
     sed -e "s#$root#<repo>#g" -e "s#$HOME#<home>#g" -e "s#$(id -un)#<user>#g" "$log"
@@ -164,12 +210,18 @@ DEBTS
 play() {
   setup || return $?
   run_oracle || return $?
+  sync_sources || return $?
+  build_candidate || return $?
+  run_installed || return $?
   return 0
 }
 
 case "$command" in
   setup) setup ;;
   run) run_oracle ;;
+  sync) sync_sources ;;
+  build) build_candidate ;;
+  run-installed) run_installed ;;
   collect) collect ;;
   remove) on_machine "$remote_harness/remove" ;;
   all)

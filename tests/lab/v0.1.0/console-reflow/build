@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Build the installable candidate from the synced sources, then install it.
+#
+# The build runs where every product build of this project runs: on the LAB
+# machine, never on the pilot. It proves it pulls nothing from a network at the
+# moment it runs — `npm ci --offline` and `CARGO_NET_OFFLINE` — because the
+# ground it needs was placed at provision time from the versioned locks.
+#
+# The tree under `/root/your-cloud-console-build` persists between runs on
+# purpose: a cold release build of the Tauri stack costs over an hour on this
+# machine, a warm one costs minutes, and the sync step re-stamps the sources on
+# every run so the cache can never resurrect a stale candidate. `remove` names
+# this directory as deliberately kept.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+sources=/root/your-cloud-console-build
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+[[ -f "$sources/package.json" ]] || fail "the console sources are not synced; run the sync phase first"
+
+# shellcheck disable=SC1091
+. /root/.cargo/env
+# The frontend build scripts refuse to run outside an isolated environment;
+# this machine is exactly the LAB VM that marker exists to name.
+export YOUR_CLOUD_EXECUTION_ENV=lab
+export CARGO_NET_OFFLINE=true
+# One job: this machine has 2 vCPUs and 2 GiB, and a second rustc in flight is
+# how the OOM reaper chooses a victim. The swapfile absorbs the peaks of one.
+export CARGO_BUILD_JOBS=1
+
+cd "$sources"
+
+echo "  npm ci --offline (from the cache the recipe warmed)"
+npm ci --offline --no-audit --no-fund --loglevel=error
+
+echo "  tauri build --bundles deb (offline, one job)"
+npm run --silent tauri -- build --bundles deb
+
+mapfile -t candidates < <(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -newer package.json 2>/dev/null; find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' 2>/dev/null)
+mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | awk 'NF' | sort -u)
+[[ ${#candidates[@]} -eq 1 ]] || fail "expected exactly one .deb, found ${#candidates[@]}: ${candidates[*]-none}"
+deb=${candidates[0]}
+
+package=$(dpkg-deb --field "$deb" Package)
+version=$(dpkg-deb --field "$deb" Version)
+[[ "$package" == your-cloud ]] || fail "the bundle names the package $package"
+
+echo "  installing $deb"
+dpkg --install "$deb" >/dev/null
+
+for binary in /usr/bin/your-cloud-console /usr/bin/your-cloud-native-bootstrap-assistant; do
+  [[ -x "$binary" ]] || fail "$binary is absent after installation"
+done
+
+printf '  candidate: package=%s version=%s sha256=%s\n' \
+  "$package" "$version" "$(sha256sum "$deb" | cut -d' ' -f1)"
+echo "BUILD_INSTALLED_OK"

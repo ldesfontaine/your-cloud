@@ -1,38 +1,30 @@
 #!/usr/bin/env bash
 # Everything the oracle needs, inside the virtual screen `run` opened.
 #
-# The bundle is served over loopback rather than opened from a file, because the
-# page carries the product's own Content-Security-Policy and a `file://` origin
-# would silently relax half of it. The engine is the one Debian ships for the
-# Console: the same `libwebkit2gtk-4.1` the installed binary links against.
+# Two pilots, one oracle. The `fixture` pilot serves the shipped frontend
+# bundle over loopback — not `file://`, because the page carries the product's
+# own Content-Security-Policy and a file origin would silently relax half of
+# it — and drives it in WebKitGTK, the engine the Linux Console paints with.
+# The `installed` pilot drives the `.deb` the `build` phase really installed,
+# through `tauri-driver` proxying the same WebKitWebDriver: the process under
+# measurement is the product's own, not a stand-in for it.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-revision=${1:?usage: inside <revision> <run-id>}
-run_id=${2:?usage: inside <revision> <run-id>}
+revision=${1:?usage: inside <revision> <run-id> <fixture|installed> [only]}
+run_id=${2:?usage: inside <revision> <run-id> <fixture|installed> [only]}
+pilot=${3:?usage: inside <revision> <run-id> <fixture|installed> [only]}
+only=${4:-}
 
 bundle="$here/bundle"
-output="$here/output"
+output="$here/output/$pilot"
 http_port=8710
 driver_port=4444
+native_port=4445
 
-[[ -f "$bundle/index.html" ]] || { echo "FAILED: the fixture bundle is absent" >&2; exit 1; }
 rm -rf "$output"
 install -d -m 0755 "$output"
-
-python3 -m http.server "$http_port" --bind 127.0.0.1 --directory "$bundle" \
-  >"$output/http.log" 2>&1 &
-http_pid=$!
-WebKitWebDriver --host=127.0.0.1 --port="$driver_port" >"$output/webdriver.log" 2>&1 &
-driver_pid=$!
-
-cleanup() {
-  kill "$http_pid" "$driver_pid" 2>/dev/null || true
-  wait "$http_pid" 2>/dev/null || true
-  wait "$driver_pid" 2>/dev/null || true
-}
-trap cleanup EXIT
 
 wait_for() {
   local label=$1 url=$2 attempt
@@ -47,14 +39,99 @@ wait_for() {
   return 1
 }
 
-wait_for "static server" "http://127.0.0.1:$http_port/index.html"
-wait_for "WebKitWebDriver" "http://127.0.0.1:$driver_port/status"
+# The hosted gate waits on the ports, not on a route: `tauri-driver` owes no
+# `/status` before its first session, and a probe that demanded one would wait
+# forever on a healthy driver.
+#
+# The probe lives entirely in its subshell — the descriptor closes with it.
+# An earlier version closed it again in this shell with `exec … 2>/dev/null`,
+# which silently redirected this whole script's stderr to /dev/null and ate
+# every traceback the oracle tried to leave behind.
+wait_for_port() {
+  local label=$1 port=$2 attempt
+  for attempt in $(seq 1 120); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+      echo "  $label ready after $attempt attempts"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "FAILED: $label never opened port $port" >&2
+  return 1
+}
 
-echo "  engine $(WebKitWebDriver --version 2>&1 | head -1)"
-python3 "$here/reflow-oracle.py" \
-  --base-url "http://127.0.0.1:$driver_port" \
-  --app-url "http://127.0.0.1:$http_port/index.html" \
-  --output "$output" \
-  --revision "$revision" \
-  --run "$run_id" \
-  ${3:+--only "$3"}
+case "$pilot" in
+  fixture)
+    [[ -f "$bundle/index.html" ]] || { echo "FAILED: the fixture bundle is absent" >&2; exit 1; }
+    python3 -m http.server "$http_port" --bind 127.0.0.1 --directory "$bundle" \
+      >"$output/http.log" 2>&1 &
+    http_pid=$!
+    WebKitWebDriver --host=127.0.0.1 --port="$driver_port" >"$output/webdriver.log" 2>&1 &
+    driver_pid=$!
+    cleanup() {
+      kill "$http_pid" "$driver_pid" 2>/dev/null || true
+      wait "$http_pid" 2>/dev/null || true
+      wait "$driver_pid" 2>/dev/null || true
+    }
+    trap cleanup EXIT
+    wait_for "static server" "http://127.0.0.1:$http_port/index.html"
+    wait_for "WebKitWebDriver" "http://127.0.0.1:$driver_port/status"
+    echo "  engine $(dpkg-query -W -f '${Version}' libwebkit2gtk-4.1-0 2>/dev/null || echo '?') (WebKitGTK)"
+    python3 "$here/reflow-oracle.py" \
+      --pilot fixture \
+      --base-url "http://127.0.0.1:$driver_port" \
+      --app-url "http://127.0.0.1:$http_port/index.html" \
+      --output "$output" \
+      --revision "$revision" \
+      --run "$run_id" \
+      ${only:+--only "$only"}
+    ;;
+  installed)
+    application=/usr/bin/your-cloud-console
+    [[ -x "$application" ]] || { echo "FAILED: $application is absent; run the build phase first" >&2; exit 1; }
+    # The candidate must find nothing of a previous life: its state lives under
+    # these three roots and the oracle empties them before every session, so
+    # the uninitialized view is reachable as many times as the matrix needs it.
+    state_root=$(mktemp -d /tmp/your-cloud-reflow-state-XXXXXX)
+    export XDG_DATA_HOME="$state_root/data" XDG_CONFIG_HOME="$state_root/config" XDG_CACHE_HOME="$state_root/cache"
+    install -d -m 0700 "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+    /root/.cargo/bin/tauri-driver \
+      --native-driver /usr/bin/WebKitWebDriver \
+      --port "$driver_port" --native-port "$native_port" \
+      >"$output/tauri-driver.log" 2>&1 &
+    driver_pid=$!
+    cleanup() {
+      kill "$driver_pid" 2>/dev/null || true
+      wait "$driver_pid" 2>/dev/null || true
+      pkill -x your-cloud-console 2>/dev/null || true
+      rm -rf "$state_root"
+    }
+    trap cleanup EXIT
+    wait_for_port "tauri-driver" "$driver_port"
+    wait_for_port "the native WebKitWebDriver" "$native_port"
+    echo "  engine $(dpkg-query -W -f '${Version}' libwebkit2gtk-4.1-0 2>/dev/null || echo '?') (WebKitGTK), proxied by tauri-driver"
+    # `-u` and the fault handler are not decoration: this pilot has died by
+    # signal without a line of explanation, and a red that cannot name its
+    # reason is a harness defect of its own. The oracle's exit code is echoed
+    # so the log carries the verdict even when the transport that returned it
+    # does not survive the run.
+    set +e
+    python3 -u -X faulthandler "$here/reflow-oracle.py" \
+      --pilot installed \
+      --base-url "http://127.0.0.1:$driver_port" \
+      --application "$application" \
+      --state-root "$state_root" \
+      --output "$output" \
+      --revision "$revision" \
+      --run "$run_id" \
+      ${only:+--only "$only"}
+    oracle_status=$?
+    set -e
+    echo "  oracle exit: $oracle_status"
+    exit "$oracle_status"
+    ;;
+  *)
+    echo "FAILED: unknown pilot $pilot" >&2
+    exit 1
+    ;;
+esac

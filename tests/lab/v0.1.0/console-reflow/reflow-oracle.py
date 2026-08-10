@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Measure the Console frontend's geometry in WebKitGTK, at both contractual
-window sizes, with the text at 100 % and at 200 %, on hostile labels.
+"""Measure the Console frontend's geometry at both contractual window sizes,
+with the text at 100 % and at 200 %, under two pilots: the shipped bundle in
+WebKitGTK on hostile labels, and the installed `.deb` candidate driven as its
+own process through `tauri-driver`, on the states a Controller is not needed
+for.
 
 Two oracles run on every case and both must be silent.
 
@@ -23,8 +26,10 @@ from __future__ import annotations
 import argparse
 import base64
 import collections
+import http.client
 import json
 import pathlib
+import shutil
 import struct
 import subprocess
 import sys
@@ -156,34 +161,69 @@ ZOOMS = (100, 200)
 # would be a second thing to trust.
 
 
-def request(base_url: str, method: str, path: str, payload: object | None = None) -> object:
+def request(
+    base_url: str,
+    method: str,
+    path: str,
+    payload: object | None = None,
+    retry_disconnected: bool = False,
+) -> object:
+    """One WebDriver call, with one bounded replay for the calls that allow it.
+
+    The automation transport to the real application sometimes closes a fresh
+    connection without an answer — the v0.0.3 functional proof met the same
+    drop and bounded its retry to one attempt, and the #45 harness fixed the
+    rule this oracle follows: an idempotent call may be tried twice after a
+    transport cut, a mutating call is never replayed."""
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    call = urllib.request.Request(
-        f"{base_url}{path}",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method=method,
-    )
-    try:
-        with urllib.request.urlopen(call, timeout=60) as response:
-            document = json.load(response)
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"WebDriver {method} {path} failed: {error.code} {detail}") from error
-    return document.get("value")
+    attempts = 2 if retry_disconnected else 1
+    for attempt in range(attempts):
+        call = urllib.request.Request(
+            f"{base_url}{path}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(call, timeout=60) as response:
+                document = json.load(response)
+            return document.get("value")
+        except (http.client.RemoteDisconnected, ConnectionResetError):
+            if attempt + 1 == attempts:
+                raise
+            time.sleep(0.5)
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"WebDriver {method} {path} failed: {error.code} {detail}") from error
+    raise AssertionError("unreachable WebDriver retry state")
 
 
 class Driver:
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, pilot: str = "fixture", application: str | None = None):
         self.base_url = base_url.rstrip("/")
+        if pilot == "installed":
+            # `tauri-driver` launches the named binary itself and proxies the
+            # session to the native WebKitWebDriver: the process under
+            # measurement is the installed product's own.
+            capabilities: dict[str, object] = {"tauri:options": {"application": application, "args": []}}
+        else:
+            capabilities = {"webkitgtk:browserOptions": {"args": ["--automation"]}}
+        # Creating the session may be replayed once after a transport cut: if
+        # the first request did establish a session whose answer was lost, the
+        # replay fails loudly on the driver's refusal of a second session —
+        # never silently, never with two applications measured as one.
         response = request(
             self.base_url,
             "POST",
             "/session",
-            {"capabilities": {"alwaysMatch": {"webkitgtk:browserOptions": {"args": ["--automation"]}}}},
+            {"capabilities": {"alwaysMatch": capabilities}},
+            retry_disconnected=True,
         )
         self.session_id = response["sessionId"]
         self.engine = f"{response.get('capabilities', {}).get('browserName', '?')} " f"{response.get('capabilities', {}).get('browserVersion', '?')}"
+        # Every transport cut the pilot survived is counted and reported:
+        # a compensation is never silent.
+        self.compensations = 0
 
     def close(self) -> None:
         request(self.base_url, "DELETE", f"/session/{self.session_id}")
@@ -191,23 +231,40 @@ class Driver:
     def go(self, url: str) -> None:
         request(self.base_url, "POST", f"/session/{self.session_id}/url", {"url": url})
 
-    def execute(self, script: str, *arguments: object) -> object:
+    def execute(self, script: str, *arguments: object, idempotent: bool = False) -> object:
         return request(
             self.base_url,
             "POST",
             f"/session/{self.session_id}/execute/sync",
             {"script": script, "args": list(arguments)},
+            retry_disconnected=idempotent,
         )
 
     def set_rect(self, width: int, height: int) -> dict[str, int]:
+        # Re-sending the same rectangle changes nothing: the setter may be
+        # replayed once after a transport cut.
         return request(
             self.base_url,
             "POST",
             f"/session/{self.session_id}/window/rect",
             {"x": 0, "y": 0, "width": width, "height": height},
+            retry_disconnected=True,
         )
 
-    def press_tab(self) -> None:
+    def press_tab(self) -> bool:
+        """Send one Tab.
+
+        Returns False when the transport dropped without an answer: whether
+        the key landed is then unknown, and the caller decides by observing
+        the focus itself rather than by replaying a keystroke blindly."""
+        try:
+            self.send_tab_actions()
+            return True
+        except (http.client.RemoteDisconnected, ConnectionResetError):
+            self.compensations += 1
+            return False
+
+    def send_tab_actions(self) -> None:
         request(
             self.base_url,
             "POST",
@@ -227,7 +284,12 @@ class Driver:
         )
 
     def screenshot(self) -> bytes:
-        encoded = request(self.base_url, "GET", f"/session/{self.session_id}/screenshot")
+        encoded = request(
+            self.base_url,
+            "GET",
+            f"/session/{self.session_id}/screenshot",
+            retry_disconnected=True,
+        )
         return base64.b64decode(encoded, validate=True)
 
     def wait_for_paint(self) -> None:
@@ -237,10 +299,11 @@ class Driver:
             "window.__ycPainted = false;"
             "Promise.resolve(document.fonts ? document.fonts.ready : null).then(() =>"
             " requestAnimationFrame(() => requestAnimationFrame(() => { window.__ycPainted = true; })));"
-            "return true;"
+            "return true;",
+            idempotent=True,
         )
         for _ in range(200):
-            if self.execute("return window.__ycPainted === true;") is True:
+            if self.execute("return window.__ycPainted === true;", idempotent=True) is True:
                 return
             time.sleep(0.05)
         raise RuntimeError("the page never reported a painted frame")
@@ -255,7 +318,7 @@ class Driver:
         ring would be reporting its own harness. `xdotool` sets the input focus
         directly, which is what a window manager would have done.
         """
-        if self.execute("return document.hasFocus();") is True:
+        if self.execute("return document.hasFocus();", idempotent=True) is True:
             return
         listing = subprocess.run(
             ["xdotool", "search", "--onlyvisible", "--name", "."],
@@ -266,7 +329,7 @@ class Driver:
         for window in listing.stdout.split():
             subprocess.run(["xdotool", "windowfocus", window], capture_output=True, check=False)
         for _ in range(30):
-            if self.execute("return document.hasFocus();") is True:
+            if self.execute("return document.hasFocus();", idempotent=True) is True:
                 return
             time.sleep(0.1)
         raise RuntimeError("the browser window never regained the keyboard focus")
@@ -277,7 +340,8 @@ class Driver:
         for _ in range(6):
             inner = self.execute(
                 "return {w: window.innerWidth, h: window.innerHeight,"
-                " ow: window.outerWidth, oh: window.outerHeight};"
+                " ow: window.outerWidth, oh: window.outerHeight};",
+                idempotent=True,
             )
             delta_w = width - int(inner["w"])
             delta_h = height - int(inner["h"])
@@ -724,14 +788,20 @@ def raster_findings(
 def drive(driver: Driver, app_url: str, view: dict[str, object], zoom: int) -> None:
     driver.go(f"{app_url}?state={view['state']}")
     for _ in range(120):
-        heading = driver.execute("const h = document.querySelector('h1'); return h ? h.textContent : null;")
+        heading = driver.execute(
+            "const h = document.querySelector('h1'); return h ? h.textContent : null;",
+            idempotent=True,
+        )
         if heading:
             break
         time.sleep(0.05)
     else:
         raise RuntimeError(f"{view['id']}: the fixture never rendered a heading")
     if zoom != 100:
-        driver.execute(f"document.documentElement.style.fontSize = '{16 * zoom // 100}px'; return true;")
+        driver.execute(
+            f"document.documentElement.style.fontSize = '{16 * zoom // 100}px'; return true;",
+            idempotent=True,
+        )
     for label in view["clicks"]:
         for _ in range(60):
             if driver.execute(CLICK_SCRIPT, label) is True:
@@ -741,32 +811,262 @@ def drive(driver: Driver, app_url: str, view: dict[str, object], zoom: int) -> N
             raise RuntimeError(f"{view['id']}: no button reads « {label} »")
         time.sleep(0.15)
     for _ in range(120):
-        heading = driver.execute("const h = document.querySelector('h1'); return h ? h.textContent : null;")
+        heading = driver.execute(
+            "const h = document.querySelector('h1'); return h ? h.textContent : null;",
+            idempotent=True,
+        )
         if heading == view["heading"]:
             break
         time.sleep(0.05)
     else:
         raise RuntimeError(f"{view['id']}: the heading never became « {view['heading']} »")
     if view.get("requires"):
-        found = driver.execute("return document.querySelector(arguments[0]) !== null;", view["requires"])
+        found = driver.execute(
+            "return document.querySelector(arguments[0]) !== null;", view["requires"], idempotent=True
+        )
         if found is not True:
             raise RuntimeError(f"{view['id']}: {view['requires']} is absent")
     driver.wait_for_paint()
 
 
 def walk_focus(driver: Driver) -> tuple[list[dict[str, object]], int]:
-    driver.restore_keyboard_focus()
-    expected = int(driver.execute(FOCUS_ORDER_SCRIPT, CONTROL_SELECTOR))
-    steps: list[dict[str, object]] = []
-    for _ in range(expected + 3):
-        driver.press_tab()
-        step = driver.execute(FOCUS_STEP_SCRIPT)
-        if step.get("end"):
-            break
-        steps.append(step)
-        if len(steps) >= expected:
-            break
-    return steps, expected
+    """Walk the keyboard order, and never judge a walk the transport maimed.
+
+    A Tab whose answer was dropped may or may not have landed, and observing
+    the focus right after can still read the state from before the keystroke.
+    A walk that lost an answer is therefore not the walk to judge: it is
+    replayed once, whole and clean — a real order defect reproduces on the
+    clean walk, a transport artefact does not. The in-step guard below stays
+    as the last net when the second walk is maimed too."""
+    for walk_attempt in (1, 2):
+        driver.restore_keyboard_focus()
+        expected = int(driver.execute(FOCUS_ORDER_SCRIPT, CONTROL_SELECTOR, idempotent=True))
+        steps: list[dict[str, object]] = []
+        previous_index = -1
+        clean = True
+        for _ in range(expected + 3):
+            delivered = driver.press_tab()
+            # The step only reads the active element; replaying it after a
+            # transport cut observes the same focus, while replaying the Tab
+            # itself would move it.
+            step = driver.execute(FOCUS_STEP_SCRIPT, idempotent=True)
+            if not delivered:
+                clean = False
+                if step.get("end") or step.get("index") == previous_index:
+                    # The dropped Tab observably never landed — the focus did
+                    # not move. One more keystroke is allowed, judged by the
+                    # same observation; a Tab that did land is never resent.
+                    driver.press_tab()
+                    step = driver.execute(FOCUS_STEP_SCRIPT, idempotent=True)
+            if step.get("end"):
+                break
+            steps.append(step)
+            previous_index = step["index"]
+            if len(steps) >= expected:
+                break
+        if clean or walk_attempt == 2:
+            return steps, expected
+        driver.compensations += 1
+        driver.execute(
+            "if (document.activeElement && document.activeElement.blur)"
+            " document.activeElement.blur();"
+            "window.scrollTo(0, 0); return true;",
+            idempotent=True,
+        )
+    raise AssertionError("unreachable focus walk state")
+
+
+# --------------------------------------------------------------------------
+# The installed pilot: the same oracle, in the process the `.deb` really
+# installed. No `?state=` exists there — the states are reached the way a
+# human reaches them, in order, and the state on disk is emptied between two
+# combos so the uninitialized view stays reachable as many times as the matrix
+# needs it.
+#
+# Only the states a Controller is not needed for are reachable here; the
+# post-association views stay measured by the fixture pilot until the proof
+# stands the real chain up. The list below says which contract views that is.
+
+INSTALLED_VIEWS = (
+    {"id": "local-access", "contract_view": 1, "heading": "Accès local"},
+    {"id": "local-access-secrets", "contract_view": 1, "heading": "Accès local", "displays_secrets": True},
+    {"id": "infrastructures", "contract_view": 2, "heading": "Infrastructures"},
+    {"id": "association", "contract_view": 3, "heading": "Association ou récupération"},
+)
+
+REACT_FILL_SCRIPT = r"""
+for (const [selector, value] of Object.entries(arguments[0])) {
+  const element = document.querySelector(selector);
+  if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return false;
+  const prototype = element instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const previous = element.value;
+  Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+  if (element._valueTracker) element._valueTracker.setValue(previous);
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+}
+return true;
+"""
+
+
+def wait_until(driver: Driver, script: str, expected: object = True, seconds: int = 30, label: str = "") -> None:
+    deadline = time.monotonic() + seconds
+    last: object = None
+    while time.monotonic() < deadline:
+        last = driver.execute(script, idempotent=True)
+        if last == expected:
+            return
+        time.sleep(0.25)
+    raise RuntimeError(f"{label}: the condition never held; last value was {last!r}")
+
+
+def click_button(driver: Driver, label: str, seconds: int = 30) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if driver.execute(CLICK_SCRIPT, label) is True:
+            return
+        time.sleep(0.25)
+    raise RuntimeError(f"no button reads « {label} »")
+
+
+def click_then_wait(
+    driver: Driver,
+    label: str,
+    effect_script: str,
+    expected: object = True,
+    seconds: int = 30,
+    description: str = "",
+) -> None:
+    """Click, then hold the click to its observable effect.
+
+    The transport to the busy application sometimes closes without answering
+    a click whose event did land. A keystroke or a click is never replayed
+    blindly: the effect arriving proves the click happened, and only its
+    absence after the full wait allows exactly one more attempt."""
+    for attempt in (1, 2):
+        try:
+            click_button(driver, label)
+        except (http.client.RemoteDisconnected, ConnectionResetError):
+            driver.compensations += 1
+        try:
+            wait_until(driver, effect_script, expected, seconds=seconds, label=description or label)
+            return
+        except RuntimeError:
+            if attempt == 2:
+                raise
+            driver.compensations += 1
+
+
+def clear_state_root(root: pathlib.Path) -> None:
+    """Empty the three XDG roots the candidate writes under, without touching
+    anything else: the state root is a private temporary directory `inside`
+    created for this run alone."""
+    for name in ("data", "config", "cache"):
+        base = root / name
+        if base.exists():
+            shutil.rmtree(base)
+        base.mkdir(mode=0o700, parents=True)
+
+
+def reach_installed_state(driver: Driver, view: dict[str, object], secrets: list[str], zoom: int) -> None:
+    identity = view["id"]
+    print(f"  reaching {identity}", flush=True)
+    if identity == "local-access":
+        wait_until(
+            driver,
+            "const h = document.querySelector('h1'); return h ? h.textContent : null;",
+            "Accès local",
+            seconds=60,
+            label=str(identity),
+        )
+    elif identity == "local-access-secrets":
+        click_then_wait(
+            driver,
+            "Générer les secrets locaux",
+            "return document.querySelectorAll('.yc-secret').length === 2;",
+            seconds=30,
+            description=str(identity),
+        )
+        generated = driver.execute(
+            "return [...document.querySelectorAll('.yc-secret')].map((e) => e.textContent.trim());",
+            idempotent=True,
+        )
+        secrets[:] = list(generated)
+    elif identity == "infrastructures":
+        phrase, recovery = secrets
+        # Filling the same values twice is the same form: the fill may be
+        # replayed after a transport cut.
+        filled = driver.execute(
+            REACT_FILL_SCRIPT,
+            {"#confirm-unlock-phrase": phrase, "#confirm-recovery-code": recovery},
+            idempotent=True,
+        )
+        if filled is not True:
+            raise RuntimeError("the confirmation fields were not found")
+        # The script only ticks an unticked box, so replaying it cannot
+        # untick what the first delivery ticked.
+        driver.execute(
+            "const box = document.querySelector('input[type=checkbox]');"
+            "if (box && !box.checked) box.click(); return true;",
+            idempotent=True,
+        )
+        wait_until(
+            driver,
+            "return document.querySelector('input[type=checkbox]').checked;",
+            label=f"{identity}: the confirmation checkbox",
+        )
+        wait_until(
+            driver,
+            "const b = [...document.querySelectorAll('button')]"
+            ".find((e) => e.textContent.trim() === 'Confirmer et créer le coffre');"
+            "return b ? !b.disabled : false;",
+            label=f"{identity}: the create button",
+        )
+        # The vault derives its key on two virtual CPUs: the wait is the KDF's.
+        click_then_wait(
+            driver,
+            "Confirmer et créer le coffre",
+            "const h = document.querySelector('h1'); return h ? h.textContent : null;",
+            "Infrastructures",
+            seconds=180,
+            description=str(identity),
+        )
+    elif identity == "association":
+        click_then_wait(
+            driver,
+            "Associer",
+            "const h = document.querySelector('h1'); return h ? h.textContent : null;",
+            "Association ou récupération",
+            seconds=60,
+            description=str(identity),
+        )
+    else:
+        raise RuntimeError(f"unknown installed state {identity}")
+    if zoom != 100:
+        driver.execute(
+            f"document.documentElement.style.fontSize = '{16 * zoom // 100}px'; return true;",
+            idempotent=True,
+        )
+    driver.wait_for_paint()
+
+
+def redact(value: object, needles: set[str]) -> object:
+    """Replace every occurrence of a generated secret in the report.
+
+    The secrets panel really displays the unlock phrase and the recovery code,
+    and the DOM oracle quotes element text when it names a defect. A report the
+    pilot brings home must not carry that material, whatever the vault's
+    lifetime was."""
+    if isinstance(value, str):
+        for needle in needles:
+            if needle and needle in value:
+                value = value.replace(needle, "<redacted-lab-secret>")
+        return value
+    if isinstance(value, list):
+        return [redact(entry, needles) for entry in value]
+    if isinstance(value, dict):
+        return {key: redact(entry, needles) for key, entry in value.items()}
+    return value
 
 
 def judge(
@@ -861,33 +1161,75 @@ def judge(
     return failures
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://127.0.0.1:4444")
-    parser.add_argument("--app-url", required=True)
-    parser.add_argument("--output", required=True, type=pathlib.Path)
-    parser.add_argument("--revision", required=True)
-    parser.add_argument("--run", required=True)
-    parser.add_argument("--capture-zoom", type=int, default=200)
-    parser.add_argument("--only", default="", help="restrict the matrix to cases whose name contains this")
-    arguments = parser.parse_args()
-
-    arguments.output.mkdir(parents=True, exist_ok=True)
-    driver = Driver(arguments.base_url)
-    report: dict[str, object] = {
-        "schema_version": 1,
-        "proof": "console-reflow",
-        "issue": "#56",
-        "contract": "docs/objectifs/v1/CONTRAT-V0.0.3.md",
-        "revision": arguments.revision,
-        "run": arguments.run,
-        "platform": "linux",
-        "engine": driver.engine,
-        "instrumentation": "WebKitWebDriver driving MiniBrowser on Xvfb",
-        "under_test": "the shipped frontend bundle with the Tauri IPC bridge replaced",
-        "cases": [],
+def measure_case(
+    driver: Driver,
+    arguments: argparse.Namespace,
+    report: dict[str, object],
+    failures: list[str],
+    view: dict[str, object],
+    width: int,
+    height: int,
+    zoom: int,
+    capture_allowed: bool = True,
+) -> None:
+    case = f"{view['id']}-{width}x{height}-text-{zoom}"
+    metrics = driver.execute(MEASURE_SCRIPT, CONTROL_SELECTOR, idempotent=True)
+    focus, expected_focus = walk_focus(driver)
+    driver.execute(
+        "window.scrollTo(0, 0);"
+        "if (document.activeElement && document.activeElement.blur)"
+        " document.activeElement.blur();"
+        "return true;",
+        idempotent=True,
+    )
+    stats: dict[str, object] | None = None
+    raster: list[dict[str, object]] | None = None
+    captured = zoom == arguments.capture_zoom and capture_allowed
+    if captured:
+        driver.wait_for_paint()
+        payload = driver.screenshot()
+        (arguments.output / f"linux-{case}.png").write_bytes(payload)
+        image_width, image_height, rows, stats = decode_png(payload)
+        raster = raster_findings(rows, image_width, image_height, metrics)
+    compact_expected = width <= 644 * zoom / 100
+    case_failures = judge(case, metrics, focus, expected_focus, raster, stats, compact_expected)
+    failures.extend(case_failures)
+    entry: dict[str, object] = {
+        "case": case,
+        "view": view["id"],
+        "contract_view": view["contract_view"],
+        "width": width,
+        "height": height,
+        "text_zoom": zoom,
+        "captured": captured,
+        "compact_expected": compact_expected,
+        "metrics": metrics,
+        "focus_steps": focus,
+        "focusable_controls": expected_focus,
+        "raster": stats,
+        "raster_findings": raster,
+        "failures": case_failures,
     }
-    failures: list[str] = []
+    if zoom == arguments.capture_zoom and not capture_allowed:
+        entry["capture_withheld"] = (
+            "the panel displays freshly generated secret material; "
+            "the raster guard for this state stays with the fixture pilot"
+        )
+    report["cases"].append(entry)
+    print(
+        f"{'PASS' if not case_failures else 'RED '} {case:<52} "
+        f"controls={metrics['control_count']:>3} "
+        f"compact={metrics['compact_layout']} "
+        f"scroll_w={metrics['root_scroll_width']}/{metrics['client_width']}",
+        flush=True,
+    )
+    for line in case_failures:
+        print(f"     FAILED: {line}", flush=True)
+
+
+def run_fixture(arguments: argparse.Namespace, report: dict[str, object], failures: list[str]) -> None:
+    driver = Driver(arguments.base_url)
+    report["engine"] = driver.engine
     try:
         for width, height in SIZES:
             driver.go("about:blank")
@@ -899,70 +1241,121 @@ def main() -> int:
                         continue
                     drive(driver, arguments.app_url, view, zoom)
                     driver.viewport(width, height)
-                    metrics = driver.execute(MEASURE_SCRIPT, CONTROL_SELECTOR)
-                    focus, expected_focus = walk_focus(driver)
-                    driver.execute(
-                        "window.scrollTo(0, 0);"
-                        "if (document.activeElement && document.activeElement.blur)"
-                        " document.activeElement.blur();"
-                        "return true;"
-                    )
-                    stats: dict[str, object] | None = None
-                    raster: list[dict[str, object]] | None = None
-                    captured = zoom == arguments.capture_zoom
-                    if captured:
-                        driver.wait_for_paint()
-                        payload = driver.screenshot()
-                        (arguments.output / f"linux-{case}.png").write_bytes(payload)
-                        image_width, image_height, rows, stats = decode_png(payload)
-                        raster = raster_findings(rows, image_width, image_height, metrics)
-                    compact_expected = width <= 644 * zoom / 100
-                    case_failures = judge(case, metrics, focus, expected_focus, raster, stats, compact_expected)
-                    failures.extend(case_failures)
-                    report["cases"].append(
-                        {
-                            "case": case,
-                            "view": view["id"],
-                            "contract_view": view["contract_view"],
-                            "width": width,
-                            "height": height,
-                            "text_zoom": zoom,
-                            "captured": captured,
-                            "compact_expected": compact_expected,
-                            "metrics": metrics,
-                            "focus_steps": focus,
-                            "focusable_controls": expected_focus,
-                            "raster": stats,
-                            "raster_findings": raster,
-                            "failures": case_failures,
-                        }
-                    )
-                    print(
-                        f"{'PASS' if not case_failures else 'RED '} {case:<52} "
-                        f"controls={metrics['control_count']:>3} "
-                        f"compact={metrics['compact_layout']} "
-                        f"scroll_w={metrics['root_scroll_width']}/{metrics['client_width']}",
-                        flush=True,
-                    )
-                    for line in case_failures:
-                        print(f"     FAILED: {line}", flush=True)
+                    measure_case(driver, arguments, report, failures, view, width, height, zoom)
     finally:
+        report["transport_compensations"] = int(report.get("transport_compensations", 0)) + driver.compensations
         try:
             driver.close()
         except Exception:  # noqa: BLE001 — a lost session must not hide the verdict
             pass
 
+
+def run_installed(arguments: argparse.Namespace, report: dict[str, object], failures: list[str]) -> set[str]:
+    """One session per size-and-zoom combo, each from an emptied state root.
+
+    The states are walked forward in the order a human meets them, so a case
+    the `--only` filter excludes still has its transition executed — skipping
+    a step of the walk would change what the later steps measure."""
+    needles: set[str] = set()
+    for width, height in SIZES:
+        for zoom in ZOOMS:
+            clear_state_root(arguments.state_root)
+            driver = Driver(arguments.base_url, "installed", str(arguments.application))
+            if "engine" not in report:
+                report["engine"] = driver.engine
+            try:
+                driver.viewport(width, height)
+                secrets: list[str] = []
+                for view in INSTALLED_VIEWS:
+                    case = f"{view['id']}-{width}x{height}-text-{zoom}"
+                    reach_installed_state(driver, view, secrets, zoom)
+                    needles.update(secrets)
+                    if arguments.only and arguments.only not in case:
+                        continue
+                    driver.viewport(width, height)
+                    measure_case(
+                        driver,
+                        arguments,
+                        report,
+                        failures,
+                        view,
+                        width,
+                        height,
+                        zoom,
+                        capture_allowed=not view.get("displays_secrets", False),
+                    )
+            finally:
+                report["transport_compensations"] = (
+                    int(report.get("transport_compensations", 0)) + driver.compensations
+                )
+                try:
+                    driver.close()
+                except Exception:  # noqa: BLE001 — a lost session must not hide the verdict
+                    pass
+    return needles
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pilot", choices=("fixture", "installed"), default="fixture")
+    parser.add_argument("--base-url", default="http://127.0.0.1:4444")
+    parser.add_argument("--app-url", help="the fixture bundle's URL (fixture pilot only)")
+    parser.add_argument("--application", type=pathlib.Path, help="the installed binary (installed pilot only)")
+    parser.add_argument("--state-root", type=pathlib.Path, help="the XDG roots the installed candidate writes under")
+    parser.add_argument("--output", required=True, type=pathlib.Path)
+    parser.add_argument("--revision", required=True)
+    parser.add_argument("--run", required=True)
+    parser.add_argument("--capture-zoom", type=int, default=200)
+    parser.add_argument("--only", default="", help="restrict the matrix to cases whose name contains this")
+    arguments = parser.parse_args()
+    if arguments.pilot == "fixture" and not arguments.app_url:
+        parser.error("--app-url is required for the fixture pilot")
+    if arguments.pilot == "installed" and not (arguments.application and arguments.state_root):
+        parser.error("--application and --state-root are required for the installed pilot")
+
+    arguments.output.mkdir(parents=True, exist_ok=True)
+    report: dict[str, object] = {
+        "schema_version": 2,
+        "proof": "console-reflow",
+        "issue": "#56",
+        "contract": "docs/objectifs/v1/CONTRAT-V0.0.3.md",
+        "revision": arguments.revision,
+        "run": arguments.run,
+        "platform": "linux",
+        "pilot": arguments.pilot,
+        "instrumentation": (
+            "WebKitWebDriver driving MiniBrowser on Xvfb"
+            if arguments.pilot == "fixture"
+            else "tauri-driver proxying WebKitWebDriver, driving the installed binary on Xvfb"
+        ),
+        "under_test": (
+            "the shipped frontend bundle with the Tauri IPC bridge replaced"
+            if arguments.pilot == "fixture"
+            else "the installed .deb candidate, launched as its own process"
+        ),
+        "cases": [],
+    }
+    failures: list[str] = []
+    needles: set[str] = set()
+    if arguments.pilot == "fixture":
+        run_fixture(arguments, report, failures)
+    else:
+        needles = run_installed(arguments, report, failures)
+
     report["outcome"] = "pass" if not failures else "red"
     report["failures"] = failures
+    document = redact(report, needles)
     (arguments.output / "reflow-result.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     print(
-        f"reflow: cases={len(report['cases'])} captures="
-        f"{sum(1 for case in report['cases'] if case['captured'])} outcome={report['outcome']}"
+        f"reflow: pilot={arguments.pilot} cases={len(report['cases'])} captures="
+        f"{sum(1 for case in report['cases'] if case['captured'])} "
+        f"transport_compensations={report.get('transport_compensations', 0)} "
+        f"outcome={report['outcome']}"
     )
     if failures:
-        for line in failures:
+        for line in redact(list(failures), needles):
             print(f"FAILED: {line}", file=sys.stderr)
         return 1
     return 0

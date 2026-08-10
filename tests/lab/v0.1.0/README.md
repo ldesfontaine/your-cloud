@@ -546,29 +546,64 @@ tests/lab/v0.1.0/oci-plan/prove remove
 ## [`console-reflow/`](console-reflow/) — reflow sans coupe au zoom texte 200 %
 
 Ce harnais ne monte aucun périmètre et ne prouve aucun comportement produit : il
-mesure une géométrie. Il répond à #56 pour sa moitié Linux, et à elle seule.
+mesure une géométrie. Il répond à #56 pour sa moitié Linux, et à elle seule,
+par deux pilotes qui partagent les deux mêmes oracles et répondent à deux
+questions différentes : la feuille de style reflue-t-elle sous un contenu
+hostile (pilote `fixture`), et le processus réellement installé dispose-t-il la
+même géométrie (pilote `installed`).
 
 - [`prove`](console-reflow/prove) est l'entrée unique, exécutée depuis le poste
   de pilotage. Elle commence par la garde d'inventaire obligatoire, construit le
   bundle de fixture depuis l'arbre de travail, le pose sur `lab-console`,
-  déclenche la mesure, rapatrie les captures et le résultat structuré, puis
-  retire le harnais de la machine — que le run soit vert ou rouge.
+  mesure le pilote `fixture`, synchronise les sources Console, fait construire
+  et installer le `.deb` sur la machine, mesure le pilote `installed`, rapatrie
+  les captures et les deux résultats structurés, puis retire le harnais et
+  désinstalle le candidat — que le run soit vert ou rouge.
 - [`run`](console-reflow/run) ouvre l'écran virtuel avec l'invocation `xvfb-run`
-  exacte de la porte hébergée, `-noreset` compris, et passe la main.
-- [`inside`](console-reflow/inside) sert le bundle en boucle locale plutôt que
-  depuis `file://`, parce que la page porte la CSP du produit et qu'une origine
-  `file://` en relâcherait la moitié en silence, lance `WebKitWebDriver`, puis
-  exécute l'oracle.
-- [`reflow-oracle.py`](console-reflow/reflow-oracle.py) porte les deux oracles.
+  exacte de la porte hébergée, `-noreset` compris, conserve les erreurs du
+  serveur X dans le résultat, et passe la main.
+- [`inside`](console-reflow/inside) porte les deux pilotes : pour `fixture`, le
+  bundle servi en boucle locale plutôt que depuis `file://` — la page porte la
+  CSP du produit et une origine `file://` en relâcherait la moitié en silence —
+  et `WebKitWebDriver` ; pour `installed`, `tauri-driver` proxifiant le même
+  `WebKitWebDriver` vers le binaire installé, sous des racines XDG privées
+  vidées entre deux combinaisons.
+- [`build`](console-reflow/build) construit le candidat sur la machine —
+  `npm ci --offline` puis `tauri build` sous `CARGO_NET_OFFLINE`, un seul job —
+  et l'installe. Le sol (Node, `patchelf`, `tauri-driver`, les caches npm et
+  cargo) vient de `tools/provision-lab` ; le build prouve qu'il ne tire rien du
+  réseau au moment où il court. L'arbre `/root/your-cloud-console-build`
+  persiste entre deux runs, nommé par `remove` : un build froid coûte plus d'une
+  demi-heure, un build chaud quelques minutes, et la synchronisation ré-estampille
+  les sources pour que le cache ne ressuscite jamais un candidat périmé.
+- [`reflow-oracle.py`](console-reflow/reflow-oracle.py) porte les deux oracles
+  et les deux pilotes.
 
-**Ce qui est mesuré.** Le bundle frontend livré, un seul module remplacé : le
-pont IPC Tauri. Les composants React, les feuilles de style et les fontes sont
-ceux du produit ; le moteur est `libwebkit2gtk-4.1`, celui contre lequel le
-binaire Linux est lié. Onze états — les sept vues contractuelles, l'affichage
-des deux secrets locaux, les éléments externes, et la vue Services dans ses deux
-états : le formulaire, et le panneau de conséquences qu'un gel traverse — à
-`1280 x 800` et `640 x 560`, texte à 100 % puis à 200 %, sur des libellés
-hostiles. Chaque état est atteint en cliquant le chemin qu'un humain suit.
+**Ce qui est mesuré par le pilote `fixture`.** Le bundle frontend livré, un
+seul module remplacé : le pont IPC Tauri. Les composants React, les feuilles de
+style et les fontes sont ceux du produit ; le moteur est `libwebkit2gtk-4.1`,
+celui contre lequel le binaire Linux est lié. Onze états — les sept vues
+contractuelles, l'affichage des deux secrets locaux, les éléments externes, et
+la vue Services dans ses deux états : le formulaire, et le panneau de
+conséquences qu'un gel traverse — à `1280 x 800` et `640 x 560`, texte à 100 %
+puis à 200 %, sur des libellés hostiles. Chaque état est atteint en cliquant le
+chemin qu'un humain suit.
+
+**Ce qui est mesuré par le pilote `installed`.** Le `.deb` que `build` vient
+d'installer, lancé comme son propre processus par `tauri-driver`, sur les états
+qu'un Controller n'est pas nécessaire pour atteindre : l'accès local, le
+panneau des secrets générés, les infrastructures après une vraie création de
+coffre conduite par l'interface, et l'association — vues contractuelles 1 à 3,
+aux mêmes tailles et aux mêmes zooms. La capture du panneau des secrets est
+retenue, parce qu'il affiche une matière secrète réellement générée : sa garde
+raster reste au pilote `fixture`, et les valeurs générées sont expurgées du
+résultat structuré. Le transport d'automatisation vers l'application occupée
+lâche parfois une connexion sans réponse : l'oracle compense par observation
+d'effet — un appel idempotent peut être rejoué une fois, un clic n'est rejoué
+que si son effet n'est pas arrivé, une frappe n'est jamais renvoyée quand le
+focus a bougé, et une marche clavier mutilée par une coupure est rejouée
+entière plutôt que jugée. Chaque compensation est comptée dans
+`transport_compensations` du résultat : aucune n'est silencieuse.
 
 **L'oracle DOM** asserte, par cas : aucun cadre coupant ne retient de texte plus
 large que lui, aucun contrôle n'en chevauche un autre, aucun ne sort de la
@@ -588,20 +623,24 @@ WebKitGTK/Xvfb.
 ```text
 tools/labctl topology create quick
 tools/provision-lab lab-console
-tests/lab/v0.1.0/console-reflow/prove            # setup, mesure, collecte, retrait
+tests/lab/v0.1.0/console-reflow/prove            # tout, du bundle au candidat installé
 tests/lab/v0.1.0/console-reflow/prove setup
 tests/lab/v0.1.0/console-reflow/prove run
+tests/lab/v0.1.0/console-reflow/prove sync
+tests/lab/v0.1.0/console-reflow/prove build
+tests/lab/v0.1.0/console-reflow/prove run-installed
 tests/lab/v0.1.0/console-reflow/prove collect
 tests/lab/v0.1.0/console-reflow/prove remove
 ```
 
 ### Limites et hygiène
 
-- **Ce n'est pas le paquet installé.** Huit des onze états ne sont atteignables
-  que derrière un coffre déverrouillé et un Controller vivant ; dresser cette
-  chaîne pour mesurer une feuille de style aurait fait dépendre la mesure de
-  tout sauf de la feuille de style. Le moteur, le bundle et les tailles de
-  fenêtre sont ceux du produit ; le processus qui les héberge ne l'est pas.
+- **Le paquet installé n'est mesuré que sur les états d'avant l'association.**
+  Les vues d'après — synthèse, parc, observations, profil, éléments externes,
+  services — ne sont atteignables que derrière un Controller vivant, et restent
+  mesurées par le seul pilote `fixture` tant qu'une preuve n'a pas dressé la
+  vraie chaîne. La limite est portée par chaque rapport plutôt que masquée par
+  la présence du second pilote.
 - **Windows n'est pas mesuré.** La même mesure sous WebView2 sur `windows-eval`
   est l'autre moitié de #56 et garde l'issue ouverte.
 - Le harnais restaure lui-même le focus X après chaque redimensionnement, avec
