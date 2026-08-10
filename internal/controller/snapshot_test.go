@@ -35,7 +35,7 @@ func testSnapshot() RelaySnapshot {
 				Observation: &RelaySnapshotObservation{
 					SchemaVersion: 1,
 					MachineID:     "lab-machine-1",
-					DaemonVersion: "v0.0.3",
+					DaemonVersion: "v0.1.0",
 					Profile:       "host-health.v1",
 					Sequence:      31,
 					ObservedAt:    "2026-07-19T11:59:29Z",

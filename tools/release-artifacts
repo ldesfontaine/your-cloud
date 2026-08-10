@@ -207,6 +207,24 @@ def read_revision() -> dict[str, str]:
     }
 
 
+def read_release_version() -> str:
+    """Lit l'identité de release à sa source unique, ou refuse en la nommant.
+
+    `console/package.json` est la source de vérité que le contrat des sources
+    Console fait rayonner partout ailleurs (#55). Un artefact de release qui
+    porterait un autre numéro — ou aucun — relierait des empreintes à une
+    identité que personne ne peut recouper avec le tag."""
+
+    manifest = ROOT / "console" / "package.json"
+    try:
+        declared = json.loads(manifest.read_text(encoding="utf-8")).get("version", "")
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"the release version cannot be read from {manifest}: {error}")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", str(declared)):
+        fail(f"the release version in console/package.json is not exact semver: {declared!r}")
+    return str(declared)
+
+
 def read_toolchains() -> dict[str, str]:
     """Lit les versions réellement installées ; refuse plutôt qu'écrire 'unknown'."""
 
@@ -474,7 +492,7 @@ def derived_serial(revision_id: str) -> str:
     return "urn:uuid:" + "-".join(groups)
 
 
-def build_sbom(revision: dict[str, str], module_path: str) -> dict[str, object]:
+def build_sbom(revision: dict[str, str], module_path: str, release_version: str) -> dict[str, object]:
     """Assemble le SBOM depuis les verrous, trié et sans horodatage."""
 
     components: list[dict[str, object]] = []
@@ -586,7 +604,11 @@ def build_sbom(revision: dict[str, str], module_path: str) -> dict[str, object]:
                 "bom-ref": f"pkg:golang/{module_path}@{revision['id']}",
                 "type": "application",
                 "name": module_path,
-                "version": revision["id"],
+                # La version du composant est l'identité de release ; la
+                # révision exacte reste dans le bom-ref et les propriétés.
+                # Une révision '+worktree' n'est fetchable par personne, et
+                # les propriétés la nomment telle quelle.
+                "version": release_version,
                 "description": (
                     "Your Cloud, at the exact revision these artifacts name. A "
                     "modified tree is written '+worktree' and is not fetchable "
@@ -640,7 +662,9 @@ def digest_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build_provenance(revision: dict[str, str], toolchains: dict[str, str]) -> dict:
+def build_provenance(
+    revision: dict[str, str], toolchains: dict[str, str], release_version: str
+) -> dict:
     """Dit d'où viennent les octets, et dit qu'elle ne dit pas qui en répond."""
 
     return {
@@ -669,6 +693,7 @@ def build_provenance(revision: dict[str, str], toolchains: dict[str, str]) -> di
             "sha256": hashlib.sha256(SELF.read_bytes()).hexdigest(),
             "version": TOOL_VERSION,
         },
+        "release": {"version": release_version},
         "revision": dict(revision),
         "schema_version": PROVENANCE_SCHEMA_VERSION,
         "source": {"module_path": module_path()},
@@ -676,7 +701,9 @@ def build_provenance(revision: dict[str, str], toolchains: dict[str, str]) -> di
     }
 
 
-def build_manifest(revision: dict[str, str], hashed: dict[str, Path]) -> dict:
+def build_manifest(
+    revision: dict[str, str], hashed: dict[str, Path], release_version: str
+) -> dict:
     """Nomme les cinq artefacts, empreint ceux qu'un manifeste peut empreindre."""
 
     not_hashed = {
@@ -720,6 +747,10 @@ def build_manifest(revision: dict[str, str], hashed: dict[str, Path]) -> dict:
         "does_not_attest": list(DOES_NOT_ATTEST),
         "environment_not_recorded": ENVIRONMENT_NOT_RECORDED,
         "kind": "your-cloud-release-manifest",
+        # L'identité de release que ces artefacts déclarent porter. Le tag
+        # v<version> la reliera au SHA attesté ; le manifeste déclare, la
+        # matrice hébergée atteste, et aucun des deux ne remplace l'autre.
+        "release": {"version": release_version},
         "revision": dict(revision),
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "verification": {
@@ -769,10 +800,11 @@ def produce(output_dir: Path, *, force: bool) -> dict[str, str]:
     # Tout est lu et assemblé avant qu'un octet ne soit écrit : un refus ne
     # laisse ni fichier partiel, ni répertoire créé pour rien.
     revision = read_revision()
+    release_version = read_release_version()
     toolchains = read_toolchains()
     path = module_path()
-    sbom = build_sbom(revision, path)
-    provenance = build_provenance(revision, toolchains)
+    sbom = build_sbom(revision, path, release_version)
+    provenance = build_provenance(revision, toolchains, release_version)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -789,6 +821,7 @@ def produce(output_dir: Path, *, force: bool) -> dict[str, str]:
                 SBOM_NAME: output_dir / SBOM_NAME,
                 PROVENANCE_NAME: output_dir / PROVENANCE_NAME,
             },
+            release_version,
         ),
     )
     write_checksums(
@@ -804,6 +837,7 @@ def command_produce(arguments: argparse.Namespace) -> int:
     revision = produce(output_dir, force=arguments.force)
     print(f"REVISION={revision['id']}")
     print(f"TREE={revision['tree']}")
+    print(f"VERSION={read_release_version()}")
     for name in PRODUCED:
         print(f"{name.upper().replace('.', '_')}={output_dir / name}")
     if revision["tree"] == "modified":

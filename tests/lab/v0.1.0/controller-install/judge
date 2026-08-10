@@ -14,7 +14,9 @@ fixture="$state/fixture"
 signer="$state/signer"
 seed="$state/keys/seed"
 work="$state/work"
-version=0.0.3
+# The expected version travels in the perimeter the pilot mounted, read there
+# from the release identity's single source — never copied into this file.
+version=${YOUR_CLOUD_LAB_BUNDLE_VERSION:?missing bundle version from the perimeter}
 
 [[ -x "$fixture" ]] || { echo "no fixture at $fixture" >&2; exit 1; }
 [[ -x "$signer" ]] || { echo "no signer at $signer" >&2; exit 1; }

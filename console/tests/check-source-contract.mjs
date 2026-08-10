@@ -457,6 +457,53 @@ if (cargoVersion !== packageDocument.version) {
 if (tauriConfig.version !== "../package.json") {
   failures.push("src-tauri/tauri.conf.json: la version doit provenir de package.json");
 }
+
+// L'identité de release est unique et couvre chaque endroit qui la répète :
+// les deux crates du workspace, leurs épingles exactes, le verrou Cargo et la
+// constante Go que chaque enveloppe d'observation transporte. Un endroit qui
+// divergerait serait celui que personne ne relit avant le tag (#55).
+{
+  const expected = packageDocument.version;
+  const protocolManifest = await readSourceText(
+    join(consoleRoot, "src-tauri", "crates", "bootstrap-protocol", "Cargo.toml"),
+  );
+  const assistantManifest = await readSourceText(
+    join(consoleRoot, "src-tauri", "crates", "native-bootstrap-assistant", "Cargo.toml"),
+  );
+  const cargoLock = await readSourceText(join(consoleRoot, "src-tauri", "Cargo.lock"));
+  const observation = await readSourceText(
+    join(consoleRoot, "..", "internal", "observation", "observation.go"),
+  );
+  if (protocolManifest.match(/^version\s*=\s*"([^"]+)"$/mu)?.[1] !== expected) {
+    failures.push("crates/bootstrap-protocol/Cargo.toml: version différente de package.json");
+  }
+  if (assistantManifest.match(/^version\s*=\s*"([^"]+)"$/mu)?.[1] !== expected) {
+    failures.push("crates/native-bootstrap-assistant/Cargo.toml: version différente de package.json");
+  }
+  const pin = `your-cloud-bootstrap-protocol = { version = "=${expected}"`;
+  if (!cargoManifest.includes(pin)) {
+    failures.push("src-tauri/Cargo.toml: l'épingle du protocole ne porte pas la version de release");
+  }
+  if (!assistantManifest.includes(pin)) {
+    failures.push(
+      "crates/native-bootstrap-assistant/Cargo.toml: l'épingle du protocole ne porte pas la version de release",
+    );
+  }
+  for (const crate of [
+    "your-cloud-console",
+    "your-cloud-bootstrap-protocol",
+    "your-cloud-native-bootstrap-assistant",
+  ]) {
+    if (!cargoLock.includes(`name = "${crate}"\nversion = "${expected}"`)) {
+      failures.push(`Cargo.lock: ${crate} ne porte pas la version de release`);
+    }
+  }
+  if (!observation.includes(`DaemonVersion = "v${expected}"`)) {
+    failures.push(
+      "internal/observation/observation.go: DaemonVersion ne porte pas la version de release préfixée v",
+    );
+  }
+}
 if (
   JSON.stringify(tauriConfig.bundle?.externalBin) !==
   JSON.stringify(["binaries/your-cloud-native-bootstrap-assistant"])

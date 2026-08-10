@@ -44,7 +44,12 @@ expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-controller-install
 console_state=/root/lab-controller-install
 controller_unit=your-cloud-controller.service
-version=0.0.3
+# The release identity has one source: console/package.json. A number copied
+# here would be the copy someone forgets, and the bundle this harness builds
+# would then prove an identity the candidate does not carry.
+version=$(sed -n 's/^  "version": "\([0-9.]*\)",$/\1/p' "$root/console/package.json" | head -1)
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { echo "FAILED: cannot read the release version from console/package.json" >&2; exit 1; }
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
@@ -182,6 +187,7 @@ install -m 0700 target/debug/your-cloud-controller-install-fixture $console_stat
     echo "export YOUR_CLOUD_LAB_CONTROLLER_TARGET_KEY=$console_host_key"
     echo "export YOUR_CLOUD_LAB_CONTROLLER_ADDRESS=$controller_address"
     echo "export YOUR_CLOUD_LAB_CONSOLE_ADDRESS=$console_address"
+    echo "export YOUR_CLOUD_LAB_BUNDLE_VERSION=$version"
   } >"$workdir/perimeter.env"
   "$labctl" copy-to "$console_vm" "$workdir/perimeter.env" "$console_state/perimeter.env" >/dev/null
   cp "$workdir/perimeter.env" "$workdir/perimeter.env.local"

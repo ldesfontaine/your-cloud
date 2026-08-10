@@ -152,6 +152,40 @@ système : que les quatre artefacts sont ceux de cette révision, et que le
 rapport qu'il lit est celui que cette course a produit. Deux portées, deux
 fichiers, aucune des deux ne prétendant à l'autre.
 
+## La procédure de tag : relier version, SHA et artefacts, dans cet ordre
+
+Le tag `v0.1.0` est le dernier geste, jamais un geste préparatoire, et il est
+préparé ici pour n'être improvisé nulle part (`#55`). L'identité de release a
+une source unique — `console/package.json` — que le contrat des sources
+Console fait rayonner sur les manifestes, les verrous, la constante
+d'observation du Daemon et les artefacts ; le tag ne fait que la relier au
+SHA que la matrice hébergée a attesté.
+
+Préconditions, toutes vérifiées sur le même SHA candidat :
+
+1. la matrice native `workflow_dispatch`, précédée de
+   `tools/ci-usage --guard 100`, est entièrement verte sur ce SHA exact ;
+2. la preuve complète est verte sur ce SHA, arbre propre, et ses artefacts
+   portent `release.version` égal à la version de `console/package.json` ;
+3. les issues de palier requises sont fermées, et le suivi le montre.
+
+Le geste, alors :
+
+```text
+git rev-parse HEAD                        le SHA local est le SHA attesté
+git status --porcelain                    l'arbre est propre, rien d'autre
+git tag -a v0.1.0 -m "Your Cloud 0.1.0" <sha-atteste>
+git rev-parse 'v0.1.0^{commit}'           le tag déréférencé rend le même SHA
+git push origin v0.1.0                    l'unique écriture, après accord
+```
+
+Deux règles ferment la procédure : un tag publié ne bouge jamais — une erreur
+découverte après le push reçoit un numéro suivant, jamais un re-tag — et
+aucune preuve antérieure n'est réattribuée au tag d'un autre SHA. La
+vérification d'un tiers reste celle des artefacts : `sha256sum -c` dans le
+répertoire publié, puis le rapprochement du champ `release.version` du
+manifeste, du tag et du SHA qu'il déréférence.
+
 ## La règle de blocage, sans exception implicite
 
 **Toute capacité que la preuve complète n'établit pas est annoncée comme non
