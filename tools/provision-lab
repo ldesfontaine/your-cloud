@@ -225,23 +225,31 @@ provision_console() {
   # resolves it from the lock the repository versions, and the copy is removed.
   # What stays is `~/.cargo/registry`, which is what a later `--offline` build
   # reads.
-  if remote lab-console "test -d /root/.cargo/registry/cache"; then
-    note "crate registry" "already warmed"
-  else
-    local warm=/root/cargo-warm archive
-    archive=$(mktemp -t provision-lab-workspace-XXXXXX.tgz)
-    tar czf "$archive" -C "$root/console" --exclude=target --exclude=node_modules src-tauri
-    remote lab-console "rm -rf $warm && install -d -m 0700 $warm"
-    "$labctl" copy-to lab-console "$archive" /root/cargo-warm-workspace.tgz >/dev/null
-    rm -f "$archive"
-    remote lab-console "tar xzf /root/cargo-warm-workspace.tgz -C $warm \
-      && rm -f /root/cargo-warm-workspace.tgz"
-    remote lab-console ". /root/.cargo/env \
-      && cd $warm/src-tauri \
-      && cargo +$rust_version fetch --locked >/dev/null 2>&1"
-    remote lab-console "rm -rf $warm"
-    note "crate registry" "warmed from the versioned lock"
-  fi
+  # The warming is unconditional, and that is the correction of a real red.
+  #
+  # An earlier reading skipped it as soon as `~/.cargo/registry/cache` existed,
+  # and swallowed the fetch's own output. Both were wrong in the same way: a
+  # registry warmed for an older lock answers "already warmed" for a newer one,
+  # and a fetch that failed said nothing. The first proof after a dependency
+  # was added stopped hours later, inside a palier harness, on `no matching
+  # package named sha2` — a `--offline` build failing for a crate the recipe
+  # believed it had placed. `cargo fetch --locked` is idempotent and cheap on a
+  # warm registry, so it runs every time, and its failure is this step's
+  # failure rather than a silence.
+  local warm=/root/cargo-warm archive
+  archive=$(mktemp -t provision-lab-workspace-XXXXXX.tgz)
+  tar czf "$archive" -C "$root/console" --exclude=target --exclude=node_modules src-tauri
+  remote lab-console "rm -rf $warm && install -d -m 0700 $warm"
+  "$labctl" copy-to lab-console "$archive" /root/cargo-warm-workspace.tgz >/dev/null
+  rm -f "$archive"
+  remote lab-console "tar xzf /root/cargo-warm-workspace.tgz -C $warm \
+    && rm -f /root/cargo-warm-workspace.tgz"
+  remote lab-console ". /root/.cargo/env \
+    && cd $warm/src-tauri \
+    && cargo +$rust_version fetch --locked" >/dev/null \
+    || fail "the crate registry could not be warmed from the versioned lock"
+  remote lab-console "rm -rf $warm"
+  note "crate registry" "warmed from the versioned lock"
   note observed "$(remote lab-console "ls /root/.cargo/registry/cache/*/ | wc -l") crates cached"
 
   # The npm cache the frontend build reads, warmed here for the reason the
@@ -251,18 +259,19 @@ provision_console() {
   # already. `npm ci` resolves them from the lock the repository versions into
   # `~/.npm`, the copy of the manifest is removed, and what stays is the cache
   # a later `--offline` install reads.
-  if remote lab-console "test -d /root/.npm/_cacache"; then
-    note "npm cache" "already warmed"
-  else
-    local npm_warm=/root/npm-warm
-    remote lab-console "rm -rf $npm_warm && install -d -m 0700 $npm_warm"
-    "$labctl" copy-to lab-console "$root/console/package.json" "$npm_warm/package.json" >/dev/null
-    "$labctl" copy-to lab-console "$root/console/package-lock.json" "$npm_warm/package-lock.json" >/dev/null
-    remote lab-console "cd $npm_warm \
-      && npm ci --no-audit --no-fund --loglevel=error >/dev/null"
-    remote lab-console "rm -rf $npm_warm"
-    note "npm cache" "warmed from the versioned lock"
-  fi
+  # Unconditional and loud, for the reason written above the crate registry: a
+  # cache warmed for an older lock is not a warm cache for a newer one, and an
+  # install that failed must fail this step rather than leave a directory that
+  # answers a later guard.
+  local npm_warm=/root/npm-warm
+  remote lab-console "rm -rf $npm_warm && install -d -m 0700 $npm_warm"
+  "$labctl" copy-to lab-console "$root/console/package.json" "$npm_warm/package.json" >/dev/null
+  "$labctl" copy-to lab-console "$root/console/package-lock.json" "$npm_warm/package-lock.json" >/dev/null
+  remote lab-console "cd $npm_warm \
+    && npm ci --no-audit --no-fund --loglevel=error" >/dev/null \
+    || fail "the npm cache could not be warmed from the versioned lock"
+  remote lab-console "rm -rf $npm_warm"
+  note "npm cache" "warmed from the versioned lock"
   note observed "$(remote lab-console "du -sh /root/.npm/_cacache 2>/dev/null | cut -f1") npm cache"
 }
 
