@@ -179,10 +179,23 @@ provision_console() {
     || fail "node is absent from the PATH of a plain command"
   note observed "$(remote lab-console 'node --version') / npm $(remote lab-console 'npm --version')"
 
+  if remote lab-console ". /root/.cargo/env 2>/dev/null && cargo +$rust_version --version >/dev/null 2>&1"; then
+    note "Rust $rust_version" "already installed"
+  else
+    remote lab-console "curl -fsSL https://sh.rustup.rs -o /root/rustup.sh \
+      && sh /root/rustup.sh -y --profile minimal --default-toolchain $rust_version \
+        --no-modify-path >/dev/null \
+      && rm -f /root/rustup.sh"
+    note "Rust $rust_version" "installed"
+  fi
+  note observed "$(remote lab-console ". /root/.cargo/env && cargo +$rust_version --version")"
+
   # The WebDriver bridge the installed-candidate measurement drives the `.deb`
   # with, pinned to the exact version the hosted gate installs. It is a cargo
   # install, so it uses the network here at provision time, exactly like rustup
-  # above — never at proof time.
+  # above — never at proof time. It stands after the Rust step because it is
+  # built by it: the first run from a bare machine stopped on a
+  # `/root/.cargo/env` that nothing had written yet.
   # `tauri-driver` answers no `--version`; the version cargo installed is read
   # from cargo's own ledger instead.
   if remote lab-console ". /root/.cargo/env \
@@ -194,17 +207,6 @@ provision_console() {
     note "tauri-driver $tauri_driver_version" "installed"
   fi
   note observed "$(remote lab-console ". /root/.cargo/env && cargo install --list | grep '^tauri-driver '")"
-
-  if remote lab-console ". /root/.cargo/env 2>/dev/null && cargo +$rust_version --version >/dev/null 2>&1"; then
-    note "Rust $rust_version" "already installed"
-  else
-    remote lab-console "curl -fsSL https://sh.rustup.rs -o /root/rustup.sh \
-      && sh /root/rustup.sh -y --profile minimal --default-toolchain $rust_version \
-        --no-modify-path >/dev/null \
-      && rm -f /root/rustup.sh"
-    note "Rust $rust_version" "installed"
-  fi
-  note observed "$(remote lab-console ". /root/.cargo/env && cargo +$rust_version --version")"
 
   # The registry of crates the proofs build against, warmed here and not by the
   # proofs themselves.
