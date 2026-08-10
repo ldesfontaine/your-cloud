@@ -90,6 +90,8 @@ type ControllerHandler struct {
 	inventory   *InventoryStore
 	external    *ExternalStore
 	definitions *ServiceDefinitionStore
+	dispatches  *DispatchRegistryStore
+	dispatcher  auxiliaryDispatcher
 	relay       relaySnapshotReader
 	host        string
 	now         func() time.Time
@@ -108,25 +110,29 @@ func NewControllerHandler(
 	inventory *InventoryStore,
 	external *ExternalStore,
 	definitions *ServiceDefinitionStore,
+	dispatches *DispatchRegistryStore,
 	relay relaySnapshotReader,
 	host string,
 ) (*ControllerHandler, error) {
 	if authority == nil || pairing == nil || sessions == nil || inventory == nil || external == nil ||
-		definitions == nil || relay == nil || host == "" || strings.ContainsAny(host, "/?#@") {
+		definitions == nil || dispatches == nil || relay == nil || host == "" || strings.ContainsAny(host, "/?#@") {
 		return nil, errors.New("Controller HTTP dependencies and exact Host are required")
 	}
 	state := authority.Snapshot()
 	inventoryState := inventory.Snapshot()
 	externalState := external.Snapshot()
 	definitionState := definitions.Snapshot()
+	dispatchState := dispatches.Snapshot()
 	if inventoryState.ControllerID != state.ControllerID || inventoryState.InfrastructureID != state.InfrastructureID ||
 		externalState.ControllerID != state.ControllerID || externalState.InfrastructureID != state.InfrastructureID ||
-		definitionState.ControllerID != state.ControllerID || definitionState.InfrastructureID != state.InfrastructureID {
+		definitionState.ControllerID != state.ControllerID || definitionState.InfrastructureID != state.InfrastructureID ||
+		dispatchState.ControllerID != state.ControllerID || dispatchState.InfrastructureID != state.InfrastructureID {
 		return nil, errors.New("Controller HTTP authorities do not describe the same installation")
 	}
 	return &ControllerHandler{
 		authority: authority, pairing: pairing, sessions: sessions, inventory: inventory,
-		external: external, definitions: definitions, relay: relay, host: host,
+		external: external, definitions: definitions, dispatches: dispatches,
+		dispatcher: noDispatcher{}, relay: relay, host: host,
 		now: time.Now, random: rand.Reader, active: make(map[string]uint8),
 		sleep: func(ctx context.Context, delay time.Duration) error {
 			timer := time.NewTimer(delay)
@@ -212,6 +218,10 @@ func (handler *ControllerHandler) ServeHTTP(response http.ResponseWriter, reques
 		handler.serveRestorePlans(response, request, certificate)
 	case "/v0/user-service-plans":
 		handler.serveUserServicePlans(response, request, certificate)
+	case "/v0/plan-approvals":
+		handler.servePlanApprovals(response, request, certificate)
+	case "/v0/plan-dispatches":
+		handler.servePlanDispatches(response, request, certificate)
 	default:
 		if rotationID, ok := deviceRotationRoute(request.URL.Path); ok {
 			handler.serveDeviceRotation(response, request, certificate, rotationID)
@@ -754,6 +764,19 @@ func controllerRouteMethods(path string) ([]string, bool) {
 		"/v0/private-service-plans", "/v0/link-route-plans", "/v0/snapshot-plans", "/v0/restore-plans",
 		"/v0/user-service-plans":
 		return []string{http.MethodPost}, true
+	// The one route of the product whose effect leaves the Controller's
+	// machine, and it is deliberately alone: a second launching route would be
+	// a second policy to hold, and the first thing a reader must be able to
+	// count is the number of doors. It stands apart from the construction
+	// block above because it is not a construction: those routes freeze bytes
+	// and keep nothing, this one spends an authority durably.
+	case "/v0/plan-approvals":
+		return []string{http.MethodPost}, true
+	// The history reads and mutates nothing. There is no DELETE, no retry and
+	// no resume: recovery after an unknown result is an observation then a new
+	// signed plan, and a route pretending better would be a route that lies.
+	case "/v0/plan-dispatches":
+		return []string{http.MethodGet}, true
 	}
 	if _, ok := machineRoute(path); ok {
 		return []string{http.MethodPut}, true

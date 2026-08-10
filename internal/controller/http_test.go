@@ -42,10 +42,12 @@ type controllerHTTPFixture struct {
 	handler     *ControllerHandler
 	authority   *AuthorityStore
 	certificate *x509.Certificate
+	identity    testConsoleIdentity
 	sessions    *SessionManager
 	inventory   *InventoryStore
 	external    *ExternalStore
 	definitions *ServiceDefinitionStore
+	dispatches  *DispatchRegistryStore
 	directory   string
 	relay       *fakeRelayReader
 	host        string
@@ -55,7 +57,7 @@ type controllerHTTPFixture struct {
 
 func newControllerHTTPFixture(t *testing.T) controllerHTTPFixture {
 	t.Helper()
-	authority, certificate, _, initial := activeSessionFixture(t)
+	authority, certificate, identity, initial := activeSessionFixture(t)
 	state := authority.Snapshot()
 	directory := privateTestDirectory(t)
 	if err := CreateInventory(directory, state.ControllerID, state.InfrastructureID); err != nil {
@@ -70,6 +72,10 @@ func newControllerHTTPFixture(t *testing.T) controllerHTTPFixture {
 		t.Fatal(err)
 	}
 	definitions, err := OpenServiceDefinitionStore(directory, state.ControllerID, state.InfrastructureID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatches, err := OpenDispatchRegistryStore(directory, state.ControllerID, state.InfrastructureID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,15 +95,15 @@ func newControllerHTTPFixture(t *testing.T) controllerHTTPFixture {
 	pairing, _ := NewPairingManager(authority)
 	relay := &fakeRelayReader{status: RelayUnavailable, err: errors.New("offline")}
 	host := controllerServerName(state.InfrastructureID) + ":9443"
-	handler, err := NewControllerHandler(authority, pairing, sessions, inventory, external, definitions, relay, host)
+	handler, err := NewControllerHandler(authority, pairing, sessions, inventory, external, definitions, dispatches, relay, host)
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler.now = func() time.Time { return current }
 	return controllerHTTPFixture{
-		handler: handler, authority: authority, certificate: certificate, sessions: sessions,
-		inventory: inventory, external: external, definitions: definitions, directory: directory,
-		relay: relay, host: host, token: token, current: &current,
+		handler: handler, authority: authority, certificate: certificate, identity: identity, sessions: sessions,
+		inventory: inventory, external: external, definitions: definitions, dispatches: dispatches,
+		directory: directory, relay: relay, host: host, token: token, current: &current,
 	}
 }
 

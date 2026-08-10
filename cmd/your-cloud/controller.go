@@ -117,6 +117,10 @@ func runControllerServe(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("Controller service definitions: %w", err)
 	}
+	dispatches, err := controller.OpenDispatchRegistryStore(configuration.stateDirectory, state.ControllerID, state.InfrastructureID)
+	if err != nil {
+		return fmt.Errorf("Controller dispatch registry: %w", err)
+	}
 	cache, err := controller.OpenRelayCacheStore(configuration.stateDirectory, state.ControllerID, state.InfrastructureID)
 	if err != nil {
 		return fmt.Errorf("Controller Relay cache: %w", err)
@@ -149,7 +153,7 @@ func runControllerServe(arguments []string) error {
 		return fmt.Errorf("Controller sessions: %w", err)
 	}
 	host := protocol.ControllerServerName(state.InfrastructureID) + ":9443"
-	handler, err := controller.NewControllerHandler(authority, pairing, sessions, inventory, external, definitions, reader, host)
+	handler, err := controller.NewControllerHandler(authority, pairing, sessions, inventory, external, definitions, dispatches, reader, host)
 	if err != nil {
 		return fmt.Errorf("Controller HTTP: %w", err)
 	}
