@@ -728,6 +728,19 @@ parent déclaré, dialogue Win32 vivant, crash et dump du secret — avec les
 invocations exactes de la porte native. Son adresse et sa clé viennent de
 l'environnement ; aucune ne vit dans le dépôt.
 
+**Deux suites ne s'y observent pas, et le harnais le dit plutôt que de rougir.**
+Une session ouverte par OpenSSH est la session 0, dont la station de fenêtres
+est un `Service-0x0-…$` et non la `WinSta0` interactive : une fenêtre qui y est
+montrée est une vraie fenêtre — l'enfant du helper crée bien son dialogue
+`#32770`, titré, et il a été observé le faisant — mais `IsWindowVisible` y
+répond zéro, mesuré le 9 août 2026 sur une fenêtre que .NET déclarait pourtant
+visible. Toute suite qui cherche une fenêtre *visible* est donc inobservable par
+ce transport, quel que soit l'état du produit ; `windows-live-prompt-contract`
+est déclarée **non jouée avec sa raison**, jamais verte et jamais rouge. De
+même, `windows-personal-transport-contract` exige un périmètre `YOUR_CLOUD_LAB_*`
+nommant une cible réelle. Nommer une suite sur la ligne de commande la joue
+malgré tout : demander une suite par son nom, c'est demander à la voir essayer.
+
 Elle ne devient pas une autorité d'attestation. La CI hébergée conserve ce
 rôle : la porte native `workflow_dispatch` sur le candidat de palier reste
 exigée pour fermer un palier, selon le [contrat CI](../contribution/CI.md). Une

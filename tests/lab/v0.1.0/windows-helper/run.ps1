@@ -18,6 +18,20 @@ $toolchain = "1.94.1"
 $assistant = "your-cloud-native-bootstrap-assistant"
 $protocol = "your-cloud-bootstrap-protocol"
 
+# Reading the window station this run was given. It is the one fact that says
+# whether a suite looking for a visible window can be believed here.
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class WindowStation {
+    [DllImport("user32.dll")] public static extern IntPtr GetProcessWindowStation();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool GetUserObjectInformationW(IntPtr hObj, int nIndex,
+        StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+}
+"@
+
 $workspace = Join-Path $Sources "src-tauri"
 if (-not (Test-Path -LiteralPath (Join-Path $workspace "Cargo.toml"))) {
     throw "no workspace at $workspace; synchronise the sources first"
@@ -282,19 +296,48 @@ function Invoke-SuiteAsSystem {
     $script:systemSuiteResult = $code
 }
 
-# The Terminal Services session this run lives in. It is printed rather than
-# checked because it decides what can be observed at all: a session opened by
-# OpenSSH is session 0, whose window station is not interactive, and a modal
-# dialog created there never gains `WS_VISIBLE`. A suite that looks for a
-# visible window is therefore unobservable through this transport, and the
-# number below is what says so instead of a shrug.
+# The Terminal Services session this run lives in, and the window station it
+# was given. Together they decide what can be observed at all: a session opened
+# by OpenSSH is session 0, whose window station is a `Service-0x0-...$` and not
+# the interactive `WinSta0`. A window shown there is a real window — the helper
+# child really creates its `#32770` dialog, titled, and it was observed doing
+# so — but `IsWindowVisible` answers zero for it, measured on this machine on
+# 9 August 2026 with a plain form that .NET itself reported as visible.
+#
+# A suite that looks for a *visible* window is therefore unobservable through
+# this transport, whatever the product does. Below, such a suite is declared
+# not run and named with its reason, never green and never red: a red would say
+# the product failed, and a green would say something was proven that nobody
+# watched.
 $session = (Get-Process -Id $PID).SessionId
+$windowStationName = New-Object System.Text.StringBuilder 256
+$windowStationNeeded = 0
+[void][WindowStation]::GetUserObjectInformationW(
+    [WindowStation]::GetProcessWindowStation(), 2,
+    $windowStationName, 256, [ref]$windowStationNeeded)
+$station = $windowStationName.ToString()
+$interactiveStation = $station -eq "WinSta0"
 Write-Output "session     = $session"
+Write-Output "windowstation = $station$(if ($interactiveStation) { ' (interactive)' } else { ' (not interactive)' })"
 Write-Output "workspace   = $workspace"
 Write-Output "configuration = $Configuration"
 foreach ($name in $perimeterNames) {
     Write-Output ("perimeter   = " + $name + "=" + (Get-Item -Path ("Env:" + $name)).Value)
 }
+
+# What each suite needs from the environment before it can say anything. A
+# suite whose need is unmet is not run, unless the operator named it on the
+# command line: asking for one suite by name is asking to see it try.
+$unmetNeed = @{}
+if (-not $interactiveStation) {
+    $unmetNeed["windows-live-prompt-contract"] =
+        "needs an interactive window station; this session holds $station, where a shown window reports IsWindowVisible=0"
+}
+if ($perimeterNames.Count -eq 0) {
+    $unmetNeed["windows-personal-transport-contract"] =
+        "needs a YOUR_CLOUD_LAB_* perimeter naming a real target, and none was carried"
+}
+$explicit = $Suite.Count -ne 0
 
 Push-Location $workspace
 $results = [ordered]@{}
@@ -307,7 +350,10 @@ try {
         $arguments += $entry.arguments
         Write-Output ""
         Write-Output "== $($entry.name) =="
-        if ($SystemAgent -and $entry.name -eq "windows-personal-transport-contract") {
+        if (-not $explicit -and $unmetNeed.ContainsKey($entry.name)) {
+            Write-Output "not run: $($unmetNeed[$entry.name])"
+            $results[$entry.name] = "not_run"
+        } elseif ($SystemAgent -and $entry.name -eq "windows-personal-transport-contract") {
             $script:systemSuiteResult = 1
             Invoke-SuiteAsSystem -CargoArguments $arguments
             $results[$entry.name] = $script:systemSuiteResult
@@ -325,10 +371,20 @@ finally {
 Write-Output ""
 Write-Output "== verdict =="
 $failed = 0
+$notRun = 0
 foreach ($name in $results.Keys) {
     $code = $results[$name]
-    if ($code -eq 0) { Write-Output "ok     $name" }
-    else { Write-Output "FAILED $name ($code)"; $failed += 1 }
+    if ($code -eq "not_run") { Write-Output "not run $name"; $notRun += 1 }
+    elseif ($code -eq 0) { Write-Output "ok      $name" }
+    else { Write-Output "FAILED  $name ($code)"; $failed += 1 }
+}
+if ($notRun -ne 0) {
+    Write-Output ""
+    Write-Output "$notRun suite(s) this environment cannot observe were not run:"
+    foreach ($name in $results.Keys) {
+        if ($results[$name] -eq "not_run") { Write-Output "  $name : $($unmetNeed[$name])" }
+    }
+    Write-Output "Naming one on the command line runs it anyway, and it may fail for this reason."
 }
 if ($failed -ne 0) { exit 1 }
 Write-Output "RUN_WINDOWS_HELPER_OK"
