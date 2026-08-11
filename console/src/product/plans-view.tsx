@@ -76,14 +76,19 @@ function instant(unixSeconds: number): string {
 export function PlansView({
   definitions,
   infrastructureId,
+  initialSlug,
   onRefresh,
 }: {
   definitions: ServiceDefinitionsProjection | null;
   infrastructureId: string;
+  // Le nom qu'un geste « Déployer » a nommé, s'il y en a eu un. C'est tout ce
+  // qui traverse depuis la vue Services : aucun plan, aucun document, aucune
+  // empreinte — le Controller construit la paire et cette vue la relit.
+  initialSlug: string | null;
   onRefresh: () => void;
 }) {
   const [machineId, setMachineId] = useState("");
-  const [slug, setSlug] = useState("");
+  const [slug, setSlug] = useState(initialSlug ?? "");
   const [imageDigest, setImageDigest] = useState("");
   const [localPort, setLocalPort] = useState("");
   const [originHost, setOriginHost] = useState("");

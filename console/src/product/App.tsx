@@ -20,6 +20,7 @@ import type {
   AssociationSummary,
   ConsoleStatus,
   ExternalElementsView,
+  PlanDispatchEntryView,
   InfrastructureView,
   MachinesView,
   PairingInput,
@@ -53,6 +54,10 @@ export function App() {
   const [machines, setMachines] = useState<MachinesView | null>(null);
   const [external, setExternal] = useState<ExternalElementsView | null>(null);
   const [definitions, setDefinitions] = useState<ServiceDefinitionsProjection | null>(null);
+  const [dispatches, setDispatches] = useState<PlanDispatchEntryView[]>([]);
+  // Le nom qu'un geste « Déployer » a nommé, et rien d'autre : la vue Plans
+  // fait construire la paire par le Controller, elle ne reçoit pas de plan.
+  const [deploySlug, setDeploySlug] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [failure, setFailure] = useState<string | null>(null);
   const [associationMode, setAssociationMode] = useState<PairingInput["mode"]>("enrollment");
@@ -217,6 +222,22 @@ export function App() {
   // propre révision : geler une définition ne doit pas déplacer la révision
   // contre laquelle la Console tient son parc, et une lecture qui les
   // rassemblerait effacerait cette séparation à l'écran.
+  // L'histoire des lancements est lue à part des définitions : l'une dit ce qui
+  // est gelé, l'autre ce qui a été lancé, et les mélanger ferait dépendre l'une
+  // de la fraîcheur de l'autre.
+  const loadDispatches = useCallback(async () => {
+    if (!selectedInfrastructure) return;
+    try {
+      const next = await nativeConsole.readPlanDispatches(selectedInfrastructure);
+      setDispatches([...next.dispatches]);
+    } catch {
+      // L'absence d'histoire n'empêche pas de lire des définitions : la vue
+      // dit alors qu'aucun plan portant ce nom n'a été lancé, ce qui est vrai
+      // de ce que cette Console peut voir.
+      setDispatches([]);
+    }
+  }, [selectedInfrastructure]);
+
   const loadDefinitions = useCallback(async () => {
     if (!selectedInfrastructure) return;
     const generation = requestGeneration.current + 1;
@@ -269,6 +290,7 @@ export function App() {
 
   useEffect(() => {
     if (selectedInfrastructure && (view === "services" || view === "plans")) void loadDefinitions();
+    if (selectedInfrastructure && (view === "services" || view === "plans")) void loadDispatches();
   }, [selectedInfrastructure, view, loadDefinitions]);
 
   async function lockConsole() {
@@ -425,15 +447,21 @@ export function App() {
             <ServicesView
               infrastructureId={selectedAssociation.infrastructure_id}
               definitions={definitions}
+              dispatches={dispatches}
               loading={loadState === "loading"}
               onRefresh={() => void loadDefinitions()}
               onFroze={() => void loadDefinitions()}
+              onDeploy={(slug) => {
+                setDeploySlug(slug);
+                setView("plans");
+              }}
             />
           ) : null}
           {view === "plans" && selectedAssociation ? (
             <PlansView
               infrastructureId={selectedAssociation.infrastructure_id}
               definitions={definitions}
+              initialSlug={deploySlug}
               onRefresh={() => void loadDefinitions()}
             />
           ) : null}

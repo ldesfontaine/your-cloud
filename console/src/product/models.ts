@@ -409,6 +409,10 @@ export type PlanDispatchEntryView = {
   expires_at_unix: number;
   machine_sentence: string;
   controller_observation: string;
+  /// La révision que le plan approuvé épinglait. Elle vient du plan, jamais du
+  /// rapport, et elle a été tenue deux fois avant d'être enregistrée.
+  definition_slug: string;
+  definition_sha256: string;
   reported_changed: boolean;
   reported_outcome: string;
 };

@@ -82,6 +82,8 @@ function dispatchEntry(state: string) {
         : state === "not_launched"
           ? "the connection failed before the first byte of the wrapper; the machine is unchanged"
           : "",
+    definition_slug: "service-de-notes",
+    definition_sha256: PLAN_DIGEST,
     reported_changed: state === "reported",
     reported_outcome: state === "reported" ? "applied" : "",
   };

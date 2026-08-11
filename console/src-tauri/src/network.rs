@@ -1631,6 +1631,8 @@ pub(crate) struct PlanDispatchEntryView {
     pub expires_at_unix: u64,
     pub machine_sentence: String,
     pub controller_observation: String,
+    pub definition_slug: String,
+    pub definition_sha256: String,
     pub reported_changed: bool,
     pub reported_outcome: String,
 }

@@ -337,3 +337,46 @@
   color: var(--color-text);
   font: inherit;
 }
+
+/* Les instances d'une définition. Les deux provenances gardent chacune leur
+   ligne : la révision vient du plan approuvé, le fait qu'elle court vient du
+   rapport, et un cadre qui les fondrait laisserait croire qu'une machine a été
+   observée alors qu'elle a été approuvée. */
+.yc-instances {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.yc-instance {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+
+.yc-instance-machine {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+  font-weight: 600;
+}
+
+.yc-instance-facts {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.yc-instance-facts dt {
+  color: var(--color-muted);
+}
+
+.yc-instance-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}

@@ -2460,10 +2460,49 @@ for (const [name, frame] of [
 if (/Date\.now\(\)|new Date\(/u.test(serviceViews)) {
   failures.push("service-views.tsx: la date d’un gel doit rester celle du Controller");
 }
-// Aucune instance n’est inventée. Rien ne projette encore quelle machine
-// exécute quelle révision, et la vue nomme l’absence plutôt que de deviner.
-if (!serviceViews.includes("ce palier ne projette pas encore quelle machine")) {
-  failures.push("service-views.tsx: l’absence d’instances doit être nommée plutôt que devinée");
+// Aucune instance n’est inventée, et les deux provenances ne fusionnent jamais.
+// La révision vient du plan approuvé ; le fait qu’elle court vient du rapport.
+// Un écran qui les mélangerait laisserait croire qu’une machine a été observée
+// alors qu’elle a été approuvée.
+if (
+  !serviceViews.includes("Révision épinglée par le plan approuvé") ||
+  !serviceViews.includes("Ce que la machine a rapporté")
+) {
+  failures.push(
+    "service-views.tsx: la révision et le fait qu’elle court doivent garder leur origine lisible",
+  );
+}
+// La révision affichée est celle que l’enregistrement du dispatch porte, jamais
+// celle de la définition la plus récente : montrer la dernière gelée à la place
+// de celle qui a été approuvée serait deviner.
+const instancesStart = serviceViews.indexOf("function Instances(");
+const instancesEnd = serviceViews.indexOf("\nfunction ", instancesStart + 1);
+const instancesBody =
+  instancesStart >= 0 && instancesEnd > instancesStart
+    ? serviceViews.slice(instancesStart, instancesEnd)
+    : "";
+if (
+  instancesBody.length === 0 ||
+  !instancesBody.includes("entry.definition_sha256") ||
+  instancesBody.includes("latest.") ||
+  instancesBody.includes("revisions")
+) {
+  failures.push("service-views.tsx: une instance doit nommer la révision de son dispatch");
+}
+// La limite est écrite là où elle se lit, avec sa porte de sortie.
+if (
+  !serviceViews.includes("hors de ce produit") ||
+  !serviceViews.includes("seule une observation la verrait")
+) {
+  failures.push("service-views.tsx: la limite d’une modification hors produit doit être écrite");
+}
+// « Déployer » ne signe rien et ne construit rien depuis cette vue : le geste
+// nomme un slug, et la vue Plans fait construire la paire par le Controller.
+if (
+  !serviceViews.includes("onDeploy(slug)") ||
+  /onDeploy[\s\S]{0,600}?(sign_approval|submit_plan_decision|read_plan_pair)/u.test(serviceViews)
+) {
+  failures.push("service-views.tsx: « Déployer » ne peut que nommer un slug");
 }
 
 // La neuvième vue est mesurée par l’oracle de reflow, dans ses deux états, et

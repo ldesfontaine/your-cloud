@@ -4,6 +4,7 @@ import {
   GitCompareArrows,
   Info,
   RefreshCw,
+  Rocket,
   ScrollText,
   ShieldAlert,
   Snowflake,
@@ -21,6 +22,7 @@ import type {
   ServiceDefinitionRefusalName,
   ServiceDefinitionReview,
   ServiceDefinitionsProjection,
+  PlanDispatchEntryView,
 } from "./models";
 import { nativeConsole } from "./native";
 
@@ -71,12 +73,16 @@ export function ServicesView({
   onRefresh,
   onFroze,
   infrastructureId,
+  dispatches,
+  onDeploy,
 }: {
   definitions: ServiceDefinitionsProjection | null;
   loading: boolean;
   onRefresh: () => void;
   onFroze: () => void;
   infrastructureId: string;
+  dispatches: readonly PlanDispatchEntryView[];
+  onDeploy: (slug: string) => void;
 }) {
   const [draft, setDraft] = useState<ServiceDefinitionDraft>(EMPTY_DRAFT);
   const [review, setReview] = useState<ServiceDefinitionReview | null>(null);
@@ -196,7 +202,7 @@ export function ServicesView({
           onFreeze={() => void freeze()}
         />
       )}
-      <FrozenDefinitions definitions={definitions} />
+      <FrozenDefinitions definitions={definitions} dispatches={dispatches} onDeploy={onDeploy} />
     </div>
   );
 }
@@ -509,8 +515,12 @@ function ConsequencesPanel({
 
 function FrozenDefinitions({
   definitions,
+  dispatches,
+  onDeploy,
 }: {
   definitions: ServiceDefinitionsProjection | null;
+  dispatches: readonly PlanDispatchEntryView[];
+  onDeploy: (slug: string) => void;
 }) {
   const entries = definitions?.definitions ?? [];
   if (entries.length === 0) {
@@ -534,13 +544,103 @@ function FrozenDefinitions({
   return (
     <div className="yc-definition-grid">
       {[...bySlug.entries()].map(([slug, revisions]) => (
-        <DefinitionCard key={slug} slug={slug} revisions={revisions} />
+        <DefinitionCard
+          key={slug}
+          slug={slug}
+          revisions={revisions}
+          dispatches={dispatches}
+          onDeploy={onDeploy}
+        />
       ))}
     </div>
   );
 }
 
-function DefinitionCard({ slug, revisions }: { slug: string; revisions: FrozenDefinitionView[] }) {
+// Ce qu'une instance affiche, et de quelles deux provenances.
+//
+// **La révision vient du plan approuvé** — enregistrée à la soumission, prise
+// dans le plan que le Controller venait de parser, et tenue deux fois avant
+// d'être conservée. **Le fait qu'elle court vient du rapport**, et de lui seul.
+// Les deux restent des lignes distinctes : les fondre en une seule affirmation
+// laisserait croire qu'une machine a été observée alors qu'elle a été
+// approuvée.
+//
+// La limite est écrite ici plutôt que découverte : une modification faite hors
+// du produit après le dispatch n'est visible par aucune des deux. Seule une
+// observation la verrait, et ce palier n'en ajoute aucune.
+function Instances({
+  slug,
+  dispatches,
+}: {
+  slug: string;
+  dispatches: readonly PlanDispatchEntryView[];
+}) {
+  // Le dernier dispatch de chaque machine pour ce nom, dans l'ordre où le
+  // Controller les a acceptés.
+  const byMachine = new Map<string, PlanDispatchEntryView>();
+  for (const entry of dispatches) {
+    if (entry.definition_slug !== slug) continue;
+    const held = byMachine.get(entry.machine_id);
+    if (!held || entry.accepted_at_unix >= held.accepted_at_unix) {
+      byMachine.set(entry.machine_id, entry);
+    }
+  }
+  if (byMachine.size === 0) {
+    return (
+      <Banner icon={Info} title="Instances" tone="accent">
+        <p>
+          Aucun plan portant ce nom n’a été lancé depuis cette Console. Une définition gelée n’a
+          par elle-même aucune instance.
+        </p>
+      </Banner>
+    );
+  }
+  return (
+    <div className="yc-instances">
+      <h4>Instances</h4>
+      {[...byMachine.entries()].map(([machine, entry]) => (
+        <div key={machine} className="yc-instance">
+          <span className="yc-instance-machine">{machine}</span>
+          <dl className="yc-instance-facts">
+            <dt>Révision épinglée par le plan approuvé</dt>
+            <dd className="yc-mono">{entry.definition_sha256}</dd>
+            <dt>Ce que la machine a rapporté</dt>
+            <dd>
+              {entry.state === "reported"
+                ? entry.operation === "remove_user_service"
+                  ? "Le retrait a été appliqué ; les données, les archives et les secrets survivent."
+                  : "Le déploiement a été appliqué."
+                : entry.state === "launched_unreported"
+                  ? "Rien : le lancement n’a pas été rapporté. Ce Controller ne sait pas si la machine a agi."
+                  : entry.state === "machine_refused"
+                    ? "La machine a refusé et n’a rien changé."
+                    : entry.state === "not_launched"
+                      ? "Rien n’est parti : aucun effet n’existe."
+                      : "Le lancement est en cours."}
+            </dd>
+          </dl>
+        </div>
+      ))}
+      <p className="yc-muted">
+        La révision vient du plan approuvé ; le fait qu’elle court vient du rapport. Une
+        modification faite hors de ce produit après le lancement n’est visible par aucune des
+        deux : seule une observation la verrait, et ce palier n’en ajoute aucune.
+      </p>
+    </div>
+  );
+}
+
+function DefinitionCard({
+  slug,
+  revisions,
+  dispatches,
+  onDeploy,
+}: {
+  slug: string;
+  revisions: FrozenDefinitionView[];
+  dispatches: readonly PlanDispatchEntryView[];
+  onDeploy: (slug: string) => void;
+}) {
   const [compared, setCompared] = useState<string | null>(null);
   const latest = revisions.at(-1);
   const earlier = revisions.find((revision) => revision.definition_sha256 === compared) ?? null;
@@ -564,17 +664,14 @@ function DefinitionCard({ slug, revisions }: { slug: string; revisions: FrozenDe
             {revisions.length} révision{revisions.length > 1 ? "s" : ""}
           </Badge>
         </div>
-        {/* L'état « déployée » n'est pas affiché parce que rien ne le projette :
-            aucune route de ce produit ne dit encore quelle machine exécute
-            quelle révision. Nommer l'absence vaut mieux que rendre un état que
-            la Console devrait deviner. */}
-        <Banner icon={Info} title="Instances" tone="accent">
-          <p>
-            Aucune instance n’est affichée : ce palier ne projette pas encore quelle machine
-            exécute quelle révision. Une définition gelée n’a par elle-même aucune instance, et
-            déployer reste un plan approuvé à part.
-          </p>
-        </Banner>
+        <Instances slug={slug} dispatches={dispatches} />
+        {/* Déployer ne signe rien et ne construit rien ici : le geste mène au
+            parcours de la vue Plans, qui fait construire la paire par le
+            Controller et la porte à la fenêtre native. Rien n'est assemblé à la
+            main, et rien ne part d'ici. */}
+        <Button icon={Rocket} onClick={() => onDeploy(slug)}>
+          Déployer cette révision
+        </Button>
         <dl className="yc-definition-list">
           <dt>Révision courante</dt>
           <dd className="yc-mono">{latest.definition_sha256}</dd>
