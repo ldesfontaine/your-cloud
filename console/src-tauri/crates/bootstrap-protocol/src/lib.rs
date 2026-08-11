@@ -22,9 +22,10 @@ pub use approval::{
     MAX_APPROVAL_PRIVILEGES, MAX_SIGNED_APPROVAL_BYTES,
 };
 pub use approval_consent::{
-    ApprovalConsentDecision, ApprovalConsentOutcomeKind, ApprovalConsentOutcomeV1,
-    ApprovalConsentV1, APPROVAL_CONSENT_SCHEMA_VERSION, MAX_APPROVAL_CONSENT_FRAME_BYTES,
-    MAX_APPROVAL_CONSENT_LINES, MAX_APPROVAL_CONSENT_LINE_BYTES,
+    folded_line_count, ApprovalConsentDecision, ApprovalConsentOutcomeKind,
+    ApprovalConsentOutcomeV1, ApprovalConsentV1, APPROVAL_CONSENT_FOLD_COLUMNS,
+    APPROVAL_CONSENT_SCHEMA_VERSION, MAX_APPROVAL_CONSENT_FOLDED_LINES,
+    MAX_APPROVAL_CONSENT_FRAME_BYTES, MAX_APPROVAL_CONSENT_LINES, MAX_APPROVAL_CONSENT_LINE_BYTES,
     MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES,
 };
 pub use monotonic::{monotonic_nanos, MonotonicClockError};

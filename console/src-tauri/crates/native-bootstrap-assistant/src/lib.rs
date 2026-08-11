@@ -1,3 +1,9 @@
+/// The approval consent window. It is compiled on the two platforms the palier
+/// targets, like the bootstrap window it sits beside.
+#[cfg(target_os = "linux")]
+mod approval_window;
+#[cfg(target_os = "windows")]
+mod approval_window_windows;
 mod framing;
 mod hardening;
 /// Installing one Controller from the embedded bundle. It is compiled on the
@@ -41,6 +47,16 @@ use your_cloud_bootstrap_protocol::{
 };
 
 pub const REQUIRED_MODE_ARGUMENT: &str = "--native-bootstrap-assistant";
+
+/// The second, and only other, mode this process answers to.
+///
+/// It is a distinct argument rather than a field inside the bootstrap scope
+/// because the two modes read two different documents, on two differently
+/// bounded frames, and answer two different closed vocabularies. A mode chosen
+/// by a field of the document would be a process whose behaviour the document
+/// decides; a mode chosen by the invocation is a process whose behaviour the
+/// parent decides, and the parent is attested.
+pub const REQUIRED_APPROVAL_MODE_ARGUMENT: &str = "--native-approval-consent";
 pub const EXIT_ACCESS_VERIFIED: u8 = ASSISTANT_EXIT_ACCESS_VERIFIED;
 pub const EXIT_INVALID_INVOCATION: u8 = ASSISTANT_EXIT_INVALID_INVOCATION;
 pub const EXIT_PROTOCOL_REFUSED: u8 = ASSISTANT_EXIT_PROTOCOL_REFUSED;
@@ -381,6 +397,141 @@ fn read_contract_passphrase() -> Result<secret::ProtectedSecret, u8> {
         return Err(EXIT_INVALID_INVOCATION);
     }
     Ok(passphrase)
+}
+
+/// The approval consent session: read one consent, show it whole, answer once.
+///
+/// It shares the hardening, the parent attestation, the watchdog and the lease
+/// of the bootstrap session, because the properties those give are exactly the
+/// ones a window that collects a signature needs: a process that dies with its
+/// parent, a transport that belongs to the declared parent, a session that
+/// cannot outlive the time the Console granted it, and a cancellation the
+/// Console can always reach.
+///
+/// What it does **not** share is everything that touches a credential. No agent
+/// endpoint, no key file, no passphrase and no elevation are reachable from
+/// here — this function calls into `approval_window` and `framing` and into
+/// nothing else, and a test of this crate holds that structurally rather than
+/// by intention.
+pub fn approval_consent_main() -> u8 {
+    let session_started_at = Instant::now();
+    if hardening::apply().is_err() {
+        return EXIT_INTERNAL_FAILURE;
+    }
+    std::panic::set_hook(Box::new(|_| {}));
+
+    let watchdog = match watchdog::Watchdog::start_at(session_started_at) {
+        Ok(watchdog) => watchdog,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+
+    if !valid_approval_arguments(std::env::args_os()) {
+        return EXIT_INVALID_INVOCATION;
+    }
+
+    let mut stdin = match UnbufferedStandardInput::open() {
+        Ok(stdin) => stdin,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+    let _parent = match parent::verify(&stdin) {
+        Ok(parent) => parent,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+
+    let stdout = io::stdout();
+    let consent = match framing::read_approval_consent(&mut stdin).map_err(map_read_error) {
+        Ok(consent) => consent,
+        Err(SessionError::Protocol) => return EXIT_PROTOCOL_REFUSED,
+        Err(SessionError::Io) => return EXIT_IO_FAILURE,
+        Err(SessionError::Internal) => return EXIT_INTERNAL_FAILURE,
+    };
+    let lease = match LeaseState::watch_standard_input(stdin) {
+        Ok(lease) => lease,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+    let mut writer = stdout.lock();
+
+    // The deadline is mapped from the parent's own boot-relative issuance onto
+    // this process's clock, exactly as the bootstrap session maps it, so the
+    // time the Console granted cannot be renewed by a document that arrived
+    // late or by a window that opened slowly. Sampling the local instant before
+    // the observation makes any drift conservative rather than generous.
+    let local_before = Instant::now();
+    let Ok(observed_at_monotonic_nanos) = monotonic_nanos() else {
+        return EXIT_INTERNAL_FAILURE;
+    };
+    let Some(deadline) = deadline_from_observation(
+        local_before,
+        observed_at_monotonic_nanos,
+        consent.issued_at_monotonic_nanos,
+        consent.remaining_millis,
+    ) else {
+        return EXIT_PROTOCOL_REFUSED;
+    };
+    if watchdog.tighten_to(deadline).is_err() {
+        return EXIT_INTERNAL_FAILURE;
+    }
+    if Instant::now() >= deadline {
+        // The window is never opened past its own deadline: a human asked after
+        // the authority expired is a human asked for nothing.
+        let expired = your_cloud_bootstrap_protocol::ApprovalConsentOutcomeV1::without_confirmation(
+            &consent.request_id,
+            your_cloud_bootstrap_protocol::ApprovalConsentOutcomeKind::Expired,
+        );
+        let code = expired.exit_code();
+        if framing::write_approval_outcome(&mut writer, &expired).is_err() {
+            return EXIT_IO_FAILURE;
+        }
+        return code;
+    }
+    let outcome = approval_window_ask(&consent, deadline, watchdog.expiration_flag(), lease);
+    let code = outcome.exit_code();
+    if framing::write_approval_outcome(&mut writer, &outcome).is_err() {
+        return EXIT_IO_FAILURE;
+    }
+    code
+}
+
+#[cfg(target_os = "linux")]
+fn approval_window_ask(
+    consent: &your_cloud_bootstrap_protocol::ApprovalConsentV1,
+    deadline: Instant,
+    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: LeaseState,
+) -> your_cloud_bootstrap_protocol::ApprovalConsentOutcomeV1 {
+    approval_window::ask(consent, deadline, expired, lease)
+}
+
+#[cfg(target_os = "windows")]
+fn approval_window_ask(
+    consent: &your_cloud_bootstrap_protocol::ApprovalConsentV1,
+    deadline: Instant,
+    expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: LeaseState,
+) -> your_cloud_bootstrap_protocol::ApprovalConsentOutcomeV1 {
+    approval_window_windows::ask(consent, deadline, expired, lease)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn approval_window_ask(
+    consent: &your_cloud_bootstrap_protocol::ApprovalConsentV1,
+    _deadline: Instant,
+    _expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    _lease: LeaseState,
+) -> your_cloud_bootstrap_protocol::ApprovalConsentOutcomeV1 {
+    // Unsupported targets never reach a prepared release artifact, and they say
+    // `unavailable` rather than pretending a human was asked.
+    your_cloud_bootstrap_protocol::ApprovalConsentOutcomeV1::without_confirmation(
+        &consent.request_id,
+        your_cloud_bootstrap_protocol::ApprovalConsentOutcomeKind::Unavailable,
+    )
+}
+
+fn valid_approval_arguments(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    let mut arguments = arguments.into_iter();
+    let _program = arguments.next();
+    arguments.next().as_deref() == Some(OsStr::new(REQUIRED_APPROVAL_MODE_ARGUMENT))
+        && arguments.next().is_none()
 }
 
 pub fn process_main() -> u8 {

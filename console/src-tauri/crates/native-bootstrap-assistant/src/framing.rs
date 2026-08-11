@@ -1,8 +1,9 @@
 use std::io::{self, Read, Write};
 
 use your_cloud_bootstrap_protocol::{
-    AssistantEventV1, AssistantScopeV1, MAX_ASSISTANT_EVENT_FRAME_BYTES,
-    MAX_ASSISTANT_SCOPE_FRAME_BYTES,
+    ApprovalConsentOutcomeV1, ApprovalConsentV1, AssistantEventV1, AssistantScopeV1,
+    MAX_APPROVAL_CONSENT_FRAME_BYTES, MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES,
+    MAX_ASSISTANT_EVENT_FRAME_BYTES, MAX_ASSISTANT_SCOPE_FRAME_BYTES,
 };
 
 const FRAME_HEADER_BYTES: usize = 4;
@@ -22,6 +23,43 @@ pub(crate) fn read_scope(reader: &mut impl Read) -> Result<AssistantScopeV1, Rea
         .map_err(|_| ReadFrameError::Invalid)?
         .validate()
         .map_err(|_| ReadFrameError::Invalid)
+}
+
+/// Reads exactly the single approval consent frame.
+///
+/// It is read against its own bound rather than the bootstrap scope's: the two
+/// frames carry two different documents, and widening the scope's bound to hold
+/// a consent would loosen a bound on a document that never needs the room. What
+/// is read is what the window may be asked to display; what is *accepted* is
+/// narrower still, and `validate` is what says so.
+pub(crate) fn read_approval_consent(
+    reader: &mut impl Read,
+) -> Result<ApprovalConsentV1, ReadFrameError> {
+    let payload = read_payload(reader, MAX_APPROVAL_CONSENT_FRAME_BYTES)?;
+    serde_json::from_slice::<ApprovalConsentV1>(&payload)
+        .map_err(|_| ReadFrameError::Invalid)?
+        .validate()
+        .map_err(|_| ReadFrameError::Invalid)
+}
+
+/// Writes the one answer this window produces.
+///
+/// The answer is held to its own grammar on the way out as well as on the way
+/// in: a confirmation that lost its pair, or a refusal that grew one, is never
+/// written rather than written and refused by the reader.
+pub(crate) fn write_approval_outcome(
+    writer: &mut impl Write,
+    outcome: &ApprovalConsentOutcomeV1,
+) -> Result<(), ()> {
+    let validated = outcome.clone().validate().map_err(|_| ())?;
+    let payload = serde_json::to_vec(&validated).map_err(|_| ())?;
+    if payload.is_empty() || payload.len() > MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES {
+        return Err(());
+    }
+    let length = u32::try_from(payload.len()).map_err(|_| ())?;
+    writer.write_all(&length.to_be_bytes()).map_err(|_| ())?;
+    writer.write_all(&payload).map_err(|_| ())?;
+    writer.flush().map_err(|_| ())
 }
 
 pub(crate) fn write_event(writer: &mut impl Write, event: &AssistantEventV1) -> Result<(), ()> {
