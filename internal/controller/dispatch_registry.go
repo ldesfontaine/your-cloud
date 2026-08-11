@@ -31,20 +31,54 @@ import (
 const (
 	dispatchRegistrySchema = 1
 
-	// maxDispatchRecordsPerMachine bounds the history one machine keeps. A
-	// machine holds one command at a time, so sixteen terminal records reach
-	// well past any history a human resumes from; records past the bound
-	// leave the registry oldest-first, and never a non-terminal one — an open
-	// dispatch cannot be forgotten. Sixteen is an implementation constant the
-	// architecture contract names as contestable (#122): the worst case of
-	// 64 machines stays inside the state-file bound below.
-	maxDispatchRecordsPerMachine = 16
+	// maxDispatchMachineSentenceBytes bounds what a machine's own refusal may
+	// leave in this document, and it is the same bound the launch reads off
+	// the error channel (#126) so the two cannot drift: what is read is what
+	// can be stored. It is derived from a measurement of the sentences the
+	// Auxiliary can actually write — the widest literal refusal in
+	// `internal/approval` and `internal/auxiliary` is 103 bytes, and a wrapped
+	// chain carrying one system error that names a path under the product's
+	// own layout measures under 400 — taken to the power of two above. The
+	// sentence is kept verbatim and never paraphrased, so this is a bound on
+	// what is read, never a licence to rewrite what was read.
+	maxDispatchMachineSentenceBytes = 512
 
-	// maxDispatchStateBytes bounds the whole registry file. Derived from the
-	// record bound: 64 machines × 16 records × a record that stays under
-	// 512 bytes once encoded, plus the head — rounded to the power of two
-	// above, the same reading discipline as every other state document.
-	maxDispatchStateBytes = int64(1024 * 1024)
+	// maxDispatchObservationBytes bounds the Controller's own account of its
+	// own attempt. This one the product writes itself, from a closed set of
+	// sentences, and the widest of them measures 94 bytes; the bound sits at
+	// the power of two above with room for the launch refusals #126 adds.
+	maxDispatchObservationBytes = 256
+
+	// maxDispatchRecordsPerMachine bounds the history one machine keeps.
+	//
+	// It is derived from a measurement of the product's own proofs rather than
+	// from a round number: a machine holds one command at a time, and the
+	// busiest single machine of the `v0.1.1` proof crosses about thirty
+	// dispatches in one run (`play-removal` alone drives eleven, `play-refusals`
+	// eight, `play-lifecycle` seven). A history that dropped half of what one
+	// proof produced would be a history `#128` could not read back. Thirty-two
+	// is the power of two above that measurement.
+	//
+	// Records past the bound leave the registry oldest-first, and never a
+	// non-terminal one — an open dispatch cannot be forgotten. The named limit
+	// is that a machine which crosses the bound loses its oldest dispatches
+	// from the history the Console reads; the effects stay on the machine, and
+	// an instance whose last reported dispatch has left the history is shown
+	// with its revision unknown rather than with an invented one. Raising this
+	// number is a measurement away and changes no format.
+	maxDispatchRecordsPerMachine = 32
+
+	// maxDispatchStateBytes bounds the whole registry file, and it is derived
+	// from the two bounds above rather than chosen: 64 machines — the
+	// inventory's own bound — × 32 records × a record measured at 2 220 bytes
+	// in its worst case (685 bytes of identifiers, digests, states and stamps,
+	// plus the two free-text fields at their bound, each doubled because JSON
+	// escapes the quote and the backslash), plus the head, comes to 4 546 707
+	// bytes. This is the power of two above, so a legitimate history that the
+	// trimming keeps can never be refused by the file's own bound. The test
+	// suite builds that maximal registry and encodes it rather than trusting
+	// this arithmetic.
+	maxDispatchStateBytes = int64(8 * 1024 * 1024)
 )
 
 // Dispatch states, stored in English like every stored word of this package;
@@ -375,6 +409,22 @@ func validateDispatchRegistry(state DispatchRegistry) error {
 		}
 		if record.Operation == "" || record.ApprovalEpoch == 0 || record.Sequence == 0 {
 			return errors.New("a record must name its operation, epoch and sequence")
+		}
+		// The two free-text fields are refused here rather than trimmed in the
+		// rendering: a bound held at the drawing would be a document that grew
+		// silently behind a view that looked bounded.
+		if len(record.MachineSentence) > maxDispatchMachineSentenceBytes {
+			return fmt.Errorf("a machine sentence must stay within %d bytes", maxDispatchMachineSentenceBytes)
+		}
+		if len(record.ControllerObservation) > maxDispatchObservationBytes {
+			return fmt.Errorf("an observation must stay within %d bytes", maxDispatchObservationBytes)
+		}
+		// At most one of the two exists for any conclusion: one is a sentence
+		// the product did not write, the other is its own account of its own
+		// attempt, and a record carrying both would leave a reader unable to
+		// tell which it is reading.
+		if record.MachineSentence != "" && record.ControllerObservation != "" {
+			return errors.New("a record carries the machine's sentence or this Controller's observation, never both")
 		}
 		switch record.State {
 		case DispatchInFlight, DispatchNotLaunched, DispatchMachineRefused,
