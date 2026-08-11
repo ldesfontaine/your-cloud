@@ -402,6 +402,18 @@ func (handler *ControllerHandler) serveMachines(response http.ResponseWriter, re
 		handler.writeProblem(response, http.StatusServiceUnavailable, "projection_unavailable", 0)
 		return
 	}
+	// The command position is a second authority and is filled after the
+	// projection rather than inside it: the projection answers for the
+	// inventory and the observation chain, the registry answers for what a
+	// machine reported having consumed, and merging the two readers would make
+	// one of them look like a source of the other. No new route: the Console
+	// learns the successor it must sign where it already reads its machines.
+	for index := range view.Machines {
+		sequence, certain := handler.dispatches.CommandPosition(view.Machines[index].MachineID)
+		view.Machines[index].CommandPosition = ProjectedCommandPosition{
+			LastReportedSequence: sequence, Certain: certain,
+		}
+	}
 	encoded, err := EncodeMachinesView(view)
 	if err != nil {
 		handler.writeProblem(response, http.StatusServiceUnavailable, "projection_unavailable", 0)

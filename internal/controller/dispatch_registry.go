@@ -286,6 +286,38 @@ func (store *DispatchRegistryStore) HighestReportedSequence(machineID string) ui
 	return highest
 }
 
+// CommandPosition is what this Controller may tell the Console about one
+// machine: the highest position that machine itself reported as consumed, and
+// whether that position is certain.
+//
+// It is uncertain as soon as one dispatch of that machine was launched and not
+// reported. That state is never resolved here, by a retry or by a guess: the
+// machine may have consumed or not, and the reprise is a human gesture costing
+// at most one wasted approval. `not_launched` and `machine_refused` leave the
+// position certain, because both mean the machine consumed nothing and this
+// Controller either observed it or was told so.
+func (store *DispatchRegistryStore) CommandPosition(machineID string) (uint64, bool) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var highest uint64
+	certain := true
+	for index := range store.state.Records {
+		record := &store.state.Records[index]
+		if record.MachineID != machineID {
+			continue
+		}
+		switch record.State {
+		case DispatchReported:
+			if record.Sequence > highest {
+				highest = record.Sequence
+			}
+		case DispatchLaunchedUnreported, DispatchInFlight:
+			certain = false
+		}
+	}
+	return highest, certain
+}
+
 // Accept durably writes a new record in `in_flight`, before any connection
 // exists to fail. The write is the point of consumption on the Controller:
 // everything before it happened to a request, everything after it happens to
@@ -312,12 +344,12 @@ func (store *DispatchRegistryStore) Accept(record DispatchRecord) error {
 // can carry what a report established; the report's own fields are filled by
 // the ingestion that validates it (#127), never by the launch.
 func (store *DispatchRegistryStore) Conclude(
-	approvalSHA256, state, machineSentence, controllerObservation string, finishedAtUnix uint64,
+	approvalSHA256 string, conclusion DispatchConclusion, finishedAtUnix uint64,
 ) error {
-	switch state {
+	switch conclusion.State {
 	case DispatchNotLaunched, DispatchMachineRefused, DispatchLaunchedUnreported, DispatchReported:
 	default:
-		return fmt.Errorf("a dispatch does not conclude into %q", state)
+		return fmt.Errorf("a dispatch does not conclude into %q", conclusion.State)
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -330,9 +362,11 @@ func (store *DispatchRegistryStore) Conclude(
 		if record.terminal() {
 			return errors.New("this dispatch already holds its conclusion")
 		}
-		record.State = state
-		record.MachineSentence = machineSentence
-		record.ControllerObservation = controllerObservation
+		record.State = conclusion.State
+		record.MachineSentence = conclusion.MachineSentence
+		record.ControllerObservation = conclusion.ControllerObservation
+		record.ReportedChanged = conclusion.ReportedChanged
+		record.ReportedOutcome = conclusion.ReportedOutcome
 		record.FinishedAtUnix = finishedAtUnix
 		// The bound is held here too: a conclusion is what turns a record
 		// terminal, so a history that were only trimmed on acceptance would

@@ -468,19 +468,28 @@ demandé des décisions qu'il ne nommait pas, et elles sont ici.
   l'attribuait à la porte dont il ne vient pas. Les lignes d'archive et de retour
   disent désormais ce que la vue Services dit ; les profils livrés gardent leur
   étiquette, et aucune ligne n'est ajoutée ni retirée.
-- **`RequireDefinitionAgreement` n'est pas miroité, et c'est un constat.**
-  C'était la seconde dette de `#118`, conditionnée à ce que la Console tienne une
-  définition à côté d'un plan. Elle ne la tient pas : cette vue écrit et gèle des
-  définitions, et n'affiche aucun plan. Le contrôle croisé reste où il peut être
-  fait — construction par le Controller, revérification par l'Auxiliaire,
-  définition en main — et rejoindra la fenêtre d'approbation le jour où un plan et
-  une définition s'y rencontrent.
-- **Aucune instance n'est affichée, et l'absence est nommée.** Rien entre le
-  Controller et la Console ne projette quelle machine exécute quelle révision :
-  ni `GET /v0/machines`, ni aucune route de ce contrat. La vue le dit plutôt que
-  de deviner un état « déployée » qu'aucune lecture ne soutient. Suivre les
-  instances demandera une projection que ce palier n'a pas écrite, et le câblage
-  plan → UI que `v0.1.0` a laissé ouvert.
+- **`RequireDefinitionAgreement` n'est pas encore miroité, et la condition est
+  désormais nommée.** C'était la seconde dette de `#118`, conditionnée à ce que
+  la Console tienne une définition à côté d'un plan. Cette vue ne la tient pas :
+  elle écrit et gèle des définitions, et n'affiche aucun plan. Le contrôle croisé
+  reste où il peut être fait — construction par le Controller, revérification par
+  le Controller à la soumission depuis `v0.1.2`, revérification par l'Auxiliaire,
+  définition en main — et le miroir Rust rejoindra la fenêtre d'approbation avec
+  `#123`–`#124`, où les deux documents se rencontrent enfin. Le contrat de ce
+  trajet est [`TRAJET-DE-COMMANDE.md`](TRAJET-DE-COMMANDE.md).
+- **La projection des instances existe depuis `v0.1.2` ; son affichage arrive
+  avec `#124`.** La lecture qui manquait à ce palier est
+  `GET /v0/plan-dispatches` : le Controller lit le rapport de la machine, refuse
+  tout rapport qui ne nomme pas ce dispatch, et rend l'histoire bornée de chaque
+  lancement — état, instants, empreintes, et ce que la machine a conclu. Un
+  rapport de `deploy_user_service` nomme la machine, le slug et la révision que
+  le plan approuvé épingle, un rapport de `remove_user_service` nomme ce qui
+  survit. Ce qui reste dû est la **vue** : la vue Services rendra la révision que
+  chaque instance court **depuis ce que la machine a rapporté**, jamais depuis
+  une supposition, et une instance dont le dernier dispatch n'a pas été rapporté
+  — ou dont l'enregistrement est sorti de l'histoire bornée — sera affichée avec
+  son incertitude plutôt qu'avec un état inventé. Le câblage plan → UI que
+  `v0.1.0` avait laissé ouvert se ferme avec la vue Plans de `#124`.
 
 ## Ce que la preuve devra constater
 

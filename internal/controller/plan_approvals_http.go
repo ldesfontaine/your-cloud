@@ -100,7 +100,19 @@ type PlanDispatchAcceptedView struct {
 // the machine's own sentence when one was read and the Controller's own
 // observation otherwise.
 type auxiliaryDispatcher interface {
-	Dispatch(record DispatchRecord, wrapper []byte) (state, machineSentence, controllerObservation string)
+	Dispatch(record DispatchRecord, wrapper []byte) DispatchConclusion
+}
+
+// DispatchConclusion is everything one launch established, and nothing more.
+// It is one value rather than a list of returns because the registry writes
+// them together or not at all: a state without what a report carried, or a
+// report without the state it concluded, would be a record that half happened.
+type DispatchConclusion struct {
+	State                 string
+	MachineSentence       string
+	ControllerObservation string
+	ReportedChanged       bool
+	ReportedOutcome       string
 }
 
 // AttachAuxiliaryDispatcher installs the one engine of this product whose
@@ -282,16 +294,18 @@ func (handler *ControllerHandler) servePlanApprovals(response http.ResponseWrite
 	// the dispatcher's. Its conclusion is written durably before the answer:
 	// an answer that outran its own state would let a Console read a history
 	// this Controller had not written yet.
-	state, machineSentence, observation := handler.dispatcher.Dispatch(record, wrapper)
+	conclusion := handler.dispatcher.Dispatch(record, wrapper)
 	finished := uint64(handler.now().Unix())
-	if err := handler.dispatches.Conclude(approvalDigest, state, machineSentence, observation, finished); err != nil {
+	if err := handler.dispatches.Conclude(approvalDigest, conclusion, finished); err != nil {
 		handler.writeProblem(response, http.StatusServiceUnavailable, "controller_state_unavailable", 0)
 		return
 	}
 	concluded := record
-	concluded.State = state
-	concluded.MachineSentence = machineSentence
-	concluded.ControllerObservation = observation
+	concluded.State = conclusion.State
+	concluded.MachineSentence = conclusion.MachineSentence
+	concluded.ControllerObservation = conclusion.ControllerObservation
+	concluded.ReportedChanged = conclusion.ReportedChanged
+	concluded.ReportedOutcome = conclusion.ReportedOutcome
 	concluded.FinishedAtUnix = finished
 	handler.writeAccepted(response, context, http.StatusOK, PlanDispatchAcceptedView{
 		SchemaVersion: planApprovalSchema,

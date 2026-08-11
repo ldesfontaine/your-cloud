@@ -227,6 +227,7 @@ func runControllerServe(arguments []string) error {
 	// wrote. A Controller that cannot build it serves no command route at all
 	// rather than a door that would spend a human approval and reach nothing.
 	dispatcher, err := controller.NewSSHDispatcher(
+		state.InfrastructureID,
 		filepath.Join(credentialDirectory, commandIdentitiesCredential),
 		filepath.Join(credentialDirectory, commandEndpointsCredential),
 		os.Getenv(runtimeDirectoryEnvironment),

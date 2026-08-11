@@ -33,9 +33,11 @@ import (
 // can name this type, and an unattached Controller serves no such route.
 type haltedDispatcher struct{}
 
-func (haltedDispatcher) Dispatch(DispatchRecord, []byte) (string, string, string) {
-	return DispatchNotLaunched, "",
-		"the connection failed before the first byte of the wrapper; the machine is unchanged"
+func (haltedDispatcher) Dispatch(DispatchRecord, []byte) DispatchConclusion {
+	return DispatchConclusion{
+		State:                 DispatchNotLaunched,
+		ControllerObservation: "the connection failed before the first byte of the wrapper; the machine is unchanged",
+	}
 }
 
 // signedApprovalFor signs one envelope with the fixture's human key — the key
@@ -284,7 +286,8 @@ func TestPlanApprovalRefusalsAreNamedAndSpendNothing(t *testing.T) {
 			if err := fixture.dispatches.Accept(seeded); err != nil {
 				t.Fatal(err)
 			}
-			if err := fixture.dispatches.Conclude(seeded.ApprovalSHA256, DispatchReported, "", "", 2); err != nil {
+			if err := fixture.dispatches.Conclude(seeded.ApprovalSHA256,
+				DispatchConclusion{State: DispatchReported}, 2); err != nil {
 				t.Fatal(err)
 			}
 			envelope := probeEnvelope(fixture, pair, "lab-machine-1", 5)

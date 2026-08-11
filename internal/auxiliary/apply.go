@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/ldesfontaine/your-cloud/internal/approval"
+	"github.com/ldesfontaine/your-cloud/internal/auxiliaryreport"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 	"github.com/ldesfontaine/your-cloud/internal/servicedefinition"
 )
@@ -33,16 +34,13 @@ const (
 // answer is the answer — the result is unknown until something observes the
 // machine.
 const (
-	// OutcomeApplied is the machine holding the approved state, whether reaching
-	// it changed anything or found it already true.
-	OutcomeApplied = "applied"
-	// OutcomeRolledBack is a controlled failure whose approved rollback was
-	// attempted and reached the state that rollback describes.
-	OutcomeRolledBack = "rolled_back_after_controlled_failure"
-	// OutcomePartial is a controlled failure whose approved rollback was
-	// attempted and failed in its turn. It claims nothing about the machine
-	// beyond what a read could still establish.
-	OutcomePartial = "partial_state_after_failed_rollback"
+	// The three conclusions a mutating operation may reach. They live in
+	// `internal/auxiliaryreport` with the document that carries them, so the
+	// machine that writes a word and the Controller that reads it back can
+	// never hold two lists.
+	OutcomeApplied    = auxiliaryreport.OutcomeApplied
+	OutcomeRolledBack = auxiliaryreport.OutcomeRolledBack
+	OutcomePartial    = auxiliaryreport.OutcomePartial
 )
 
 // The closed vocabulary an Observation is written in. Each word is a fact or the
@@ -146,55 +144,11 @@ type Application struct {
 	Changed      bool
 }
 
-// Observation is what read-only calls could still establish about this machine
-// after a rollback had itself failed.
-//
-// It is written in the closed vocabulary above and never in the words of a
-// command: a reader learns what was seen, or that it could not be seen at all.
-// It is deliberately incapable of saying that the machine is in a known state,
-// because a failed rollback is precisely the moment that ceased to be true.
-// Which words it carries is decided by the kind of instance that was being
-// applied, and every one of them is omitted rather than reported empty where the
-// operation never touched what it answers for: an observation says what was
-// seen, and a word about something nobody looked at would be neither a fact nor
-// an admission. The four words of an account and a container are what a service,
-// an entrypoint and a route are left holding; a route adds the one file it is;
-// and a passage carries none of the four, because it has neither an account nor
-// a container to be left holding.
-type Observation struct {
-	Account   string `json:"account,omitempty"`
-	UnitFile  string `json:"unit_file,omitempty"`
-	Service   string `json:"service,omitempty"`
-	Container string `json:"container,omitempty"`
-	// Fragment is filled only while the instance that was being applied is a
-	// route of either kind, because it is the only instance whose state is a
-	// fragment file. For a route the passage carries it may also read `unbacked`,
-	// which is the fragment being there and the junction not — the one state this
-	// palier's contract asks to be observable rather than inferred.
-	Fragment string `json:"fragment,omitempty"`
-	// LinkKey, LinkInterface, LinkPeer and LinkBounds are filled only for a
-	// passage. The key is reported present or absent and never by its value: the
-	// public half would say more than an observation needs, and the private half
-	// is not something any function of this package can reach. The bounds are
-	// reported the same way and for the reason the peer is: after a rollback that
-	// failed in its turn, whether this machine is left holding a peer nothing
-	// bounds — or bounds with nothing left to bound — is exactly what a human has
-	// to read, and neither can be inferred from the other.
-	LinkKey       string `json:"link_key,omitempty"`
-	LinkInterface string `json:"link_interface,omitempty"`
-	LinkPeer      string `json:"link_peer,omitempty"`
-	LinkBounds    string `json:"link_bounds,omitempty"`
-	// Data, Egress and Archive are filled only for the operations of a
-	// data-bearing profile, and they are three words rather than one because
-	// neither can be inferred from the others. After a rollback that failed in its
-	// turn, whether this machine still holds the data, whether the account is still
-	// confined, and whether the archive the operation was writing exists are
-	// exactly the three things a human has to read. Each is reported present or
-	// absent and never by its content: an archive is named, never opened.
-	Data    string `json:"data,omitempty"`
-	Egress  string `json:"egress,omitempty"`
-	Archive string `json:"archive,omitempty"`
-}
+// Observation is the closed document a report carries, and it lives in
+// `internal/auxiliaryreport` beside the report itself: one document, one
+// package, written by the machine and read back by the Controller. The alias
+// keeps this package's own vocabulary unchanged.
+type Observation = auxiliaryreport.Observation
 
 // ControlledFailure is a failure that happened after this machine had already
 // been changed, together with what was done about it.

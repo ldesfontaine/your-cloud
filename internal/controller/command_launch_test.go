@@ -81,8 +81,8 @@ func newLaunchFixture(t *testing.T) launchFixture {
 	}
 	runner := &recordingRunner{}
 	now := time.Unix(1_700_000_000, 0).UTC()
-	dispatcher, err := newCommandDispatcher("/usr/bin/ssh", endpoints, identities, runtime, runner,
-		func() time.Time { return now })
+	dispatcher, err := newCommandDispatcher(testInfrastructureID, "/usr/bin/ssh", endpoints, identities, runtime,
+		runner, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,10 +199,11 @@ func TestAnExpiredAuthoritySendsNothing(t *testing.T) {
 	record := launchRecord(fixture, 900)
 	record.ExpiresAtUnix = uint64(fixture.now.Unix())
 
-	state, sentence, observation := fixture.dispatcher.Dispatch(record, []byte("{}"))
+	concluded := fixture.dispatcher.Dispatch(record, []byte("{}"))
 
-	if state != DispatchNotLaunched || sentence != "" || observation == "" {
-		t.Fatalf("an expired authority: state=%s sentence=%q observation=%q", state, sentence, observation)
+	if concluded.State != DispatchNotLaunched || concluded.MachineSentence != "" ||
+		concluded.ControllerObservation == "" {
+		t.Fatalf("an expired authority: %+v", concluded)
 	}
 	if fixture.runner.program != "" {
 		t.Fatal("an expired authority still ran a client")
@@ -290,22 +291,23 @@ func TestTheConclusionNeverInventsAStrongerState(t *testing.T) {
 			observed: true,
 		},
 		{
-			name:     "an answer this palier does not yet read as a report",
+			name:     "a report that names another dispatch",
 			result:   commandResult{WroteStandardInput: true, ExitCode: 0, StandardOutput: []byte(`{"schema_version":1}`)},
 			state:    DispatchLaunchedUnreported,
 			observed: true,
 		},
 	} {
-		state, sentence, observation := concludeLaunch(answer.result, maxDispatchMachineSentenceBytes)
-		if state != answer.state || sentence != answer.sentence {
-			t.Fatalf("%s: state=%s sentence=%q", answer.name, state, sentence)
+		concluded := concludeLaunch(reportedRecord(), testInfrastructureID,
+			answer.result, maxDispatchMachineSentenceBytes)
+		if concluded.State != answer.state || concluded.MachineSentence != answer.sentence {
+			t.Fatalf("%s: state=%s sentence=%q", answer.name, concluded.State, concluded.MachineSentence)
 		}
-		if answer.observed != (observation != "") {
-			t.Fatalf("%s: observation=%q", answer.name, observation)
+		if answer.observed != (concluded.ControllerObservation != "") {
+			t.Fatalf("%s: observation=%q", answer.name, concluded.ControllerObservation)
 		}
 		// The two kinds of statement are never carried together: the registry
 		// refuses a record that holds both.
-		if sentence != "" && observation != "" {
+		if concluded.MachineSentence != "" && concluded.ControllerObservation != "" {
 			t.Fatalf("%s: the machine's sentence and this Controller's observation travelled together", answer.name)
 		}
 	}
@@ -389,9 +391,10 @@ func TestALaunchWithoutItsEnrolmentFactsSendsNothing(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		state, sentence, observation := fixture.dispatcher.Dispatch(launchRecord(fixture, 900), []byte("{}"))
-		if state != DispatchNotLaunched || sentence != "" || observation == "" {
-			t.Fatalf("missing %s: state=%s sentence=%q observation=%q", missing, state, sentence, observation)
+		concluded := fixture.dispatcher.Dispatch(launchRecord(fixture, 900), []byte("{}"))
+		if concluded.State != DispatchNotLaunched || concluded.MachineSentence != "" ||
+			concluded.ControllerObservation == "" {
+			t.Fatalf("missing %s: %+v", missing, concluded)
 		}
 		if fixture.runner.program != "" {
 			t.Fatalf("missing %s: a client was still run", missing)
@@ -411,11 +414,28 @@ func TestTheLaunchRefusesPathsItCouldNotOwn(t *testing.T) {
 		{"/usr/bin/ssh", "/a/../a", "/b", "/c"},
 		{"/usr/bin/ssh", "/a", "/b/", "/c"},
 	} {
-		if _, err := newCommandDispatcher(hostile[0], hostile[1], hostile[2], hostile[3], runner, clock); err == nil {
+		if _, err := newCommandDispatcher(testInfrastructureID, hostile[0], hostile[1], hostile[2], hostile[3],
+			runner, clock); err == nil {
 			t.Fatalf("the launch accepted %v", hostile)
 		}
 	}
-	if _, err := newCommandDispatcher("/usr/bin/ssh", "/a", "/b", "/c", nil, clock); err == nil {
+	if _, err := newCommandDispatcher(testInfrastructureID, "/usr/bin/ssh", "/a", "/b", "/c", nil, clock); err == nil {
 		t.Fatal("the launch accepted no client at all")
+	}
+	// A launch answers for one infrastructure, and it is what a report is held
+	// against: one that named none could accept a report from anywhere.
+	if _, err := newCommandDispatcher("not-a-uuid", "/usr/bin/ssh", "/a", "/b", "/c", runner, clock); err == nil {
+		t.Fatal("the launch accepted an infrastructure it could not name")
+	}
+}
+
+// reportedRecord is the dispatch the conclusion table is read against: one
+// machine, one operation, one position, one pair.
+func reportedRecord() DispatchRecord {
+	return DispatchRecord{
+		ApprovalSHA256: strings.Repeat("a", 64), MachineID: "lab-machine-1",
+		Operation: "deploy_oci_probe", ApprovalEpoch: 1, Sequence: 7,
+		PlanSHA256: strings.Repeat("b", 64), RollbackSHA256: strings.Repeat("c", 64),
+		State: DispatchInFlight, AcceptedAtUnix: 1, ExpiresAtUnix: 901,
 	}
 }

@@ -87,13 +87,13 @@ func TestDispatchRegistryRefusesASecondConclusion(t *testing.T) {
 	if err := store.Accept(record); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Conclude(record.ApprovalSHA256, DispatchNotLaunched, "", "unreachable", 2); err != nil {
+	if err := store.Conclude(record.ApprovalSHA256, DispatchConclusion{State: DispatchNotLaunched, MachineSentence: "", ControllerObservation: "unreachable"}, 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Conclude(record.ApprovalSHA256, DispatchLaunchedUnreported, "", "", 3); err == nil {
+	if err := store.Conclude(record.ApprovalSHA256, DispatchConclusion{State: DispatchLaunchedUnreported, MachineSentence: "", ControllerObservation: ""}, 3); err == nil {
 		t.Fatal("a second conclusion was accepted")
 	}
-	if err := store.Conclude(strings.Repeat("9", 64), DispatchNotLaunched, "", "", 2); err == nil {
+	if err := store.Conclude(strings.Repeat("9", 64), DispatchConclusion{State: DispatchNotLaunched, MachineSentence: "", ControllerObservation: ""}, 2); err == nil {
 		t.Fatal("a conclusion without an open record was accepted")
 	}
 }
@@ -116,7 +116,7 @@ func TestDispatchRegistryBoundsTerminalHistoryPerMachine(t *testing.T) {
 			// it, whatever grows after it.
 			continue
 		}
-		if err := store.Conclude(record.ApprovalSHA256, DispatchNotLaunched, "", "no engine", record.AcceptedAtUnix); err != nil {
+		if err := store.Conclude(record.ApprovalSHA256, DispatchConclusion{State: DispatchNotLaunched, MachineSentence: "", ControllerObservation: "no engine"}, record.AcceptedAtUnix); err != nil {
 			t.Fatal(err)
 		}
 	}

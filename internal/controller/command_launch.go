@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ldesfontaine/your-cloud/internal/identifier"
 	"github.com/ldesfontaine/your-cloud/internal/machineid"
 	"github.com/ldesfontaine/your-cloud/internal/strictjson"
 )
@@ -182,6 +183,7 @@ type commandResult struct {
 // risk is that the client's version and compiled defaults belong to the
 // distribution; the product bounds what it passes, not what OpenSSH is.
 type CommandDispatcher struct {
+	infrastructure string
 	program        string
 	endpoints      string
 	identities     string
@@ -205,8 +207,8 @@ const sshClientProgram = "/usr/bin/ssh"
 // with the command identities, the root-owned directory of endpoint sheets the
 // enrolment wrote, and the runtime directory the known hosts are derived into
 // and which disappears with the service.
-func NewSSHDispatcher(identities, endpoints, runtime string) (*CommandDispatcher, error) {
-	return newCommandDispatcher(sshClientProgram, endpoints, identities, runtime,
+func NewSSHDispatcher(infrastructureID, identities, endpoints, runtime string) (*CommandDispatcher, error) {
+	return newCommandDispatcher(infrastructureID, sshClientProgram, endpoints, identities, runtime,
 		systemCommandRunner{maxAnswerBytes: maxCommandAnswerBytes}, time.Now)
 }
 
@@ -214,9 +216,12 @@ func NewSSHDispatcher(identities, endpoints, runtime string) (*CommandDispatcher
 // service has no home, no `~/.ssh` and no user configuration, so every entry of
 // the client must be an explicit path — there is nowhere an identity could be
 // picked up by default, and this constructor keeps it that way.
-func newCommandDispatcher(program, endpoints, identities, runtime string, runner commandRunner, now func() time.Time) (*CommandDispatcher, error) {
+func newCommandDispatcher(infrastructureID, program, endpoints, identities, runtime string, runner commandRunner, now func() time.Time) (*CommandDispatcher, error) {
 	if runner == nil || now == nil {
 		return nil, errors.New("a launch needs a client and a clock")
+	}
+	if identifier.ValidateUUIDv4(infrastructureID) != nil {
+		return nil, errors.New("a launch answers for one canonical infrastructure")
 	}
 	for _, path := range []string{program, endpoints, identities, runtime} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
@@ -224,7 +229,8 @@ func newCommandDispatcher(program, endpoints, identities, runtime string, runner
 		}
 	}
 	return &CommandDispatcher{
-		program: program, endpoints: endpoints, identities: identities,
+		infrastructure: infrastructureID,
+		program:        program, endpoints: endpoints, identities: identities,
 		runtime: runtime, runner: runner, now: now,
 		maxStderrBytes: maxDispatchMachineSentenceBytes,
 	}, nil
@@ -237,26 +243,26 @@ func newCommandDispatcher(program, endpoints, identities, runtime string, runner
 // It reads top to bottom as the contract's order of effects: read the enrolment
 // facts, derive the deadline from the authority, derive the known hosts, run
 // the bounded client, and conclude.
-func (dispatcher *CommandDispatcher) Dispatch(record DispatchRecord, wrapper []byte) (string, string, string) {
+func (dispatcher *CommandDispatcher) Dispatch(record DispatchRecord, wrapper []byte) DispatchConclusion {
 	endpoint, err := dispatcher.readEndpoint(record.MachineID)
 	if err != nil {
 		// Nothing was opened, and the Controller saw why.
-		return DispatchNotLaunched, "", launchObservation("this machine has no usable command endpoint on this Controller")
+		return notLaunched("this machine has no usable command endpoint on this Controller")
 	}
 	identity := filepath.Join(dispatcher.identities, record.MachineID)
 	if err := requireCommandIdentity(identity); err != nil {
-		return DispatchNotLaunched, "", launchObservation("this Controller holds no command identity for this machine")
+		return notLaunched("this Controller holds no command identity for this machine")
 	}
 	remaining, ok := dispatcher.remainingAuthority(record)
 	if !ok {
 		// The window closed between acceptance and here. Nothing is sent: a
 		// launch that outran the authority permitting it would have nothing
 		// left to justify it.
-		return DispatchNotLaunched, "", launchObservation("the approval's own window closed before any byte was sent")
+		return notLaunched("the approval's own window closed before any byte was sent")
 	}
 	knownHosts, err := dispatcher.deriveKnownHosts(endpoint)
 	if err != nil {
-		return DispatchNotLaunched, "", launchObservation("this Controller could not derive the known host of this machine")
+		return notLaunched("this Controller could not derive the known host of this machine")
 	}
 	defer func() { _ = os.Remove(knownHosts) }()
 
@@ -264,7 +270,7 @@ func (dispatcher *CommandDispatcher) Dispatch(record DispatchRecord, wrapper []b
 	defer cancel()
 	result := dispatcher.runner.Run(context, dispatcher.program,
 		commandArguments(endpoint, identity, knownHosts, remaining), wrapper)
-	return concludeLaunch(result, dispatcher.maxStderrBytes)
+	return concludeLaunch(record, dispatcher.infrastructure, result, dispatcher.maxStderrBytes)
 }
 
 // remainingAuthority derives the launch's whole deadline from the envelope's
@@ -393,30 +399,56 @@ func commandArguments(endpoint commandEndpoint, identity, knownHosts string, rem
 // concludeLaunch turns what happened into one of the registry's terminal
 // states, and the whole point is that it never invents a stronger one.
 //
-// `#127` replaces the last branch: a valid report read off the standard output
-// makes the dispatch `rapporté`. Until then a machine that answered anything
-// but a bare refusal leaves `lancé, non rapporté`, which is the honest weaker
-// state rather than a success nobody read.
-func concludeLaunch(result commandResult, maxSentence int) (string, string, string) {
+// It reads top to bottom as the weakening it is: an observed failure before the
+// wrapper, a channel that closed, a bare refusal, a valid report, and — for
+// everything else, including a report that named another dispatch — the honest
+// weaker state rather than a success nobody established.
+func concludeLaunch(
+	record DispatchRecord, infrastructureID string, result commandResult, maxSentence int,
+) DispatchConclusion {
 	if !result.WroteStandardInput {
 		// The client failed before the first byte of the wrapper, and this
 		// Controller observed it: a host key that changed, an unreachable
 		// machine, an authentication that did not pass. No effect exists.
-		return DispatchNotLaunched, "", launchObservation(
-			"the connection failed before the first byte of the wrapper; the machine is unchanged")
+		return notLaunched("the connection failed before the first byte of the wrapper; the machine is unchanged")
 	}
 	if result.Err != nil {
-		return DispatchLaunchedUnreported, "", launchObservation(
-			"the channel closed before this Controller could read an answer")
+		return unreported("the channel closed before this Controller could read an answer")
 	}
-	sentence := boundedMachineSentence(result.StandardError, maxSentence)
 	if result.ExitCode != 0 && len(result.StandardOutput) == 0 {
 		// A refusal renders no report: the machine exited in failure and wrote
 		// why. The sentence is kept exactly as received and never paraphrased.
-		return DispatchMachineRefused, sentence, ""
+		return DispatchConclusion{
+			State:           DispatchMachineRefused,
+			MachineSentence: boundedMachineSentence(result.StandardError, maxSentence),
+		}
 	}
-	return DispatchLaunchedUnreported, "", launchObservation(
-		"the machine answered something this Controller does not yet read as a report")
+	ingested, err := ingestReport(record, infrastructureID, result.StandardOutput)
+	if err != nil {
+		// A discarded report never becomes a failure and never becomes a
+		// success: this Controller does not know what the machine did, and it
+		// says so. The reason is its own observation, never quoted as the
+		// machine's sentence.
+		return unreported(err.Error())
+	}
+	changed, outcome, err := reportedConclusion(ingested)
+	if err != nil {
+		return unreported(err.Error())
+	}
+	// A report that was read carries no sentence of its own: the error channel
+	// of a machine that concluded is noise, and storing it beside a conclusion
+	// would make a success look like it had something to say.
+	return DispatchConclusion{
+		State: DispatchReported, ReportedChanged: changed, ReportedOutcome: outcome,
+	}
+}
+
+func notLaunched(observation string) DispatchConclusion {
+	return DispatchConclusion{State: DispatchNotLaunched, ControllerObservation: launchObservation(observation)}
+}
+
+func unreported(observation string) DispatchConclusion {
+	return DispatchConclusion{State: DispatchLaunchedUnreported, ControllerObservation: launchObservation(observation)}
 }
 
 // boundedMachineSentence keeps at most the bound the registry holds and drops

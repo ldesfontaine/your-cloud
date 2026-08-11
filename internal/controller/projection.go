@@ -44,6 +44,31 @@ type ProjectedMachine struct {
 	EnrollmentStatus  *string               `json:"enrollment_status"`
 	ObservationStatus *string               `json:"observation_status"`
 	Observation       *ProjectedObservation `json:"observation"`
+	// CommandPosition is what the Console needs in order to sign the exact
+	// successor of this machine's sequence, and it is two read-only fields
+	// rather than one number because the second is what keeps the first
+	// honest.
+	CommandPosition ProjectedCommandPosition `json:"command_position"`
+}
+
+// ProjectedCommandPosition is the position this Controller can attest, and
+// whether it is certain.
+//
+// `LastReportedSequence` is the highest position a machine itself *reported* as
+// consumed — never one this Controller assumed, and never one it merely sent.
+// Zero means this Controller can attest nothing, which is not the same as a
+// machine that has consumed nothing, and the Console says so.
+//
+// `Certain` is false as soon as a dispatch of that machine was launched and not
+// reported: the machine may have consumed or not, and the product says that
+// rather than guessing. The reprise then costs at most one wasted human
+// approval — the human approves at the position this Controller knows, and if
+// the machine has already gone past it, it refuses by naming its own position
+// in its own sentence, which the Console shows without rewriting
+// (docs/architecture/TRAJET-DE-COMMANDE.md).
+type ProjectedCommandPosition struct {
+	LastReportedSequence uint64 `json:"last_reported_sequence"`
+	Certain              bool   `json:"certain"`
 }
 
 type ProjectedObservation struct {
