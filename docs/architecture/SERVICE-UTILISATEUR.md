@@ -477,19 +477,29 @@ demandé des décisions qu'il ne nommait pas, et elles sont ici.
   définition en main — et le miroir Rust rejoindra la fenêtre d'approbation avec
   `#123`–`#124`, où les deux documents se rencontrent enfin. Le contrat de ce
   trajet est [`TRAJET-DE-COMMANDE.md`](TRAJET-DE-COMMANDE.md).
-- **La projection des instances existe depuis `v0.1.2` ; son affichage arrive
-  avec `#124`.** La lecture qui manquait à ce palier est
-  `GET /v0/plan-dispatches` : le Controller lit le rapport de la machine, refuse
-  tout rapport qui ne nomme pas ce dispatch, et rend l'histoire bornée de chaque
-  lancement — état, instants, empreintes, et ce que la machine a conclu. Un
-  rapport de `deploy_user_service` nomme la machine, le slug et la révision que
-  le plan approuvé épingle, un rapport de `remove_user_service` nomme ce qui
-  survit. Ce qui reste dû est la **vue** : la vue Services rendra la révision que
-  chaque instance court **depuis ce que la machine a rapporté**, jamais depuis
-  une supposition, et une instance dont le dernier dispatch n'a pas été rapporté
-  — ou dont l'enregistrement est sorti de l'histoire bornée — sera affichée avec
-  son incertitude plutôt qu'avec un état inventé. Le câblage plan → UI que
-  `v0.1.0` avait laissé ouvert se ferme avec la vue Plans de `#124`.
+- **Les instances sont affichées depuis `v0.1.2`, et de deux provenances
+  distinctes.** La lecture qui manquait est `GET /v0/plan-dispatches` : le
+  Controller rend l'histoire bornée de chaque lancement — état, instants,
+  empreintes, la révision que le plan approuvé épinglait, et ce que la machine a
+  conclu. La vue Services rend donc, pour chaque instance : **la révision, qui
+  vient du plan approuvé — vérifiée deux fois, par ce Controller à la
+  soumission et par l'Auxiliaire avant toute mutation — et le fait qu'elle
+  court, qui vient du rapport.** Les deux origines restent lisibles séparément :
+  l'écran ne les fusionne pas en une affirmation unique. Une instance dont le
+  dernier dispatch n'a pas été rapporté, ou dont l'enregistrement est sorti de
+  l'histoire bornée, est affichée avec son incertitude plutôt qu'avec un état
+  inventé.
+  
+  La limite, écrite plutôt que découverte : **une modification faite hors du
+  produit après le dispatch n'est visible ni par l'une ni par l'autre**, et ne
+  le serait pas davantage si la révision venait du rapport — celui-ci est émis
+  au moment de l'application et ne fait que répéter le plan qu'il vient de
+  vérifier. Seule une observation la verrait, et ce palier n'en ajoute aucune ;
+  c'est la distinction `déclaré` contre `vérifié` que ce produit fait déjà
+  ailleurs, et la vue accueillera une colonne observée le jour venu sans que
+  rien de celle-ci soit réécrit. Le câblage plan → UI que `v0.1.0` avait laissé
+  ouvert se ferme avec la vue Plans de `#124` ; le contrat est
+  [`TRAJET-DE-COMMANDE.md`](TRAJET-DE-COMMANDE.md).
 
 ## Ce que la preuve devra constater
 

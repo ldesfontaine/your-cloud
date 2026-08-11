@@ -662,16 +662,49 @@ d'autre :
 >   plan → UI que `v0.1.0` avait laissé ouvert est fermé par la vue Plans de
 >   `#124`.
 
-**La dette « instances » de la vue Services se solde ici.** `SERVICE-UTILISATEUR.md`
-constate que rien ne projette quelle machine exécute quelle révision, et que
-suivre les instances demandera « une projection que ce palier n'a pas écrite, et
-le câblage plan → UI que `v0.1.0` a laissé ouvert ». Les deux arrivent ensemble :
-un rapport de `deploy_user_service` nomme la machine, le slug et la révision
-épinglée par le plan approuvé, et un rapport de `remove_user_service` nomme ce
-qui survit. La vue Services affiche donc la révision que chaque instance court
-**depuis un rapport**, jamais depuis une supposition — et une instance dont le
-dernier dispatch n'a pas été rapporté est affichée avec son incertitude plutôt
-qu'avec un état inventé.
+**La dette « instances » de la vue Services se solde ici, et sa phrase est
+amendée pour dire exactement ce qu'elle fait.** `SERVICE-UTILISATEUR.md`
+constatait que rien ne projette quelle machine exécute quelle révision.
+
+La formulation initiale — « la révision vient du rapport » — décrivait quelque
+chose qui n'existe pas : **le rapport de l'Auxiliaire ne nomme ni le slug ni la
+révision**, vérifié champ par champ. La phrase juste est celle-ci :
+
+> **La révision vient du plan approuvé, et le fait que l'instance la court vient
+> du rapport.**
+
+Les deux provenances sont distinctes et le restent à l'écran. Ce que chacune
+vaut :
+
+- **la révision** est enregistrée à la soumission, prise dans le plan que ce
+  Controller vient de parser, jamais dans la requête. Le couple (définition,
+  empreinte que le plan épingle) est tenu deux fois avant d'être stocké — par ce
+  Controller à la soumission, par l'Auxiliaire depuis les octets de la
+  définition avant de toucher la machine. C'est un fait vérifié, pas une
+  déclaration ;
+- **le fait qu'elle court** vient du rapport, et de lui seul : une instance dont
+  le dernier dispatch n'a pas été rapporté est affichée avec son incertitude
+  plutôt qu'avec un état inventé.
+
+**Pourquoi la révision ne vient pas du rapport, alors que ce serait « plus
+fort ».** Elle ne le serait pas. Le rapport est émis au moment de l'application :
+il ne ferait que répéter la révision du plan qu'il vient lui-même de vérifier.
+Ce n'est pas une observation indépendante. Élargir le document le plus sensible
+du produit — celui que l'Auxiliaire écrit, déjà contracté et prouvé — pour une
+valeur probante quasi nulle de plus serait payer cher une illusion.
+
+**La limite, en toutes lettres, avec sa porte de sortie.** Une modification faite
+hors du produit après le dispatch n'est visible par **aucune** de ces deux
+provenances, et ne le serait pas davantage par un rapport. Seule une
+**observation** la verrait, et ce palier n'en ajoute aucune. C'est la distinction
+`déclaré` contre `vérifié` que le produit fait déjà ailleurs : la vue accueillera
+une colonne observée le jour où un palier en apportera une, sans qu'une ligne de
+celle-ci soit réécrite.
+
+**L'écran ne fusionne jamais les deux en une seule affirmation.** La révision et
+le fait qu'elle court gardent chacune leur origine lisible ; un écran qui les
+mélangerait laisserait croire qu'une machine a été observée alors qu'elle a été
+approuvée.
 
 ## Le parcours utilisateur est un critère de ce contrat
 

@@ -135,6 +135,26 @@ type DispatchRecord struct {
 	// never rewrites, the other is the product's own account of its own
 	// attempt, and a reader must be able to tell which is which.
 	ControllerObservation string `json:"controller_observation"`
+	// DefinitionSlug and DefinitionSHA256 name the frozen revision the approved
+	// plan pins, and they are filled exactly when the operation's door pins one.
+	//
+	// They are recorded at acceptance rather than read out of a report, and the
+	// distinction matters for what a reader may conclude: **the revision comes
+	// from the approved plan, and the fact that an instance runs it comes from
+	// the report.** The pairing is established twice before it is stored — this
+	// Controller holds the definition against the digest the plan pins at
+	// submission, and the machine re-holds it from the definition's own bytes
+	// before touching anything — so what is kept here is a verified fact rather
+	// than a claim. A report would only repeat the revision of the plan it had
+	// just verified; it is not an independent observation of the machine.
+	//
+	// Named limit: a change made outside this product after the dispatch is
+	// invisible here, as it would be to a report. Only an observation would see
+	// it, and this palier adds none — the same `declared` against `verified`
+	// distinction the product already makes elsewhere, which will accept an
+	// observed column later without rewriting this one.
+	DefinitionSlug   string `json:"definition_slug"`
+	DefinitionSHA256 string `json:"definition_sha256"`
 	// ReportedChanged and ReportedOutcome are filled by a valid report only
 	// (#127); they stay empty until one is ingested.
 	ReportedChanged bool   `json:"reported_changed"`
@@ -448,6 +468,18 @@ func validateDispatchRegistry(state DispatchRegistry) error {
 		}
 		if record.Operation == "" || record.ApprovalEpoch == 0 || record.Sequence == 0 {
 			return errors.New("a record must name its operation, epoch and sequence")
+		}
+		// The revision travels exactly with its door, here as everywhere: a
+		// record naming one beside an operation that pins none, or an operation
+		// of that door naming none, is a record whose two halves disagree.
+		pinned := record.Operation == "deploy_user_service" ||
+			record.Operation == "remove_user_service"
+		switch {
+		case pinned && (record.DefinitionSlug == "" ||
+			!canonicalDispatchDigest.MatchString(record.DefinitionSHA256)):
+			return errors.New("a record of a user-service door must name the revision its plan pins")
+		case !pinned && (record.DefinitionSlug != "" || record.DefinitionSHA256 != ""):
+			return errors.New("a record names a revision beside an operation that pins none")
 		}
 		if record.ExpiresAtUnix <= record.AcceptedAtUnix {
 			return errors.New("a record must carry the window its approval was still inside when it was accepted")

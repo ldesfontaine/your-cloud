@@ -221,3 +221,68 @@ func TestTheCommandPositionIsUncertainAfterALaunchNobodyReported(t *testing.T) {
 		}
 	}
 }
+
+// TestARecordNamesTheRevisionItsDoorPins is the decision the Services view
+// rests on, made executable: the revision comes from the approved plan, the
+// fact that an instance runs it comes from the report, and the two are never
+// merged into one claim.
+//
+// A record of a user-service door must name its revision; a record of any other
+// door must name none. The pairing is refused in both directions by the
+// document itself, so a projection reading it cannot find a half-named one.
+func TestARecordNamesTheRevisionItsDoorPins(t *testing.T) {
+	base := reportedRecord()
+	base.State = DispatchNotLaunched
+	base.FinishedAtUnix = 2
+
+	for name, shape := range map[string]struct {
+		record   DispatchRecord
+		accepted bool
+	}{
+		"a user-service door naming its revision": {
+			record: func() DispatchRecord {
+				record := base
+				record.Operation = "deploy_user_service"
+				record.DefinitionSlug = "service-de-notes"
+				record.DefinitionSHA256 = strings.Repeat("d", 64)
+				return record
+			}(),
+			accepted: true,
+		},
+		"a user-service door naming none": {
+			record: func() DispatchRecord {
+				record := base
+				record.Operation = "remove_user_service"
+				return record
+			}(),
+		},
+		"a user-service door with a digest that is not one": {
+			record: func() DispatchRecord {
+				record := base
+				record.Operation = "deploy_user_service"
+				record.DefinitionSlug = "service-de-notes"
+				record.DefinitionSHA256 = "pas-une-empreinte"
+				return record
+			}(),
+		},
+		"another door naming a revision": {
+			record: func() DispatchRecord {
+				record := base
+				record.DefinitionSlug = "service-de-notes"
+				record.DefinitionSHA256 = strings.Repeat("d", 64)
+				return record
+			}(),
+		},
+		"another door naming none": {record: base, accepted: true},
+	} {
+		err := validateDispatchRegistry(DispatchRegistry{
+			SchemaVersion:    dispatchRegistrySchema,
+			ControllerID:     testControllerID,
+			InfrastructureID: testInfrastructureID,
+			Records:          []DispatchRecord{shape.record},
+		})
+		if shape.accepted != (err == nil) {
+			t.Fatalf("%s: accepted=%v err=%v", name, shape.accepted, err)
+		}
+	}
+}

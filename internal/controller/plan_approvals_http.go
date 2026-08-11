@@ -72,6 +72,8 @@ type PlanDispatchEntry struct {
 	ExpiresAtUnix         uint64 `json:"expires_at_unix"`
 	MachineSentence       string `json:"machine_sentence"`
 	ControllerObservation string `json:"controller_observation"`
+	DefinitionSlug        string `json:"definition_slug"`
+	DefinitionSHA256      string `json:"definition_sha256"`
 	ReportedChanged       bool   `json:"reported_changed"`
 	ReportedOutcome       string `json:"reported_outcome"`
 }
@@ -233,7 +235,7 @@ func (handler *ControllerHandler) servePlanApprovals(response http.ResponseWrite
 	// rules — it travels exactly with its door, and it renders the digest the
 	// plan pins — are held a second time. This Controller does not believe
 	// its own earlier freeze.
-	wrapper, err := handler.verifyApprovedPair(envelope, &body)
+	wrapper, pinned, err := handler.verifyApprovedPair(envelope, &body)
 	if err != nil {
 		code := refusalPairMismatch
 		if _, definition := err.(*definitionMismatchError); definition {
@@ -262,16 +264,18 @@ func (handler *ControllerHandler) servePlanApprovals(response http.ResponseWrite
 	}
 
 	record := DispatchRecord{
-		ApprovalSHA256: approvalDigest,
-		MachineID:      envelope.MachineID,
-		Operation:      envelope.Operation,
-		ApprovalEpoch:  envelope.ApprovalEpoch,
-		Sequence:       envelope.Sequence,
-		PlanSHA256:     envelope.PlanSHA256,
-		RollbackSHA256: envelope.RollbackSHA256,
-		State:          DispatchInFlight,
-		AcceptedAtUnix: now,
-		ExpiresAtUnix:  envelope.ExpiresAtUnix,
+		ApprovalSHA256:   approvalDigest,
+		MachineID:        envelope.MachineID,
+		Operation:        envelope.Operation,
+		ApprovalEpoch:    envelope.ApprovalEpoch,
+		Sequence:         envelope.Sequence,
+		PlanSHA256:       envelope.PlanSHA256,
+		RollbackSHA256:   envelope.RollbackSHA256,
+		State:            DispatchInFlight,
+		AcceptedAtUnix:   now,
+		ExpiresAtUnix:    envelope.ExpiresAtUnix,
+		DefinitionSlug:   pinned.slug,
+		DefinitionSHA256: pinned.digest,
 	}
 	var acceptError error
 	if err := handler.sessions.Accept(context, func() error {
@@ -354,6 +358,8 @@ func dispatchEntryOf(record DispatchRecord) PlanDispatchEntry {
 		ExpiresAtUnix:         record.ExpiresAtUnix,
 		MachineSentence:       record.MachineSentence,
 		ControllerObservation: record.ControllerObservation,
+		DefinitionSlug:        record.DefinitionSlug,
+		DefinitionSHA256:      record.DefinitionSHA256,
 		ReportedChanged:       record.ReportedChanged,
 		ReportedOutcome:       record.ReportedOutcome,
 	}
@@ -370,19 +376,27 @@ func (err *definitionMismatchError) Unwrap() error { return err.reason }
 // envelope signs, holds the definition to its door in both directions, and
 // assembles the wrapper — the exact standard input of the machine's forced
 // command — from the bytes it just verified and from nothing else.
+// pinnedRevision is the frozen revision an approved plan pins, empty for the
+// doors that pin none.
+type pinnedRevision struct {
+	slug   string
+	digest string
+}
+
 func (handler *ControllerHandler) verifyApprovedPair(
 	envelope *approval.Envelope, body *planApprovalRequest,
-) ([]byte, error) {
+) ([]byte, pinnedRevision, error) {
+	var pinned pinnedRevision
 	planBytes := []byte(body.PlanDocument)
 	rollbackBytes := []byte(body.RollbackDocument)
 	if envelope.PlanSHA256 == envelope.RollbackSHA256 {
-		return nil, fmt.Errorf("the approval names one digest as both the plan and its rollback")
+		return nil, pinnedRevision{}, fmt.Errorf("the approval names one digest as both the plan and its rollback")
 	}
 	if err := requireDigest(planBytes, envelope.PlanSHA256, "plan"); err != nil {
-		return nil, err
+		return nil, pinnedRevision{}, err
 	}
 	if err := requireDigest(rollbackBytes, envelope.RollbackSHA256, "rollback"); err != nil {
-		return nil, err
+		return nil, pinnedRevision{}, err
 	}
 
 	// The definition travels exactly with its door. Both directions are
@@ -391,24 +405,27 @@ func (handler *ControllerHandler) verifyApprovedPair(
 	definitionRequired := envelope.Operation == approval.OperationDeployUserService ||
 		envelope.Operation == approval.OperationRemoveUserService
 	if !definitionRequired && body.DefinitionDocument != "" {
-		return nil, &definitionMismatchError{fmt.Errorf(
+		return nil, pinnedRevision{}, &definitionMismatchError{fmt.Errorf(
 			"a service definition travelled beside %q, which pins none", envelope.Operation)}
 	}
 	if definitionRequired {
 		if body.DefinitionDocument == "" {
-			return nil, &definitionMismatchError{fmt.Errorf(
+			return nil, pinnedRevision{}, &definitionMismatchError{fmt.Errorf(
 				"the approved plan pins a service definition and none travelled with it")}
 		}
 		document, err := userServiceDocumentOf(planBytes)
 		if err != nil {
-			return nil, &definitionMismatchError{err}
+			return nil, pinnedRevision{}, &definitionMismatchError{err}
 		}
+		// The revision is taken from the plan this Controller just parsed, never
+		// from the request: what is recorded is what the approval binds.
+		pinned = pinnedRevision{slug: document.DefinitionSlug, digest: document.DefinitionDigest}
 		definition, err := servicedefinition.Verify([]byte(body.DefinitionDocument), document.DefinitionDigest)
 		if err != nil {
-			return nil, &definitionMismatchError{err}
+			return nil, pinnedRevision{}, &definitionMismatchError{err}
 		}
 		if err := plan.RequireDefinitionAgreement(*document, definition); err != nil {
-			return nil, &definitionMismatchError{err}
+			return nil, pinnedRevision{}, &definitionMismatchError{err}
 		}
 	}
 
@@ -425,9 +442,9 @@ func (handler *ControllerHandler) verifyApprovedPair(
 	}
 	encoded, err := json.Marshal(wrapper)
 	if err != nil {
-		return nil, fmt.Errorf("wrapper: %w", err)
+		return nil, pinnedRevision{}, fmt.Errorf("wrapper: %w", err)
 	}
-	return encoded, nil
+	return encoded, pinned, nil
 }
 
 // requireDigest recanonises one carried document by its declared schema and
