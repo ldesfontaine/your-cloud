@@ -1,6 +1,6 @@
 #[allow(dead_code)]
-#[path = "../../../src/native_assistant.rs"]
-mod native_assistant;
+#[path = "../../../src/native_helper.rs"]
+mod native_helper;
 
 use std::{
     path::Path,
@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use native_assistant::{NativeAssistantError, NativeAssistantPoll, NativeAssistantSupervisor};
+use native_helper::{NativeHelperError, NativeHelperPoll, NativeHelperSupervisor};
 use your_cloud_bootstrap_protocol::{
     AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
     BootstrapTarget, NativePromptKind,
@@ -60,7 +60,7 @@ fn windowed_scope() -> AssistantScopeV1 {
 fn console_parent_launches_the_exact_helper_and_refuses_to_invent_success() {
     let path = Path::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
     let expected_name = path.file_name().unwrap();
-    let mut supervisor = NativeAssistantSupervisor::default();
+    let mut supervisor = NativeHelperSupervisor::default();
     supervisor
         .start_with_path(
             path,
@@ -72,16 +72,16 @@ fn console_parent_launches_the_exact_helper_and_refuses_to_invent_success() {
 
     assert_eq!(
         supervisor.poll("ffeeddccbbaa99887766554433221100"),
-        Err(NativeAssistantError::RequestRefused)
+        Err(NativeHelperError::RequestRefused)
     );
 
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         match supervisor.poll(REQUEST_ID) {
-            Ok(NativeAssistantPoll::Running) if Instant::now() < deadline => {
+            Ok(NativeHelperPoll::Running) if Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(5));
             }
-            Ok(NativeAssistantPoll::Unavailable) => break,
+            Ok(NativeHelperPoll::Unavailable) => break,
             outcome => panic!("unexpected native assistant outcome: {outcome:?}"),
         }
     }
@@ -92,7 +92,7 @@ fn console_parent_launches_the_exact_helper_and_refuses_to_invent_success() {
 fn console_parent_closes_one_job_before_reusing_the_boundary() {
     let path = Path::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
     let expected_name = path.file_name().unwrap();
-    let mut supervisor = NativeAssistantSupervisor::default();
+    let mut supervisor = NativeHelperSupervisor::default();
     supervisor
         .start_with_path(
             path,
@@ -105,7 +105,7 @@ fn console_parent_closes_one_job_before_reusing_the_boundary() {
     supervisor.cancel(REQUEST_ID).unwrap();
     assert_eq!(
         supervisor.poll(REQUEST_ID),
-        Err(NativeAssistantError::RequestRefused)
+        Err(NativeHelperError::RequestRefused)
     );
 
     let mut second_scope = scope();
@@ -129,7 +129,7 @@ fn console_parent_closes_one_job_before_reusing_the_boundary() {
 fn console_parent_keeps_the_gtk_helper_bounded_until_cancelled() {
     let path = Path::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
     let expected_name = path.file_name().unwrap();
-    let mut supervisor = NativeAssistantSupervisor::default();
+    let mut supervisor = NativeHelperSupervisor::default();
     supervisor
         .start_with_path(
             path,
@@ -142,11 +142,11 @@ fn console_parent_keeps_the_gtk_helper_bounded_until_cancelled() {
     thread::sleep(Duration::from_millis(250));
     assert_eq!(
         supervisor.poll(REQUEST_ID),
-        Ok(NativeAssistantPoll::Running)
+        Ok(NativeHelperPoll::Running)
     );
     supervisor.cancel(REQUEST_ID).unwrap();
     assert_eq!(
         supervisor.poll(REQUEST_ID),
-        Err(NativeAssistantError::RequestRefused)
+        Err(NativeHelperError::RequestRefused)
     );
 }

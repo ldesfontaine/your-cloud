@@ -38,8 +38,8 @@ mod canary_scan;
 /// only worth something if the launcher under test is the shipped one,
 /// `env_clear` and environment allowlist included.
 #[allow(dead_code)]
-#[path = "../../../src/native_assistant.rs"]
-mod native_assistant;
+#[path = "../../../src/native_helper.rs"]
+mod native_helper;
 
 use std::{
     fs::{self, File},
@@ -69,7 +69,7 @@ use bounded_process::{
     PIPE_EOF_TIMEOUT, REAP_TIMEOUT,
 };
 use canary_scan::file_contains;
-use native_assistant::{NativeAssistantPoll, NativeAssistantSupervisor};
+use native_helper::{NativeHelperPoll, NativeHelperSupervisor};
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1, BootstrapAccessKind,
     BootstrapAction, BootstrapMode, BootstrapStep, BootstrapTarget, NativePromptKind,
@@ -1315,14 +1315,14 @@ struct SupervisedWindow {
 /// never the filter, so a window that opened under the wrong title fails the
 /// case instead of being skipped over.
 fn await_supervised_window(
-    supervisor: &mut NativeAssistantSupervisor,
+    supervisor: &mut NativeHelperSupervisor,
     request_id: &str,
 ) -> SupervisedWindow {
     let deadline = Instant::now() + WINDOW_TIMEOUT;
     loop {
         assert_eq!(
             supervisor.poll(request_id),
-            Ok(NativeAssistantPoll::Running),
+            Ok(NativeHelperPoll::Running),
             "the supervised helper ended before opening a window"
         );
         if let Some(window) = visible_window_owned_by_a_child() {
@@ -1428,7 +1428,7 @@ fn a_console_launched_helper_reaches_the_personal_agent_and_opens_its_window() {
         .file_name()
         .expect("the helper binary must be a file")
         .to_owned();
-    let mut supervisor = NativeAssistantSupervisor::default();
+    let mut supervisor = NativeHelperSupervisor::default();
     supervisor
         .start_with_path(
             &path,
@@ -1490,7 +1490,7 @@ fn a_window_that_needs_no_agent_is_never_given_one() {
         .file_name()
         .expect("the helper binary must be a file")
         .to_owned();
-    let mut supervisor = NativeAssistantSupervisor::default();
+    let mut supervisor = NativeHelperSupervisor::default();
     supervisor
         .start_with_path(
             &path,

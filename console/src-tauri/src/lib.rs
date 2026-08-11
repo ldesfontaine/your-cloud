@@ -15,7 +15,7 @@ mod bootstrap;
 // holds the command surface against that.
 #[allow(dead_code)]
 mod link_plan;
-mod native_assistant;
+mod native_helper;
 mod network;
 // The probe plan is verified, displayed and signed here for the same reason the
 // module above is not reachable from a command: the window that must render a
@@ -41,7 +41,7 @@ mod vault;
 mod windows_security;
 
 use bootstrap::BootstrapState;
-use native_assistant::{NativeAssistantPoll, NativeAssistantSupervisor};
+use native_helper::{HelperInvocation, NativeHelperPoll, NativeHelperSupervisor};
 use network::{
     ExternalElementsView, ExternalWithdrawalView, InfrastructureView, MachineMutationView,
     MachinesView, NetworkState, PairingInput,
@@ -95,8 +95,8 @@ impl From<bootstrap::BootstrapError> for CommandError {
     }
 }
 
-impl From<native_assistant::NativeAssistantError> for CommandError {
-    fn from(value: native_assistant::NativeAssistantError) -> Self {
+impl From<native_helper::NativeHelperError> for CommandError {
+    fn from(value: native_helper::NativeHelperError) -> Self {
         Self {
             code: value.public_code(),
         }
@@ -106,7 +106,7 @@ impl From<native_assistant::NativeAssistantError> for CommandError {
 struct ConsoleLocalState {
     core: ConsoleCore,
     bootstrap: BootstrapState,
-    native_assistant: NativeAssistantSupervisor,
+    native_helper: NativeHelperSupervisor,
 }
 
 impl ConsoleLocalState {
@@ -118,7 +118,7 @@ impl ConsoleLocalState {
             return Err(vault::VaultError::Locked.into());
         }
         let started = self.bootstrap.start(input)?;
-        if let Err(error) = self.native_assistant.stop_active() {
+        if let Err(error) = self.native_helper.stop_active() {
             self.bootstrap.clear();
             return Err(error.into());
         }
@@ -129,7 +129,10 @@ impl ConsoleLocalState {
                 return Err(error.into());
             }
         };
-        if let Err(error) = self.native_assistant.start(launch.scope, launch.expires_at) {
+        if let Err(error) = self
+            .native_helper
+            .start(HelperInvocation::Bootstrap(launch.scope), launch.expires_at)
+        {
             self.bootstrap.clear();
             return Err(error.into());
         }
@@ -147,15 +150,15 @@ impl ConsoleLocalState {
         self.bootstrap.start(input).map_err(Into::into)
     }
 
-    fn lock(&mut self) -> Result<(), native_assistant::NativeAssistantError> {
+    fn lock(&mut self) -> Result<(), native_helper::NativeHelperError> {
         self.core.lock();
-        let stopped = self.native_assistant.stop_active();
+        let stopped = self.native_helper.stop_active();
         self.bootstrap.clear();
         stopped
     }
 
     fn close(&mut self) {
-        let _ = self.native_assistant.stop_active();
+        let _ = self.native_helper.stop_active();
         self.bootstrap.close();
     }
 }
@@ -274,28 +277,39 @@ fn bootstrap_status(
     let view = match local.bootstrap.status(&request_id) {
         Ok(view) => view,
         Err(error @ bootstrap::BootstrapError::Expired) => {
-            local.native_assistant.stop_active()?;
+            local.native_helper.stop_active()?;
             return Err(error.into());
         }
         Err(error) => return Err(error.into()),
     };
-    match local.native_assistant.poll(&request_id) {
-        Ok(NativeAssistantPoll::Running) => Ok(view),
+    match local.native_helper.poll(&request_id) {
+        Ok(NativeHelperPoll::Running) => Ok(view),
         // The helper proved its access and is gone. The session is cleared here
         // because it is over; naming that outcome to the frontend belongs to
         // the business closure of the palier, not to this one. The frontend
         // therefore cannot read `access_verified`, and — having no way to write
         // an event either — cannot produce one.
-        Ok(NativeAssistantPoll::AccessVerified) => {
+        Ok(NativeHelperPoll::AccessVerified) => {
             local.bootstrap.clear();
             Ok(view)
         }
-        Ok(NativeAssistantPoll::Unavailable) => {
+        Ok(NativeHelperPoll::Unavailable) => {
             local.bootstrap.clear();
-            Err(native_assistant::NativeAssistantError::Unavailable.into())
+            Err(native_helper::NativeHelperError::Unavailable.into())
+        }
+        // An approval outcome read on a bootstrap session is not a weaker
+        // bootstrap verdict; it is an answer to something else. The session is
+        // cleared and refused rather than interpreted — the supervisor already
+        // reads the frame its own invocation writes, so reaching here would
+        // mean the two had been crossed, and this is the second place that
+        // cannot happen.
+        Ok(NativeHelperPoll::ApprovalDecided(_)) => {
+            let _ = local.native_helper.stop_active();
+            local.bootstrap.clear();
+            Err(native_helper::NativeHelperError::RequestRefused.into())
         }
         Err(error) => {
-            let _ = local.native_assistant.stop_active();
+            let _ = local.native_helper.stop_active();
             local.bootstrap.clear();
             Err(error.into())
         }
@@ -314,12 +328,12 @@ fn cancel_bootstrap(
     match local.bootstrap.status(&request_id) {
         Ok(_) => {}
         Err(error @ bootstrap::BootstrapError::Expired) => {
-            local.native_assistant.stop_active()?;
+            local.native_helper.stop_active()?;
             return Err(error.into());
         }
         Err(error) => return Err(error.into()),
     }
-    local.native_assistant.cancel(&request_id)?;
+    local.native_helper.cancel(&request_id)?;
     local.bootstrap.cancel(&request_id).map_err(Into::into)
 }
 
@@ -780,7 +794,7 @@ pub fn run() {
                 local: Mutex::new(ConsoleLocalState {
                     core: ConsoleCore::new(state_directory),
                     bootstrap: BootstrapState::default(),
-                    native_assistant: NativeAssistantSupervisor::default(),
+                    native_helper: NativeHelperSupervisor::default(),
                 }),
                 network: Mutex::new(NetworkState::new()),
                 request_generation: AtomicU64::new(0),
@@ -874,7 +888,7 @@ mod bootstrap_lifecycle_tests {
             ConsoleLocalState {
                 core,
                 bootstrap: BootstrapState::default(),
-                native_assistant: NativeAssistantSupervisor::default(),
+                native_helper: NativeHelperSupervisor::default(),
             },
         )
     }

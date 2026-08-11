@@ -47,7 +47,7 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{NativeAssistantError, KILL_REAP_GRACE};
+use super::{NativeHelperError, KILL_REAP_GRACE};
 
 const TERMINATED_EXIT_CODE: u32 = 1;
 const MAX_WINDOWS_COMMAND_LINE_UNITS: usize = 32_767;
@@ -185,13 +185,13 @@ impl Drop for WindowsChild {
     }
 }
 
-pub(super) fn spawn_native_assistant(
+pub(super) fn spawn_helper_process(
     path: &Path,
     working_directory: &Path,
     required_argument: &str,
-) -> Result<WindowsChild, NativeAssistantError> {
+) -> Result<WindowsChild, NativeHelperError> {
     if WINDOWS_CLEANUP_UNPROVEN.load(Ordering::SeqCst) {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     let application = wide_null(path.as_os_str())?;
     let current_directory = wide_null(working_directory.as_os_str())?;
@@ -209,14 +209,14 @@ pub(super) fn spawn_native_assistant(
     ];
     for handle in inherited_handles {
         if !handle_is_inheritable(handle)? {
-            return Err(NativeAssistantError::Unavailable);
+            return Err(NativeHelperError::Unavailable);
         }
     }
     let mut attributes = ProcThreadAttributeList::with_handle_list(&inherited_handles)?;
 
     let mut startup = STARTUPINFOEXW::default();
-    startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>())
-        .map_err(|_| NativeAssistantError::Unavailable)?;
+    startup.StartupInfo.cb =
+        u32::try_from(size_of::<STARTUPINFOEXW>()).map_err(|_| NativeHelperError::Unavailable)?;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = inherited_handles[0];
     startup.StartupInfo.hStdOutput = inherited_handles[1];
@@ -245,7 +245,7 @@ pub(super) fn spawn_native_assistant(
         )
     };
     if created == 0 {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
 
     let process = owned_handle(process_information.hProcess)?;
@@ -264,19 +264,19 @@ pub(super) fn spawn_native_assistant(
 
     #[cfg(feature = "windows-contract-test")]
     if take_spawn_fault(WindowsSpawnFault::AfterCreate) {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
 
     // SAFETY: the process is still suspended and both owned handles remain valid.
     if unsafe { AssignProcessToJobObject(suspended.job_handle(), suspended.process_handle()) } == 0
     {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     suspended.assigned = true;
 
     #[cfg(feature = "windows-contract-test")]
     if take_spawn_fault(WindowsSpawnFault::AfterAssign) {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
 
     let mut belongs_to_job = 0;
@@ -290,12 +290,12 @@ pub(super) fn spawn_native_assistant(
     } == 0
         || belongs_to_job == 0
     {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
 
     #[cfg(feature = "windows-contract-test")]
     if take_spawn_fault(WindowsSpawnFault::BeforeResume) {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
 
     #[cfg(feature = "windows-contract-test")]
@@ -304,14 +304,14 @@ pub(super) fn spawn_native_assistant(
         // The test hook changes only the final observation result so the production Drop branch
         // remains responsible for poisoning every later launch.
         WINDOWS_FORCE_CLEANUP_OBSERVATION_UNPROVEN.store(true, Ordering::SeqCst);
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
 
     // CREATE_SUSPENDED creates one suspension level. Any other previous count means the thread
     // either ran before this boundary or would remain suspended, so the Job is killed closed.
     // SAFETY: the primary thread handle is valid and has not been resumed before this point.
     if unsafe { ResumeThread(suspended.thread_handle()) } != 1 {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
 
     drop(attributes);
@@ -321,14 +321,14 @@ pub(super) fn spawn_native_assistant(
     Ok(suspended.into_child(stdin.parent, stdout.parent))
 }
 
-fn configured_job() -> Result<OwnedHandle, NativeAssistantError> {
+fn configured_job() -> Result<OwnedHandle, NativeHelperError> {
     // SAFETY: null attributes and name request a private, non-inheritable unnamed Job.
     let handle = unsafe { CreateJobObjectW(null(), null()) };
     let job = owned_handle(handle)?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     let size = u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
-        .map_err(|_| NativeAssistantError::Unavailable)?;
+        .map_err(|_| NativeHelperError::Unavailable)?;
     // SAFETY: limits is a correctly sized immutable extended-limit structure.
     if unsafe {
         SetInformationJobObject(
@@ -339,7 +339,7 @@ fn configured_job() -> Result<OwnedHandle, NativeAssistantError> {
         )
     } == 0
     {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     let mut confirmed = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     // SAFETY: confirmed is a correctly sized writable extended-limit structure.
@@ -354,7 +354,7 @@ fn configured_job() -> Result<OwnedHandle, NativeAssistantError> {
     } == 0
         || confirmed.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0
     {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     Ok(job)
 }
@@ -365,7 +365,7 @@ struct PipePair {
 }
 
 impl PipePair {
-    fn for_child_stdin() -> Result<Self, NativeAssistantError> {
+    fn for_child_stdin() -> Result<Self, NativeHelperError> {
         let (read, write) = inheritable_pipe()?;
         clear_inheritance(&write)?;
         Ok(Self {
@@ -374,7 +374,7 @@ impl PipePair {
         })
     }
 
-    fn for_child_stdout() -> Result<Self, NativeAssistantError> {
+    fn for_child_stdout() -> Result<Self, NativeHelperError> {
         let (read, write) = inheritable_pipe()?;
         clear_inheritance(&read)?;
         Ok(Self {
@@ -384,10 +384,10 @@ impl PipePair {
     }
 }
 
-fn inheritable_pipe() -> Result<(OwnedHandle, OwnedHandle), NativeAssistantError> {
+fn inheritable_pipe() -> Result<(OwnedHandle, OwnedHandle), NativeHelperError> {
     let mut security = SECURITY_ATTRIBUTES {
         nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>())
-            .map_err(|_| NativeAssistantError::Unavailable)?,
+            .map_err(|_| NativeHelperError::Unavailable)?,
         lpSecurityDescriptor: null_mut(),
         bInheritHandle: 1,
     };
@@ -395,15 +395,15 @@ fn inheritable_pipe() -> Result<(OwnedHandle, OwnedHandle), NativeAssistantError
     let mut write = null_mut();
     // SAFETY: both outputs and SECURITY_ATTRIBUTES are initialized writable storage.
     if unsafe { CreatePipe(&mut read, &mut write, &mut security, 0) } == 0 {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     Ok((owned_handle(read)?, owned_handle(write)?))
 }
 
-fn inherited_null_stderr() -> Result<OwnedHandle, NativeAssistantError> {
+fn inherited_null_stderr() -> Result<OwnedHandle, NativeHelperError> {
     let mut security = SECURITY_ATTRIBUTES {
         nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>())
-            .map_err(|_| NativeAssistantError::Unavailable)?,
+            .map_err(|_| NativeHelperError::Unavailable)?,
         lpSecurityDescriptor: null_mut(),
         bInheritHandle: 1,
     };
@@ -423,28 +423,28 @@ fn inherited_null_stderr() -> Result<OwnedHandle, NativeAssistantError> {
     owned_handle(handle)
 }
 
-fn clear_inheritance(handle: &OwnedHandle) -> Result<(), NativeAssistantError> {
+fn clear_inheritance(handle: &OwnedHandle) -> Result<(), NativeHelperError> {
     // SAFETY: handle is owned and remains open throughout the flag update and verification.
     if unsafe { SetHandleInformation(handle.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) } == 0 {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     if handle_is_inheritable(handle.as_raw_handle())? {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     Ok(())
 }
 
-fn handle_is_inheritable(handle: HANDLE) -> Result<bool, NativeAssistantError> {
+fn handle_is_inheritable(handle: HANDLE) -> Result<bool, NativeHelperError> {
     let mut flags = 0_u32;
     if unsafe { GetHandleInformation(handle, &mut flags) } == 0 {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     Ok(flags & HANDLE_FLAG_INHERIT != 0)
 }
 
-fn owned_handle(handle: HANDLE) -> Result<OwnedHandle, NativeAssistantError> {
+fn owned_handle(handle: HANDLE) -> Result<OwnedHandle, NativeHelperError> {
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     // SAFETY: successful Win32 creators return a new handle whose ownership transfers here.
     Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
@@ -461,31 +461,31 @@ struct ProcThreadAttributeList {
 }
 
 impl ProcThreadAttributeList {
-    fn with_handle_list(handles: &[HANDLE; 3]) -> Result<Self, NativeAssistantError> {
+    fn with_handle_list(handles: &[HANDLE; 3]) -> Result<Self, NativeHelperError> {
         let mut bytes = 0_usize;
         // SAFETY: a null first argument is the documented size query; bytes is writable.
         let _ = unsafe { InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut bytes) };
         if bytes == 0 {
-            return Err(NativeAssistantError::Unavailable);
+            return Err(NativeHelperError::Unavailable);
         }
         let words = bytes
             .checked_add(size_of::<usize>() - 1)
             .and_then(|size| size.checked_div(size_of::<usize>()))
-            .ok_or(NativeAssistantError::Unavailable)?;
+            .ok_or(NativeHelperError::Unavailable)?;
         let mut list = Self {
             storage: vec![0_usize; words],
             initialized: false,
         };
         // SAFETY: storage is aligned, sized from the preceding query and remains pinned in list.
         if unsafe { InitializeProcThreadAttributeList(list.as_mut_ptr(), 1, 0, &mut bytes) } == 0 {
-            return Err(NativeAssistantError::Unavailable);
+            return Err(NativeHelperError::Unavailable);
         }
         list.initialized = true;
 
         let handles_size = handles
             .len()
             .checked_mul(size_of::<HANDLE>())
-            .ok_or(NativeAssistantError::Unavailable)?;
+            .ok_or(NativeHelperError::Unavailable)?;
         // SAFETY: handles is an exact three-element array kept alive until CreateProcessW, and
         // list was initialized for one attribute.
         if unsafe {
@@ -493,7 +493,7 @@ impl ProcThreadAttributeList {
                 list.as_mut_ptr(),
                 0,
                 usize::try_from(PROC_THREAD_ATTRIBUTE_HANDLE_LIST)
-                    .map_err(|_| NativeAssistantError::Unavailable)?,
+                    .map_err(|_| NativeHelperError::Unavailable)?,
                 handles.as_ptr().cast(),
                 handles_size,
                 null_mut(),
@@ -501,7 +501,7 @@ impl ProcThreadAttributeList {
             )
         } == 0
         {
-            return Err(NativeAssistantError::Unavailable);
+            return Err(NativeHelperError::Unavailable);
         }
         Ok(list)
     }
@@ -610,19 +610,19 @@ fn terminate_job_and_observe(process: HANDLE, job: HANDLE) -> bool {
     root_reaped && job_empty
 }
 
-fn fixed_command_line(required_argument: &str) -> Result<Vec<u16>, NativeAssistantError> {
+fn fixed_command_line(required_argument: &str) -> Result<Vec<u16>, NativeHelperError> {
     if required_argument.is_empty()
         || required_argument
             .chars()
             .any(|character| character == '\0' || character == '"' || character.is_whitespace())
     {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     let command = format!("\"your-cloud-native-bootstrap-assistant.exe\" {required_argument}");
     wide_null(OsStr::new(&command))
 }
 
-fn public_environment_block() -> Result<Vec<u16>, NativeAssistantError> {
+fn public_environment_block() -> Result<Vec<u16>, NativeHelperError> {
     let mut entries = Vec::<(OsString, OsString)>::new();
     for name in [
         "SystemRoot",
@@ -661,21 +661,21 @@ fn public_environment_block() -> Result<Vec<u16>, NativeAssistantError> {
 fn append_wide_without_nul(
     destination: &mut Vec<u16>,
     value: &OsStr,
-) -> Result<(), NativeAssistantError> {
+) -> Result<(), NativeHelperError> {
     for unit in value.encode_wide() {
         if unit == 0 {
-            return Err(NativeAssistantError::Unavailable);
+            return Err(NativeHelperError::Unavailable);
         }
         destination.push(unit);
     }
     Ok(())
 }
 
-fn wide_null(value: &OsStr) -> Result<Vec<u16>, NativeAssistantError> {
+fn wide_null(value: &OsStr) -> Result<Vec<u16>, NativeHelperError> {
     let mut wide = Vec::new();
     append_wide_without_nul(&mut wide, value)?;
     if wide.len() >= MAX_WINDOWS_COMMAND_LINE_UNITS {
-        return Err(NativeAssistantError::Unavailable);
+        return Err(NativeHelperError::Unavailable);
     }
     wide.push(0);
     Ok(wide)
@@ -694,7 +694,7 @@ mod tests {
         );
         assert_eq!(
             fixed_command_line("--native-bootstrap-assistant extra"),
-            Err(NativeAssistantError::Unavailable)
+            Err(NativeHelperError::Unavailable)
         );
     }
 

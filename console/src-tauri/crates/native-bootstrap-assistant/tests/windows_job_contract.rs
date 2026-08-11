@@ -26,7 +26,7 @@ use windows_sys::Win32::{
 
 #[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NativeAssistantError {
+enum NativeHelperError {
     Unavailable,
 }
 
@@ -34,7 +34,7 @@ enum NativeAssistantError {
 const KILL_REAP_GRACE: Duration = Duration::from_millis(500);
 
 #[cfg(target_os = "windows")]
-#[path = "../../../src/native_assistant/windows.rs"]
+#[path = "../../../src/native_helper/windows.rs"]
 mod windows;
 
 #[cfg(target_os = "windows")]
@@ -165,7 +165,7 @@ fn prove_suspended_failures_never_execute_and_poison_unproven_cleanup() {
             "--native-bootstrap-assistant",
         );
         assert!(
-            matches!(result, Err(NativeAssistantError::Unavailable)),
+            matches!(result, Err(NativeHelperError::Unavailable)),
             "injected failure {fault:?} must fail closed"
         );
         assert!(
@@ -185,7 +185,7 @@ fn prove_suspended_failures_never_execute_and_poison_unproven_cleanup() {
         working_directory,
         "--native-bootstrap-assistant",
     );
-    assert!(matches!(unproven, Err(NativeAssistantError::Unavailable)));
+    assert!(matches!(unproven, Err(NativeHelperError::Unavailable)));
     assert!(
         windows::cleanup_is_unproven(),
         "an unproven cleanup observation must poison the launch boundary"
@@ -201,7 +201,7 @@ fn prove_suspended_failures_never_execute_and_poison_unproven_cleanup() {
         "--native-bootstrap-assistant",
     );
     assert!(
-        matches!(replay, Err(NativeAssistantError::Unavailable)),
+        matches!(replay, Err(NativeHelperError::Unavailable)),
         "every later launch must remain refused after cleanup is unproven"
     );
     assert!(

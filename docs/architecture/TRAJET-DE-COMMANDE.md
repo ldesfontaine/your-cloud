@@ -120,6 +120,60 @@ peut réordonner son propre affichage est une phrase dont ce qu'un humain lit et
 ce qu'il signe divergent. Le refus est en amont, dans la validation du
 document, jamais dans le dessin.
 
+### Décision tranchée : deux invocations nommées, et le compilateur qui l'atteste
+
+La Console possède **un seul chemin qui lance un processus**, et jusqu'ici il ne
+savait lancer qu'une chose : la fenêtre d'amorçage, avec son argument de mode et
+sa trame de portée. La fenêtre d'approbation en demande une seconde. La façon
+dont ce chemin se généralise est une décision d'autorité, pas de confort.
+
+**Le superviseur est paramétré par une énumération fermée de deux invocations
+nommées, jamais par un couple `(mode, trame)` libre.** Chaque variante *porte* le
+document que son propre mode lit :
+
+| Invocation | Argument de mode | Document qui entre | Document qui sort |
+|---|---|---|---|
+| amorçage | `--native-bootstrap-assistant` | `AssistantScopeV1` | un événement terminal |
+| consentement | `--native-approval-consent` | `ApprovalConsentV1` | une réponse fermée |
+
+Le croisement — un consentement écrit sur la trame d'amorçage, une portée remise
+à la fenêtre d'approbation — n'est pas *refusé à l'exécution* : **il ne peut pas
+s'écrire**. Un mode et un document nommables séparément seraient un mode et un
+document croisables ; portés par une même valeur, ils décrivent nécessairement la
+même chose. Et une troisième invocation ne s'obtient pas en passant une chaîne de
+plus : il faudrait une troisième variante, et chaque `match` du chemin cesserait
+de compiler jusqu'à ce qu'elle soit traitée. La généralisation a d'ailleurs été
+faite ainsi : le compilateur a exigé, en deux erreurs, que le site de lancement
+nomme sa variante et que la lecture du verdict d'amorçage réponde à la nouvelle.
+
+**Les gardes ne se dédoublent pas.** L'alternative — un second superviseur dédié
+— aurait mis en deux exemplaires la politique de lancement : validation de
+l'exécutable installé, `env_clear`, groupe de processus propre, échéance
+échantillonnée sur l'horloge partagée avant l'instant local, nettoyage réconcilié,
+refus si un helper est déjà actif. Deux copies d'une politique de sécurité
+divergent ; c'est la panne que ce dépôt refuse partout ailleurs, et qui a fait
+déplacer le document de rapport dans son propre paquet au maillon 5. **Un test
+unique traverse les deux variantes contre la même liste de gardes.**
+
+**L'exclusion « un seul helper actif » est globale aux deux modes.** Un amorçage
+en cours bloque un consentement, et inversement. Ce n'est pas une commodité
+d'implémentation : deux fenêtres natives ouvertes en même temps sont deux fenêtres
+dont un humain ne sait plus laquelle répond à quoi, et le produit n'a aucun moyen
+de le lui dire. Une seule fenêtre à la fois est ce qui rend une réponse
+attribuable.
+
+**Le superviseur change de nom.** Il ne lance plus l'Assistant : il lance un
+helper natif, et il en connaît deux. Le nom dit désormais ce qu'il est devenu,
+plutôt que ce qu'il était quand il n'y en avait qu'un.
+
+**L'agent de signature reste interdit à la fenêtre d'approbation, et
+structurellement.** L'endpoint de l'agent personnel n'est accordé que par un pas
+qui ne peut pas s'en passer, et cette autorisation se lit sur le genre de fenêtre
+demandé. La variante consentement **ne porte aucun genre de fenêtre** : elle ne
+décline pas l'octroi, il n'existe aucune valeur qu'elle pourrait porter qui le
+demanderait. Un agent est un oracle de signature ; une fenêtre qui recueille une
+approbation n'en a aucun besoin, et n'en reçoit aucun.
+
 **Décision tranchée : une seconde borne, celle des lignes *repliées*, et elle
 est refusée dans `validate`.** Les 24 phrases sont des phrases *logiques* ; la
 fenêtre les replie à sa propre largeur, et le produit en possède déjà une,
