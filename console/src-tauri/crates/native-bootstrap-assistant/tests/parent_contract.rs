@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use native_helper::{NativeHelperError, NativeHelperPoll, NativeHelperSupervisor};
+use native_helper::{HelperInvocation, NativeHelperError, NativeHelperSupervisor};
 use your_cloud_bootstrap_protocol::{
     AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
     BootstrapTarget, NativePromptKind,
@@ -65,7 +65,7 @@ fn console_parent_launches_the_exact_helper_and_refuses_to_invent_success() {
         .start_with_path(
             path,
             expected_name,
-            scope(),
+            HelperInvocation::Bootstrap(scope()),
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap();
@@ -97,7 +97,7 @@ fn console_parent_closes_one_job_before_reusing_the_boundary() {
         .start_with_path(
             path,
             expected_name,
-            scope(),
+            HelperInvocation::Bootstrap(scope()),
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap();
@@ -114,7 +114,7 @@ fn console_parent_closes_one_job_before_reusing_the_boundary() {
         .start_with_path(
             path,
             expected_name,
-            second_scope,
+            HelperInvocation::Bootstrap(second_scope),
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap();
@@ -134,7 +134,7 @@ fn console_parent_keeps_the_gtk_helper_bounded_until_cancelled() {
         .start_with_path(
             path,
             expected_name,
-            windowed_scope(),
+            HelperInvocation::Bootstrap(windowed_scope()),
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap();

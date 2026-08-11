@@ -197,7 +197,9 @@ impl HelperInvocation {
                 let scope = scope
                     .validate()
                     .map_err(|_| NativeHelperError::RequestRefused)?;
-                let frame = encode_frame(&scope, MAX_ASSISTANT_SCOPE_FRAME_BYTES)?;
+                let encoded =
+                    serde_json::to_vec(&scope).map_err(|_| NativeHelperError::RequestRefused)?;
+                let frame = encode_frame(encoded, MAX_ASSISTANT_SCOPE_FRAME_BYTES)?;
                 Ok((scope.request_id, frame))
             }
             Self::ApprovalConsent(mut consent) => {
@@ -206,7 +208,9 @@ impl HelperInvocation {
                 let consent = consent
                     .validate()
                     .map_err(|_| NativeHelperError::RequestRefused)?;
-                let frame = encode_frame(&consent, MAX_APPROVAL_CONSENT_FRAME_BYTES)?;
+                let encoded =
+                    serde_json::to_vec(&consent).map_err(|_| NativeHelperError::RequestRefused)?;
+                let frame = encode_frame(encoded, MAX_APPROVAL_CONSENT_FRAME_BYTES)?;
                 Ok((consent.request_id, frame))
             }
         }
@@ -645,15 +649,17 @@ impl Drop for NativeHelperSupervisor {
     }
 }
 
-/// Renders one document as the one frame it travels in, against **its own**
-/// bound rather than a shared one: the two documents of this boundary are
-/// bounded by what their own fields can reach, and widening one would loosen a
-/// bound on a document that never needs the room.
-fn encode_frame<T: serde::Serialize>(
-    document: &T,
-    maximum: usize,
-) -> Result<Vec<u8>, NativeHelperError> {
-    let payload = serde_json::to_vec(document).map_err(|_| NativeHelperError::RequestRefused)?;
+/// Wraps one already-encoded document in the one frame it travels in, against
+/// **its own** bound rather than a shared one: the two documents of this
+/// boundary are bounded by what their own fields can reach, and widening one
+/// would loosen a bound on a document that never needs the room.
+///
+/// It takes bytes rather than a serialisable value on purpose. This file is
+/// also compiled inside the helper crate's own integration tests, whose graph
+/// holds `serde_json` and not `serde`; naming the trait here would make this
+/// module build in one crate and not in the other, which is exactly the kind of
+/// divergence the Windows suites exist to catch — and did.
+fn encode_frame(payload: Vec<u8>, maximum: usize) -> Result<Vec<u8>, NativeHelperError> {
     if payload.is_empty() || payload.len() > maximum {
         return Err(NativeHelperError::RequestRefused);
     }
@@ -775,10 +781,7 @@ fn descendants_are_gone(_child: &NativeChild) -> bool {
 /// A second copy of it would be a second place for "and nothing else" to stop
 /// being true. What differs between the two invocations is the type parsed and
 /// the bound applied, and both are arguments here.
-fn read_single_frame<T: serde::de::DeserializeOwned>(
-    reader: &mut impl Read,
-    maximum: usize,
-) -> Result<T, NativeHelperError> {
+fn read_single_frame(reader: &mut impl Read, maximum: usize) -> Result<Vec<u8>, NativeHelperError> {
     let mut header = [0_u8; FRAME_HEADER_BYTES];
     read_exact(reader, &mut header)?;
     let length = usize::try_from(u32::from_be_bytes(header))
@@ -793,17 +796,17 @@ fn read_single_frame<T: serde::de::DeserializeOwned>(
         Ok(0) => {}
         Ok(_) => return Err(NativeHelperError::RequestRefused),
         Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-            return decode_after_confirmed_eof(reader, payload)
+            return payload_after_confirmed_eof(reader, payload)
         }
         Err(_) => return Err(NativeHelperError::Unavailable),
     }
-    serde_json::from_slice::<T>(&payload).map_err(|_| NativeHelperError::RequestRefused)
+    Ok(payload)
 }
 
-fn decode_after_confirmed_eof<T: serde::de::DeserializeOwned>(
+fn payload_after_confirmed_eof(
     reader: &mut impl Read,
     payload: Vec<u8>,
-) -> Result<T, NativeHelperError> {
+) -> Result<Vec<u8>, NativeHelperError> {
     let mut extra = [0_u8; 1];
     loop {
         match reader.read(&mut extra) {
@@ -813,11 +816,13 @@ fn decode_after_confirmed_eof<T: serde::de::DeserializeOwned>(
             Err(_) => return Err(NativeHelperError::Unavailable),
         }
     }
-    serde_json::from_slice::<T>(&payload).map_err(|_| NativeHelperError::RequestRefused)
+    Ok(payload)
 }
 
 fn read_event(reader: &mut impl Read) -> Result<AssistantEventV1, NativeHelperError> {
-    read_single_frame::<AssistantEventV1>(reader, MAX_ASSISTANT_EVENT_FRAME_BYTES)?
+    let payload = read_single_frame(reader, MAX_ASSISTANT_EVENT_FRAME_BYTES)?;
+    serde_json::from_slice::<AssistantEventV1>(&payload)
+        .map_err(|_| NativeHelperError::RequestRefused)?
         .validate()
         .map_err(|_| NativeHelperError::RequestRefused)
 }
@@ -825,7 +830,9 @@ fn read_event(reader: &mut impl Read) -> Result<AssistantEventV1, NativeHelperEr
 fn read_approval_outcome(
     reader: &mut impl Read,
 ) -> Result<ApprovalConsentOutcomeV1, NativeHelperError> {
-    read_single_frame::<ApprovalConsentOutcomeV1>(reader, MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES)?
+    let payload = read_single_frame(reader, MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES)?;
+    serde_json::from_slice::<ApprovalConsentOutcomeV1>(&payload)
+        .map_err(|_| NativeHelperError::RequestRefused)?
         .validate()
         .map_err(|_| NativeHelperError::RequestRefused)
 }
@@ -1125,7 +1132,11 @@ mod tests {
     #[test]
     fn parent_scope_frame_is_bounded_and_exact() {
         let scope = scope();
-        let frame = encode_frame(&scope, MAX_ASSISTANT_SCOPE_FRAME_BYTES).unwrap();
+        let frame = encode_frame(
+            serde_json::to_vec(&scope).unwrap(),
+            MAX_ASSISTANT_SCOPE_FRAME_BYTES,
+        )
+        .unwrap();
         let length = u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize;
 
         assert_eq!(length, frame.len() - 4);

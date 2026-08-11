@@ -71,7 +71,7 @@ fn prove_job_contains_and_reaps_a_descendant() {
     let hostile_handle = inheritable_sentinel();
     let previous_lang = env::var_os("LANG");
     set_public_lang(hostile_handle.as_raw_handle() as usize);
-    let spawn = windows::spawn_native_assistant(
+    let spawn = windows::spawn_helper_process(
         &executable,
         working_directory,
         "--native-bootstrap-assistant",
@@ -159,7 +159,7 @@ fn prove_suspended_failures_never_execute_and_poison_unproven_cleanup() {
     ] {
         remove_marker(&marker);
         windows::inject_spawn_fault(fault);
-        let result = windows::spawn_native_assistant(
+        let result = windows::spawn_helper_process(
             &executable,
             working_directory,
             "--native-bootstrap-assistant",
@@ -180,7 +180,7 @@ fn prove_suspended_failures_never_execute_and_poison_unproven_cleanup() {
 
     remove_marker(&marker);
     windows::inject_spawn_fault(windows::WindowsSpawnFault::CleanupObservationUnprovenBeforeResume);
-    let unproven = windows::spawn_native_assistant(
+    let unproven = windows::spawn_helper_process(
         &executable,
         working_directory,
         "--native-bootstrap-assistant",
@@ -195,7 +195,7 @@ fn prove_suspended_failures_never_execute_and_poison_unproven_cleanup() {
         "the unproven cleanup branch must not execute the suspended fixture"
     );
 
-    let replay = windows::spawn_native_assistant(
+    let replay = windows::spawn_helper_process(
         &executable,
         working_directory,
         "--native-bootstrap-assistant",
