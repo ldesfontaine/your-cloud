@@ -230,14 +230,27 @@ func parseAuxiliaryArguments(arguments []string) (auxiliaryArguments, error) {
 	if len(arguments) == 0 || arguments[0] != "approve" {
 		return auxiliaryArguments{}, errors.New("auxiliary requires exactly the approve subject")
 	}
+	// The default format is JSON, and the forced command is why rather than a
+	// taste. The `authorized_keys` entry is compared byte for byte and accepts
+	// no free argument — `/usr/bin/sudo -n /usr/lib/your-cloud/your-cloud
+	// auxiliary approve`, and nothing else — so the Controller that will read
+	// this report over that channel (#126, #127) cannot ask for a format. A
+	// report another program must read cannot be a rendering meant for human
+	// eyes, and parsing a presentation is exactly the coupling this product
+	// avoids everywhere else. The line rendering survives behind
+	// `--format=text` for the human who runs the Auxiliary by hand on his own
+	// machine, and the two renderings stay the same closed structure, so no
+	// field can exist in one and be missing from the other. The forced command,
+	// the `sudo` rule and the account do not move a byte — that is the whole
+	// point of moving the default rather than the invocation.
 	result := auxiliaryArguments{
 		anchorPath:  approval.AnchorPath,
 		stateDir:    approval.StateDirectory,
 		readerLimit: auxiliary.MaxInputBytes,
-		format:      "text",
+		format:      "json",
 	}
 	flags := flag.NewFlagSet("auxiliary approve", flag.ContinueOnError)
-	flags.StringVar(&result.format, "format", "text", "text or json")
+	flags.StringVar(&result.format, "format", "json", "json or text")
 	if err := flags.Parse(arguments[1:]); err != nil {
 		return auxiliaryArguments{}, err
 	}

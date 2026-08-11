@@ -30,8 +30,21 @@ func TestAuxiliaryAcceptsOnlyItsOwnBoundedSubject(t *testing.T) {
 	if valid.readerLimit != auxiliary.MaxInputBytes {
 		t.Fatalf("the auxiliary did not bound its input: %+v", valid)
 	}
-	if _, err := parseAuxiliaryArguments([]string{"approve", "--format=json"}); err != nil {
-		t.Fatalf("the json format was refused: %v", err)
+	// The default is JSON because the forced SSH command accepts no free
+	// argument: the Controller reads this report over a channel it cannot pass
+	// a flag on. The line rendering stays reachable for the human who runs the
+	// Auxiliary by hand, and it is the only way to reach it.
+	if valid.format != "json" {
+		t.Fatalf("the auxiliary does not answer a program by default: %+v", valid)
+	}
+	for _, accepted := range []string{"json", "text"} {
+		parsed, err := parseAuxiliaryArguments([]string{"approve", "--format=" + accepted})
+		if err != nil {
+			t.Fatalf("the %s format was refused: %v", accepted, err)
+		}
+		if parsed.format != accepted {
+			t.Fatalf("the %s format was not the one kept: %+v", accepted, parsed)
+		}
 	}
 
 	for _, arguments := range [][]string{
