@@ -132,16 +132,31 @@ si un humain doit faire défiler.
 `MAX_APPROVAL_CONSENT_FOLDED_LINES` vaut **32**, et ce nombre est mesuré sur les
 présentations que le produit écrit réellement, repliées à 72 caractères :
 
-| Présentation la plus large | Phrases logiques | Lignes repliées mesurées |
+| Présentation la plus large | Phrases logiques | Lignes repliées **mesurées** |
 |---|---|---|
-| service privé (schéma 2) | 16 | ≈ 25 |
-| service utilisateur avec origine | 12 | ≈ 24 |
+| service privé (schéma 2) | 16 | **30** |
+| service utilisateur avec origine | 12 | **25** |
 
 La plus longue phrase du produit — l'origine d'un service utilisateur, qui porte
 un hôte pouvant atteindre `MAX_ROUTE_HOST_BYTES = 253` — se replie à elle seule
-en cinq lignes ; les deux empreintes en deux chacune. Trente-deux est la borne
-au-dessus de cette mesure, et elle tient dans une fenêtre qu'aucun écran
-n'oblige à défiler.
+en cinq lignes ; les deux empreintes en deux chacune. Trente-deux est la
+puissance de deux au-dessus de cette mesure, et elle tient dans une fenêtre
+qu'aucun écran n'oblige à défiler.
+
+**La marge est de deux lignes, et c'est la décision plutôt qu'un oubli.**
+Ajouter une phrase à une fenêtre d'approbation doit être une décision prise
+contre cette borne, jamais une dérive découverte devant un humain ; un palier
+qui aurait besoin d'une présentation plus large devra dire ce qu'il abandonne,
+exactement comme le contrat le dit déjà pour la trame. Les deux bornes mordent
+dans deux régimes différents et aucune n'est morte : vingt-quatre phrases
+courtes se replient en vingt-quatre lignes et sont refusées par
+`MAX_APPROVAL_CONSENT_LINES`, tandis que seize phrases larges sont refusées par
+celle-ci.
+
+*(La mesure initiale de la séance annonçait ≈25 lignes pour le service privé ;
+l'implémentation, qui replie réellement les phrases construites depuis leurs
+constantes, en donne 30. Le nombre retenu ne change pas, la marge oui, et elle
+est écrite.)*
 
 La borne est **refusée à la validation du document de consentement**, jamais au
 dessin : une présentation qui la dépasserait rendrait un test rouge avant qu'un

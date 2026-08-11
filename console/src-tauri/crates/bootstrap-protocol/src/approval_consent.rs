@@ -87,6 +87,60 @@ pub const MAX_APPROVAL_CONSENT_LINES: usize = 24;
 /// nobody read.
 pub const MAX_APPROVAL_CONSENT_LINE_BYTES: usize = 384;
 
+/// The width the approval window folds a sentence at, in characters.
+///
+/// It is not a new number: it is the width the bootstrap consent window already
+/// folds its own lines at, shipped and measured, and taking a second one would
+/// be two windows of the same product disagreeing on what a line is. It is a
+/// character count rather than a byte count because folding is a display
+/// question, and the copy of this product is accented.
+pub const APPROVAL_CONSENT_FOLD_COLUMNS: usize = 72;
+
+/// Most *displayed* lines one consent may reach once folded.
+///
+/// [`MAX_APPROVAL_CONSENT_LINES`] bounds the number of **logical** sentences,
+/// and that is not the number a human scrolls past: twenty-four sentences of
+/// 384 bytes would fold into far more than twenty-four lines. What decides
+/// whether a window must scroll is the folded count, so that is what is
+/// bounded, and it is bounded **here** — a window that refused at the drawing
+/// would refuse in front of a human, and one that truncated would show less
+/// than what is signed.
+///
+/// The number is measured rather than chosen. Folded at
+/// [`APPROVAL_CONSENT_FOLD_COLUMNS`], the two widest presentations the product
+/// writes measure **30** and **25** displayed lines: the private service of
+/// schema 2, whose sixteen sentences carry two digests, a long egress sentence
+/// and two origins, and the user service, whose origin sentence alone folds into
+/// five. Thirty-two is the power of two above that measurement, and the test
+/// suite of this module rebuilds both presentations from the very constants they
+/// are formatted from, so a host bound or a hardening line that grew turns this
+/// red rather than producing a window a human must scroll.
+///
+/// **The margin is two lines, and that is the decision rather than an
+/// oversight.** Adding a sentence to an approval window must be a decision taken
+/// against this bound, never a drift discovered in front of a human; a palier
+/// that needs a wider presentation must say what it gives up, exactly as the
+/// contract already says for the frame. The two bounds bind in different
+/// regimes and neither is dead: twenty-four short sentences fold into
+/// twenty-four lines and are refused by [`MAX_APPROVAL_CONSENT_LINES`], while
+/// sixteen wide ones are refused by this one.
+pub const MAX_APPROVAL_CONSENT_FOLDED_LINES: usize = 32;
+
+/// How many displayed lines a set of sentences folds into.
+///
+/// One sentence is at least one line, even shorter than the width; the count is
+/// in characters, and it is the same walk the window performs, kept here so the
+/// bound and the drawing cannot fold differently.
+pub fn folded_line_count(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .map(|line| {
+            let characters = line.chars().count();
+            characters.div_ceil(APPROVAL_CONSENT_FOLD_COLUMNS).max(1)
+        })
+        .sum()
+}
+
 /// What one sentence costs in the encoding beyond its own bytes: the two quotes
 /// that delimit it and the comma that separates it from the next.
 ///
@@ -371,6 +425,13 @@ fn valid_confirmation_lines(lines: &[String], plan_sha256: &str, rollback_sha256
             return false;
         }
     }
+    // The second bound, and the one a human actually meets: what the window
+    // will display once every sentence is folded to its width. The byte frame
+    // bounds what is *read* before parsing; this bounds what is *accepted*, and
+    // it is the stricter of the two by construction.
+    if folded_line_count(lines) > MAX_APPROVAL_CONSENT_FOLDED_LINES {
+        return false;
+    }
     let last = &lines[lines.len() - 1];
     let previous = &lines[lines.len() - 2];
     previous.ends_with(plan_sha256) && last.ends_with(rollback_sha256)
@@ -474,6 +535,14 @@ mod tests {
     /// believed: a field added to the consent and forgotten in
     /// `APPROVAL_CONSENT_FIXED_BYTES` fails here rather than producing a frame
     /// the window refuses in the field.
+    ///
+    /// The document built here is deliberately **not** admissible: twenty-four
+    /// sentences at their byte ceiling fold into far more than
+    /// [`MAX_APPROVAL_CONSENT_FOLDED_LINES`] displayed lines. That is the whole
+    /// distinction between the two bounds — the frame bounds what the window
+    /// must be able to *read* before it can parse anything, so a hostile
+    /// document of that width has to be readable and then refused, never
+    /// unreadable. Both halves are asserted below.
     #[test]
     fn the_declared_frame_ceiling_holds_the_widest_consent() {
         let mut maximal = consent();
@@ -492,17 +561,169 @@ mod tests {
         }
         maximal.confirmation_lines = widest;
 
-        let validated = maximal.validate().expect("a maximal consent is admissible");
-        let encoded = serde_json::to_vec(&validated).unwrap();
+        let encoded = serde_json::to_vec(&maximal).unwrap();
         assert!(
             encoded.len() <= MAX_APPROVAL_CONSENT_FRAME_BYTES,
             "the widest consent is {} bytes, over the declared {MAX_APPROVAL_CONSENT_FRAME_BYTES}",
             encoded.len()
         );
+        // Readable, then refused: the frame let it through, the folded bound
+        // did not.
+        assert!(folded_line_count(&maximal.confirmation_lines) > MAX_APPROVAL_CONSENT_FOLDED_LINES);
+        assert!(maximal.validate().is_err());
 
         assert!(
             serde_json::to_vec(&consent().confirmed()).unwrap().len()
                 <= MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES
+        );
+    }
+
+    /// The folded bound really holds the widest presentations the product
+    /// writes, and it is measured rather than believed.
+    ///
+    /// Both are rebuilt from the very constants they are formatted from — the
+    /// route host bound, the origin placeholder, the hardening lines, the data
+    /// volume, the egress table — so a constant that grew turns this red rather
+    /// than producing a window a human must scroll. What is held is a width,
+    /// not a copy: the sentences themselves are pinned where they are written.
+    #[test]
+    fn the_folded_bound_holds_the_widest_presentations_the_product_writes() {
+        let host = "a".repeat(crate::MAX_ROUTE_HOST_BYTES);
+        let image = format!("registry.example.test/namespace/service:1.0.0@sha256:{PLAN}");
+
+        // The private service of schema 2: sixteen sentences, the widest
+        // presentation of the delivered profiles.
+        let mut private_service = vec![
+            format!("Machine : {}", "m".repeat(63)),
+            "Opération : déployer le service privé".to_owned(),
+            "Service : coffre privé".to_owned(),
+            format!("Image : {image}"),
+            format!("Digest de l’image : sha256:{PLAN}"),
+            format!("Port local : {}:65535", crate::SERVICE_LOCAL_ADDRESS),
+            format!(
+                "Origine : {}://{host}",
+                crate::PRIVATE_SERVICE_ORIGIN_SCHEME
+            ),
+            format!("Volume persistant : {}", crate::PRIVATE_SERVICE_DATA_VOLUME),
+        ];
+        for hardening in crate::PRIVATE_SERVICE_ENVIRONMENT_HARDENING {
+            private_service.push(format!("Ligne d’environnement : {hardening}"));
+        }
+        private_service.push(format!(
+            "Ligne d’environnement : {}={}://{host}",
+            crate::PRIVATE_SERVICE_ORIGIN_VARIABLE,
+            crate::PRIVATE_SERVICE_ORIGIN_SCHEME
+        ));
+        private_service.push(format!(
+            "Confinement de sortie : table {}, le service ne parle à personne : sortie refusée \
+             hors loopback et réponses",
+            crate::PRIVATE_SERVICE_EGRESS_TABLE
+        ));
+        private_service.push(
+            "Rollback : retirer le service privé, sur la même machine, la même image et le même \
+             port"
+                .to_owned(),
+        );
+        private_service.push(format!("Empreinte du plan : {PLAN}"));
+        private_service.push(format!("Empreinte du rollback : {ROLLBACK}"));
+
+        // The user service: fewer sentences, but the widest single one of the
+        // product — the origin, which folds into five lines on its own.
+        let user_service = vec![
+            format!("Machine : {}", "m".repeat(63)),
+            "Opération : déployer le service utilisateur".to_owned(),
+            format!("Service défini : {}", "s".repeat(32)),
+            format!("Révision de la définition : {PLAN}"),
+            format!("Image : {image}"),
+            format!("Digest de l’image : sha256:{PLAN}"),
+            format!("Port local : {}:65535", crate::SERVICE_LOCAL_ADDRESS),
+            format!(
+                "Origine : {host}, portée par les lignes de la définition qui nomment {}",
+                crate::ORIGIN_HOST_PLACEHOLDER
+            ),
+            "Ce que la révision décide : le compte, le foyer, les volumes, l’environnement et les \
+             noms de secrets viennent de la définition gelée sous cette empreinte, et d’aucun \
+             champ de ce plan"
+                .to_owned(),
+            "Rollback : retirer le service utilisateur, sur la même machine et le même slug"
+                .to_owned(),
+            format!("Empreinte du plan : {PLAN}"),
+            format!("Empreinte du rollback : {ROLLBACK}"),
+        ];
+
+        for (family, sentences) in [
+            ("le service privé", &private_service),
+            ("le service utilisateur", &user_service),
+        ] {
+            assert!(
+                sentences.len() <= MAX_APPROVAL_CONSENT_LINES,
+                "{family} writes {} sentences, over the declared {MAX_APPROVAL_CONSENT_LINES}",
+                sentences.len()
+            );
+            let folded = folded_line_count(sentences);
+            assert!(
+                folded <= MAX_APPROVAL_CONSENT_FOLDED_LINES,
+                "{family} folds into {folded} lines, over the declared \
+                 {MAX_APPROVAL_CONSENT_FOLDED_LINES}"
+            );
+            // And each is really admissible, rather than merely under a number.
+            let mut carried = consent();
+            carried.confirmation_lines = sentences.clone();
+            assert!(
+                carried.validate().is_ok(),
+                "{family} is not admissible as a consent"
+            );
+        }
+
+        // The two measurements, held as numbers so a presentation that grew is
+        // read here rather than discovered in front of a human.
+        assert_eq!(folded_line_count(&private_service), 30);
+        assert_eq!(folded_line_count(&user_service), 25);
+
+        // The bound bites, and it bites on the widest family: one sentence more
+        // of the widest kind carries the private service past it, and the
+        // document refuses it — not the window.
+        let mut overflowing = consent();
+        let mut sentences = private_service.clone();
+        sentences.insert(
+            1,
+            format!(
+                "Origine : {host}, portée par les lignes de la définition qui nomment {}",
+                crate::ORIGIN_HOST_PLACEHOLDER
+            ),
+        );
+        assert!(
+            sentences.len() <= MAX_APPROVAL_CONSENT_LINES,
+            "the sentence bound is not what refuses it"
+        );
+        overflowing.confirmation_lines = sentences;
+        assert!(overflowing.validate().is_err());
+    }
+
+    /// A sentence shorter than the fold width still costs one displayed line,
+    /// and the count is in characters rather than bytes — the copy of this
+    /// product is accented, and folding is a display question.
+    #[test]
+    fn folding_counts_characters_and_never_costs_less_than_one_line() {
+        assert_eq!(folded_line_count(&["a".to_owned()]), 1);
+        assert_eq!(
+            folded_line_count(&["a".repeat(APPROVAL_CONSENT_FOLD_COLUMNS)]),
+            1
+        );
+        assert_eq!(
+            folded_line_count(&["a".repeat(APPROVAL_CONSENT_FOLD_COLUMNS + 1)]),
+            2
+        );
+        // 72 accented characters are 144 bytes and still one displayed line: a
+        // byte count here would have refused a sentence a window renders whole.
+        assert_eq!(
+            folded_line_count(&["é".repeat(APPROVAL_CONSENT_FOLD_COLUMNS)]),
+            1
+        );
+        assert_eq!(
+            folded_line_count(&["a".to_owned(), "b".to_owned()]),
+            2,
+            "each sentence starts its own line"
         );
     }
 
