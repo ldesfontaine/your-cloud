@@ -327,7 +327,7 @@ grep -c 'return Ok(minted);' crates/native-bootstrap-assistant/src/machine_ident
 interrupt() {
   local step target_address output
   target_address=$(inventory "$target_vm")
-  for step in artifact account anchor replay elevation key; do
+  for step in artifact account anchor replay elevation key endpoint; do
     "$labctl" ssh "$target_vm" -- "$remote_harness/remove-machine enrolment" >/dev/null 2>&1 || true
     output=$(on_console "YOUR_CLOUD_FAIL_AT=$step $remote_harness/enrol-from-controller \
       $target_vm $target_address" 2>&1 || true)

@@ -88,6 +88,16 @@ pub enum Step {
     /// The `authorized_keys` entry. Nothing before this step makes the identity
     /// usable, and nothing after it widens what the identity may do.
     ActivateForcedKey,
+    /// The command endpoint sheet on the Controller: where this machine's
+    /// commands go, which account answers, and the host key the audit pinned.
+    ///
+    /// It comes **after** the forced key on purpose. The sheet records a
+    /// destination, and a destination recorded before the machine holds its
+    /// locked account, its bounded elevation and its forced command would be a
+    /// recorded destination that nothing yet bounds. It comes **before** the
+    /// verification for a plainer reason: the Controller cannot open a path it
+    /// does not know the address of.
+    WriteCommandEndpoint,
     /// The Controller opens the new path itself and reads the Auxiliary's
     /// read-only diagnostic back. Nothing is started before this answers.
     VerifyNewPath,
@@ -101,13 +111,14 @@ pub enum Step {
 /// The fixed sequence. It is a constant rather than a builder because an
 /// enrolment whose order could be chosen is an enrolment whose ordering
 /// guarantees are the caller's problem.
-pub const STEPS: [Step; 9] = [
+pub const STEPS: [Step; 10] = [
     Step::InstallArtifact,
     Step::CreateAccount,
     Step::InstallApprovalAnchor,
     Step::InstallReplayState,
     Step::InstallElevationRule,
     Step::ActivateForcedKey,
+    Step::WriteCommandEndpoint,
     Step::VerifyNewPath,
     Step::ActivateApprovedRoles,
     Step::DestroyTemporaryState,
@@ -123,6 +134,7 @@ impl Step {
             Self::InstallReplayState => "replay",
             Self::InstallElevationRule => "elevation",
             Self::ActivateForcedKey => "key",
+            Self::WriteCommandEndpoint => "endpoint",
             Self::VerifyNewPath => "verify",
             Self::ActivateApprovedRoles => "roles",
             Self::DestroyTemporaryState => "destroy",
@@ -514,9 +526,25 @@ mod tests {
         assert!(position(Step::InstallArtifact) < position(Step::ActivateForcedKey));
         assert!(position(Step::VerifyNewPath) < position(Step::ActivateApprovedRoles));
         assert!(position(Step::InstallElevationRule) < position(Step::ActivateForcedKey));
+        // La fiche d'endpoint enregistre une destination. Elle vient après la
+        // clé forcée — une destination enregistrée avant que la machine tienne
+        // son compte verrouillé, son élévation bornée et sa commande forcée
+        // serait une destination que rien ne borne encore — et avant la
+        // vérification, parce que le Controller ne peut pas ouvrir un chemin
+        // dont il ignore l'adresse.
+        assert!(position(Step::ActivateForcedKey) < position(Step::WriteCommandEndpoint));
+        assert!(position(Step::WriteCommandEndpoint) < position(Step::VerifyNewPath));
         assert_eq!(STEPS[0], Step::InstallArtifact);
         assert_eq!(STEPS.last(), Some(&Step::DestroyTemporaryState));
-        assert_eq!(STEPS.len(), 9);
+        assert_eq!(STEPS.len(), 10);
+        // Chaque étape a un nom, et deux étapes n'en partagent jamais un : le
+        // registre et le rapport LAB nomment les étapes par ces mots, et un
+        // doublon ferait raconter deux arrêts différents de la même façon.
+        let mut names: Vec<&str> = STEPS.iter().map(|step| step.as_str()).collect();
+        names.sort_unstable();
+        let unique = names.len();
+        names.dedup();
+        assert_eq!(names.len(), unique);
     }
 
     /// Clearing other machines is not clearing this one, and an unenrolled
