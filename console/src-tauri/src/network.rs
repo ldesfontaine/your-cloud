@@ -36,7 +36,10 @@ use unicode_normalization::UnicodeNormalization;
 use url::Url;
 use uuid::Uuid;
 use x509_parser::{extensions::GeneralName, parse_x509_certificate, pem::parse_x509_pem};
-use your_cloud_bootstrap_protocol::MAX_SERVICE_DEFINITION_BYTES;
+use your_cloud_bootstrap_protocol::{
+    SignedApprovalV1, MAX_PLAN_DOCUMENT_BYTES, MAX_SERVICE_DEFINITION_BYTES,
+    MAX_SIGNED_APPROVAL_BYTES,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 const REQUEST_MAX_BYTES: usize = 4 * 1024;
@@ -56,6 +59,12 @@ const MAX_FROZEN_SERVICE_DEFINITIONS: usize = 128;
 // arrives as at most twice its bytes plus the two other fields of the envelope.
 // Deriving it from the document's bound is what keeps a definition the contract
 // admits from being one this Console could never send.
+/// A submission carries a signed approval and the documents it signs. The bound
+/// is the sum of what those documents may reach, taken from the packages that
+/// own them rather than written as a number, plus the envelope's own fields.
+const PLAN_APPROVAL_REQUEST_MAX_BYTES: usize = 2
+    * (MAX_SIGNED_APPROVAL_BYTES + 2 * MAX_PLAN_DOCUMENT_BYTES + MAX_SERVICE_DEFINITION_BYTES)
+    + 512;
 const DEFINITION_REQUEST_MAX_BYTES: usize = 2 * MAX_SERVICE_DEFINITION_BYTES + 512;
 const TEMPORARY_RESPONSE_MAX_BYTES: usize = 8 * 1024;
 const ERROR_MAX_BYTES: usize = 1024;
@@ -659,6 +668,63 @@ impl NetworkState {
         if view.plan_document.is_empty()
             || view.rollback_document.is_empty()
             || view.plan_sha256 == view.rollback_sha256
+        {
+            return Err(NetworkError::InvalidInput);
+        }
+        ensure_current(generation, current_generation)?;
+        Ok(view)
+    }
+
+    /// Submits one signed approval, with the documents it signs.
+    ///
+    /// This is the one request of this Console whose effect leaves the
+    /// Controller's machine, and everything that decides what happens is inside
+    /// the envelope: the machine, the operation, the position and the two
+    /// digests. What travels beside it are the exact bytes those digests were
+    /// taken over, because the Controller recanonises and rehashes them itself
+    /// and believes neither this Console nor its own earlier freeze.
+    ///
+    /// The definition travels exactly when the operation's door pins one. It is
+    /// the revision this Console read back from the Controller, not one a
+    /// caller supplied: a definition assembled elsewhere would be a definition
+    /// the human never saw the consequences of.
+    pub(crate) fn submit_plan_approval(
+        &mut self,
+        association: &AssociationRecord,
+        signed_approval: &SignedApprovalV1,
+        documents: &PlanPairView,
+        definition_document: &str,
+        generation: u64,
+        current_generation: &AtomicU64,
+    ) -> Result<PlanDispatchAcceptedView, NetworkError> {
+        let client = association_client(association)?;
+        let token = self.session(association, &client, generation, current_generation)?;
+        let response = send_json_within::<PlanDispatchAcceptedView, _>(
+            &client,
+            "POST",
+            &format!("{}/v0/plan-approvals", association.summary.origin),
+            Some(token.as_str()),
+            &PlanApprovalSubmission {
+                schema_version: 1,
+                signed_approval,
+                plan_document: &documents.plan_document,
+                rollback_document: &documents.rollback_document,
+                definition_document,
+            },
+            PLAN_APPROVAL_REQUEST_MAX_BYTES,
+            RESPONSE_MAX_BYTES,
+            &[StatusCode::OK],
+        );
+        let view =
+            self.handle_session_response(&association.summary.infrastructure_id, response)?;
+        // The answer must be about the dispatch that was just submitted. A view
+        // naming another machine, another position or another pair is not a
+        // weaker answer about this one; it is an answer about something else.
+        if view.schema_version != 1
+            || view.dispatch.machine_id != signed_approval.envelope.machine_id
+            || view.dispatch.sequence != signed_approval.envelope.sequence
+            || view.dispatch.plan_sha256 != signed_approval.envelope.plan_sha256
+            || view.dispatch.rollback_sha256 != signed_approval.envelope.rollback_sha256
         {
             return Err(NetworkError::InvalidInput);
         }
@@ -1488,6 +1554,46 @@ pub(crate) struct ServiceDefinitionsView {
     pub infrastructure_id: String,
     pub definition_revision: u64,
     pub definitions: Vec<ServiceDefinitionEntryView>,
+}
+
+/// What a submission carries, and nothing else.
+#[derive(Serialize)]
+struct PlanApprovalSubmission<'a> {
+    schema_version: u8,
+    signed_approval: &'a SignedApprovalV1,
+    plan_document: &'a str,
+    rollback_document: &'a str,
+    definition_document: &'a str,
+}
+
+/// What the Controller answers a submission with: the record as it stands when
+/// the answer is written.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PlanDispatchAcceptedView {
+    pub schema_version: u8,
+    pub dispatch: PlanDispatchEntryView,
+}
+
+/// One dispatch as this Console reads it back.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PlanDispatchEntryView {
+    pub approval_sha256: String,
+    pub machine_id: String,
+    pub operation: String,
+    pub approval_epoch: u64,
+    pub sequence: u64,
+    pub plan_sha256: String,
+    pub rollback_sha256: String,
+    pub state: String,
+    pub accepted_at_unix: u64,
+    pub finished_at_unix: u64,
+    pub expires_at_unix: u64,
+    pub machine_sentence: String,
+    pub controller_observation: String,
+    pub reported_changed: bool,
+    pub reported_outcome: String,
 }
 
 /// One frozen revision: the exact canonical bytes, the digest they hash to, the

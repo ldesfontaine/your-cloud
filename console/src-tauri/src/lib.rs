@@ -45,11 +45,12 @@ use bootstrap::BootstrapState;
 use native_helper::{HelperInvocation, NativeHelperPoll, NativeHelperSupervisor};
 use network::{
     ExternalElementsView, ExternalWithdrawalView, InfrastructureView, MachineMutationView,
-    MachinesView, NetworkState, PairingInput,
+    MachinesView, NetworkState, PairingInput, PlanDispatchAcceptedView,
 };
 use plan_consent::{PlanConsentError, PlanConsentSessionView, PlanConsentState};
 use publication_plan::{
-    PlanPairView, PresentedPublicationPlan, PublicationPlanConfirmation, PublicationPlanError,
+    PlanPairView, PresentedPublicationPlan, PublicationApprovalRequest,
+    PublicationPlanConfirmation, PublicationPlanError,
 };
 use serde::Serialize;
 use service_definition::{
@@ -68,7 +69,9 @@ use vault::{
     AssociationSummary, ConsoleCore, ConsoleStatus, GeneratedLocalSecrets, PreparedPhraseChange,
     PreparedRecoveryRotation, RecoveryRotationProgress,
 };
-use your_cloud_bootstrap_protocol::{BootstrapSessionView, BootstrapStartInput};
+use your_cloud_bootstrap_protocol::{
+    BootstrapSessionView, BootstrapStartInput, MAX_APPROVAL_LIFETIME_SECONDS,
+};
 use zeroize::Zeroizing;
 
 #[derive(Debug, Serialize)]
@@ -134,6 +137,11 @@ struct ConsoleLocalState {
 struct HeldPlanPair {
     presented: PresentedPublicationPlan,
     documents: PlanPairView,
+    /// The frozen revision this plan pins, read back from the Controller rather
+    /// than supplied by a caller: a definition assembled elsewhere would be a
+    /// definition whose consequences nobody read. Empty for the doors that pin
+    /// none — the Controller refuses one that travelled beside them.
+    definition_document: String,
 }
 
 impl ConsoleLocalState {
@@ -591,7 +599,20 @@ fn read_plan_pair(
         generation,
         &state.request_generation,
     )?;
+    // The revision this plan pins is read back from the Controller now, while
+    // the association is in hand: the submission that follows carries it, and
+    // carrying one a caller supplied would be carrying one nobody read.
+    let definitions =
+        network.read_service_definitions(&association, generation, &state.request_generation)?;
     drop(network);
+    let definition_document = definitions
+        .definitions
+        .iter()
+        .find(|entry| entry.slug == definition_slug && entry.definition_sha256 == definition_digest)
+        .map(|entry| entry.definition_document.clone())
+        .ok_or(CommandError {
+            code: "definition_absent",
+        })?;
 
     let presented = PresentedPublicationPlan::verify(&view)?;
     let presentation = PlanPairPresentation {
@@ -610,6 +631,7 @@ fn read_plan_pair(
     local.plan_pair = Some(HeldPlanPair {
         presented,
         documents: view,
+        definition_document,
     });
     // A new pair ends any window still open on the previous one: an answer
     // about a plan nobody is considering any more is an answer about nothing.
@@ -709,6 +731,87 @@ fn plan_consent_status(
             Err(error.into())
         }
     }
+}
+
+/// Signs the confirmed plan and submits it, which is the one act of this Console
+/// whose effect leaves the Controller's machine.
+///
+/// Nothing here re-decides anything. The signature happens only for a session
+/// whose window answered a confirmation, over the exact bytes that were
+/// verified and displayed; `publication_plan` re-verifies them from those bytes
+/// before signing, so a transport that altered either document between the
+/// window and this call produces another pair and no signature at all.
+///
+/// The position and the epoch are named by the caller because they are read
+/// from the machine's own reported position, and they are re-verified by the
+/// Controller and again by the machine: this Console is trusted for neither.
+/// What it *is* trusted for is that the human saw these two digests, and that
+/// is what the envelope binds.
+///
+/// The session is closed whatever happens. An approval is a one-shot authority
+/// on this side too: a confirmation that could be submitted twice would be a
+/// confirmation that authorised two dispatches.
+#[tauri::command]
+fn submit_plan_decision(
+    infrastructure_id: String,
+    request_id: String,
+    approval_epoch: u64,
+    sequence: u64,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<PlanDispatchAcceptedView, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut local = state.local.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    if !local.plan_consent.confirmed(&request_id) {
+        return Err(PlanConsentError::RequestRefused.into());
+    }
+    let Some(held) = local.plan_pair.as_ref() else {
+        return Err(PlanConsentError::NoPlan.into());
+    };
+    let signed = held.presented.sign(
+        &association,
+        &held.documents,
+        &held.presented.confirmed(),
+        PublicationApprovalRequest {
+            approval_epoch,
+            sequence,
+            issued_at_unix_seconds: unix_seconds()?,
+            lifetime_seconds: MAX_APPROVAL_LIFETIME_SECONDS,
+        },
+    )?;
+    let documents = held.documents.clone();
+    let definition_document = held.definition_document.clone();
+    // The session is spent before a byte leaves, and it is spent whatever the
+    // submission answers.
+    local.plan_consent.clear();
+    drop(local);
+
+    let mut network = state.network.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    network
+        .submit_plan_approval(
+            &association,
+            &signed,
+            &documents,
+            &definition_document,
+            generation,
+            &state.request_generation,
+        )
+        .map_err(Into::into)
+}
+
+/// The instant an envelope is issued at, read from the wall clock because that
+/// is what an expiry is compared against on the other side.
+fn unix_seconds() -> Result<u64, CommandError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .map_err(|_| CommandError {
+            code: "console_unavailable",
+        })
 }
 
 /// Closes the window without an answer.
@@ -1085,6 +1188,7 @@ pub fn run() {
             open_plan_consent,
             plan_consent_status,
             cancel_plan_consent,
+            submit_plan_decision,
             put_infrastructure,
             put_machine,
             rotate_device,
