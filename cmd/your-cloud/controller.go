@@ -34,6 +34,12 @@ import (
 const (
 	commandIdentitiesCredential = "command-identities"
 	commandEndpointsCredential  = "command-endpoints"
+
+	// defaultCommandIdentityDirectory is where the enrolment writes them, and
+	// where the unit loads them from. Naming it here rather than making it a
+	// required argument keeps the Assistant's invocation to the one thing it
+	// really decides: which machine.
+	defaultCommandIdentityDirectory = "/etc/your-cloud/command-identities"
 )
 
 // runtimeDirectoryEnvironment is set by systemd for units declaring
@@ -52,17 +58,21 @@ type controllerServeArguments struct {
 
 func runController(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("controller requires one local operation: init, serve or revoke-device")
+		return errors.New("controller requires one local operation: init, serve, mint-command-identity or revoke-device")
 	}
 	switch arguments[0] {
 	case "init":
 		return runControllerInit(arguments[1:])
 	case "serve":
 		return runControllerServe(arguments[1:])
+	case "mint-command-identity":
+		return runControllerMintCommandIdentity(arguments[1:])
 	case "revoke-device":
 		return runControllerRevokeDevice(arguments[1:])
 	default:
-		return fmt.Errorf("unknown controller operation %q: expected init, serve or revoke-device", arguments[0])
+		return fmt.Errorf(
+			"unknown controller operation %q: expected init, serve, mint-command-identity or revoke-device",
+			arguments[0])
 	}
 }
 
@@ -87,6 +97,40 @@ func runControllerRevokeDevice(arguments []string) error {
 		return fmt.Errorf("revoke active Controller device: %w", err)
 	}
 	fmt.Fprintf(os.Stdout, "device_id=%s status=%s\n", revoked.DeviceID, revoked.Status)
+	return nil
+}
+
+// runControllerMintCommandIdentity strikes the command identity of one machine
+// and prints only what may leave this Controller.
+//
+// It is a local operation rather than a route, and that is the decision: the
+// serving Controller runs under a dynamic account with no write access to
+// `/etc`, and giving it one so that a request could mint a key would be giving
+// the network surface the power to create authorities. The Assistant runs this
+// at enrolment over the personal access, as `root`, exactly once per machine,
+// and carries away the public half and its fingerprint — never a byte of the
+// other one, which stays here.
+func runControllerMintCommandIdentity(arguments []string) error {
+	flags := flag.NewFlagSet("controller mint-command-identity", flag.ContinueOnError)
+	machine := flags.String("machine", "", "machine the identity commands")
+	directory := flags.String("identity-dir", defaultCommandIdentityDirectory,
+		"root-owned directory of command identities")
+	if err := flags.Parse(arguments); err != nil {
+		return fmt.Errorf("controller mint-command-identity arguments: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return errorsForUnexpectedArguments("controller mint-command-identity", flags.Args())
+	}
+	minted, err := controller.MintCommandIdentity(*directory, *machine, nil)
+	if err != nil {
+		return fmt.Errorf("mint the command identity of this machine: %w", err)
+	}
+	// Two lines, both public. The private half is named by nothing here, not
+	// even by its path: a process listing is a place a reader could learn where
+	// to look.
+	fmt.Fprintf(os.Stdout, "machine_id=%s\n", minted.MachineID)
+	fmt.Fprintf(os.Stdout, "public_key=%s\n", minted.PublicLine)
+	fmt.Fprintf(os.Stdout, "fingerprint=%s\n", minted.FingerprintSHA256)
 	return nil
 }
 
