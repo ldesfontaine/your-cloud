@@ -399,6 +399,54 @@ fn read_contract_passphrase() -> Result<secret::ProtectedSecret, u8> {
     Ok(passphrase)
 }
 
+pub fn process_main() -> u8 {
+    // This origin precedes every local operation: hardening, parent attestation and
+    // protocol reading all consume, and can never renew, the Console-provided TTL.
+    let session_started_at = Instant::now();
+    if hardening::apply().is_err() {
+        return EXIT_INTERNAL_FAILURE;
+    }
+    std::panic::set_hook(Box::new(|_| {}));
+
+    let watchdog = match watchdog::Watchdog::start_at(session_started_at) {
+        Ok(watchdog) => watchdog,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+
+    if !valid_arguments(std::env::args_os()) {
+        return EXIT_INVALID_INVOCATION;
+    }
+
+    let mut stdin = match UnbufferedStandardInput::open() {
+        Ok(stdin) => stdin,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+    let _parent = match parent::verify(&stdin) {
+        Ok(parent) => parent,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+
+    let stdout = io::stdout();
+    let scope = match framing::read_scope(&mut stdin).map_err(map_read_error) {
+        Ok(scope) => scope,
+        Err(SessionError::Protocol) => return EXIT_PROTOCOL_REFUSED,
+        Err(SessionError::Io) => return EXIT_IO_FAILURE,
+        Err(SessionError::Internal) => return EXIT_INTERNAL_FAILURE,
+    };
+    let lease = match LeaseState::watch_standard_input(stdin) {
+        Ok(lease) => lease,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+    let mut writer = stdout.lock();
+
+    match serve_scope(scope, &mut writer, &watchdog, lease) {
+        Ok(terminal) => terminal.exit_code(),
+        Err(SessionError::Protocol) => EXIT_PROTOCOL_REFUSED,
+        Err(SessionError::Io) => EXIT_IO_FAILURE,
+        Err(SessionError::Internal) => EXIT_INTERNAL_FAILURE,
+    }
+}
+
 /// The approval consent session: read one consent, show it whole, answer once.
 ///
 /// It shares the hardening, the parent attestation, the watchdog and the lease
@@ -532,54 +580,6 @@ fn valid_approval_arguments(arguments: impl IntoIterator<Item = OsString>) -> bo
     let _program = arguments.next();
     arguments.next().as_deref() == Some(OsStr::new(REQUIRED_APPROVAL_MODE_ARGUMENT))
         && arguments.next().is_none()
-}
-
-pub fn process_main() -> u8 {
-    // This origin precedes every local operation: hardening, parent attestation and
-    // protocol reading all consume, and can never renew, the Console-provided TTL.
-    let session_started_at = Instant::now();
-    if hardening::apply().is_err() {
-        return EXIT_INTERNAL_FAILURE;
-    }
-    std::panic::set_hook(Box::new(|_| {}));
-
-    let watchdog = match watchdog::Watchdog::start_at(session_started_at) {
-        Ok(watchdog) => watchdog,
-        Err(()) => return EXIT_INTERNAL_FAILURE,
-    };
-
-    if !valid_arguments(std::env::args_os()) {
-        return EXIT_INVALID_INVOCATION;
-    }
-
-    let mut stdin = match UnbufferedStandardInput::open() {
-        Ok(stdin) => stdin,
-        Err(()) => return EXIT_INTERNAL_FAILURE,
-    };
-    let _parent = match parent::verify(&stdin) {
-        Ok(parent) => parent,
-        Err(()) => return EXIT_INTERNAL_FAILURE,
-    };
-
-    let stdout = io::stdout();
-    let scope = match framing::read_scope(&mut stdin).map_err(map_read_error) {
-        Ok(scope) => scope,
-        Err(SessionError::Protocol) => return EXIT_PROTOCOL_REFUSED,
-        Err(SessionError::Io) => return EXIT_IO_FAILURE,
-        Err(SessionError::Internal) => return EXIT_INTERNAL_FAILURE,
-    };
-    let lease = match LeaseState::watch_standard_input(stdin) {
-        Ok(lease) => lease,
-        Err(()) => return EXIT_INTERNAL_FAILURE,
-    };
-    let mut writer = stdout.lock();
-
-    match serve_scope(scope, &mut writer, &watchdog, lease) {
-        Ok(terminal) => terminal.exit_code(),
-        Err(SessionError::Protocol) => EXIT_PROTOCOL_REFUSED,
-        Err(SessionError::Io) => EXIT_IO_FAILURE,
-        Err(SessionError::Internal) => EXIT_INTERNAL_FAILURE,
-    }
 }
 
 fn valid_arguments(arguments: impl IntoIterator<Item = OsString>) -> bool {

@@ -103,10 +103,10 @@ const bootstrapRuntime = await readSourceText(
   join(consoleRoot, "src-tauri", "src", "bootstrap.rs"),
 );
 const nativeAssistantRuntime = await readSourceText(
-  join(consoleRoot, "src-tauri", "src", "native_assistant.rs"),
+  join(consoleRoot, "src-tauri", "src", "native_helper.rs"),
 );
 const nativeAssistantWindows = await readSourceText(
-  join(consoleRoot, "src-tauri", "src", "native_assistant", "windows.rs"),
+  join(consoleRoot, "src-tauri", "src", "native_helper", "windows.rs"),
 );
 const nativeAssistantHardening = await readSourceText(
   join(
@@ -1605,29 +1605,44 @@ if (
     "lib.rs helper: origine TTL, hardening, watchdog, transport, parent et scope sont mal ordonnés",
   );
 }
+// Chaque calcul de reste est précédé de son estampille OS, et il y en a
+// exactement deux : celui du refus avant spawn et celui de la trame écrite
+// après. Le premier doit précéder la création du processus — refuser après
+// l'avoir créé serait créer un processus pour une autorité déjà éteinte — et le
+// second doit précéder l'encodage puis l'écriture.
 const parentStampIndices = [
-  ...nativeAssistantRuntime.matchAll(/scope\.issued_at_monotonic_nanos\s*=/gu),
+  ...nativeAssistantRuntime.matchAll(
+    /let issued_at = monotonic_nanos\(\)\.map_err\(\|_\| NativeHelperError::Unavailable\)\?;/gu,
+  ),
 ].map((match) => match.index);
 const parentRemainingIndices = [
   ...nativeAssistantRuntime.matchAll(
-    /scope\.remaining_millis\s*=\s*remaining_millis\(expires_at, Instant::now\(\)\)\?;/gu,
+    /let remaining = remaining_millis\(expires_at, now\)\?;/gu,
   ),
 ].map((match) => match.index);
-const encodedScopeIndex = nativeAssistantRuntime.indexOf("let frame = encode_scope(&scope)?;");
+const preflightIndex = nativeAssistantRuntime.indexOf(
+  "invocation.preflight(expires_at, Instant::now())?;",
+);
+const spawnIndex = nativeAssistantRuntime.indexOf("let working_directory = path.parent()");
+const encodedScopeIndex = nativeAssistantRuntime.indexOf(
+  "invocation.stamp_and_encode(expires_at, Instant::now())?;",
+);
 const writtenScopeIndex = nativeAssistantRuntime.indexOf(".write_all(&frame)", encodedScopeIndex);
 if (
   parentStampIndices.length !== 2 ||
   parentRemainingIndices.length !== 2 ||
   parentStampIndices.some((stampIndex, position) => {
     const remainingIndex = parentRemainingIndices[position];
-    const pair = nativeAssistantRuntime.slice(stampIndex, remainingIndex);
-    return stampIndex >= remainingIndex || !pair.includes("monotonic_nanos()");
+    return stampIndex >= remainingIndex;
   }) ||
-  encodedScopeIndex <= parentRemainingIndices[1] ||
+  preflightIndex < 0 ||
+  spawnIndex < 0 ||
+  preflightIndex >= spawnIndex ||
+  encodedScopeIndex <= preflightIndex ||
   writtenScopeIndex <= encodedScopeIndex
 ) {
   failures.push(
-    "native_assistant.rs: chaque remaining doit être précédé de son estampille OS, dont la paire finale avant encodage et écriture",
+    "native_helper.rs: chaque remaining doit être précédé de son estampille OS, le refus doit précéder le spawn, et la paire finale l'encodage puis l'écriture",
   );
 }
 const serveScopeStart = nativeAssistantHelperRuntime.indexOf("fn serve_scope(");
@@ -2211,7 +2226,7 @@ if (
 // Geler n’est pas signer. Aucune enveloppe, aucune approbation et aucune fenêtre
 // native ne vit sur ce chemin : la définition est inerte, et la route qui la
 // gèle est une route métier comme les autres.
-for (const forbidden of ["sign_approval", "ApprovalRequest", "native_assistant"]) {
+for (const forbidden of ["sign_approval", "ApprovalRequest", "native_helper"]) {
   if (definitionRuntime.includes(forbidden)) {
     failures.push(`service_definition.rs: le gel emprunte un chemin d’approbation (${forbidden})`);
   }
@@ -2508,6 +2523,12 @@ for (const bound of [
     failures.push(`approval_consent.rs: le consentement ne porte plus (${bound})`);
   }
 }
+// Ce que la fenêtre reçoit se juge sur la *définition* du document, pas sur la
+// suite de tests : celle-ci reconstruit les présentations réelles du produit
+// pour mesurer leur repli, et ces phrases parlent légitimement de ce que la
+// révision décide — les noms de secrets compris. La garde reste exactement
+// aussi forte sur ce qui compte, le document lui-même.
+const approvalConsentDocument = approvalConsentProtocol.split("#[cfg(test)]")[0];
 for (const forbidden of [
   "plan_document",
   "rollback_document",
@@ -2518,7 +2539,7 @@ for (const forbidden of [
   "secret",
   "Signer",
 ]) {
-  if (approvalConsentProtocol.includes(forbidden)) {
+  if (approvalConsentDocument.includes(forbidden)) {
     failures.push(`approval_consent.rs: la fenêtre reçoit autre chose que des phrases (${forbidden})`);
   }
 }
@@ -3242,7 +3263,7 @@ if (
   !consoleRuntime.includes("struct ConsoleLocalState") ||
   !consoleRuntime.includes("core: ConsoleCore") ||
   !consoleRuntime.includes("bootstrap: BootstrapState") ||
-  !consoleRuntime.includes("native_assistant: NativeAssistantSupervisor")
+  !consoleRuntime.includes("native_helper: NativeHelperSupervisor")
 ) {
   failures.push(
     "lib.rs: coffre, amorçage et helper doivent partager la même transition atomique",
@@ -3288,7 +3309,7 @@ for (const expected of [
   "reap_until_terminal",
 ]) {
   if (!nativeAssistantRuntime.includes(expected)) {
-    failures.push(`native_assistant.rs: garde de lancement parent absente (${expected})`);
+    failures.push(`native_helper.rs: garde de lancement parent absente (${expected})`);
   }
 }
 for (const expected of [
@@ -3308,7 +3329,7 @@ for (const expected of [
   "WINDOWS_CLEANUP_UNPROVEN",
 ]) {
   if (!nativeAssistantWindows.includes(expected)) {
-    failures.push(`native_assistant/windows.rs: garde Win32 absente (${expected})`);
+    failures.push(`native_helper/windows.rs: garde Win32 absente (${expected})`);
   }
 }
 for (const expected of [
@@ -3335,11 +3356,11 @@ if (
   !(assignToJobIndex < verifyJobIndex && verifyJobIndex < resumeThreadIndex)
 ) {
   failures.push(
-    "native_assistant/windows.rs: l’ordre assignation Job, vérification puis reprise doit rester explicite",
+    "native_helper/windows.rs: l’ordre assignation Job, vérification puis reprise doit rester explicite",
   );
 }
 if (nativeAssistantWindows.includes("CREATE_BREAKAWAY_FROM_JOB")) {
-  failures.push("native_assistant/windows.rs: CREATE_BREAKAWAY_FROM_JOB est interdit");
+  failures.push("native_helper/windows.rs: CREATE_BREAKAWAY_FROM_JOB est interdit");
 }
 for (const expected of [
   "GetStdHandle",
@@ -3400,12 +3421,12 @@ if (nativeAssistantWindows.includes('"SSH_AUTH_SOCK"')) {
   );
 }
 if (
-  !/prompt != NativePromptKind::ConfirmPersonalAccess \{\s*return;\s*\}[\s\S]{0,400}?"SSH_AUTH_SOCK"/u.test(
+  !/prompt != Some\(NativePromptKind::ConfirmPersonalAccess\) \{\s*return;\s*\}[\s\S]{0,400}?"SSH_AUTH_SOCK"/u.test(
     nativeAssistantRuntime,
   )
 ) {
   failures.push(
-    "native_assistant.rs: SSH_AUTH_SOCK doit rester réservé au prompt d’accès personnel",
+    "native_helper.rs: SSH_AUTH_SOCK doit rester réservé au prompt d’accès personnel",
   );
 }
 for (const expected of [

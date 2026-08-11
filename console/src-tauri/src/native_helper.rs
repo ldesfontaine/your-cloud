@@ -143,6 +143,38 @@ impl HelperInvocation {
         }
     }
 
+    /// Refuses a launch before any process exists.
+    ///
+    /// It stamps a copy of the document and validates it: a lease already spent,
+    /// or a document that no longer fits its own grammar once stamped, is
+    /// refused here rather than spawned and then killed. Spawning first would
+    /// mean a process created for an authority that was already gone, and the
+    /// bounded termination that followed would be cleaning up after a decision
+    /// this side could have taken without it.
+    fn preflight(&self, expires_at: Instant, now: Instant) -> Result<(), NativeHelperError> {
+        let issued_at = monotonic_nanos().map_err(|_| NativeHelperError::Unavailable)?;
+        let remaining = remaining_millis(expires_at, now)?;
+        match self {
+            Self::Bootstrap(scope) => {
+                let mut scope = scope.clone();
+                scope.issued_at_monotonic_nanos = issued_at;
+                scope.remaining_millis = remaining;
+                scope
+                    .validate()
+                    .map_err(|_| NativeHelperError::RequestRefused)?;
+            }
+            Self::ApprovalConsent(consent) => {
+                let mut consent = consent.clone();
+                consent.issued_at_monotonic_nanos = issued_at;
+                consent.remaining_millis = remaining;
+                consent
+                    .validate()
+                    .map_err(|_| NativeHelperError::RequestRefused)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Stamps the shared clock onto the document and renders the one frame this
     /// invocation writes.
     ///
@@ -300,11 +332,10 @@ impl NativeHelperSupervisor {
             return Err(NativeHelperError::Busy);
         }
         validate_executable(path, expected_name, enforce_installed_policy)?;
-        // Refuse the lease before a process exists: a document that no longer
-        // fits its own grammar, or a lease already spent, is refused here rather
-        // than spawned and then killed. The frame written after the spawn is
+        // Refuse before a process exists. The frame written after the spawn is
         // stamped again from the same origin, which can shorten this lease and
         // can never renew it.
+        invocation.preflight(expires_at, Instant::now())?;
         let kind = invocation.kind();
         let mode_argument = invocation.mode_argument();
         #[cfg(target_os = "linux")]

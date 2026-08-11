@@ -11,8 +11,9 @@
 //! would say a human declined and no human was ever asked. It is also the one
 //! answer that names no pair, so nothing here can be mistaken for a consent.
 //!
-//! The named debt: `#123` ships the GTK half proven on `lab-console`; the Win32
-//! half and its `windows-eval` run remain due before `v0.1.2` can be declared.
+//! The named debt: `#123` ships the GTK half, proven on `lab-console`. The Win32
+//! half and its `windows-eval` run remain due before this palier can be
+//! declared.
 
 use std::{
     sync::{atomic::AtomicBool, Arc},

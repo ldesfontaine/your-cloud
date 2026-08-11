@@ -1,4 +1,5 @@
 use crate::{
+    publication_plan::PlanPairView,
     service_definition::displayable_definition,
     vault::{
         parse_recovery_code, AssociationRecord, AssociationSummary, RecoveryControllerProgress,
@@ -602,6 +603,68 @@ impl NetworkState {
         let view =
             self.handle_session_response(&association.summary.infrastructure_id, response)?;
         validate_service_definitions(&view, association)?;
+        ensure_current(generation, current_generation)?;
+        Ok(view)
+    }
+
+    /// Asks the Controller for the frozen pair of one deployment, and reads it
+    /// back as a pair rather than as a promise.
+    ///
+    /// The Console assembles no plan. It names a machine, a frozen revision and
+    /// the three values a deployment really chooses, and what comes back is two
+    /// documents and two digests the Controller froze. Nothing here trusts that
+    /// escort: the verification that holds each document against its own digest
+    /// belongs to `publication_plan`, and it runs on the caller's side of this
+    /// function — this one only refuses a shape that is not a pair at all.
+    pub(crate) fn build_user_service_plan(
+        &mut self,
+        association: &AssociationRecord,
+        machine_id: &str,
+        operation: &str,
+        definition_slug: &str,
+        definition_digest: &str,
+        image_digest: &str,
+        local_port: u16,
+        origin_host: &str,
+        generation: u64,
+        current_generation: &AtomicU64,
+    ) -> Result<PlanPairView, NetworkError> {
+        let client = association_client(association)?;
+        let token = self.session(association, &client, generation, current_generation)?;
+        let response = send_json_within::<PlanPairView, _>(
+            &client,
+            "POST",
+            &format!(
+                "{}/v0/user-service-plans",
+                association.summary.origin
+            ),
+            Some(token.as_str()),
+            &UserServicePlanRequest {
+                schema_version: 2,
+                machine_id,
+                operation,
+                definition_slug,
+                definition_digest,
+                image_digest,
+                local_port,
+                origin_host,
+            },
+            DEFINITION_REQUEST_MAX_BYTES,
+            RESPONSE_MAX_BYTES,
+            &[StatusCode::OK],
+        );
+        let view =
+            self.handle_session_response(&association.summary.infrastructure_id, response)?;
+        // The one thing held here is that a pair arrived. What makes it *this*
+        // pair — each document rendering the digest beside it, and the rollback
+        // being the complete undoing of the plan — is held where the grammar
+        // lives, and a caller that skipped it would have nothing to display.
+        if view.plan_document.is_empty()
+            || view.rollback_document.is_empty()
+            || view.plan_sha256 == view.rollback_sha256
+        {
+            return Err(NetworkError::InvalidInput);
+        }
         ensure_current(generation, current_generation)?;
         Ok(view)
     }
@@ -1462,6 +1525,27 @@ pub(crate) struct FrozenServiceDefinitionView {
 /// an operation or a date: freezing touches no machine, so a request that could
 /// name one would be a request whose refusal had to be written somewhere.
 #[derive(Serialize)]
+/// What the Console may choose about one deployment of a frozen revision, and
+/// nothing else.
+///
+/// The account, the home, the volume paths, the environment and the names of
+/// the secrets are absent on purpose: the revision decides them, the Controller
+/// reads them out of it, and the Auxiliary re-reads them from the definition's
+/// own bytes before touching the machine. What is here is what a human really
+/// chooses for one deployment — which image revision, which local port, and
+/// which public name the service answers as.
+#[derive(Serialize)]
+struct UserServicePlanRequest<'a> {
+    schema_version: u8,
+    machine_id: &'a str,
+    operation: &'a str,
+    definition_slug: &'a str,
+    definition_digest: &'a str,
+    image_digest: &'a str,
+    local_port: u16,
+    origin_host: &'a str,
+}
+
 struct ServiceDefinitionFreezeRequest<'a> {
     schema_version: u8,
     definition_document: &'a str,

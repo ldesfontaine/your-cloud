@@ -46,6 +46,7 @@ use network::{
     ExternalElementsView, ExternalWithdrawalView, InfrastructureView, MachineMutationView,
     MachinesView, NetworkState, PairingInput,
 };
+use publication_plan::{PresentedPublicationPlan, PublicationPlanError};
 use serde::Serialize;
 use service_definition::{
     FrozenDefinitionView, ServiceDefinitionDraft, ServiceDefinitionPaste, ServiceDefinitionReview,
@@ -107,6 +108,16 @@ struct ConsoleLocalState {
     core: ConsoleCore,
     bootstrap: BootstrapState,
     native_helper: NativeHelperSupervisor,
+    /// The one pair currently under consideration, verified, with the exact
+    /// bytes the Controller froze.
+    ///
+    /// It is one rather than a collection for the same reason a single helper
+    /// runs at a time: a human considers one plan, and a Console holding two
+    /// would have to say which of them a window answered for. Keeping the exact
+    /// bytes matters more than keeping them at all — asking again would build a
+    /// second pair, and approving one while submitting the other is the whole
+    /// class of failure the two digests exist to make impossible.
+    plan_pair: Option<PresentedPublicationPlan>,
 }
 
 impl ConsoleLocalState {
@@ -177,6 +188,14 @@ fn with_core<T>(
         code: "console_unavailable",
     })?;
     operation(&mut local.core).map_err(Into::into)
+}
+
+impl From<PublicationPlanError> for CommandError {
+    fn from(error: PublicationPlanError) -> Self {
+        Self {
+            code: error.public_code(),
+        }
+    }
 }
 
 fn json_request_body<'a>(request: &'a Request<'_>) -> Result<&'a serde_json::Value, CommandError> {
@@ -502,6 +521,86 @@ fn parse_service_definition_paste(pasted: String) -> ServiceDefinitionPaste {
 }
 
 /// Reads every definition this infrastructure has frozen, rehashed one by one.
+/// Reads back the frozen pair of one deployment, and renders it as sentences.
+///
+/// The Console assembles nothing. It names a machine, a revision this
+/// Controller already froze, and the three values a deployment really chooses —
+/// which image revision, which local port, which public name — and the
+/// Controller answers with two documents and two digests it froze itself.
+///
+/// What is returned is the **presentation**: the sentences a human reads and
+/// the two digests that end the last two of them. The canonical bytes stay on
+/// this side, reachable behind an explicit gesture and never as the default
+/// form, because a human reads phrases and not documents.
+///
+/// The verification is not a formality on the way to a display. Both documents
+/// are strict-decoded, both digests are rebuilt from the parsed fields rather
+/// than believed, and the rollback is required to be the complete undoing of
+/// the plan. A pair that fails any of it is refused whole: there is no
+/// partially verified plan a window could render most of.
+#[tauri::command]
+fn read_plan_pair(
+    infrastructure_id: String,
+    machine_id: String,
+    operation: String,
+    definition_slug: String,
+    definition_digest: String,
+    image_digest: String,
+    local_port: u16,
+    origin_host: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<PlanPairPresentation, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut network = state.network.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    let view = network.build_user_service_plan(
+        &association,
+        &machine_id,
+        &operation,
+        &definition_slug,
+        &definition_digest,
+        &image_digest,
+        local_port,
+        &origin_host,
+        generation,
+        &state.request_generation,
+    )?;
+    drop(network);
+
+    let presented = PresentedPublicationPlan::verify(&view)?;
+    let presentation = PlanPairPresentation {
+        schema_version: 1,
+        machine_id: presented.machine_id().to_owned(),
+        plan_sha256: presented.plan_sha256().to_owned(),
+        rollback_sha256: presented.rollback_sha256().to_owned(),
+        confirmation_lines: presented.confirmation_lines(),
+    };
+    // The verified pair is kept whole, with the bytes that were verified, so the
+    // window and the submission that follow answer for these documents and not
+    // for a second pair built from the same request.
+    let mut local = state.local.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    local.plan_pair = Some(presented);
+    Ok(presentation)
+}
+
+/// What a human is shown of a pair before any window opens.
+///
+/// It carries no document. The last two sentences end with the two digests, so
+/// the values a signature will bind are values the human read at the end of a
+/// phrase rather than values handed to him beside one.
+#[derive(Serialize)]
+struct PlanPairPresentation {
+    schema_version: u8,
+    machine_id: String,
+    plan_sha256: String,
+    rollback_sha256: String,
+    confirmation_lines: Vec<String>,
+}
+
 #[tauri::command]
 fn read_service_definitions(
     infrastructure_id: String,
@@ -795,6 +894,7 @@ pub fn run() {
                     core: ConsoleCore::new(state_directory),
                     bootstrap: BootstrapState::default(),
                     native_helper: NativeHelperSupervisor::default(),
+                    plan_pair: None,
                 }),
                 network: Mutex::new(NetworkState::new()),
                 request_generation: AtomicU64::new(0),
@@ -838,6 +938,7 @@ pub fn run() {
             parse_service_definition_paste,
             read_service_definitions,
             freeze_service_definition,
+            read_plan_pair,
             put_infrastructure,
             put_machine,
             rotate_device,
@@ -889,6 +990,7 @@ mod bootstrap_lifecycle_tests {
                 core,
                 bootstrap: BootstrapState::default(),
                 native_helper: NativeHelperSupervisor::default(),
+                plan_pair: None,
             },
         )
     }
