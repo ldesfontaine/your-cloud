@@ -3,6 +3,8 @@ package controller
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +20,23 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/approval"
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
+
+// haltedDispatcher is a test double, and it exists only in this file. It stands
+// where #126's bounded OpenSSH launch will stand and concludes the way that
+// launch concludes when the connection failed before the first byte of the
+// wrapper: `not_launched`, with this Controller's own observation and no
+// sentence from a machine that was never reached.
+//
+// It is a seam of the tests rather than an engine of the product: a build whose
+// Controller held this would spend human approvals and reach nothing, which is
+// exactly what AttachAuxiliaryDispatcher makes unreachable — no production file
+// can name this type, and an unattached Controller serves no such route.
+type haltedDispatcher struct{}
+
+func (haltedDispatcher) Dispatch(DispatchRecord, []byte) (string, string, string) {
+	return DispatchNotLaunched, "",
+		"the connection failed before the first byte of the wrapper; the machine is unchanged"
+}
 
 // signedApprovalFor signs one envelope with the fixture's human key — the key
 // the Console's native core signs with — and returns the exact bytes a
@@ -301,6 +320,80 @@ func TestPlanApprovalRoutesKeepTheirClosedMethods(t *testing.T) {
 		"application/json", bearer, fixture.certificate)
 	if posted.Code != http.StatusMethodNotAllowed || posted.Header().Get("Allow") != http.MethodGet {
 		t.Fatalf("POST on the history: status=%d allow=%q", posted.Code, posted.Header().Get("Allow"))
+	}
+}
+
+// TestCommandRoutesDoNotExistWithoutAnEngine pins the structural guard: a
+// Controller that holds no dispatch engine serves neither door, so it cannot
+// durably spend a human approval and reach nothing. The engine is attached
+// once and only once, and nil is refused rather than accepted as a degraded
+// mode.
+func TestCommandRoutesDoNotExistWithoutAnEngine(t *testing.T) {
+	fixture := newControllerHTTPFixture(t)
+	attachProbeMachine(t, fixture, "lab-machine-1")
+	pair := frozenProbePair(t, fixture, "lab-machine-1")
+	signed := signedApprovalFor(t, fixture, probeEnvelope(fixture, pair, "lab-machine-1", 1))
+	body := submissionBody(t, signed, pair, "")
+
+	// A second handler over the same stores, left without an engine: this is
+	// the shape of every Controller until #126 wires the launch.
+	pairing, err := NewPairingManager(fixture.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := NewControllerHandler(fixture.authority, pairing, fixture.sessions, fixture.inventory,
+		fixture.external, fixture.definitions, fixture.dispatches, fixture.relay, fixture.host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed.now = fixture.handler.now
+
+	before := registryBytes(t, fixture)
+	for _, closedCase := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodPost, "/v0/plan-approvals", body},
+		{http.MethodGet, "/v0/plan-dispatches", ""},
+		// The methods table reads the same field as the routing: an absent
+		// route never answers 405, which would announce a door that does not
+		// open.
+		{http.MethodGet, "/v0/plan-approvals", ""},
+	} {
+		request := httptest.NewRequest(closedCase.method, "https://"+fixture.host+closedCase.path,
+			strings.NewReader(closedCase.body))
+		request.Host = fixture.host
+		request.Header.Set("Accept", "application/json")
+		request.Header.Set("Authorization", "Bearer "+fixture.token)
+		if closedCase.body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		request.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{fixture.certificate}}
+		recorder := httptest.NewRecorder()
+		closed.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound || refusalCode(t, recorder) != "route_not_found" {
+			t.Fatalf("%s %s on an engineless Controller: status=%d body=%s",
+				closedCase.method, closedCase.path, recorder.Code, recorder.Body.String())
+		}
+		if recorder.Header().Get("Allow") != "" {
+			t.Fatalf("%s %s announced %q on an engineless Controller",
+				closedCase.method, closedCase.path, recorder.Header().Get("Allow"))
+		}
+	}
+	if string(registryBytes(t, fixture)) != string(before) {
+		t.Fatal("an engineless Controller wrote to the dispatch registry")
+	}
+
+	// One engine, once, and never nil.
+	if closed.AttachAuxiliaryDispatcher(nil) == nil {
+		t.Fatal("a nil dispatcher was accepted as an engine")
+	}
+	if err := closed.AttachAuxiliaryDispatcher(haltedDispatcher{}); err != nil {
+		t.Fatal(err)
+	}
+	if closed.AttachAuxiliaryDispatcher(haltedDispatcher{}) == nil {
+		t.Fatal("a second engine was attached to the same Controller")
 	}
 }
 

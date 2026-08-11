@@ -91,12 +91,14 @@ type ControllerHandler struct {
 	external    *ExternalStore
 	definitions *ServiceDefinitionStore
 	dispatches  *DispatchRegistryStore
-	dispatcher  auxiliaryDispatcher
-	relay       relaySnapshotReader
-	host        string
-	now         func() time.Time
-	random      io.Reader
-	sleep       func(context.Context, time.Duration) error
+	// dispatcher is nil until AttachAuxiliaryDispatcher names one. Nil is not
+	// a degraded mode: it closes the two routes of the command trajectory.
+	dispatcher auxiliaryDispatcher
+	relay      relaySnapshotReader
+	host       string
+	now        func() time.Time
+	random     io.Reader
+	sleep      func(context.Context, time.Duration) error
 
 	requestMu sync.Mutex
 	active    map[string]uint8
@@ -132,7 +134,7 @@ func NewControllerHandler(
 	return &ControllerHandler{
 		authority: authority, pairing: pairing, sessions: sessions, inventory: inventory,
 		external: external, definitions: definitions, dispatches: dispatches,
-		dispatcher: noDispatcher{}, relay: relay, host: host,
+		relay: relay, host: host,
 		now: time.Now, random: rand.Reader, active: make(map[string]uint8),
 		sleep: func(ctx context.Context, delay time.Duration) error {
 			timer := time.NewTimer(delay)
@@ -176,6 +178,15 @@ func (handler *ControllerHandler) ServeHTTP(response http.ResponseWriter, reques
 		return
 	}
 	defer handler.leaveDevice(device.DeviceID)
+
+	// The two routes of the command trajectory exist only beside the engine
+	// that can actually launch (`AttachAuxiliaryDispatcher`). A Controller
+	// without one does not serve a door that would spend a human approval and
+	// reach nothing; it serves no such path at all.
+	if handler.dispatcher == nil && commandTrajectoryRoute(request.URL.Path) {
+		handler.writeProblem(response, http.StatusNotFound, "route_not_found", 0)
+		return
+	}
 
 	switch request.URL.Path {
 	case "/v0/session/challenge":
@@ -253,7 +264,7 @@ func (handler *ControllerHandler) validEnvelope(response http.ResponseWriter, re
 		handler.writeProblem(response, http.StatusNotAcceptable, "not_acceptable", 0)
 		return false
 	}
-	expected, known := controllerRouteMethods(request.URL.Path)
+	expected, known := handler.routeMethods(request.URL.Path)
 	if known && !containsMethod(expected, request.Method) {
 		response.Header().Set("Allow", strings.Join(expected, ", "))
 		handler.writeProblem(response, http.StatusMethodNotAllowed, "method_not_allowed", 0)
@@ -731,6 +742,17 @@ func (handler *ControllerHandler) leaveDevice(deviceID string) {
 		return
 	}
 	handler.active[deviceID]--
+}
+
+// routeMethods answers for the surface this Controller actually serves. The
+// two routes of the command trajectory are unknown here until an engine is
+// attached, so the `Allow` header and the routing read the same one field and
+// cannot drift into announcing a door that does not open.
+func (handler *ControllerHandler) routeMethods(path string) ([]string, bool) {
+	if handler.dispatcher == nil && commandTrajectoryRoute(path) {
+		return nil, false
+	}
+	return controllerRouteMethods(path)
 }
 
 func controllerRouteMethods(path string) ([]string, bool) {

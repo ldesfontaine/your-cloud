@@ -157,6 +157,11 @@ func runControllerServe(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("Controller HTTP: %w", err)
 	}
+	// No auxiliary dispatcher is attached here, and that is the whole decision:
+	// the two routes of the command trajectory do not exist on a Controller
+	// that cannot launch. `#126` attaches the bounded OpenSSH launch at this
+	// exact line, and the routes appear with it. Until then this binary cannot
+	// receive an approval, so it cannot spend one for nothing.
 	tlsConfiguration, err := authority.DeviceTLSConfig()
 	if err != nil {
 		return fmt.Errorf("Controller TLS: %w", err)

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -101,17 +102,34 @@ type auxiliaryDispatcher interface {
 	Dispatch(record DispatchRecord, wrapper []byte) (state, machineSentence, controllerObservation string)
 }
 
-// noDispatcher is this palier's honest engine: none. A submission is fully
-// verified and durably consumed, and its launch concludes `not_launched` with
-// the observation that no dispatch engine exists yet — the connection failed
-// before the first byte in the most literal way possible. #126 replaces this
-// with the bounded OpenSSH launch; the order of effects it will inherit is
-// already the contract's.
-type noDispatcher struct{}
+// AttachAuxiliaryDispatcher installs the one engine of this product whose
+// effects leave the Controller's machine, and it is the structural reason no
+// approval can ever be spent for nothing.
+//
+// Until an engine is attached, the two routes of the command trajectory **do
+// not exist**: `ServeHTTP` and the methods table both read this one field, so
+// the surface a reader counts and the surface the Controller serves cannot say
+// different things. A Controller that received an approval it had no way to
+// launch would durably spend a human authority and reach nothing — the
+// contract allows that outcome for a host key that changed, which this
+// Controller *observed*, never as the standing condition of a build.
+//
+// It refuses a second attachment for the same reason the registry refuses a
+// second conclusion: one engine, once, named at startup.
+func (handler *ControllerHandler) AttachAuxiliaryDispatcher(dispatcher auxiliaryDispatcher) error {
+	if dispatcher == nil {
+		return errors.New("an auxiliary dispatcher is attached or the command routes stay closed")
+	}
+	if handler.dispatcher != nil {
+		return errors.New("this Controller already holds its one dispatch engine")
+	}
+	handler.dispatcher = dispatcher
+	return nil
+}
 
-func (noDispatcher) Dispatch(DispatchRecord, []byte) (string, string, string) {
-	return DispatchNotLaunched, "",
-		"this Controller holds no dispatch engine yet: nothing was sent, the machine is unchanged"
+// commandTrajectoryRoute names the two routes that exist only beside an engine.
+func commandTrajectoryRoute(path string) bool {
+	return path == "/v0/plan-approvals" || path == "/v0/plan-dispatches"
 }
 
 // approvalRefusals is the closed list of this route. Every name carries a

@@ -99,6 +99,13 @@ func newControllerHTTPFixture(t *testing.T) controllerHTTPFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The two routes of the command trajectory exist only beside an engine.
+	// The tests attach the halted one, which is a test double and lives in a
+	// test file for that reason: no production wiring can name it, and the
+	// launch itself is #126's.
+	if err := handler.AttachAuxiliaryDispatcher(haltedDispatcher{}); err != nil {
+		t.Fatal(err)
+	}
 	handler.now = func() time.Time { return current }
 	return controllerHTTPFixture{
 		handler: handler, authority: authority, certificate: certificate, identity: identity, sessions: sessions,
