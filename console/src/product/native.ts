@@ -19,6 +19,9 @@ import type {
   ServiceDefinitionPaste,
   ServiceDefinitionReview,
   ServiceDefinitionsProjection,
+  PlanPairPresentation,
+  PlanConsentSessionView,
+  PlanDispatchAcceptedView,
 } from "./models";
 
 export type NativeErrorCode =
@@ -33,7 +36,15 @@ export type NativeErrorCode =
   | "bootstrap_busy"
   | "bootstrap_expired"
   | "bootstrap_request_refused"
-  | "native_assistant_unavailable";
+  | "native_assistant_unavailable"
+  | "plan_absent"
+  | "definition_absent"
+  | "plan_consent_request_refused"
+  | "plan_consent_expired"
+  | "plan_consent_unavailable"
+  | "unverified_plan"
+  | "unconfirmed_plan"
+  | "foreign_infrastructure";
 
 export class NativeOperationError extends Error {
   readonly code: NativeErrorCode;
@@ -136,6 +147,51 @@ export const nativeConsole = {
   // relecture ci-dessus et par un humain.
   parseServiceDefinitionPaste: (pasted: string) =>
     namedOperation<ServiceDefinitionPaste>("parse_service_definition_paste", { pasted }),
+  // Lire une paire gelée. La Console n’assemble rien : elle nomme une machine,
+  // une révision déjà gelée et les trois valeurs qu’un déploiement choisit
+  // réellement, et ce qui revient sont des phrases.
+  readPlanPair: (
+    infrastructureId: string,
+    machineId: string,
+    operation: string,
+    definitionSlug: string,
+    definitionDigest: string,
+    imageDigest: string,
+    localPort: number,
+    originHost: string,
+  ) =>
+    namedOperation<PlanPairPresentation>("read_plan_pair", {
+      infrastructureId,
+      machineId,
+      operation,
+      definitionSlug,
+      definitionDigest,
+      imageDigest,
+      localPort,
+      originHost,
+    }),
+  // Ouvrir la fenêtre native sur la paire en cours d’examen. Le frontend ne
+  // choisit pas l’identifiant de la demande : il le reçoit.
+  openPlanConsent: (infrastructureId: string) =>
+    namedOperation<PlanConsentSessionView>("open_plan_consent", { infrastructureId }),
+  planConsentStatus: (requestId: string) =>
+    namedOperation<PlanConsentSessionView>("plan_consent_status", { requestId }),
+  cancelPlanConsent: (requestId: string) =>
+    namedOperation<void>("cancel_plan_consent", { requestId }),
+  // Signer et soumettre. La position et l’époque viennent de ce que la machine
+  // a elle-même rapporté ; le Controller et la machine les revérifient.
+  submitPlanDecision: (
+    infrastructureId: string,
+    requestId: string,
+    approvalEpoch: number,
+    sequence: number,
+  ) =>
+    namedOperation<PlanDispatchAcceptedView>("submit_plan_decision", {
+      infrastructureId,
+      requestId,
+      approvalEpoch,
+      sequence,
+    }),
   readServiceDefinitions: (infrastructureId: string) =>
     namedOperation<ServiceDefinitionsProjection>("read_service_definitions", { infrastructureId }),
   // Les deux arguments sont exactement ce que la relecture a produit : les
@@ -203,6 +259,22 @@ export function localErrorMessage(code: NativeErrorCode): string {
       return "Le parcours d’amorçage demandé n’est plus utilisable.";
     case "native_assistant_unavailable":
       return "L’assistant natif d’amorçage est indisponible.";
+    case "plan_absent":
+      return "Aucun plan n’est en cours d’examen. Relisez une paire avant d’ouvrir la fenêtre.";
+    case "definition_absent":
+      return "Ce Controller ne détient aucune révision gelée sous ce nom et cette empreinte.";
+    case "plan_consent_request_refused":
+      return "Cette demande d’approbation n’est plus ouverte. Relisez le plan et rouvrez la fenêtre.";
+    case "plan_consent_expired":
+      return "La fenêtre d’approbation a expiré. Rien n’a été signé ; rouvrez-la pour décider.";
+    case "plan_consent_unavailable":
+      return "La fenêtre d’approbation n’a pas pu s’ouvrir. Aucun plan n’a été approuvé.";
+    case "unverified_plan":
+      return "Cette paire ne rend pas les empreintes qu’elle annonce. Elle n’est pas affichable.";
+    case "unconfirmed_plan":
+      return "Ce plan n’a pas été confirmé dans la fenêtre native. Rien ne peut être signé.";
+    case "foreign_infrastructure":
+      return "Ce plan nomme une autre infrastructure que celle à laquelle cette Console est associée.";
     case "console_unavailable":
       return "La Console ne peut pas terminer cette opération.";
   }

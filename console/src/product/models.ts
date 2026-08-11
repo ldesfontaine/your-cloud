@@ -359,3 +359,60 @@ export type BootstrapSessionView = {
   lifecycle: "awaiting_native_assistant";
   expires_in_seconds: number;
 };
+
+/// La présentation d’une paire gelée : les phrases qu’un humain lit, et les deux
+/// empreintes qui terminent les deux dernières. Aucun document ne traverse — les
+/// octets canoniques restent dans le cœur, atteignables derrière un geste
+/// explicite et jamais comme forme par défaut.
+export type PlanPairPresentation = {
+  schema_version: 1;
+  machine_id: string;
+  plan_sha256: string;
+  rollback_sha256: string;
+  confirmation_lines: readonly string[];
+};
+
+/// Ce que le frontend lit d’une session de consentement : quelle demande, et
+/// combien de temps il reste. Ni empreinte ni phrase : la fenêtre les a
+/// montrées, et les répéter ici serait un second endroit où elles pourraient
+/// différer de ce qui a été affiché.
+export type PlanConsentSessionView = {
+  schema_version: 1;
+  request_id: string;
+  remaining_millis: number;
+  state: "open" | "answered";
+  confirmed: boolean;
+};
+
+/// Un dispatch tel que la Console le relit. Les états sont ceux du contrat, et
+/// `launched_unreported` en est un à part entière : il n’est ni un succès ni un
+/// échec, et la vue le rend comme tel.
+export type PlanDispatchState =
+  | "in_flight"
+  | "not_launched"
+  | "machine_refused"
+  | "reported"
+  | "launched_unreported";
+
+export type PlanDispatchEntryView = {
+  approval_sha256: string;
+  machine_id: string;
+  operation: string;
+  approval_epoch: number;
+  sequence: number;
+  plan_sha256: string;
+  rollback_sha256: string;
+  state: PlanDispatchState;
+  accepted_at_unix: number;
+  finished_at_unix: number;
+  expires_at_unix: number;
+  machine_sentence: string;
+  controller_observation: string;
+  reported_changed: boolean;
+  reported_outcome: string;
+};
+
+export type PlanDispatchAcceptedView = {
+  schema_version: 1;
+  dispatch: PlanDispatchEntryView;
+};
