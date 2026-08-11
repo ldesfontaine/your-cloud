@@ -5,6 +5,7 @@ import {
   ListTree,
   LockKeyhole,
   PackageOpen,
+  ScrollText,
   ShieldAlert,
   Unplug,
   UserRound,
@@ -14,6 +15,7 @@ import { Banner, Button, LoadingBlock } from "../design/primitives";
 import { AssociationView, InfrastructuresView, LocalAccessView } from "./access-views";
 import { operationErrorMessage } from "./errors";
 import { ExternalView, FleetView, ObservationsView, SummaryView } from "./infrastructure-views";
+import { PlansView } from "./plans-view";
 import type {
   AssociationSummary,
   ConsoleStatus,
@@ -40,6 +42,7 @@ const authenticatedNavigation: ReadonlyArray<{
   { view: "observations", label: "Observations", icon: ListTree },
   { view: "external", label: "Éléments externes", icon: Unplug },
   { view: "services", label: "Services", icon: PackageOpen },
+  { view: "plans", label: "Plans", icon: ScrollText },
 ];
 
 export function App() {
@@ -265,7 +268,7 @@ export function App() {
   }, [selectedInfrastructure, view, loadSelected]);
 
   useEffect(() => {
-    if (selectedInfrastructure && view === "services") void loadDefinitions();
+    if (selectedInfrastructure && (view === "services" || view === "plans")) void loadDefinitions();
   }, [selectedInfrastructure, view, loadDefinitions]);
 
   async function lockConsole() {
@@ -425,6 +428,13 @@ export function App() {
               loading={loadState === "loading"}
               onRefresh={() => void loadDefinitions()}
               onFroze={() => void loadDefinitions()}
+            />
+          ) : null}
+          {view === "plans" && selectedAssociation ? (
+            <PlansView
+              infrastructureId={selectedAssociation.infrastructure_id}
+              definitions={definitions}
+              onRefresh={() => void loadDefinitions()}
             />
           ) : null}
           {view === "profile" ? (

@@ -28,6 +28,7 @@ export type ViewName =
   | "observations"
   | "external"
   | "services"
+  | "plans"
   | "profile";
 
 export type AssociationSummary = {
@@ -415,4 +416,9 @@ export type PlanDispatchEntryView = {
 export type PlanDispatchAcceptedView = {
   schema_version: 1;
   dispatch: PlanDispatchEntryView;
+};
+
+export type PlanDispatchesView = {
+  schema_version: 1;
+  dispatches: readonly PlanDispatchEntryView[];
 };

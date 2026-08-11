@@ -6,7 +6,7 @@
 # Two pilots measure with the same two oracles, and they answer two different
 # questions. The `fixture` pilot drives the shipped frontend bundle — the same
 # React tree, the same stylesheets, the same fonts, one module replaced: the
-# Tauri IPC bridge — in WebKitGTK on a virtual screen, across all eleven
+# Tauri IPC bridge — in WebKitGTK on a virtual screen, across all twelve
 # states, on labels a hostile Controller could send and the product's own
 # validation would refuse. The `installed` pilot builds the `.deb` on this
 # machine, installs it, and drives the product's own process through
@@ -26,7 +26,7 @@ usage() {
 usage: prove [setup | run | sync | build | run-installed | collect | remove | all]
 
   setup          build the fixture bundle and place the harness on lab-console
-  run            drive the eleven fixture states at both sizes and text sizes
+  run            drive the twelve fixture states at both sizes and text sizes
   sync           place the console sources for the candidate build
   build          build the .deb offline on the machine and install it
   run-installed  drive the installed candidate on the pre-association states
@@ -117,7 +117,7 @@ setup() {
 }
 
 run_oracle() {
-  announce "fixture pilot — eleven states at 1280x800 and 640x560, text 100 % and 200 %"
+  announce "fixture pilot — twelve states at 1280x800 and 640x560, text 100 % and 200 %"
   on_machine "$remote_harness/run '$(revision)' '$run_id' fixture"
 }
 

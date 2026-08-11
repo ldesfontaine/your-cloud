@@ -199,3 +199,141 @@
     margin-block-end: var(--space-3);
   }
 }
+
+/* La vue Plans. Tout ce qui s'y affiche est soit une phrase du produit, soit
+   une phrase de la machine citée telle quelle : rien n'y défile, et chaque
+   valeur longue se replie dans son cadre plutôt que d'en sortir. */
+.yc-plan-form {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-3);
+}
+
+.yc-plan-lines,
+.yc-dispatch-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Les phrases d'un plan sont exactement celles que la fenêtre native montrera.
+   Elles se replient et ne se coupent jamais : une phrase dont une moitié sort
+   du cadre est une phrase que personne n'a lue avant de signer. */
+.yc-plan-lines li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+.yc-plan-session {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.yc-dispatch {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+
+.yc-dispatch-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.yc-dispatch-machine,
+.yc-dispatch-operation {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+.yc-dispatch-operation {
+  color: var(--color-muted);
+}
+
+/* Les quatre moments d'un plan. La ligne s'arrête au dernier réellement
+   atteint : elle ne promet pas la suite. */
+.yc-journey {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-muted);
+}
+
+.yc-journey-reached {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.yc-dispatch-facts {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.yc-dispatch-facts dt {
+  color: var(--color-muted);
+}
+
+.yc-dispatch-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.yc-digest {
+  font-family: var(--font-mono);
+}
+
+/* La phrase de la machine est citée et jamais réécrite ; celle de ce Controller
+   est distincte, pour qu'un lecteur sache laquelle il lit. L'isolation
+   bidirectionnelle est ici obligatoire : ce sont des octets que ce produit n'a
+   pas écrits. */
+.yc-machine-sentence {
+  min-width: 0;
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: var(--border-width) solid var(--color-border);
+  color: var(--color-text);
+  font-style: italic;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+  user-select: text;
+}
+
+.yc-observation {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+.yc-select {
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}

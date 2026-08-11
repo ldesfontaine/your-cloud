@@ -440,6 +440,7 @@ const reflowOracle = await readSourceText(
   join(consoleRoot, "..", "tests", "lab", "v0.1.0", "console-reflow", "reflow-oracle.py"),
 );
 const productScreens = await readSourceText(join(consoleRoot, "src", "product", "screens.css"));
+const plansView = await readSourceText(join(consoleRoot, "src", "product", "plans-view.tsx"));
 const cargoVersion = cargoManifest.match(/^version\s*=\s*"([^"]+)"$/mu)?.[1];
 
 if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(packageDocument.version)) {
@@ -2171,9 +2172,54 @@ if (!productApp.includes('{ view: "services", label: "Services", icon: PackageOp
 // Les définitions sont un troisième inventaire, lu à part : geler une définition
 // ne doit pas déplacer la révision contre laquelle la Console tient son parc.
 if (
-  !productApp.includes('if (selectedInfrastructure && view === "services") void loadDefinitions();')
+  !productApp.includes(
+    'if (selectedInfrastructure && (view === "services" || view === "plans")) void loadDefinitions();',
+  )
 ) {
   failures.push("App.tsx: les définitions doivent être lues sur leur propre révision");
+}
+
+// --------------------------------------------------------------------------
+// La dixième vue : construire, relire et approuver un plan, et lire l'histoire
+// de ce qui a été lancé. `docs/architecture/TRAJET-DE-COMMANDE.md`, issue #124.
+
+if (!productModels.includes('  | "plans"\n')) {
+  failures.push("models.ts: la dixième vue n’est pas nommée dans ViewName");
+}
+if (!productApp.includes('{ view: "plans", label: "Plans", icon: ScrollText },')) {
+  failures.push("App.tsx: la vue Plans n’a pas d’entrée de navigation");
+}
+// Aucun document ne traverse vers le frontend. Ce qui remonte d'une paire, ce
+// sont des phrases et deux empreintes ; les octets canoniques restent dans le
+// cœur, et une vue qui les nommerait serait une vue qui pourrait les afficher.
+for (const forbidden of ["plan_document", "rollback_document", "definition_document"]) {
+  if (plansView.includes(forbidden)) {
+    failures.push(`plans-view.tsx: la vue nomme un document (${forbidden})`);
+  }
+}
+// « lancé, non rapporté » est un état à part entière, ni un succès ni un échec.
+// La vue lui donne son propre mot et sa propre phrase ; une vue qui le rangerait
+// dans l'un des deux mentirait sur ce que ce Controller sait.
+if (
+  !plansView.includes('launched_unreported: {') ||
+  !plansView.includes('label: "Lancé, non rapporté"') ||
+  !/launched_unreported:[\s\S]{0,400}?tone: "warning"/u.test(plansView)
+) {
+  failures.push("plans-view.tsx: « lancé, non rapporté » doit être un état nommé et distinct");
+}
+// La phrase de la machine est citée et jamais réécrite ; l'observation de ce
+// Controller est rendue à part, pour qu'un lecteur sache laquelle il lit.
+if (
+  !plansView.includes("yc-machine-sentence") ||
+  !plansView.includes("yc-observation") ||
+  !productScreens.includes("unicode-bidi: isolate;")
+) {
+  failures.push("plans-view.tsx: la phrase de la machine et l’observation doivent rester distinctes");
+}
+// La Console n'ouvre pas la fenêtre native elle-même et ne répond jamais à sa
+// place : elle demande où en est la session, et rien d'autre.
+if (plansView.includes("confirmed: true") || plansView.includes("setSession({")) {
+  failures.push("plans-view.tsx: la vue ne peut pas fabriquer une réponse de fenêtre");
 }
 
 // La grammaire est celle du miroir, jamais une seconde lecture d’elle. Le

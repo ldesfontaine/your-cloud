@@ -149,6 +149,18 @@ VIEWS = (
         "heading": "Services",
         "requires": ".yc-document",
     },
+    # La dixième vue. Elle est mesurée comme les neuf autres : rien n'y défile,
+    # rien n'y est coupé, aux deux tailles et aux deux zooms. Ses phrases sont
+    # celles que la fenêtre native affichera, et une phrase dont une moitié sort
+    # du cadre serait une phrase que personne n'a lue avant de signer.
+    {
+        "id": "plans",
+        "contract_view": 10,
+        "state": "unlocked",
+        "clicks": ("Ouvrir", "Plans"),
+        "heading": "Plans",
+        "requires": ".yc-plan-form",
+    },
 )
 
 SIZES = ((1280, 800), (640, 560))

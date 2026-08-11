@@ -45,7 +45,7 @@ use bootstrap::BootstrapState;
 use native_helper::{HelperInvocation, NativeHelperPoll, NativeHelperSupervisor};
 use network::{
     ExternalElementsView, ExternalWithdrawalView, InfrastructureView, MachineMutationView,
-    MachinesView, NetworkState, PairingInput, PlanDispatchAcceptedView,
+    MachinesView, NetworkState, PairingInput, PlanDispatchAcceptedView, PlanDispatchesView,
 };
 use plan_consent::{PlanConsentError, PlanConsentSessionView, PlanConsentState};
 use publication_plan::{
@@ -733,6 +733,28 @@ fn plan_consent_status(
     }
 }
 
+/// Reads the bounded history of what was launched in this human's name.
+///
+/// It shows what happened rather than what was asked: `lancé, non rapporté` is
+/// a state of its own, neither a success nor a failure, and nothing here turns
+/// it into either. What the machine answered is carried as the machine wrote
+/// it; what this Controller observed is carried apart, because a reader must be
+/// able to tell which he is reading.
+#[tauri::command]
+fn read_plan_dispatches(
+    infrastructure_id: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<PlanDispatchesView, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut network = state.network.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    network
+        .read_plan_dispatches(&association, generation, &state.request_generation)
+        .map_err(Into::into)
+}
+
 /// Signs the confirmed plan and submits it, which is the one act of this Console
 /// whose effect leaves the Controller's machine.
 ///
@@ -1189,6 +1211,7 @@ pub fn run() {
             plan_consent_status,
             cancel_plan_consent,
             submit_plan_decision,
+            read_plan_dispatches,
             put_infrastructure,
             put_machine,
             rotate_device,

@@ -50,6 +50,42 @@ const LONG_IMAGE_REPOSITORY =
   "service-de-notes-de-laboratoire-sans-abreviation";
 const LONG_ENVIRONMENT_VALUE = `NOTES_BANNIERE=${"contenu-sans-espace-que-rien-ne-coupe-".repeat(6)}fin`;
 const LONG_CONTAINER_PATH = "/srv/donnees/equipe-plateforme/service-de-notes/archives-quotidiennes";
+const PLAN_DIGEST = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809";
+const ROLLBACK_DIGEST = "4f1c9d0a7b6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c";
+// Un hôte à la largeur que la grammaire des plans autorise : la phrase
+// d'origine est la plus large que ce produit sache écrire.
+const LONG_ORIGIN_HOST = `${"notes-de-lequipe-plateforme.".repeat(7)}exemple.test`;
+// Une phrase que ce produit n'a pas écrite : elle est citée telle quelle, et
+// elle est mesurée à la largeur qu'une machine peut réellement rendre.
+const HOSTILE_MACHINE_SENTENCE =
+  "approval sequence 12 is not the exact successor of 9: this machine consumed nothing and is unchanged";
+
+let dispatchOrdinal = 0;
+function dispatchEntry(state: string) {
+  dispatchOrdinal += 1;
+  return {
+    approval_sha256: `${dispatchOrdinal}`.padStart(64, "a"),
+    machine_id: "machine-1",
+    operation: "deploy_user_service",
+    approval_epoch: 3,
+    sequence: 12 - dispatchOrdinal,
+    plan_sha256: PLAN_DIGEST,
+    rollback_sha256: ROLLBACK_DIGEST,
+    state,
+    accepted_at_unix: 1786000000 + dispatchOrdinal,
+    finished_at_unix: state === "in_flight" ? 0 : 1786000060 + dispatchOrdinal,
+    expires_at_unix: 1786000900 + dispatchOrdinal,
+    machine_sentence: state === "machine_refused" ? HOSTILE_MACHINE_SENTENCE : "",
+    controller_observation:
+      state === "launched_unreported"
+        ? "the channel closed before this Controller could read an answer"
+        : state === "not_launched"
+          ? "the connection failed before the first byte of the wrapper; the machine is unchanged"
+          : "",
+    reported_changed: state === "reported",
+    reported_outcome: state === "reported" ? "applied" : "",
+  };
+}
 
 const CONTROLLER_ID = "01J8Z9QK7C4X2M6V0T3B5N8W1D";
 const INFRASTRUCTURE_ID = "01J8Z9QK7C4X2M6V0T3B5N8W2E";
@@ -334,6 +370,56 @@ const answers: Record<string, () => unknown> = {
   confirm_recovery_key_rotation: () => recoveryRotation,
   resume_recovery_key_rotation: () => recoveryRotation,
   complete_recovery_key_rotation: () => null,
+  // Le trajet de commande. Les valeurs sont hostiles par construction : une
+  // phrase d'origine à sa largeur maximale, une phrase de machine que ce
+  // produit n'a pas écrite, et une histoire portant les quatre états qu'un
+  // humain doit pouvoir distinguer — dont « lancé, non rapporté », qui n'est ni
+  // un succès ni un échec.
+  read_plan_pair: () => ({
+    schema_version: 1,
+    machine_id: "machine-1",
+    plan_sha256: PLAN_DIGEST,
+    rollback_sha256: ROLLBACK_DIGEST,
+    confirmation_lines: [
+      "Machine : machine-1",
+      "Opération : déployer le service utilisateur",
+      "Service défini : service-de-notes",
+      `Révision de la définition : ${PLAN_DIGEST}`,
+      `Image : ${LONG_IMAGE_REPOSITORY}@sha256:${PLAN_DIGEST}`,
+      `Digest de l’image : sha256:${PLAN_DIGEST}`,
+      "Port local : 127.0.0.1:8443",
+      `Origine : ${LONG_ORIGIN_HOST}, portée par les lignes de la définition qui nomment {origin_host}`,
+      "Ce que la révision décide : le compte, le foyer, les volumes, l’environnement et les noms de secrets viennent de la définition gelée sous cette empreinte, et d’aucun champ de ce plan",
+      "Rollback : retirer le service utilisateur, sur la même machine et le même slug",
+      `Empreinte du plan : ${PLAN_DIGEST}`,
+      `Empreinte du rollback : ${ROLLBACK_DIGEST}`,
+    ],
+  }),
+  open_plan_consent: () => ({
+    schema_version: 1,
+    request_id: "00112233445566778899aabbccddeeff",
+    remaining_millis: 300000,
+    state: "open",
+    confirmed: false,
+  }),
+  plan_consent_status: () => ({
+    schema_version: 1,
+    request_id: "00112233445566778899aabbccddeeff",
+    remaining_millis: 240000,
+    state: "open",
+    confirmed: false,
+  }),
+  cancel_plan_consent: () => null,
+  submit_plan_decision: () => ({ schema_version: 1, dispatch: dispatchEntry("reported") }),
+  read_plan_dispatches: () => ({
+    schema_version: 1,
+    dispatches: [
+      dispatchEntry("reported"),
+      dispatchEntry("launched_unreported"),
+      dispatchEntry("machine_refused"),
+      dispatchEntry("not_launched"),
+    ],
+  }),
   logout_session: () => null,
 };
 

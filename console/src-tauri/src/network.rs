@@ -675,6 +675,36 @@ impl NetworkState {
         Ok(view)
     }
 
+    /// Reads the bounded history of dispatches.
+    ///
+    /// It mutates nothing and omits nothing the Controller holds: the bound
+    /// lives where the records are kept, and a Console that filtered on the way
+    /// in would be a Console deciding what a human may know about what was
+    /// launched in his name.
+    pub(crate) fn read_plan_dispatches(
+        &mut self,
+        association: &AssociationRecord,
+        generation: u64,
+        current_generation: &AtomicU64,
+    ) -> Result<PlanDispatchesView, NetworkError> {
+        let client = association_client(association)?;
+        let token = self.session(association, &client, generation, current_generation)?;
+        let response = send_empty::<PlanDispatchesView>(
+            &client,
+            "GET",
+            &format!("{}/v0/plan-dispatches", association.summary.origin),
+            Some(token.as_str()),
+            &[StatusCode::OK],
+        );
+        let view =
+            self.handle_session_response(&association.summary.infrastructure_id, response)?;
+        if view.schema_version != 1 {
+            return Err(NetworkError::InvalidInput);
+        }
+        ensure_current(generation, current_generation)?;
+        Ok(view)
+    }
+
     /// Submits one signed approval, with the documents it signs.
     ///
     /// This is the one request of this Console whose effect leaves the
@@ -1564,6 +1594,15 @@ struct PlanApprovalSubmission<'a> {
     plan_document: &'a str,
     rollback_document: &'a str,
     definition_document: &'a str,
+}
+
+/// The bounded history, oldest first, every machine together: the Console
+/// filters, the Controller does not choose for it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PlanDispatchesView {
+    pub schema_version: u8,
+    pub dispatches: Vec<PlanDispatchEntryView>,
 }
 
 /// What the Controller answers a submission with: the record as it stands when

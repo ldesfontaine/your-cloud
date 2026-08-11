@@ -22,6 +22,7 @@ import type {
   PlanPairPresentation,
   PlanConsentSessionView,
   PlanDispatchAcceptedView,
+  PlanDispatchesView,
 } from "./models";
 
 export type NativeErrorCode =
@@ -192,6 +193,10 @@ export const nativeConsole = {
       approvalEpoch,
       sequence,
     }),
+  // L'histoire bornée des lancements, telle que le Controller la tient : rien
+  // n'y est filtré à l'entrée.
+  readPlanDispatches: (infrastructureId: string) =>
+    namedOperation<PlanDispatchesView>("read_plan_dispatches", { infrastructureId }),
   readServiceDefinitions: (infrastructureId: string) =>
     namedOperation<ServiceDefinitionsProjection>("read_service_definitions", { infrastructureId }),
   // Les deux arguments sont exactement ce que la relecture a produit : les
