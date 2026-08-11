@@ -140,10 +140,7 @@ fn console_parent_keeps_the_gtk_helper_bounded_until_cancelled() {
         .unwrap();
 
     thread::sleep(Duration::from_millis(250));
-    assert_eq!(
-        supervisor.poll(REQUEST_ID),
-        Ok(NativeHelperPoll::Running)
-    );
+    assert_eq!(supervisor.poll(REQUEST_ID), Ok(NativeHelperPoll::Running));
     supervisor.cancel(REQUEST_ID).unwrap();
     assert_eq!(
         supervisor.poll(REQUEST_ID),

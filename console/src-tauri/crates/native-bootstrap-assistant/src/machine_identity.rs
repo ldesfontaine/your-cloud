@@ -47,6 +47,10 @@
 /// The locked technical account the bounded identity is tied to.
 pub mod account;
 /// Ownership and modes of the key file, of its parents and of the binary.
+/// The endpoint sheet a machine's commands are sent to: where it lives, which
+/// account answers, and the host key the audit pinned. It is compiled on the two
+/// platforms the palier targets, like the entry it sits beside.
+pub mod command_endpoint;
 pub mod custody;
 /// The `sudo` rule, bounded to one exact invocation.
 pub mod elevation_rule;
