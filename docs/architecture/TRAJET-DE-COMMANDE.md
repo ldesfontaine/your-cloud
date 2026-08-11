@@ -1,7 +1,11 @@
 # Trajet de commande : de l'humain qui approuve à la machine qui rapporte
 
-> Statut : brouillon de contrat d'architecture proposé pour `#122`, milestone
-> `v0.1.2` « La Console aux commandes ». Il fixe les cinq maillons du chemin
+> Statut : contrat d'architecture de `#122`, milestone `v0.1.2` « La Console aux
+> commandes ». Ses neuf décisions restées ouvertes ont été tranchées le
+> 11 août 2026 et sont écrites ici, chacune à sa place, avec l'invariant qui la
+> force et la mesure dont elle est dérivée ; la section
+> [« Les neuf décisions »](#les-neuf-décisions-tranchées-le-11-août-2026) les
+> récapitule. Il fixe les cinq maillons du chemin
 > « un humain déploie depuis la Console » : la construction d'une paire, sa
 > lecture et son consentement dans une fenêtre séparée, la soumission de
 > l'approbation signée, le lancement de l'Auxiliaire par l'identité de la
@@ -116,6 +120,37 @@ peut réordonner son propre affichage est une phrase dont ce qu'un humain lit et
 ce qu'il signe divergent. Le refus est en amont, dans la validation du
 document, jamais dans le dessin.
 
+**Décision tranchée : une seconde borne, celle des lignes *repliées*, et elle
+est refusée dans `validate`.** Les 24 phrases sont des phrases *logiques* ; la
+fenêtre les replie à sa propre largeur, et le produit en possède déjà une,
+mesurée et livrée : `MAX_PUBLIC_LINE_CHARACTERS = 72`, la largeur à laquelle la
+fenêtre d'amorçage replie déjà ses lignes. Vingt-quatre phrases bornées à
+384 octets peuvent donc atteindre bien plus de vingt-quatre lignes à l'écran, et
+c'est le nombre de lignes affichées — jamais le nombre de phrases — qui décide
+si un humain doit faire défiler.
+
+`MAX_APPROVAL_CONSENT_FOLDED_LINES` vaut **32**, et ce nombre est mesuré sur les
+présentations que le produit écrit réellement, repliées à 72 caractères :
+
+| Présentation la plus large | Phrases logiques | Lignes repliées mesurées |
+|---|---|---|
+| service privé (schéma 2) | 16 | ≈ 25 |
+| service utilisateur avec origine | 12 | ≈ 24 |
+
+La plus longue phrase du produit — l'origine d'un service utilisateur, qui porte
+un hôte pouvant atteindre `MAX_ROUTE_HOST_BYTES = 253` — se replie à elle seule
+en cinq lignes ; les deux empreintes en deux chacune. Trente-deux est la borne
+au-dessus de cette mesure, et elle tient dans une fenêtre qu'aucun écran
+n'oblige à défiler.
+
+La borne est **refusée à la validation du document de consentement**, jamais au
+dessin : une présentation qui la dépasserait rendrait un test rouge avant qu'un
+humain rencontre une fenêtre qui défile ou, pire, une fenêtre qui tronque. Comme
+`MAX_APPROVAL_CONSENT_FRAME_BYTES`, elle est **dérivée** plutôt que choisie : la
+suite de tests replie les présentations les plus larges depuis les constantes
+dont elles sont formatées, si bien qu'un hôte, un slug ou une phrase qui
+grandirait rougirait ici.
+
 ### La décision en suspens, tranchée : l'écran d'un service utilisateur nomme la révision par son empreinte
 
 **L'écran d'approbation d'un service utilisateur affiche l'ardoise du plan —
@@ -226,6 +261,65 @@ nom porte une phrase dans la Console :
 Le dernier refus mérite sa précision : le Controller vérifie ce qu'il **sait**,
 et la machine reste seule autorité. Un désaccord entre les deux n'est jamais
 résolu par le Controller ; il est rapporté.
+
+### Décision tranchée : les statuts viennent de la taxonomie existante, pas d'une convention nouvelle
+
+La question n'était pas « quel statut est joli » mais « qu'est-ce que ce paquet
+dit déjà ». La réponse a été relue route par route dans
+`internal/controller`, et elle est régulière :
+
+| Classe | Statut existant | Ce que le paquet en fait déjà |
+|---|---|---|
+| requête malformée, champ inconnu, borne dépassée | `400 invalid_request` | 39 emplois, toutes routes |
+| requête bien formée dont la **sémantique** est refusée | `422` | `machine_not_active`, `label_invalid` |
+| conflit avec un **état durable** | `409` | `state_conflict` |
+
+Les refus de cette route s'y rangent sans inventer :
+`approval_signature_invalid`, `approval_expired`, `approval_pair_mismatch`,
+`approval_definition_mismatch` et `approval_sequence_invalid` sont des requêtes
+bien formées dont l'autorité échoue à sa propre vérification, donc `422` ;
+`approval_already_dispatched` est le seul conflit qu'un état durable puisse
+nommer, donc `409`. Il porte un **nom propre** plutôt que le `state_conflict`
+générique, parce que le parcours utilisateur exige que chaque refus soit une
+phrase actionnable qui nomme la suite — et « ces octets ont déjà été lancés »
+ne se dit pas comme « l'inventaire a bougé sous vos pieds ».
+
+**La clé publique humaine n'est pas relue depuis le document.** Elle vient de
+l'enregistrement d'appareil du magasin d'autorité, où sa forme canonique est
+déjà tenue à l'enrôlement : `validateDeviceRecord` refuse tout enregistrement
+dont `human_public_key` n'est pas exactement une clé Ed25519 encodée. Un
+enregistrement actif porte donc toujours une clé décodable, et la branche qui
+répond `503 controller_state_unavailable` si le décodage échoue est une garde de
+cohérence d'état, pas un chemin métier : elle est conservée parce qu'une
+autorité illisible ne doit jamais se lire comme une signature invalide.
+
+**La liste fermée est celle des refus *métier* ; les codes de transport
+existants la complètent sans l'élargir.** Cette route peut aussi répondre
+`401 authentication_failed`, `403 scope_forbidden`, `405 method_not_allowed`,
+`406 not_acceptable`, `413 request_too_large`, `415 unsupported_media_type`,
+`429 rate_limited` et `503 controller_state_unavailable` — tous déjà servis par
+les routes métier existantes, aucun nouveau. C'est la même phrase que
+`SERVICE-UTILISATEUR.md` : « aucun nouveau code d'erreur ».
+
+### Décision tranchée : sans moteur, la porte n'existe pas
+
+`#125` livre la réception, la vérification et la consommation durable ; le
+lancement est `#126`. Un Controller qui recevrait une approbation qu'il ne peut
+pas lancer **dépenserait durablement une autorité humaine pour rien** — ce que
+le contrat n'accepte que pour une clé d'hôte changée, que le Controller a
+*observée*, jamais comme condition permanente d'un binaire.
+
+La garde est donc structurelle plutôt que documentaire : le moteur est **attaché
+explicitement** (`AttachAuxiliaryDispatcher`, une fois, jamais `nil`), et tant
+qu'aucun ne l'est, **les deux routes n'existent pas** — ni dans le routage, ni
+dans la table des méthodes, qui lisent le même champ et ne peuvent donc pas
+annoncer une porte qui ne s'ouvre pas. Un Controller sans moteur répond
+`404 route_not_found`, jamais `405`, et n'écrit pas un octet dans le registre.
+
+Conséquence tenue : le moteur immobile qui conclut `non lancé` est une **couture
+de test**, il vit dans un fichier de test, et aucun fichier de production ne peut
+le nommer. `#126` attache le lancement OpenSSH borné à la ligne exacte où rien
+n'est attaché aujourd'hui, et les deux routes apparaissent avec lui.
 
 ## Maillon 4 — Lancer : l'identité de commande, l'hôte épinglé, le client borné
 
@@ -355,9 +449,36 @@ Les options sont une liste positive, et chacune retire quelque chose :
   avant octets.
 - L'exécution n'est pas bornée par un nombre choisi : elle est bornée par **la
   durée de vie restante de l'approbation qui la permet**, dont le plafond est
-  déjà une constante du produit (900 secondes). Un lancement qui courrait plus
-  longtemps que l'autorité qui l'a permis n'aurait plus rien pour se justifier.
-  La borne est donc dérivée d'un fait existant, jamais d'un goût.
+  déjà une constante du produit (`approval.MaxLifetimeSeconds = 900`). Un
+  lancement qui courrait plus longtemps que l'autorité qui l'a permis n'aurait
+  plus rien pour se justifier. La borne est donc dérivée d'un fait existant,
+  jamais d'un goût.
+
+**Décision tranchée : le plafond contractuel est l'autorité, tout délai interne
+en est dérivé et lui est strictement inférieur.** La règle tient en trois
+phrases et elle est vérifiable :
+
+1. **L'échéance de tout le lancement est `expires_at` de l'enveloppe**, pas une
+   durée. La soumission n'a été acceptée que parce que `maintenant <
+   expires_at`, et la durée de vie de l'enveloppe est elle-même bornée à 900 s à
+   sa construction : le reste à courir est donc au plus 900 s, et strictement
+   moins dès qu'une seconde s'est écoulée entre la signature et la soumission.
+   Aucun nombre n'est écrit à côté du plafond : c'est le plafond, moins ce qui a
+   déjà été consommé.
+2. **`ConnectTimeout` est un sous-délai de celui-là**, jamais un délai qui s'y
+   ajoute : il vaut `min(10, reste à courir)`. Une approbation dont il reste
+   quatre secondes ne s'autorise pas dix secondes de connexion — l'attente ne
+   dépasse jamais l'autorité, même dans le cas de bord.
+3. **L'expiration rend « lancé, non rapporté », jamais un échec et jamais un
+   retry.** Le canal fermé n'arrête pas la machine : l'Auxiliaire est un
+   processus `root` sur sa propre machine, il finit ou échoue seul. Renoncer à
+   attendre, c'est renoncer à *entendre*. Seule l'expiration **avant le premier
+   octet du wrapper** rend `non lancé`, parce que là le Controller a réellement
+   observé qu'il n'avait rien envoyé.
+
+Aucun délai de ce chemin ne peut donc être relevé sans relever le plafond
+contractuel, et relever le plafond contractuel est une décision d'un autre
+document.
 - **Fermer le canal n'arrête pas la machine, et le contrat le dit.**
   L'Auxiliaire est un processus `root` sur sa propre machine : il finit ou il
   échoue tout seul. Renoncer à l'attendre, c'est renoncer à *entendre*, jamais
@@ -397,11 +518,29 @@ argument libre : le Controller ne peut pas demander un format. Or un rapport
 que doit lire un autre programme ne peut pas être un rendu destiné aux yeux
 d'un humain, et analyser une présentation serait précisément le couplage que ce
 produit évite partout ailleurs. **Le format par défaut de l'Auxiliaire devient
-donc JSON** ; le rendu en lignes survit pour l'humain qui lance l'Auxiliaire à
-la main sur sa machine, et les deux rendus restent la même structure fermée,
-si bien qu'aucun champ ne peut exister dans l'un et manquer dans l'autre. La
-commande forcée, la règle `sudo` et le compte ne bougent pas d'un octet — c'est
-tout l'intérêt de déplacer le défaut plutôt que l'invocation.
+donc JSON** ; le rendu en lignes survit derrière `--format=text` pour l'humain
+qui lance l'Auxiliaire à la main sur sa machine, et les deux rendus restent la
+même structure fermée, si bien qu'aucun champ ne peut exister dans l'un et
+manquer dans l'autre. La commande forcée, la règle `sudo` et le compte ne
+bougent pas d'un octet — c'est tout l'intérêt de déplacer le défaut plutôt que
+l'invocation.
+
+**La bascule a été tranchée sur une mesure, avant `#127` et non après.** Deux
+faits ont été relus dans le dépôt plutôt que supposés :
+
+- **la commande forcée ne porte aucun format** : `forced_command()` rend
+  exactement `/usr/bin/sudo -n /usr/lib/your-cloud/your-cloud auxiliary approve`,
+  la règle `sudo` autorise cette invocation-là et le module de jugement refuse
+  toute entrée qui ne lui est pas égale octet pour octet — les variantes portant
+  `--format=json` sont d'ailleurs des cas *hostiles* de sa suite de tests. Le
+  Controller ne peut donc pas demander JSON ; le défaut est le seul levier ;
+- **aucun harnais existant ne consomme le rendu en lignes.** Les vingt-quatre
+  invocations de `auxiliary approve` des suites LAB passent `--format=json`
+  partout où un rapport est lu ; les rares invocations sans `--format` sont
+  toutes des cas de **refus**, où l'Auxiliaire sort en échec avant tout rendu et
+  n'écrit qu'une phrase sur le canal d'erreur, que les harnais filtrent par
+  sous-chaîne. Basculer le défaut ne change donc la sortie d'aucune preuve
+  existante, et le contraire aurait été une raison de repousser la bascule.
 
 **Un refus ne rend aucun rapport, et c'est ce qui l'empêche de se lire comme une
 opération qui a agi.** Une machine qui refuse sort en échec et écrit une phrase
@@ -458,12 +597,31 @@ seule — la dernière position que la machine a elle-même **rapportée**, et s
 cette position est certaine. Aucune route nouvelle.
 
 Après un dispatch non rapporté, la position est **incertaine**, et le produit le
-dit plutôt que de deviner : la machine peut avoir consommé ou non. La reprise
-est un geste humain et elle coûte au plus une approbation de plus — l'humain
-approuve à la position que le Controller connaît ; si la machine est déjà
-passée, elle refuse en nommant sa position dans sa propre phrase, et cette
-phrase est montrée. Rien n'est deviné, rien n'est réessayé automatiquement, et
-un refus de séquence n'a jamais d'effet.
+dit plutôt que de deviner : la machine peut avoir consommé ou non.
+
+**Décision tranchée, et c'est bien le contrat : la reprise coûte au plus une
+approbation humaine *gaspillée*, en plus de celle que l'opération demandait de
+toute façon.** Le compte se fait pas à pas :
+
+1. l'humain approuve à la position que le Controller connaît — celle qu'un
+   rapport valide a nommée, et rien d'autre ;
+2. si la machine n'était pas passée, cette approbation est la bonne : le coût
+   supplémentaire est **nul** ;
+3. si la machine était déjà passée, elle refuse en nommant **sa** position dans
+   sa propre phrase, cette phrase est montrée sans être réécrite, et l'humain
+   réapprouve à la position nommée. Cette seconde approbation aboutit, parce que
+   la position n'est plus une supposition.
+
+Le coût est donc borné à **une** approbation perdue, jamais deux, et la borne
+tient à une propriété précise : le refus de la machine *nomme* sa position. Elle
+ne tiendrait plus si le refus disait seulement « non ». C'est aussi pourquoi la
+limite honnête écrite plus bas — le Controller n'analyse pas cette phrase — est
+supportable : elle coûte une approbation dans un cas rare, pas une divergence.
+
+L'approbation perdue est **dépensée des deux côtés** et cela est voulu : sur le
+Controller, son enregistrement conclut `refusé par la machine` ; sur la machine,
+rien n'a été consommé et rien n'a changé. Rien n'est deviné, rien n'est réessayé
+automatiquement, et un refus de séquence n'a jamais d'effet.
 
 C'est aussi une limite honnête de ce palier : le Controller **n'analyse pas** la
 phrase de refus de la machine. Rendre ce refus lisible par un programme
@@ -477,6 +635,32 @@ La Console lit l'histoire bornée des dispatchs et la rend en phrases :
 **construit → approuvé → lancé → rapporté**, avec ses instants, son état et ce
 que la machine a répondu. Un état `lancé, non rapporté` est affiché comme tel,
 jamais comme un échec ni comme un succès.
+
+**Décision tranchée : le texte de la rétro-référence est fixé maintenant, déposé
+à l'atterrissage de `#127`.** `SERVICE-UTILISATEUR.md` porte deux constats
+d'absence que ce palier lève ; le jour où `#127` atterrit, ses deux puces
+« limites nommées » sont remplacées par celles-ci, mot pour mot, et par rien
+d'autre :
+
+> - **`RequireDefinitionAgreement` est miroité depuis `v0.1.2`.** C'était la
+>   seconde dette de `#118`, conditionnée à ce que la Console tienne une
+>   définition à côté d'un plan. Elle la tient depuis `#123`–`#124` : la Console
+>   lit la paire, lit la révision épinglée et soumet les deux. Le contrôle
+>   croisé est désormais tenu quatre fois — construction par le Controller,
+>   miroir Rust avant l'ouverture de la fenêtre, revérification par le Controller
+>   à la soumission, revérification par l'Auxiliaire — et le contrat de ce
+>   trajet est [`TRAJET-DE-COMMANDE.md`](TRAJET-DE-COMMANDE.md).
+> - **Les instances sont affichées depuis `v0.1.2`, et depuis un rapport.** La
+>   projection que ce palier n'avait pas écrite est
+>   `GET /v0/plan-dispatches` : un rapport de `deploy_user_service` nomme la
+>   machine, le slug et la révision que le plan approuvé épingle, un rapport de
+>   `remove_user_service` nomme ce qui survit. La vue Services rend donc la
+>   révision que chaque instance court **depuis ce que la machine a rapporté**,
+>   jamais depuis une supposition ; une instance dont le dernier dispatch n'a pas
+>   été rapporté, ou dont l'enregistrement est sorti de l'histoire bornée, est
+>   affichée avec son incertitude et non avec un état inventé. Le câblage
+>   plan → UI que `v0.1.0` avait laissé ouvert est fermé par la vue Plans de
+>   `#124`.
 
 **La dette « instances » de la vue Services se solde ici.** `SERVICE-UTILISATEUR.md`
 constate que rien ne projette quelle machine exécute quelle révision, et que
@@ -526,11 +710,36 @@ et d'aucune autre — une seule peut faire partir un octet vers une machine :
 | `POST /v0/plan-approvals` | recevoir une approbation signée avec les octets de sa paire, et la définition quand la porte l'exige ; la revérifier entièrement, consommer durablement le dispatch, puis lancer l'Auxiliaire de la machine visée et lire ce qu'il répond |
 | `GET /v0/plan-dispatches` | lire l'histoire bornée des dispatchs — état, instants, empreintes, ce que la machine a rapporté ou répondu — sans en muter ni en omettre un |
 
+**Décision tranchée : ces deux noms sont confirmés, et la régularité est le
+motif.** Le contrat proposait `POST /v0/plan-approvals` et
+`GET /v0/plan-dispatches` ; la relecture de la surface existante les confirme
+plutôt que de les amender.
+
+- **Ils sont orientés ressource, au pluriel, sans verbe**, comme les vingt et
+  une routes déjà livrées : `/v0/machines`, `/v0/external-elements`,
+  `/v0/service-definitions`, les douze `*-plans`. Une approbation de plan et un
+  dispatch de plan sont deux ressources, nommées par ce qu'elles sont.
+- **Nominaliser un acte est déjà la maison** : `/v0/external-element-withdrawals`
+  est un retrait devenu ressource, et non un `DELETE` sur la collection voisine.
+  Ce dépôt donne à chaque acte son propre chemin nominal plutôt que d'empiler
+  les méthodes sur une collection, et ces deux noms suivent cette règle.
+- **L'alternative sérieuse a été considérée** : `POST` *et* `GET` sur la seule
+  collection `/v0/plan-dispatches`, puisque ce qu'une soumission crée est un
+  dispatch. Elle est écartée pour la raison qui compte ici : la porte qui fait
+  sortir un octet doit se **compter** dans la table des chemins, pas se déduire
+  d'une table de méthodes. Deux chemins disent « POST seul lance, GET seul
+  lit » dans le routage lui-même ; un seul chemin l'aurait dit dans le
+  gestionnaire.
+- **Ils restent réguliers avec ce qui vient** : `/v0/dns-records` visé en
+  `v0.1.3+` et les sauvegardes gérées visées en `v0.2.0` se rangent dans le même
+  espace `/v0/` sans lui imposer une convention nouvelle.
+
 Décisions attachées à ces routes :
 
 - Elles empruntent la **même authentification de session** que les routes
   métier existantes : aucun nouveau chemin d'autorité, aucun nouveau code
-  d'erreur hors de la liste fermée nommée plus haut.
+  d'erreur hors de la liste fermée nommée plus haut et des codes de transport
+  partagés énumérés avec elle.
 - **`POST /v0/plan-approvals` est la seule route du produit dont l'effet sort de
   la machine du Controller.** Elle est unique volontairement : une seconde route
   capable de lancer serait une seconde politique à tenir, et la première chose
@@ -553,9 +762,47 @@ Décisions attachées à ces routes :
   place tels quels.
 - L'état des dispatchs suit le patron des états existants : un fichier
   root-owned à écriture atomique, où les enregistrements s'ajoutent et où rien
-  ne s'efface. Il est borné : au-delà d'un nombre nommé d'enregistrements par
-  machine, les plus anciens sortent de l'histoire lue par la Console — jamais
-  les non terminaux, qui ne peuvent pas être oubliés tant qu'ils sont ouverts.
+  ne s'efface. Il est borné, et **la borne est dérivée d'une mesure** plutôt
+  que choisie ronde ; elle est détaillée juste après.
+
+### Décision tranchée : la borne de l'historique, dérivée d'une mesure
+
+Trois bornes, et chacune se lit contre un fait mesuré du dépôt.
+
+| Borne | Valeur | Ce dont elle est dérivée |
+|---|---|---|
+| phrase d'une machine | 512 octets | le plus long refus littéral de `internal/approval` et `internal/auxiliary` mesure 103 octets ; une chaîne enveloppée portant une erreur système qui nomme un chemin du produit reste sous 400. Puissance de deux au-dessus |
+| observation du Controller | 256 octets | le produit les écrit lui-même, depuis un ensemble fermé ; la plus large mesure 94 octets |
+| enregistrements par machine | 32 | la machine la plus chargée de la preuve `v0.1.1` traverse une trentaine de dispatchs en une exécution (`play-removal` en conduit 11, `play-refusals` 8, `play-lifecycle` 7). Puissance de deux au-dessus |
+| fichier entier | 8 Mio | 64 machines — la borne de l'inventaire — × 32 enregistrements × **2 220 octets**, taille mesurée du pire enregistrement encodé, plus l'en-tête : 4 546 707 octets. Puissance de deux au-dessus |
+
+Quatre propriétés sont attachées à ces nombres, et chacune est une décision :
+
+- **la borne du fichier ne peut jamais refuser un historique légitime.** Elle
+  est au-dessus du produit complet des bornes précédentes, si bien qu'une
+  approbation valide ne peut pas être refusée parce qu'une histoire était
+  pleine. Une borne de fichier plus serrée que son propre contenu maximal
+  serait un refus qui n'a rien à voir avec l'autorité soumise ;
+- **elle est vérifiée plutôt qu'affirmée.** La suite de tests construit
+  l'historique le plus plein que l'élagage puisse conserver — toutes les
+  machines, tous les enregistrements, les deux champs libres à leur borne et
+  composés du caractère que l'encodage double — puis l'encode contre la borne.
+  Une arithmétique de commentaire qui dériverait deviendrait rouge ;
+- **les deux champs libres sont refusés dans `validate`**, jamais tronqués au
+  rendu, et un enregistrement ne peut pas porter les deux à la fois : l'un est
+  une phrase que le produit n'a pas écrite, l'autre est son propre compte rendu
+  de sa propre tentative, et un lecteur doit pouvoir dire lequel il lit ;
+- **la limite est nommée plutôt qu'évitée.** Une machine qui dépasse 32
+  dispatchs perd ses plus anciens de l'histoire que la Console lit ; les effets,
+  eux, restent sur la machine. Une instance dont le dernier dispatch rapporté
+  est sorti de l'histoire est affichée **révision inconnue**, jamais avec une
+  révision devinée. Aucun enregistrement non terminal ne sort jamais : un
+  dispatch ouvert ne peut pas être oublié.
+
+Enfin, ces nombres sont faits pour être **relevés par mesure sans changer de
+format** : ce sont des constantes du document, pas des champs ; une observabilité
+qui grandira demain (fraîcheur, historique plus long) relèvera la rétention et la
+borne du fichier sans qu'un seul lecteur existant cesse de lire.
 
 ## Ce que ce palier ne fait pas
 
@@ -619,6 +866,24 @@ Console réelle atteste ce que le moteur de pilotage peut atteindre, et la
 confirmation de la fenêtre native est faite par le mécanisme le plus honnête
 disponible — le rapport dit lequel, et ce qu'il ne remplace pas.
 
+## Les neuf décisions tranchées le 11 août 2026
+
+Chacune est écrite à sa place dans ce contrat ; ce tableau sert à les
+reconnaître et à retrouver ce qui les force. Aucune n'est un goût : elles
+dérivent d'un invariant du cap ou d'une mesure faite dans le dépôt.
+
+| # | Décision | Ce qui la force | Où elle est écrite |
+|---|---|---|---|
+| 1 | `POST /v0/plan-approvals` et `GET /v0/plan-dispatches`, confirmés | régularité de la surface `/v0/` existante ; le nombre de portes doit se compter dans le routage | « Surface du Controller étendue de deux routes » |
+| 2 | Format par défaut de l'Auxiliaire en JSON, `--format=text` conservé | la commande forcée est comparée octet pour octet et ne porte aucun argument ; mesure : aucun harnais ne consomme le rendu en lignes | maillon 5 |
+| 3 | Une reprise coûte au plus **une** approbation gaspillée | le refus de la machine nomme sa position ; aucune reprise autonome | « La position de commande d'une machine » |
+| 4 | 512 / 256 octets, 32 enregistrements par machine, fichier 8 Mio | toute borne est dérivée d'une mesure, refusée dans `validate`, jamais de croissance silencieuse | « La borne de l'historique, dérivée d'une mesure » |
+| 5 | Texte de la rétro-référence `SERVICE-UTILISATEUR.md`, déposé avec `#127` | une dette nommée se solde à la source qui l'a nommée | « La projection : l'histoire d'un plan » |
+| 6 | Tout délai interne dérivé de `expires_at`, strictement sous 900 s | le plafond contractuel est l'autorité ; une expiration rend « lancé, non rapporté » | maillon 4, « les deux attentes » |
+| 7 | `422` pour une autorité refusée, `409` pour les octets déjà lancés | taxonomie **existante** du Controller, relue route par route ; liste fermée | maillon 3, « les statuts viennent de la taxonomie existante » |
+| 8 | Sans moteur attaché, les deux routes n'existent pas | une approbation ne se dépense jamais pour rien ; garde structurelle plutôt que documentaire | maillon 3, « sans moteur, la porte n'existe pas » |
+| 9 | 32 lignes repliées, refusées dans `validate` | aucune phrase cachée, aucune fenêtre qui défile ; mesure à 72 caractères | maillon 2 |
+
 ## Ambiguïté documentaire tranchée : le numéro `#54`
 
 Deux lectures de `#54` coexistaient. `ROADMAP.md`, `ISSUES.md`, `TESTS.md` et
@@ -662,7 +927,17 @@ qui a été exécuté, et corriger un renvoi d'issue n'y touche aucune mesure.
   indexer le registre de dispatch par numéro de séquence (écartée : empêcherait
   un humain de réapprouver légitimement une position que la machine n'a jamais
   consommée) ; analyser la phrase de refus de la machine (écartée : coupler un
-  programme à une présentation).
+  programme à une présentation) ; une seule collection `/v0/plan-dispatches`
+  portant `POST` et `GET` (écartée : la porte qui fait sortir un octet doit se
+  compter dans la table des chemins) ; laisser un moteur immobile conclure
+  `non lancé` sur le trajet produit (écartée : un binaire qui dépenserait
+  systématiquement des autorités humaines pour rien — la garde est structurelle,
+  et sans moteur attaché les deux routes n'existent pas) ; borner l'historique
+  par un nombre rond (écartée : la rétention est dérivée de la machine la plus
+  chargée des preuves du produit, et le fichier du pire enregistrement mesuré) ;
+  demander le format JSON dans l'invocation distante (écartée : la commande
+  forcée est comparée octet pour octet, et l'élargir d'un argument serait élargir
+  la seule règle que ce produit s'autorise sur une machine gérée).
 - **Portée accordée et moindre privilège.** Le Controller reçoit exactement une
   destination, un compte, une commande sans argument et une entrée standard
   bornée par machine ; aucune capacité de shell, de transfert ou de terminal

@@ -29,6 +29,8 @@ sources.
 | `docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md` | Le contrat de l'autorité SSH initiale, de son transfert et du remplacement explicite du Controller |
 | `docs/architecture/CHAINE-D-OBSERVATION.md` | La projection détaillée des rôles Daemon/Relay, du signal de présence et de leur coordination |
 | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | Le cycle sûr validé du déploiement, de la publication, de la migration et du retrait d'un service |
+| `docs/architecture/SERVICE-UTILISATEUR.md` | Le contrat de la définition de service utilisateur : ce qu'elle peut dire, ce qui la gèle et ce qu'elle n'autorise jamais |
+| `docs/architecture/TRAJET-DE-COMMANDE.md` | Le contrat des cinq maillons entre l'humain qui approuve et la machine qui rapporte, et des bornes de ce trajet |
 | `docs/lab/` | Les preuves réellement exécutées, jamais une décision par elles-mêmes |
 | `docs/html/` | Des vues visuelles dérivées de leur Markdown, jamais une source indépendante |
 
