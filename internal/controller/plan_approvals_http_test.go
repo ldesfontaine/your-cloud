@@ -279,7 +279,7 @@ func TestPlanApprovalRefusalsAreNamedAndSpendNothing(t *testing.T) {
 				ApprovalSHA256: strings.Repeat("ab", 32), MachineID: "lab-machine-1",
 				Operation: approval.OperationDeployOCIProbe, ApprovalEpoch: 1, Sequence: 5,
 				PlanSHA256: pair.PlanSHA256, RollbackSHA256: pair.RollbackSHA256,
-				State: DispatchInFlight, AcceptedAtUnix: 1,
+				State: DispatchInFlight, AcceptedAtUnix: 1, ExpiresAtUnix: 901,
 			}
 			if err := fixture.dispatches.Accept(seeded); err != nil {
 				t.Fatal(err)

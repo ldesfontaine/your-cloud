@@ -29,6 +29,7 @@ func testDispatchRecord(digestByte byte, machine string, sequence uint64) Dispat
 		RollbackSHA256: strings.Repeat("2", 64),
 		State:          DispatchInFlight,
 		AcceptedAtUnix: sequence,
+		ExpiresAtUnix:  sequence + 900,
 	}
 }
 
@@ -195,7 +196,8 @@ func TestDispatchRegistryFileBoundHoldsItsFullestHistory(t *testing.T) {
 				ApprovalEpoch: math.MaxUint64, Sequence: math.MaxUint64,
 				PlanSHA256: strings.Repeat("b", 64), RollbackSHA256: strings.Repeat("c", 64),
 				State:          DispatchLaunchedUnreported,
-				AcceptedAtUnix: math.MaxUint64, FinishedAtUnix: math.MaxUint64,
+				AcceptedAtUnix: math.MaxUint64 - 1, FinishedAtUnix: math.MaxUint64,
+				ExpiresAtUnix: math.MaxUint64,
 				// Every byte a backslash: the widest a bounded string can
 				// become once the encoder has escaped it.
 				MachineSentence: strings.Repeat(`\`, maxDispatchMachineSentenceBytes),

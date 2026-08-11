@@ -121,6 +121,11 @@ type DispatchRecord struct {
 	// any connection; the terminal instant is zero while the record is open.
 	AcceptedAtUnix uint64 `json:"accepted_at_unix"`
 	FinishedAtUnix uint64 `json:"finished_at_unix"`
+	// ExpiresAtUnix is the envelope's own window, carried here because it is
+	// what bounds the launch: a lauch that outran the authority permitting it
+	// would have nothing left to justify itself. The Console reads it too, so
+	// a human sees under which window a dispatch was allowed.
+	ExpiresAtUnix uint64 `json:"expires_at_unix"`
 	// MachineSentence is what the machine wrote on its error channel when it
 	// refused, verbatim and bounded; empty otherwise.
 	MachineSentence string `json:"machine_sentence"`
@@ -409,6 +414,9 @@ func validateDispatchRegistry(state DispatchRegistry) error {
 		}
 		if record.Operation == "" || record.ApprovalEpoch == 0 || record.Sequence == 0 {
 			return errors.New("a record must name its operation, epoch and sequence")
+		}
+		if record.ExpiresAtUnix <= record.AcceptedAtUnix {
+			return errors.New("a record must carry the window its approval was still inside when it was accepted")
 		}
 		// The two free-text fields are refused here rather than trimmed in the
 		// rendering: a bound held at the drawing would be a document that grew

@@ -26,6 +26,16 @@ EnvironmentFile=/etc/your-cloud/controller.env
 LoadCredential=controller-reader.crt:/etc/your-cloud/controller-credentials/controller-reader.crt
 LoadCredential=controller-reader.key:/etc/your-cloud/controller-credentials/controller-reader.key
 LoadCredential=relay-reader-ca.crt:/etc/your-cloud/controller-credentials/relay-reader-ca.crt
+# The command identities and the endpoint sheets, one entry per machine inside
+# two directories. Directories rather than a line per machine because the
+# package is what delivers this unit and the package knows no machine: a unit
+# naming sixty-four of them would carry machine-specific configuration, which
+# this package never does. Each entry is named by a machine identifier, copied
+# into the service's private credential directory at start, and gone with it.
+# The private half of an identity never leaves this Controller and enters no
+# document, report, observation or process argument.
+LoadCredential=command-identities:/etc/your-cloud/command-identities
+LoadCredential=command-endpoints:/etc/your-cloud/command-endpoints
 ExecStart=/usr/lib/your-cloud/your-cloud controller serve -state-dir=/var/lib/private/your-cloud-controller -listen=${CONTROLLER_LISTEN} -allowed-source=${CONTROLLER_ALLOWED_SOURCE} -relay-endpoint=${CONTROLLER_RELAY_ENDPOINT}
 # The Controller is what must still be there when the laptop is closed, so it
 # restarts on failure rather than waiting for someone to notice.

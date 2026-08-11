@@ -69,6 +69,7 @@ type PlanDispatchEntry struct {
 	State                 string `json:"state"`
 	AcceptedAtUnix        uint64 `json:"accepted_at_unix"`
 	FinishedAtUnix        uint64 `json:"finished_at_unix"`
+	ExpiresAtUnix         uint64 `json:"expires_at_unix"`
 	MachineSentence       string `json:"machine_sentence"`
 	ControllerObservation string `json:"controller_observation"`
 	ReportedChanged       bool   `json:"reported_changed"`
@@ -258,6 +259,7 @@ func (handler *ControllerHandler) servePlanApprovals(response http.ResponseWrite
 		RollbackSHA256: envelope.RollbackSHA256,
 		State:          DispatchInFlight,
 		AcceptedAtUnix: now,
+		ExpiresAtUnix:  envelope.ExpiresAtUnix,
 	}
 	var acceptError error
 	if err := handler.sessions.Accept(context, func() error {
@@ -335,6 +337,7 @@ func dispatchEntryOf(record DispatchRecord) PlanDispatchEntry {
 		State:                 record.State,
 		AcceptedAtUnix:        record.AcceptedAtUnix,
 		FinishedAtUnix:        record.FinishedAtUnix,
+		ExpiresAtUnix:         record.ExpiresAtUnix,
 		MachineSentence:       record.MachineSentence,
 		ControllerObservation: record.ControllerObservation,
 		ReportedChanged:       record.ReportedChanged,

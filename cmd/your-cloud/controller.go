@@ -23,6 +23,24 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/transport"
 )
 
+// The two credential directories the launch reads, named here exactly as the
+// unit loads them. The enrolment writes them root-owned under /etc; systemd
+// copies them into this service's private credential directory at start.
+//
+// The endpoint sheet — address, port, account, pinned host key — lives here and
+// never in the inventory: the inventory is readable and writable by the Console,
+// and an address the Console could rewrite would be a Console that chooses where
+// a command goes. The Console names a machine; it never names an endpoint.
+const (
+	commandIdentitiesCredential = "command-identities"
+	commandEndpointsCredential  = "command-endpoints"
+)
+
+// runtimeDirectoryEnvironment is set by systemd for units declaring
+// RuntimeDirectory. The known hosts of a launch are derived into it and
+// disappear with the service.
+const runtimeDirectoryEnvironment = "RUNTIME_DIRECTORY"
+
 type controllerServeArguments struct {
 	stateDirectory string
 	listenAddress  string
@@ -157,11 +175,24 @@ func runControllerServe(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("Controller HTTP: %w", err)
 	}
-	// No auxiliary dispatcher is attached here, and that is the whole decision:
-	// the two routes of the command trajectory do not exist on a Controller
-	// that cannot launch. `#126` attaches the bounded OpenSSH launch at this
-	// exact line, and the routes appear with it. Until then this binary cannot
-	// receive an approval, so it cannot spend one for nothing.
+	// The one engine whose effects leave this machine, attached here and
+	// nowhere else. Everything it needs is read from the environment systemd
+	// itself sets — the credentials directory that holds the command
+	// identities, the runtime directory the known hosts are derived into —
+	// and from the root-owned directory of endpoint sheets the enrolment
+	// wrote. A Controller that cannot build it serves no command route at all
+	// rather than a door that would spend a human approval and reach nothing.
+	dispatcher, err := controller.NewSSHDispatcher(
+		filepath.Join(credentialDirectory, commandIdentitiesCredential),
+		filepath.Join(credentialDirectory, commandEndpointsCredential),
+		os.Getenv(runtimeDirectoryEnvironment),
+	)
+	if err != nil {
+		return fmt.Errorf("Controller command launch: %w", err)
+	}
+	if err := handler.AttachAuxiliaryDispatcher(dispatcher); err != nil {
+		return fmt.Errorf("Controller command launch: %w", err)
+	}
 	tlsConfiguration, err := authority.DeviceTLSConfig()
 	if err != nil {
 		return fmt.Errorf("Controller TLS: %w", err)
