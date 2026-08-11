@@ -120,6 +120,29 @@ peut réordonner son propre affichage est une phrase dont ce qu'un humain lit et
 ce qu'il signe divergent. Le refus est en amont, dans la validation du
 document, jamais dans le dessin.
 
+### Décision tranchée : la moitié Win32 est différée, et la dette est écrite
+
+La fenêtre d'approbation est livrée en GTK, prouvée sur `lab-console`. **La
+moitié Win32 est différée après ce palier**, et ce n'est pas un oubli : le
+dialogue Win32 de l'amorçage est une implémentation complète — classe de
+fenêtre, boucle de messages, disposition et accessibilité propres — et écrire
+son équivalent sans pouvoir le compiler ni l'exécuter produirait du code non
+prouvé, ce que la discipline de ce dépôt refuse.
+
+**L'état honnête, écrit tel quel : la Console Windows observe, elle n'approuve
+pas encore de plans.** Elle construit un plan et le lit ; elle ne recueille pas
+de signature. L'arme Windows de la fenêtre répond `unavailable` — la seule
+réponse qui ne nomme aucune paire, et qui ne prétend pas qu'un humain a décliné
+alors que personne n'a été interrogé. Un refus aurait menti sur les deux points.
+
+Ce que cela ne change pas : rien n'est retiré du Windows déjà prouvé, et la
+matrice de septembre reste ce qu'elle est — deux systèmes, une passe, attestant
+l'existant. Aucun déclencheur automatique n'est posé ; le contrat n'en a aucun.
+
+Ce qui reste dû est nommé dans une issue de rattrapage dédiée : le dialogue
+Win32 d'approbation, sa preuve dans `windows-eval`, et la levée de cette dette
+`unavailable`.
+
 ### Décision tranchée : deux invocations nommées, et le compilateur qui l'atteste
 
 La Console possède **un seul chemin qui lance un processus**, et jusqu'ici il ne

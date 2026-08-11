@@ -29,6 +29,7 @@ mod probe_plan;
 // the palier that adds the command, and the source contract holds the command
 // surface against that.
 #[allow(dead_code)]
+mod plan_consent;
 mod publication_plan;
 // The third door on the side that writes its one document. Unlike the plan
 // modules above, this one *is* reachable from a command, and it may be: freezing
@@ -46,7 +47,10 @@ use network::{
     ExternalElementsView, ExternalWithdrawalView, InfrastructureView, MachineMutationView,
     MachinesView, NetworkState, PairingInput,
 };
-use publication_plan::{PresentedPublicationPlan, PublicationPlanError};
+use plan_consent::{PlanConsentError, PlanConsentSessionView, PlanConsentState};
+use publication_plan::{
+    PlanPairView, PresentedPublicationPlan, PublicationPlanConfirmation, PublicationPlanError,
+};
 use serde::Serialize;
 use service_definition::{
     FrozenDefinitionView, ServiceDefinitionDraft, ServiceDefinitionPaste, ServiceDefinitionReview,
@@ -117,7 +121,19 @@ struct ConsoleLocalState {
     /// bytes matters more than keeping them at all — asking again would build a
     /// second pair, and approving one while submitting the other is the whole
     /// class of failure the two digests exist to make impossible.
-    plan_pair: Option<PresentedPublicationPlan>,
+    plan_pair: Option<HeldPlanPair>,
+    plan_consent: PlanConsentState,
+}
+
+/// The pair under consideration, kept twice over: verified, and as the exact
+/// bytes that were verified.
+///
+/// The bytes are kept because the signature is taken over them: re-verifying at
+/// signing time from documents that had been rebuilt would prove that a pair is
+/// well formed, not that it is *this* one.
+struct HeldPlanPair {
+    presented: PresentedPublicationPlan,
+    documents: PlanPairView,
 }
 
 impl ConsoleLocalState {
@@ -188,6 +204,14 @@ fn with_core<T>(
         code: "console_unavailable",
     })?;
     operation(&mut local.core).map_err(Into::into)
+}
+
+impl From<PlanConsentError> for CommandError {
+    fn from(error: PlanConsentError) -> Self {
+        Self {
+            code: error.public_code(),
+        }
+    }
 }
 
 impl From<PublicationPlanError> for CommandError {
@@ -583,8 +607,126 @@ fn read_plan_pair(
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
     })?;
-    local.plan_pair = Some(presented);
+    local.plan_pair = Some(HeldPlanPair {
+        presented,
+        documents: view,
+    });
+    // A new pair ends any window still open on the previous one: an answer
+    // about a plan nobody is considering any more is an answer about nothing.
+    local.plan_consent.clear();
+    let _ = local.native_helper.stop_active();
     Ok(presentation)
+}
+
+/// Opens the native window on the pair currently under consideration.
+///
+/// The Console does not ask a human to approve *a plan it describes*: it hands
+/// the separate window the sentences it derived from the two documents it
+/// verified, and that window is drawn by a process the WebView cannot reach.
+/// The identifier of the session is drawn here and never accepted from the
+/// caller — a frontend naming its own request could name one whose answer it
+/// had already seen.
+///
+/// One window at a time, and that exclusion is the helper's own: a bootstrap in
+/// progress refuses this just as this refuses a bootstrap.
+#[tauri::command]
+fn open_plan_consent(
+    infrastructure_id: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<PlanConsentSessionView, CommandError> {
+    let generation = state.request_generation.load(Ordering::SeqCst);
+    let association = active_association(&state, &infrastructure_id, generation)?;
+    let mut local = state.local.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    if local.core.status()?.lock_state != "unlocked" {
+        return Err(vault::VaultError::Locked.into());
+    }
+    let Some(held) = local.plan_pair.as_ref() else {
+        return Err(PlanConsentError::NoPlan.into());
+    };
+    let presented = held.presented.clone();
+    let (view, consent, expires_at) = local.plan_consent.start(|request_id, remaining| {
+        presented.consent(&association, request_id, remaining).ok()
+    })?;
+    if let Err(error) = local
+        .native_helper
+        .start(HelperInvocation::ApprovalConsent(consent), expires_at)
+    {
+        local.plan_consent.clear();
+        return Err(error.into());
+    }
+    Ok(view)
+}
+
+/// Reads what the window is doing, and holds its answer against the pair.
+///
+/// The answer is never read as a decision on its own. It is held against the
+/// consent this session sent — the very document the window was opened on — and
+/// against the presentation that produced it, so an answer to a window opened
+/// on another pair cannot be laundered through this one. Everything that is not
+/// a confirmation is a refusal, whatever ended the window.
+#[tauri::command]
+fn plan_consent_status(
+    request_id: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<PlanConsentSessionView, CommandError> {
+    let mut local = state.local.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    let view = local.plan_consent.status(&request_id)?;
+    if view.state == "answered" {
+        return Ok(view);
+    }
+    let consent = local.plan_consent.consent(&request_id)?;
+    match local.native_helper.poll(&request_id) {
+        Ok(NativeHelperPoll::Running) => Ok(view),
+        Ok(NativeHelperPoll::ApprovalDecided(outcome)) => {
+            let Some(held) = local.plan_pair.as_ref() else {
+                local.plan_consent.clear();
+                return Err(PlanConsentError::NoPlan.into());
+            };
+            let confirmed = matches!(
+                held.presented.confirmed_by(&consent, &outcome),
+                PublicationPlanConfirmation::Confirmed { .. }
+            );
+            local
+                .plan_consent
+                .answer(&request_id, confirmed)
+                .map_err(Into::into)
+        }
+        // A bootstrap verdict on this session, or a helper that could not run,
+        // ends it without producing an answer: this Console does not know what
+        // a human decided, and it says so rather than deciding for him.
+        Ok(NativeHelperPoll::AccessVerified) | Ok(NativeHelperPoll::Unavailable) => {
+            let _ = local.native_helper.stop_active();
+            local.plan_consent.clear();
+            Err(PlanConsentError::Unavailable.into())
+        }
+        Err(error) => {
+            let _ = local.native_helper.stop_active();
+            local.plan_consent.clear();
+            Err(error.into())
+        }
+    }
+}
+
+/// Closes the window without an answer.
+///
+/// A cancellation is not a refusal recorded on the human's behalf: the session
+/// ends holding nothing, and the pair stays where it was. Reopening is a new
+/// window, a new identifier and a new consent.
+#[tauri::command]
+fn cancel_plan_consent(
+    request_id: String,
+    state: State<'_, ConsoleRuntime>,
+) -> Result<(), CommandError> {
+    let mut local = state.local.lock().map_err(|_| CommandError {
+        code: "console_unavailable",
+    })?;
+    local.plan_consent.status(&request_id)?;
+    local.native_helper.cancel(&request_id)?;
+    local.plan_consent.cancel(&request_id).map_err(Into::into)
 }
 
 /// What a human is shown of a pair before any window opens.
@@ -895,6 +1037,7 @@ pub fn run() {
                     bootstrap: BootstrapState::default(),
                     native_helper: NativeHelperSupervisor::default(),
                     plan_pair: None,
+                    plan_consent: PlanConsentState::default(),
                 }),
                 network: Mutex::new(NetworkState::new()),
                 request_generation: AtomicU64::new(0),
@@ -939,6 +1082,9 @@ pub fn run() {
             read_service_definitions,
             freeze_service_definition,
             read_plan_pair,
+            open_plan_consent,
+            plan_consent_status,
+            cancel_plan_consent,
             put_infrastructure,
             put_machine,
             rotate_device,
@@ -991,6 +1137,7 @@ mod bootstrap_lifecycle_tests {
                 bootstrap: BootstrapState::default(),
                 native_helper: NativeHelperSupervisor::default(),
                 plan_pair: None,
+                plan_consent: PlanConsentState::default(),
             },
         )
     }

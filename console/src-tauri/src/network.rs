@@ -634,10 +634,7 @@ impl NetworkState {
         let response = send_json_within::<PlanPairView, _>(
             &client,
             "POST",
-            &format!(
-                "{}/v0/user-service-plans",
-                association.summary.origin
-            ),
+            &format!("{}/v0/user-service-plans", association.summary.origin),
             Some(token.as_str()),
             &UserServicePlanRequest {
                 schema_version: 2,
@@ -1518,13 +1515,6 @@ pub(crate) struct FrozenServiceDefinitionView {
     pub definition: ServiceDefinitionEntryView,
 }
 
-/// Everything a Console may choose about a freeze, which is the document and its
-/// digest and nothing else.
-///
-/// There is no field for a machine, an account, a host path, a port of a host,
-/// an operation or a date: freezing touches no machine, so a request that could
-/// name one would be a request whose refusal had to be written somewhere.
-#[derive(Serialize)]
 /// What the Console may choose about one deployment of a frozen revision, and
 /// nothing else.
 ///
@@ -1546,6 +1536,13 @@ struct UserServicePlanRequest<'a> {
     origin_host: &'a str,
 }
 
+/// Everything a Console may choose about a freeze, which is the document and its
+/// digest and nothing else.
+///
+/// There is no field for a machine, an account, a host path, a port of a host,
+/// an operation or a date: freezing touches no machine, so a request that could
+/// name one would be a request whose refusal had to be written somewhere.
+#[derive(Serialize)]
 struct ServiceDefinitionFreezeRequest<'a> {
     schema_version: u8,
     definition_document: &'a str,

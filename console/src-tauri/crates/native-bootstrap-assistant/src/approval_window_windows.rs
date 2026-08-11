@@ -11,9 +11,14 @@
 //! would say a human declined and no human was ever asked. It is also the one
 //! answer that names no pair, so nothing here can be mistaken for a consent.
 //!
-//! The named debt: `#123` ships the GTK half, proven on `lab-console`. The Win32
-//! half and its `windows-eval` run remain due before this palier can be
-//! declared.
+//! The honest state, and it is written the same way everywhere: **the Console
+//! on Windows observes, it does not approve plans yet.**
+//!
+//! The named debt — the Win32 dialog, its run in the evaluation VM, and the
+//! lifting of this `unavailable` — belongs to the Windows catch-up issue, and
+//! is deferred past this palier rather than rushed into code nobody could
+//! compile or run. `docs/architecture/TRAJET-DE-COMMANDE.md` carries the
+//! decision and its reasons.
 
 use std::{
     sync::{atomic::AtomicBool, Arc},
