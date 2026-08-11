@@ -291,6 +291,54 @@ if [[ $verify_position -lt $roles_position ]]; then
 else
   fail "the new path is verified before every role" "$verify_position !< $roles_position"
 fi
+endpoint_position=$(echo "$steps" | tr ',' '\n' | grep -n '^endpoint$' | cut -d: -f1)
+if [[ $key_position -lt $endpoint_position ]]; then
+  report "the destination is recorded after the machine is bounded" \
+    "$key_position < $endpoint_position"
+else
+  fail "the destination is recorded after the machine is bounded" \
+    "$key_position !< $endpoint_position"
+fi
+if [[ $endpoint_position -lt $verify_position ]]; then
+  report "the address is known before the path is opened" \
+    "$endpoint_position < $verify_position"
+else
+  fail "the address is known before the path is opened" \
+    "$endpoint_position !< $verify_position"
+fi
+
+echo
+echo "== the endpoint sheet, judged by its own gate =="
+sheet_key="AAAAC3NzaC1lZDI1NTE5AAAAIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH"
+other_key="AAAAC3NzaC1lZDI1NTE5AAAAIAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ"
+"$fixture" render-endpoint "$machine_one" 192.0.2.10 22 "$sheet_key" >"$work/endpoint.json"
+answer=$("$fixture" judge-endpoint "$machine_one" "$work/endpoint.json" "$sheet_key" || true)
+case "$answer" in
+  ENDPOINT*) report "its own sheet is read back" "$answer" ;;
+  *) fail "its own sheet is read back" "$answer" ;;
+esac
+# Une machine substituée ne se lit jamais comme une erreur de configuration.
+answer=$("$fixture" judge-endpoint "$machine_one" "$work/endpoint.json" "$other_key" || true)
+case "$answer" in
+  *HostKeyChanged*) report "a key that changed since the audit is named apart" "$answer" ;;
+  *) fail "a key that changed since the audit is named apart" "$answer" ;;
+esac
+answer=$("$fixture" judge-endpoint "$machine_one" "$work/absent.json" "$sheet_key" || true)
+case "$answer" in
+  *Absent*) report "an absent sheet is its own refusal" "$answer" ;;
+  *) fail "an absent sheet is its own refusal" "$answer" ;;
+esac
+answer=$("$fixture" judge-endpoint "$machine_two" "$work/endpoint.json" "$sheet_key" || true)
+case "$answer" in
+  *ForeignMachine*) report "a sheet filed under another machine is refused" "$answer" ;;
+  *) fail "a sheet filed under another machine is refused" "$answer" ;;
+esac
+sed 's/"account":"[^"]*"/"account":"root"/' "$work/endpoint.json" >"$work/endpoint-account.json"
+answer=$("$fixture" judge-endpoint "$machine_one" "$work/endpoint-account.json" "$sheet_key" || true)
+case "$answer" in
+  *UnexpectedAccount*) report "an unexpected account is refused" "$answer" ;;
+  *) fail "an unexpected account is refused" "$answer" ;;
+esac
 
 [[ $failures -eq 0 ]] || { echo "FAILED: $failures assertions" >&2; exit 1; }
 echo "PASS: every refusal fired for its own reason, every positive control passed"

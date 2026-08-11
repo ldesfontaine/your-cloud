@@ -56,6 +56,46 @@ personal "sudo -n env YOUR_CLOUD_FAIL_AT='$fail_at' YOUR_CLOUD_CUT_AT='$cut_at' 
 # below is composed here: each file is the machine's own answer.
 personal "sudo -n cat /root/lab-machine-identity/ledger" >"$state/observed/$machine.ledger" || true
 
+# --------------------------------------------------------------------------
+# 7. endpoint — la fiche de commande, sur le Controller et jamais sur la
+# machine. Elle vient après la clé forcée, parce qu'une destination enregistrée
+# avant que la machine tienne son compte verrouillé, son élévation bornée et sa
+# commande forcée serait une destination que rien ne borne encore ; et avant la
+# vérification, parce que le Controller ne peut pas ouvrir un chemin dont il
+# ignore l'adresse.
+#
+# La clé d'hôte est prise dans le `known_hosts` que l'audit a épinglé par le
+# canal `labctl`, jamais dans une première réponse du réseau. Le registre est
+# celui du Controller : la fiche n'est pas sur la machine, et l'écrire dans le
+# registre de la machine mentirait sur l'endroit où elle est.
+controller_ledger="$state/observed/$machine.controller-ledger"
+: >"$controller_ledger"
+if [[ "$fail_at" != endpoint ]]; then
+  host_key=$(awk -v host="$address" '$1 == host && $2 == "ssh-ed25519" {print $3; exit}' \
+    "$state/known_hosts")
+  [[ -n "$host_key" ]] || { echo "REFUSED: no pinned host key for $address" >&2; exit 1; }
+  sheet=$("$state/fixture" render-endpoint "$machine" "$address" 22 "$host_key") || {
+    echo "REFUSED: the endpoint sheet was refused by its own gate" >&2
+    exit 1
+  }
+  install -d -m 0700 "$state/command-endpoints"
+  before_sheet=ABSENT
+  [[ -e "$state/command-endpoints/$machine.json" ]] && before_sheet=PRESENT
+  printf '%s' "$sheet" >"$state/command-endpoints/$machine.json"
+  chmod 0600 "$state/command-endpoints/$machine.json"
+  if [[ "$cut_at" == endpoint ]]; then
+    printf 'FILE\t%s\tUNKNOWN\n' "$state/command-endpoints/$machine.json" >>"$controller_ledger"
+    echo "CUT_AT=endpoint"
+    exit 0
+  fi
+  provenance=CREATED
+  [[ "$before_sheet" == PRESENT ]] && provenance=FOUND
+  printf 'FILE\t%s\t%s\n' "$state/command-endpoints/$machine.json" "$provenance" \
+    >>"$controller_ledger"
+else
+  echo "STOPPED_AT=endpoint"
+fi
+
 if [[ -n "$fail_at" || -n "$cut_at" ]]; then
   echo "INTERRUPTED machine=$machine fail_at=$fail_at cut_at=$cut_at"
   exit 0

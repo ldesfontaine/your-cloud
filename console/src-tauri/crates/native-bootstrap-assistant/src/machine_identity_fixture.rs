@@ -28,6 +28,7 @@ use your_cloud_native_bootstrap_assistant::installation::rollback::{
     ItemKind, Ledger, Provenance, Unwind,
 };
 use your_cloud_native_bootstrap_assistant::machine_identity::account::{self, ObservedAccount};
+use your_cloud_native_bootstrap_assistant::machine_identity::command_endpoint;
 use your_cloud_native_bootstrap_assistant::machine_identity::custody::{
     self, ObservedPath, PathKind,
 };
@@ -47,8 +48,8 @@ use your_cloud_native_bootstrap_assistant::personal_access::placement::{
 };
 
 const USAGE: &str = "usage: steps | estate | admits | enrol | verify | activate | entry \
-                     | render-entry | elevation | render-elevation | account | custody \
-                     | unwind";
+                     | render-entry | render-endpoint | judge-endpoint | elevation \
+                     | render-elevation | account | custody | unwind";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -66,6 +67,8 @@ fn main() -> ExitCode {
         "activate" => activate(rest),
         "entry" => judge_entry(rest),
         "render-entry" => render_entry(rest),
+        "render-endpoint" => render_endpoint(rest),
+        "judge-endpoint" => judge_endpoint(rest),
         "elevation" => judge_elevation(rest),
         "render-elevation" => {
             print!("{}", elevation_rule::render());
@@ -366,6 +369,59 @@ fn render_entry(arguments: &[String]) -> ExitCode {
     match entry::render(algorithm, key) {
         Ok(line) => {
             print!("{line}");
+            ExitCode::SUCCESS
+        }
+        Err(refusal) => {
+            println!("REFUSED {refusal:?}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `render-endpoint MACHINE HOST PORT HOST_KEY` — the command endpoint sheet
+/// the enrolment writes on the Controller.
+///
+/// It is rendered by the gate itself, exactly like the `authorized_keys` entry:
+/// a harness that composed the sheet would prove that its own idea of a sheet
+/// is well formed, not that the product's is.
+fn render_endpoint(arguments: &[String]) -> ExitCode {
+    let [machine, host, port, host_key] = arguments else {
+        eprintln!("usage: render-endpoint MACHINE HOST PORT HOST_KEY");
+        return ExitCode::from(2);
+    };
+    let Ok(port) = port.parse::<u16>() else {
+        println!("REFUSED UnusablePort");
+        return ExitCode::from(1);
+    };
+    match command_endpoint::render(machine, host, port, host_key) {
+        Some(sheet) => {
+            print!("{sheet}");
+            ExitCode::SUCCESS
+        }
+        None => {
+            println!("REFUSED");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `judge-endpoint MACHINE FILE EXPECTED_HOST_KEY` — a sheet read back off the
+/// Controller, judged against the machine it is filed under and against the key
+/// the audit pinned.
+fn judge_endpoint(arguments: &[String]) -> ExitCode {
+    let [machine, path, expected] = arguments else {
+        eprintln!("usage: judge-endpoint MACHINE FILE EXPECTED_HOST_KEY");
+        return ExitCode::from(2);
+    };
+    let document = std::fs::read_to_string(path).ok();
+    match command_endpoint::judge(machine, document.as_deref(), expected) {
+        Ok(endpoint) => {
+            println!(
+                "ENDPOINT machine={} host={} port={}",
+                endpoint.machine(),
+                endpoint.host(),
+                endpoint.port()
+            );
             ExitCode::SUCCESS
         }
         Err(refusal) => {

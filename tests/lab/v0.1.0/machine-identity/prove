@@ -48,6 +48,9 @@ staged=/root/lab-machine-identity-artifact
 remote_harness=/root/your-cloud-lab-machine-identity
 fixture=$state/fixture
 signer=$state/lab-approval-signer
+# Le binaire du produit, celui-là même qui sera installé sur les machines : la
+# frappe des identités de commande n'est pas une fixture.
+artifact=$state/artifact
 seed=7
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -128,11 +131,10 @@ setup() {
 set -e
 rm -rf $state
 install -d -m 0700 $state $state/identities $state/anchors $state/entries \
-  $state/fingerprints $state/names $state/observed
+  $state/fingerprints $state/names $state/observed $state/command-identities
+  $state/command-endpoints
 ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/operator
 ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/permissive
-ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/$target_vm
-ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/$console_vm
 chmod 0600 $state/identities/*"
 
   "$labctl" ssh "$console_vm" -- "install -m 0644 $staged/your-cloud $state/artifact \
@@ -197,11 +199,19 @@ printf '%s' '$console_vm' >$state/names/two
 index=one
 for machine in $target_vm $console_vm; do
   $signer -anchor -seed $seed -epoch 1 -machine \$machine >$state/anchors/\$machine.json
-  fingerprint=\$(ssh-keygen -lf $state/identities/\$machine.pub | awk '{print \$2}')
+  # L'identité de commande est frappée par le produit lui-même, jamais par
+  # ssh-keygen : c'est la moitié du maillon 4 que toutes les preuves passées
+  # remplaçaient par une fixture. Le Controller garde la moitié privée et ne
+  # rend que la moitié publique et son empreinte.
+  minted=\$($artifact controller mint-command-identity -machine \$machine \
+    -identity-dir $state/command-identities)
+  public=\$(printf '%s' \"\$minted\" | sed -n 's/^public_key=//p')
+  fingerprint=\$(printf '%s' \"\$minted\" | sed -n 's/^fingerprint=//p')
   printf '%s' \"\$fingerprint\" >$state/fingerprints/\$index
   printf 'identity\t%s\t%s\n' \"\$machine\" \"\$fingerprint\" >>$state/perimeter.identities
   printf 'cleared\t%s\n' \"\$machine\" >>$state/perimeter.cleared
-  $fixture render-entry ssh-ed25519 \$(awk '{print \$2}' $state/identities/\$machine.pub) \
+  printf '%s\n' \"\$public\" >$state/identities/\$machine.pub
+  $fixture render-entry \$(printf '%s' \"\$public\" | awk '{print \$1, \$2}') \
     >$state/entries/\$machine
   index=two
 done
@@ -342,6 +352,17 @@ interrupt() {
     case "$output" in
       COMPLETE*) ;;
       *) fail "a clean stop before $step did not unwind completely: $output" ;;
+    esac
+    # La fiche vit sur le Controller : son registre est distinct, et un arrêt
+    # propre doit le dérouler aussi. Écrire la fiche dans le registre de la
+    # machine mentirait sur l'endroit où elle est.
+    output=$(on_console "test -s $state/observed/$target_vm.controller-ledger \
+      && $fixture unwind $state/observed/$target_vm.controller-ledger \
+      || echo COMPLETE_NO_SHEET" || true)
+    echo "unwind côté Controller: $output"
+    case "$output" in
+      COMPLETE*) ;;
+      *) fail "a clean stop before $step left an unwindable Controller ledger: $output" ;;
     esac
     # The forced key is never present before the binary is: read off the
     # machine, at every stop point, rather than argued from the sequence.
