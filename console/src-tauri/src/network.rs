@@ -1470,6 +1470,25 @@ pub(crate) struct MachineView {
     pub enrollment_status: Option<String>,
     pub observation_status: Option<String>,
     pub observation: Option<MachineObservation>,
+    /// The position this Controller can attest for this machine, and whether it
+    /// is certain. It is what the Console needs in order to sign the **exact
+    /// successor** of the machine's sequence, and it is read rather than
+    /// guessed: this Console is trusted for neither the position nor the epoch,
+    /// and both are re-verified by the Controller and again by the machine.
+    pub command_position: CommandPositionView,
+}
+
+/// What a machine has itself *reported* consuming, and whether that is certain.
+///
+/// `last_reported_sequence` is zero when this Controller can attest nothing —
+/// which is not the same as a machine that has consumed nothing, and the
+/// difference is carried rather than flattened. `certain` is false as soon as a
+/// dispatch was launched and never reported.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CommandPositionView {
+    pub last_reported_sequence: u64,
+    pub certain: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

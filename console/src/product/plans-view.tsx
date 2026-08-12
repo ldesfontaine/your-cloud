@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Banner, Button, Card, Field, TextInput } from "../design/primitives";
 import { operationErrorMessage } from "./errors";
 import type {
+  MachinesView,
   PlanConsentSessionView,
   PlanDispatchEntryView,
   PlanDispatchState,
@@ -76,11 +77,15 @@ function instant(unixSeconds: number): string {
 export function PlansView({
   definitions,
   infrastructureId,
+  machines,
   initialSlug,
   onRefresh,
 }: {
   definitions: ServiceDefinitionsProjection | null;
   infrastructureId: string;
+  // Le parc, pour la seule valeur que la signature doit nommer : la position
+  // que la machine visée a elle-même rapportée. Cette vue ne la choisit pas.
+  machines: MachinesView | null;
   // Le nom qu'un geste « Déployer » a nommé, s'il y en a eu un. C'est tout ce
   // qui traverse depuis la vue Services : aucun plan, aucun document, aucune
   // empreinte — le Controller construit la paire et cette vue la relit.
@@ -176,6 +181,50 @@ export function PlansView({
     }
     setSession(null);
   }, [session]);
+
+  // Signer et soumettre, une fois que la fenêtre native a rendu une
+  // confirmation. Ce geste est distinct de l’approbation elle-même : la fenêtre
+  // dit qu’un humain a lu et accepté ces phrases, et c’est ici seulement que la
+  // clé signe et que des octets partent. Rien n’est automatique — un humain
+  // clique — parce qu’une soumission qui suivrait la fermeture de la fenêtre
+  // ferait de la fenêtre le déclencheur d’un effet, et le contrat en fait un
+  // recueil de consentement.
+  //
+  // L’époque et la position ne sont pas choisies ici : la position est le
+  // successeur exact de ce que la machine a elle-même rapporté, et l’époque
+  // vient de son dernier lancement rapporté. Une machine dont ce Controller
+  // n’atteste rien est à sa première position sous l’époque de son ancre ; si
+  // cette supposition est fausse, la machine refuse en nommant sa propre
+  // position, cette phrase est montrée sans être réécrite, et le coût est une
+  // approbation — exactement la borne que le contrat a écrite.
+  const submitDecision = useCallback(async () => {
+    if (!session || !session.confirmed) return;
+    setFailure(null);
+    setBusy(true);
+    try {
+      const machine = machines?.machines.find((entry) => entry.machine_id === machineId) ?? null;
+      const reported = machine?.command_position.last_reported_sequence ?? 0;
+      const epoch =
+        dispatches.find((entry) => entry.machine_id === machineId)?.approval_epoch ?? 1;
+      await nativeConsole.submitPlanDecision(
+        infrastructureId,
+        session.request_id,
+        epoch,
+        reported + 1,
+      );
+      setSession(null);
+      setPair(null);
+      await loadDispatches();
+    } catch (error: unknown) {
+      // La session est dépensée côté natif quoi qu’il arrive : une
+      // confirmation qui pourrait être soumise deux fois autoriserait deux
+      // lancements. La vue le dit plutôt que de laisser un bouton qui rejouera.
+      setSession(null);
+      setFailure(operationErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [session, machines, machineId, dispatches, infrastructureId, loadDispatches]);
 
   return (
     <div className="yc-stack">
@@ -287,12 +336,26 @@ export function PlansView({
                     Annuler la demande
                   </Button>
                 </>
+              ) : session.confirmed ? (
+                <>
+                  <Badge tone="success">Approuvé dans la fenêtre native</Badge>
+                  <p className="yc-prose">
+                    Rien n’est encore parti. Signer scelle ces deux empreintes
+                    sous votre clé et remet l’approbation au Controller, qui
+                    dépense la position de cette machine avant d’ouvrir quoi que
+                    ce soit. C’est une autorité à un coup.
+                  </p>
+                  <Button
+                    icon={ShieldCheck}
+                    intent="primary"
+                    loading={busy}
+                    onClick={() => void submitDecision()}
+                  >
+                    Signer et lancer
+                  </Button>
+                </>
               ) : (
-                <Badge tone={session.confirmed ? "success" : "warning"}>
-                  {session.confirmed
-                    ? "Approuvé dans la fenêtre native"
-                    : "Refusé — rien n’a été signé"}
-                </Badge>
+                <Badge tone="warning">Refusé — rien n’a été signé</Badge>
               )}
             </div>
           ) : (

@@ -282,7 +282,10 @@ export function App() {
   useEffect(() => {
     if (
       selectedInfrastructure &&
-      ["summary", "fleet", "observations", "external", "profile"].includes(view)
+      // La vue Plans lit le parc elle aussi : la position qu’une machine a
+      // rapportée est ce que la signature doit nommer, et une vue qui
+      // l’ignorerait signerait une position devinée.
+      ["summary", "fleet", "observations", "external", "profile", "plans"].includes(view)
     ) {
       void loadSelected();
     }
@@ -461,6 +464,7 @@ export function App() {
             <PlansView
               infrastructureId={selectedAssociation.infrastructure_id}
               definitions={definitions}
+              machines={machines}
               initialSlug={deploySlug}
               onRefresh={() => void loadDefinitions()}
             />

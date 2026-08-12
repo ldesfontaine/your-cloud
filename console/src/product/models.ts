@@ -116,12 +116,26 @@ export type MachineObservation = {
   };
 };
 
+/// La position que le Controller peut attester pour une machine, et si elle est
+/// certaine. `last_reported_sequence` à zéro veut dire que ce Controller
+/// n’atteste rien — ce qui n’est pas la même chose qu’une machine qui n’a rien
+/// consommé, et l’écran ne confond jamais les deux. `certain` est faux dès
+/// qu’un lancement n’a pas été rapporté.
+export type CommandPosition = {
+  last_reported_sequence: number;
+  certain: boolean;
+};
+
 export type MachineView = {
   machine_id: string;
   label: string;
   enrollment_status: EnrollmentStatus;
   observation_status: ObservationStatus;
   observation: MachineObservation | null;
+  /// Ce que la Console doit signer : le successeur exact de cette position.
+  /// Elle vient de ce que la machine a elle-même rapporté, jamais d’une
+  /// supposition de cette Console.
+  command_position: CommandPosition;
 };
 
 export type MachinesView = {
