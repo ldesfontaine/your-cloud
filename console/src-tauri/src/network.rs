@@ -86,8 +86,18 @@ pub(crate) enum NetworkError {
     SessionExpired,
     #[error("Controller unavailable")]
     ControllerUnavailable,
-    #[error("Controller response refused")]
-    ResponseRefused,
+    /// The Controller answered and this Console refused its answer.
+    ///
+    /// It carries **which** predicate refused, and that is not decoration: this
+    /// refusal is built in eighty-five places, and a human who reads « la
+    /// réponse reçue ne respecte pas le contrat de sécurité » learns nothing
+    /// about what to do next. A refusal that cannot say why it refuses is a
+    /// defect of diagnosability — one that cost a full LAB investigation before
+    /// it was written down. The reason is a fixed string chosen here, never a
+    /// fragment of what was received: an echo would be a way for a hostile
+    /// answer to write into this Console's own account of itself.
+    #[error("Controller response refused: {0}")]
+    ResponseRefused(&'static str),
     #[error("request was cancelled")]
     Cancelled,
     #[error("local Console state is unavailable")]
@@ -95,13 +105,22 @@ pub(crate) enum NetworkError {
 }
 
 impl NetworkError {
+    /// Which predicate refused, when one did. Nothing else carries a detail:
+    /// the other variants already name themselves.
+    pub(crate) fn detail(&self) -> Option<&'static str> {
+        match self {
+            Self::ResponseRefused(reason) => Some(reason),
+            _ => None,
+        }
+    }
+
     pub(crate) fn public_code(&self) -> &'static str {
         match self {
             Self::InvalidInput => "invalid_input",
             Self::AssociationFailed => "association_failed",
             Self::SessionExpired => "session_expired",
             Self::ControllerUnavailable | Self::Cancelled => "controller_unavailable",
-            Self::ResponseRefused => "response_refused",
+            Self::ResponseRefused(_) => "response_refused",
             Self::ConsoleUnavailable => "console_unavailable",
         }
     }
@@ -183,7 +202,7 @@ impl NetworkState {
         parameters.distinguished_name = DistinguishedName::new();
         let device_uri = device_uri(&input.infrastructure_id, &challenge.device_id);
         parameters.subject_alt_names = vec![SanType::URI(
-            Ia5String::try_from(device_uri).map_err(|_| NetworkError::ResponseRefused)?,
+            Ia5String::try_from(device_uri).map_err(|_| NetworkError::ResponseRefused("pair:1"))?,
         )];
         let csr = parameters
             .serialize_request(&device_key)
@@ -325,12 +344,12 @@ impl NetworkState {
             .as_deref()
             .filter(|mode| *mode == "enrollment" || *mode == "recovery" || *mode == "rotation")
             .map(str::to_owned)
-            .ok_or(NetworkError::ResponseRefused)?;
+            .ok_or(NetworkError::ResponseRefused("activate_pending:1"))?;
         let transaction = association
             .pending_transaction_id
             .as_deref()
             .filter(|value| canonical_raw_url(value, 16))
-            .ok_or(NetworkError::ResponseRefused)?;
+            .ok_or(NetworkError::ResponseRefused("activate_pending:2"))?;
         let client = if mode == "rotation" {
             pending_association_client(&association)?
         } else {
@@ -370,7 +389,7 @@ impl NetworkState {
                 }
             || activation.identity_revision == 0
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("activate_pending:3"));
         }
         ensure_current(generation, current_generation)?;
         association.summary.device_status = "active".to_owned();
@@ -378,11 +397,11 @@ impl NetworkState {
             association.device_private_key_pem = association
                 .pending_device_private_key_pem
                 .take()
-                .ok_or(NetworkError::ResponseRefused)?;
+                .ok_or(NetworkError::ResponseRefused("activate_pending:4"))?;
             association.device_certificate_pem = association
                 .pending_device_certificate_pem
                 .take()
-                .ok_or(NetworkError::ResponseRefused)?;
+                .ok_or(NetworkError::ResponseRefused("activate_pending:5"))?;
             association.summary.certificate_expires_at =
                 association.pending_certificate_expires_at.take();
         }
@@ -494,7 +513,7 @@ impl NetworkState {
             self.handle_session_response(&association.summary.infrastructure_id, response)?;
         validate_infrastructure(&view, association)?;
         if view.label.as_deref() != Some(label.as_str()) {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("put_infrastructure:1"));
         }
         ensure_current(generation, current_generation)?;
         Ok(view)
@@ -533,7 +552,7 @@ impl NetworkState {
             || view.label != label
             || view.inventory_revision == 0
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("put_machine:1"));
         }
         ensure_current(generation, current_generation)?;
         Ok(view)
@@ -577,7 +596,7 @@ impl NetworkState {
             self.handle_session_response(&association.summary.infrastructure_id, response)?;
         if view.schema_version != 1 || view.element_id != element_id || view.external_revision == 0
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("withdraw_external_element:1"));
         }
         ensure_current(generation, current_generation)?;
         Ok(view)
@@ -815,7 +834,7 @@ impl NetworkState {
             || view.definition.slug != parsed.slug
             || !canonical_timestamp(&view.definition.frozen_at)
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("freeze_service_definition:1"));
         }
         ensure_current(generation, current_generation)?;
         Ok(view)
@@ -846,9 +865,10 @@ impl NetworkState {
             &association.summary.infrastructure_id,
             &association.device_id,
         );
-        parameters.subject_alt_names = vec![SanType::URI(
-            Ia5String::try_from(uri).map_err(|_| NetworkError::ResponseRefused)?,
-        )];
+        parameters.subject_alt_names =
+            vec![SanType::URI(Ia5String::try_from(uri).map_err(|_| {
+                NetworkError::ResponseRefused("rotate_device:1")
+            })?)];
         let csr = parameters
             .serialize_request(&device_key)
             .map_err(|_| NetworkError::ControllerUnavailable)?;
@@ -922,7 +942,7 @@ impl NetworkState {
                 &association.summary.infrastructure_id,
             )? != association.device_id
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("rotate_device:2"));
         }
         ensure_current(generation, current_generation)?;
         association.pending_mode = Some("rotation".to_owned());
@@ -952,7 +972,7 @@ impl NetworkState {
             || activation.certificate_expires_at != completed.expires_at
             || activation.identity_revision != association.identity_revision.saturating_add(1)
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("rotate_device:3"));
         }
         ensure_current(generation, current_generation)?;
         association.device_private_key_pem = association
@@ -999,11 +1019,11 @@ impl NetworkState {
             return Err(NetworkError::InvalidInput);
         }
         let infrastructure = Uuid::parse_str(&association.summary.infrastructure_id)
-            .map_err(|_| NetworkError::ResponseRefused)?;
+            .map_err(|_| NetworkError::ResponseRefused("rotate_recovery_key:1"))?;
         let spki: [u8; 32] = hex::decode(&association.server_spki_sha256)
-            .map_err(|_| NetworkError::ResponseRefused)?
+            .map_err(|_| NetworkError::ResponseRefused("rotate_recovery_key:2"))?
             .try_into()
-            .map_err(|_| NetworkError::ResponseRefused)?;
+            .map_err(|_| NetworkError::ResponseRefused("rotate_recovery_key:3"))?;
         let next_salt = recovery_rotation_salt(
             &new_code,
             &target.operation_id,
@@ -1097,7 +1117,7 @@ impl NetworkState {
             || response.recovery_epoch != target.target_recovery_epoch
             || response.identity_revision != association.identity_revision
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("rotate_recovery_key:4"));
         }
         ensure_current(generation, current_generation)?;
         association.recovery_salt = next_salt_encoded;
@@ -1118,7 +1138,7 @@ impl NetworkState {
             &[StatusCode::OK],
         )?;
         if response.schema_version != 1 || response.status != "logged_out" {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("logout:1"));
         }
         Ok(())
     }
@@ -1744,7 +1764,7 @@ fn controller_client(ca_pem: &str, identity: Option<(&str, &str)>) -> Result<Cli
         combined.push_str(certificate);
         combined.push_str(private_key);
         let identity = reqwest::Identity::from_pem(combined.as_bytes())
-            .map_err(|_| NetworkError::ResponseRefused)?;
+            .map_err(|_| NetworkError::ResponseRefused("controller_client:1"))?;
         builder = builder.identity(identity);
     }
     builder
@@ -1767,7 +1787,7 @@ fn association_client(association: &AssociationRecord) -> Result<Client, Network
         &association.server_ca_pem,
         &decode_hex_32(&association.server_spki_sha256)?,
     )
-    .map_err(|_| NetworkError::ResponseRefused)?;
+    .map_err(|_| NetworkError::ResponseRefused("association_client:1"))?;
     controller_client(
         &association.server_ca_pem,
         Some((
@@ -1780,16 +1800,22 @@ fn association_client(association: &AssociationRecord) -> Result<Client, Network
 fn pending_association_client(association: &AssociationRecord) -> Result<Client, NetworkError> {
     validate_persisted_association(association)?;
     if association.pending_mode.as_deref() != Some("rotation") {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "pending_association_client:1",
+        ));
     }
     let certificate = association
         .pending_device_certificate_pem
         .as_deref()
-        .ok_or(NetworkError::ResponseRefused)?;
+        .ok_or(NetworkError::ResponseRefused(
+            "pending_association_client:2",
+        ))?;
     let private_key = association
         .pending_device_private_key_pem
         .as_deref()
-        .ok_or(NetworkError::ResponseRefused)?;
+        .ok_or(NetworkError::ResponseRefused(
+            "pending_association_client:3",
+        ))?;
     controller_client(&association.server_ca_pem, Some((certificate, private_key)))
 }
 
@@ -1895,7 +1921,7 @@ fn decode_response<T: DeserializeOwned>(
             != Some("no-store")
         || response.headers().contains_key(TRANSFER_ENCODING)
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("decode_response:1"));
     }
     let declared = response
         .headers()
@@ -1903,7 +1929,7 @@ fn decode_response<T: DeserializeOwned>(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|length| *length > 0 && *length <= maximum)
-        .ok_or(NetworkError::ResponseRefused)?;
+        .ok_or(NetworkError::ResponseRefused("decode_response:2"))?;
     let mut bytes = Vec::with_capacity(declared);
     response
         .by_ref()
@@ -1911,18 +1937,19 @@ fn decode_response<T: DeserializeOwned>(
         .read_to_end(&mut bytes)
         .map_err(|_| NetworkError::ControllerUnavailable)?;
     if bytes.len() != declared || bytes.len() > maximum {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("decode_response:3"));
     }
     if expected_statuses.contains(&status) {
-        return serde_json::from_slice(&bytes).map_err(|_| NetworkError::ResponseRefused);
+        return serde_json::from_slice(&bytes)
+            .map_err(|_| NetworkError::ResponseRefused("decode_response:4"));
     }
-    let problem: ControllerProblem =
-        serde_json::from_slice(&bytes).map_err(|_| NetworkError::ResponseRefused)?;
+    let problem: ControllerProblem = serde_json::from_slice(&bytes)
+        .map_err(|_| NetworkError::ResponseRefused("decode_response:5"))?;
     if problem.schema_version != 1
         || !canonical_raw_url(&problem.request_id, 16)
         || !known_problem(status, &problem.error_code)
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("decode_response:6"));
     }
     if status == StatusCode::UNAUTHORIZED {
         Err(NetworkError::SessionExpired)
@@ -1934,7 +1961,11 @@ fn decode_response<T: DeserializeOwned>(
 fn pairing_error(error: NetworkError) -> NetworkError {
     match error {
         NetworkError::InvalidInput
-        | NetworkError::ResponseRefused
+        // Ici la raison ne discrimine pas : c'est le refus lui-même qui doit
+        // traverser, quel que soit le contrôle qui a mordu. Une raison écrite
+        // en position de motif filtrerait au lieu de laisser passer, et
+        // compilerait sans rien dire — c'est arrivé.
+        | NetworkError::ResponseRefused(_)
         | NetworkError::Cancelled
         | NetworkError::ConsoleUnavailable => error,
         _ => NetworkError::AssociationFailed,
@@ -1970,7 +2001,8 @@ fn validate_identity_challenge(
     response: &IdentityChallengeResponse,
     input: &PairingInput,
 ) -> Result<(), NetworkError> {
-    let device = Uuid::parse_str(&response.device_id).map_err(|_| NetworkError::ResponseRefused)?;
+    let device = Uuid::parse_str(&response.device_id)
+        .map_err(|_| NetworkError::ResponseRefused("validate_identity_challenge:1"))?;
     if response.schema_version != 1
         || !canonical_raw_url(&response.transaction_id, 16)
         || device.get_version_num() != 4
@@ -1981,7 +2013,9 @@ fn validate_identity_challenge(
         || !canonical_raw_url(&response.next_recovery_salt, 32)
         || response.next_recovery_epoch == 0
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_identity_challenge:2",
+        ));
     }
     if input.mode == "enrollment" {
         if response.next_recovery_epoch != 1
@@ -1989,19 +2023,29 @@ fn validate_identity_challenge(
             || response.current_recovery_epoch != 0
             || !response.current_recovery_public_key.is_empty()
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused(
+                "validate_identity_challenge:3",
+            ));
         }
     } else if !canonical_raw_url(&response.current_recovery_salt, 32)
         || !canonical_raw_url(&response.current_recovery_public_key, 32)
         || response.current_recovery_epoch == 0
         || response.current_recovery_epoch.checked_add(1) != Some(response.next_recovery_epoch)
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_identity_challenge:4",
+        ));
     }
-    let created = parse_timestamp(&response.created_at).ok_or(NetworkError::ResponseRefused)?;
-    let expires = parse_timestamp(&response.expires_at).ok_or(NetworkError::ResponseRefused)?;
+    let created = parse_timestamp(&response.created_at).ok_or(NetworkError::ResponseRefused(
+        "validate_identity_challenge:5",
+    ))?;
+    let expires = parse_timestamp(&response.expires_at).ok_or(NetworkError::ResponseRefused(
+        "validate_identity_challenge:6",
+    ))?;
     if expires <= created || expires - created > time::Duration::minutes(2) {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_identity_challenge:7",
+        ));
     }
     Ok(())
 }
@@ -2018,7 +2062,9 @@ fn validate_identity_completion(
         || !canonical_timestamp(&response.expires_at)
         || pem_certificate_der(&response.certificate_pem).is_err()
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_identity_completion:1",
+        ));
     }
     Ok(())
 }
@@ -2037,7 +2083,7 @@ fn validate_activation(
         || response.certificate_expires_at != completion.expires_at
         || response.identity_revision == 0
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_activation:1"));
     }
     Ok(())
 }
@@ -2049,7 +2095,9 @@ fn validate_session_challenge(response: &SessionChallengeResponse) -> Result<(),
         || !canonical_timestamp(&response.created_at)
         || !canonical_timestamp(&response.expires_at)
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_session_challenge:1",
+        ));
     }
     Ok(())
 }
@@ -2060,7 +2108,7 @@ fn validate_session_open(response: &SessionOpenResponse) -> Result<(), NetworkEr
         || !canonical_timestamp(&response.idle_expires_at)
         || !canonical_timestamp(&response.absolute_expires_at)
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_session_open:1"));
     }
     Ok(())
 }
@@ -2075,18 +2123,18 @@ fn validate_infrastructure(
         || view.initialized != view.label.is_some()
         || view.label.as_ref().is_some_and(|label| !valid_label(label))
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_infrastructure:1"));
     }
     Ok(())
 }
 
 fn validate_persisted_association(association: &AssociationRecord) -> Result<(), NetworkError> {
     let controller = Uuid::parse_str(&association.summary.controller_id)
-        .map_err(|_| NetworkError::ResponseRefused)?;
+        .map_err(|_| NetworkError::ResponseRefused("validate_persisted_association:1"))?;
     let infrastructure = Uuid::parse_str(&association.summary.infrastructure_id)
-        .map_err(|_| NetworkError::ResponseRefused)?;
-    let device =
-        Uuid::parse_str(&association.device_id).map_err(|_| NetworkError::ResponseRefused)?;
+        .map_err(|_| NetworkError::ResponseRefused("validate_persisted_association:2"))?;
+    let device = Uuid::parse_str(&association.device_id)
+        .map_err(|_| NetworkError::ResponseRefused("validate_persisted_association:3"))?;
     if controller.get_version_num() != 4
         || controller.to_string() != association.summary.controller_id
         || infrastructure.get_version_num() != 4
@@ -2103,11 +2151,13 @@ fn validate_persisted_association(association: &AssociationRecord) -> Result<(),
             .as_ref()
             .is_none_or(|value| !canonical_timestamp(value))
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_persisted_association:4",
+        ));
     }
     let host = controller_server_name(&association.summary.infrastructure_id);
     validate_origin(&association.summary.origin, &host, 9443)
-        .map_err(|_| NetworkError::ResponseRefused)?;
+        .map_err(|_| NetworkError::ResponseRefused("validate_persisted_association:5"))?;
     let certificate_device = device_id_from_certificate(
         &association.device_certificate_pem,
         &association.summary.infrastructure_id,
@@ -2117,13 +2167,17 @@ fn validate_persisted_association(association: &AssociationRecord) -> Result<(),
         || !canonical_raw_url(&association.recovery_salt, 32)
         || association.recovery_epoch == 0
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_persisted_association:6",
+        ));
     }
     if association.pending_mode.as_deref() == Some("rotation") {
         let pending_certificate = association
             .pending_device_certificate_pem
             .as_deref()
-            .ok_or(NetworkError::ResponseRefused)?;
+            .ok_or(NetworkError::ResponseRefused(
+                "validate_persisted_association:7",
+            ))?;
         if device_id_from_certificate(pending_certificate, &association.summary.infrastructure_id)?
             != association.device_id
             || association
@@ -2131,7 +2185,9 @@ fn validate_persisted_association(association: &AssociationRecord) -> Result<(),
                 .as_deref()
                 .is_none_or(|value| !canonical_timestamp(value))
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused(
+                "validate_persisted_association:8",
+            ));
         }
     }
     Ok(())
@@ -2154,7 +2210,7 @@ fn validate_machines(
             .as_ref()
             .is_some_and(|value| !canonical_timestamp(value))
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_machines:1"));
     }
     let mut previous = "";
     for machine in &view.machines {
@@ -2170,7 +2226,7 @@ fn validate_machines(
                 None | Some("absent") | Some("recent") | Some("old") | Some("untrusted")
             )
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("validate_machines:2"));
         }
         if let Some(observation) = &machine.observation {
             validate_observation(observation)?;
@@ -2192,7 +2248,7 @@ fn validate_observation(observation: &MachineObservation) -> Result<(), NetworkE
         || !valid_capacity(&observation.health.memory)
         || !valid_capacity(&observation.health.rootfs)
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_observation:1"));
     }
     if let Some(gap) = &observation.gap_summary {
         if gap.range_count == 0
@@ -2200,7 +2256,7 @@ fn validate_observation(observation: &MachineObservation) -> Result<(), NetworkE
             || gap.first_sequence == 0
             || gap.first_sequence > gap.last_sequence
         {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused("validate_observation:2"));
         }
     }
     Ok(())
@@ -2223,18 +2279,24 @@ fn validate_external_elements(
         || view.infrastructure_id != association.summary.infrastructure_id
         || view.elements.len() > MAX_EXTERNAL_ELEMENTS
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_external_elements:1",
+        ));
     }
     let mut identifiers = HashSet::with_capacity(view.elements.len());
     let mut previous: Option<(&str, u16)> = None;
     for element in &view.elements {
         validate_external_element(element)?;
         if !identifiers.insert(element.element_id.as_str()) {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused(
+                "validate_external_elements:2",
+            ));
         }
         let key = (element.machine_id.as_str(), element.probe_port);
         if previous.is_some_and(|earlier| earlier >= key) {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused(
+                "validate_external_elements:3",
+            ));
         }
         previous = Some(key);
     }
@@ -2263,20 +2325,28 @@ fn validate_service_definitions(
         || view.infrastructure_id != association.summary.infrastructure_id
         || view.definitions.len() > MAX_FROZEN_SERVICE_DEFINITIONS
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "validate_service_definitions:1",
+        ));
     }
     let mut digests = HashSet::with_capacity(view.definitions.len());
     for entry in &view.definitions {
         let parsed = displayable_definition(&entry.definition_document, &entry.definition_sha256)
-            .ok_or(NetworkError::ResponseRefused)?;
+            .ok_or(NetworkError::ResponseRefused(
+            "validate_service_definitions:2",
+        ))?;
         if parsed.slug != entry.slug || !canonical_timestamp(&entry.frozen_at) {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused(
+                "validate_service_definitions:3",
+            ));
         }
         // A revision is its digest. The same digest twice would be one revision
         // presented as two, and a human counting revisions would be counting a
         // repetition of the Controller's own state file.
         if !digests.insert(entry.definition_sha256.as_str()) {
-            return Err(NetworkError::ResponseRefused);
+            return Err(NetworkError::ResponseRefused(
+                "validate_service_definitions:4",
+            ));
         }
     }
     Ok(())
@@ -2300,7 +2370,7 @@ fn validate_external_element(element: &ExternalElementView) -> Result<(), Networ
         || element.probe_port == 0
         || !canonical_timestamp(&element.declared_at)
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_external_element:1"));
     }
     if !matches!(
         (element.state.as_str(), element.reason.as_deref()),
@@ -2315,7 +2385,7 @@ fn validate_external_element(element: &ExternalElementView) -> Result<(), Networ
                 )
             )
     ) {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_external_element:2"));
     }
     // `declared` is the state of an element nobody has read: it carries no date
     // and no age, and a Controller that dated it would be dating a reading that
@@ -2331,7 +2401,7 @@ fn validate_external_element(element: &ExternalElementView) -> Result<(), Networ
             (false, "absent") | (true, "recent") | (true, "old")
         )
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("validate_external_element:3"));
     }
     Ok(())
 }
@@ -2533,7 +2603,8 @@ fn session_transcript(
 }
 
 fn append_field(buffer: &mut Vec<u8>, value: &[u8]) -> Result<(), NetworkError> {
-    let length = u32::try_from(value.len()).map_err(|_| NetworkError::ResponseRefused)?;
+    let length =
+        u32::try_from(value.len()).map_err(|_| NetworkError::ResponseRefused("append_field:1"))?;
     buffer.extend_from_slice(&length.to_be_bytes());
     buffer.extend_from_slice(value);
     Ok(())
@@ -2548,13 +2619,13 @@ pub(crate) fn human_signing_key(
     let decoded = Zeroizing::new(
         URL_SAFE_NO_PAD
             .decode(association.human_private_seed.as_bytes())
-            .map_err(|_| NetworkError::ResponseRefused)?,
+            .map_err(|_| NetworkError::ResponseRefused("human_signing_key:1"))?,
     );
     let bytes = Zeroizing::new(
         decoded
             .as_slice()
             .try_into()
-            .map_err(|_| NetworkError::ResponseRefused)?,
+            .map_err(|_| NetworkError::ResponseRefused("human_signing_key:2"))?,
     );
     Ok(SigningKey::from_bytes(&bytes))
 }
@@ -2576,40 +2647,51 @@ fn validate_ca_pin(pem: &str, expected: &[u8; 32]) -> Result<(), NetworkError> {
 }
 
 fn pem_certificate_der(pem: &str) -> Result<Vec<u8>, NetworkError> {
-    let (remainder, block) =
-        parse_x509_pem(pem.as_bytes()).map_err(|_| NetworkError::ResponseRefused)?;
+    let (remainder, block) = parse_x509_pem(pem.as_bytes())
+        .map_err(|_| NetworkError::ResponseRefused("pem_certificate_der:1"))?;
     if !remainder.iter().all(u8::is_ascii_whitespace) || block.label != "CERTIFICATE" {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("pem_certificate_der:2"));
     }
-    let (certificate_remainder, _) =
-        parse_x509_certificate(&block.contents).map_err(|_| NetworkError::ResponseRefused)?;
+    let (certificate_remainder, _) = parse_x509_certificate(&block.contents)
+        .map_err(|_| NetworkError::ResponseRefused("pem_certificate_der:3"))?;
     if !certificate_remainder.is_empty() {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("pem_certificate_der:4"));
     }
     Ok(block.contents)
 }
 
 fn device_id_from_certificate(pem: &str, infrastructure_id: &str) -> Result<String, NetworkError> {
     let der = pem_certificate_der(pem)?;
-    let (_, certificate) =
-        parse_x509_certificate(&der).map_err(|_| NetworkError::ResponseRefused)?;
+    let (_, certificate) = parse_x509_certificate(&der)
+        .map_err(|_| NetworkError::ResponseRefused("device_id_from_certificate:1"))?;
     let san = certificate
         .subject_alternative_name()
-        .map_err(|_| NetworkError::ResponseRefused)?
-        .ok_or(NetworkError::ResponseRefused)?;
+        .map_err(|_| NetworkError::ResponseRefused("device_id_from_certificate:2"))?
+        .ok_or(NetworkError::ResponseRefused(
+            "device_id_from_certificate:3",
+        ))?;
     if san.value.general_names.len() != 1 {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "device_id_from_certificate:4",
+        ));
     }
     let GeneralName::URI(rendered) = &san.value.general_names[0] else {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "device_id_from_certificate:5",
+        ));
     };
     let prefix = format!("urn:your-cloud:device:v1:{infrastructure_id}:");
     let device = rendered
         .strip_prefix(&prefix)
-        .ok_or(NetworkError::ResponseRefused)?;
-    let parsed = Uuid::parse_str(device).map_err(|_| NetworkError::ResponseRefused)?;
+        .ok_or(NetworkError::ResponseRefused(
+            "device_id_from_certificate:6",
+        ))?;
+    let parsed = Uuid::parse_str(device)
+        .map_err(|_| NetworkError::ResponseRefused("device_id_from_certificate:7"))?;
     if parsed.get_version_num() != 4 || parsed.to_string() != device {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused(
+            "device_id_from_certificate:8",
+        ));
     }
     Ok(device.to_owned())
 }
@@ -2680,13 +2762,13 @@ fn canonical_raw_url(value: &str, size: usize) -> bool {
 fn decode_raw_url_32(value: &str) -> Result<[u8; 32], NetworkError> {
     let decoded = URL_SAFE_NO_PAD
         .decode(value.as_bytes())
-        .map_err(|_| NetworkError::ResponseRefused)?;
+        .map_err(|_| NetworkError::ResponseRefused("decode_raw_url_32:1"))?;
     if URL_SAFE_NO_PAD.encode(&decoded) != value {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("decode_raw_url_32:2"));
     }
     decoded
         .try_into()
-        .map_err(|_| NetworkError::ResponseRefused)
+        .map_err(|_| NetworkError::ResponseRefused("decode_raw_url_32:3"))
 }
 
 fn decode_hex_32(value: &str) -> Result<[u8; 32], NetworkError> {
@@ -2695,12 +2777,12 @@ fn decode_hex_32(value: &str) -> Result<[u8; 32], NetworkError> {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
-        return Err(NetworkError::ResponseRefused);
+        return Err(NetworkError::ResponseRefused("decode_hex_32:1"));
     }
     hex::decode(value)
-        .map_err(|_| NetworkError::ResponseRefused)?
+        .map_err(|_| NetworkError::ResponseRefused("decode_hex_32:2"))?
         .try_into()
-        .map_err(|_| NetworkError::ResponseRefused)
+        .map_err(|_| NetworkError::ResponseRefused("decode_hex_32:3"))
 }
 
 fn valid_window_code(value: &str) -> bool {
@@ -2841,6 +2923,71 @@ fn ensure_current(generation: u64, current: &AtomicU64) -> Result<(), NetworkErr
 
 #[cfg(test)]
 mod tests {
+    /// Un refus qui ne peut pas dire pourquoi il refuse ne se répare pas en
+    /// aval : il faut que chaque site le nomme. Le type l'impose désormais —
+    /// `ResponseRefused` ne se construit pas sans raison — et ce cas tient les
+    /// deux moitiés du contrat : le code public ne bouge pas, donc la phrase
+    /// rendue à l'humain reste celle du vocabulaire fermé, et la raison
+    /// accompagne le code sans jamais s'y substituer.
+    #[test]
+    fn un_refus_de_reponse_porte_le_controle_qui_a_mordu() {
+        let refused = NetworkError::ResponseRefused("validate_machines:1");
+        assert_eq!(refused.public_code(), "response_refused");
+        assert_eq!(refused.detail(), Some("validate_machines:1"));
+
+        // Les autres refus se nomment déjà par leur code : ils ne portent rien
+        // de plus, et un lecteur ne doit pas avoir à se demander lequel il lit.
+        for other in [
+            NetworkError::InvalidInput,
+            NetworkError::AssociationFailed,
+            NetworkError::SessionExpired,
+            NetworkError::ControllerUnavailable,
+            NetworkError::Cancelled,
+            NetworkError::ConsoleUnavailable,
+        ] {
+            assert_eq!(
+                other.detail(),
+                None,
+                "{other:?} ne doit porter aucune raison"
+            );
+        }
+    }
+
+    /// L'appariement replie ses échecs sur « association échouée », sauf quatre
+    /// refus qui doivent traverser tels quels. `ResponseRefused` en fait partie,
+    /// et il en fait partie **quelle que soit** la raison qu'il porte : la
+    /// raison sert à diagnostiquer, jamais à décider. Ce cas existe parce que
+    /// l'inverse a été écrit une fois — une raison en position de motif — et
+    /// qu'il a compilé, sans qu'aucune suite ne s'en aperçoive.
+    #[test]
+    fn l_appariement_laisse_passer_un_refus_quelle_que_soit_sa_raison() {
+        for reason in ["pair:1", "decode_response:6", "validate_activation:1"] {
+            let carried = pairing_error(NetworkError::ResponseRefused(reason));
+            assert_eq!(carried.public_code(), "response_refused");
+            assert_eq!(carried.detail(), Some(reason));
+        }
+
+        // Les trois autres traversent aussi, et eux seuls.
+        for direct in [
+            NetworkError::InvalidInput,
+            NetworkError::Cancelled,
+            NetworkError::ConsoleUnavailable,
+        ] {
+            let expected = direct.public_code();
+            assert_eq!(pairing_error(direct).public_code(), expected);
+        }
+
+        // Tout le reste devient l'échec d'appariement : c'est ce repli qui
+        // empêche un détail de transport de se lire comme un refus du produit.
+        for folded in [
+            NetworkError::AssociationFailed,
+            NetworkError::SessionExpired,
+            NetworkError::ControllerUnavailable,
+        ] {
+            assert_eq!(pairing_error(folded).public_code(), "association_failed");
+        }
+    }
+
     use super::*;
     use crate::vault::ConsoleCore;
 

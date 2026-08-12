@@ -1,7 +1,7 @@
 import { CircleHelp, RefreshCw, ScrollText, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Banner, Button, Card, Field, TextInput } from "../design/primitives";
-import { operationErrorMessage } from "./errors";
+import { operationErrorDetail, operationErrorMessage } from "./errors";
 import type {
   MachinesView,
   PlanConsentSessionView,
@@ -101,6 +101,11 @@ export function PlansView({
   const [session, setSession] = useState<PlanConsentSessionView | null>(null);
   const [dispatches, setDispatches] = useState<PlanDispatchEntryView[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
+  // Le contrôle qui a refusé, quand le cœur l’a nommé. Il accompagne la phrase
+  // plutôt que de la remplacer : « la réponse reçue ne respecte pas le contrat
+  // de sécurité » ne dit rien de la suite, et un humain devant cette phrase
+  // seule ne peut ni agir ni rapporter ce qu’il a vu.
+  const [failureDetail, setFailureDetail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const polling = useRef<number | null>(null);
 
@@ -113,6 +118,7 @@ export function PlansView({
       setDispatches([...view.dispatches].reverse());
     } catch (error: unknown) {
       setFailure(operationErrorMessage(error));
+      setFailureDetail(operationErrorDetail(error));
     }
   }, [infrastructureId]);
 
@@ -132,6 +138,7 @@ export function PlansView({
         .catch((error: unknown) => {
           setSession(null);
           setFailure(operationErrorMessage(error));
+          setFailureDetail(operationErrorDetail(error));
         });
     }, 500);
     polling.current = timer;
@@ -140,6 +147,7 @@ export function PlansView({
 
   const readPair = useCallback(async () => {
     setFailure(null);
+    setFailureDetail(null);
     setBusy(true);
     try {
       const port = Number.parseInt(localPort, 10);
@@ -158,6 +166,7 @@ export function PlansView({
     } catch (error: unknown) {
       setPair(null);
       setFailure(operationErrorMessage(error));
+      setFailureDetail(operationErrorDetail(error));
     } finally {
       setBusy(false);
     }
@@ -165,10 +174,12 @@ export function PlansView({
 
   const openConsent = useCallback(async () => {
     setFailure(null);
+    setFailureDetail(null);
     try {
       setSession(await nativeConsole.openPlanConsent(infrastructureId));
     } catch (error: unknown) {
       setFailure(operationErrorMessage(error));
+      setFailureDetail(operationErrorDetail(error));
     }
   }, [infrastructureId]);
 
@@ -178,6 +189,7 @@ export function PlansView({
       await nativeConsole.cancelPlanConsent(session.request_id);
     } catch (error: unknown) {
       setFailure(operationErrorMessage(error));
+      setFailureDetail(operationErrorDetail(error));
     }
     setSession(null);
   }, [session]);
@@ -200,6 +212,7 @@ export function PlansView({
   const submitDecision = useCallback(async () => {
     if (!session || !session.confirmed) return;
     setFailure(null);
+    setFailureDetail(null);
     setBusy(true);
     try {
       const machine = machines?.machines.find((entry) => entry.machine_id === machineId) ?? null;
@@ -221,6 +234,7 @@ export function PlansView({
       // lancements. La vue le dit plutôt que de laisser un bouton qui rejouera.
       setSession(null);
       setFailure(operationErrorMessage(error));
+      setFailureDetail(operationErrorDetail(error));
     } finally {
       setBusy(false);
     }
@@ -244,6 +258,11 @@ export function PlansView({
       {failure ? (
         <Banner icon={CircleHelp} title="Opération refusée" tone="danger">
           <p>{failure}</p>
+          {/* Le contrôle qui a refusé, quand le cœur l’a nommé. Il est rendu à
+              côté de la phrase et jamais à sa place : la phrase dit ce qu’un
+              humain doit comprendre, celle-ci lui donne de quoi rapporter ce
+              qu’il a vu quand la première ne suffit pas. */}
+          {failureDetail ? <p className="yc-mono yc-muted">{failureDetail}</p> : null}
         </Banner>
       ) : null}
 

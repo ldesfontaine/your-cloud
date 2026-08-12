@@ -74,15 +74,29 @@ use your_cloud_bootstrap_protocol::{
 };
 use zeroize::Zeroizing;
 
+/// What a refused command tells the surface above it.
+///
+/// `code` is the closed vocabulary a human sentence is chosen from, and it does
+/// not grow here. `detail` is the second half of a refusal that could not
+/// otherwise be acted on: it names **which** check refused, for the one code
+/// whose sentence — « la réponse reçue ne respecte pas le contrat de
+/// sécurité » — tells a reader nothing about what to do. It is a fixed string
+/// this product chose, never an echo of what was received, and it is omitted
+/// entirely when the code already names itself.
 #[derive(Debug, Serialize)]
 struct CommandError {
     code: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<&'static str>,
 }
 
 impl From<vault::VaultError> for CommandError {
     fn from(value: vault::VaultError) -> Self {
         Self {
             code: value.public_code(),
+            // Ces refus se nomment déjà par leur code : rien à ajouter, et un
+            // champ vide vaut mieux qu'un détail qui ne dirait rien de plus.
+            detail: None,
         }
     }
 }
@@ -91,6 +105,7 @@ impl From<network::NetworkError> for CommandError {
     fn from(value: network::NetworkError) -> Self {
         Self {
             code: value.public_code(),
+            detail: value.detail(),
         }
     }
 }
@@ -99,6 +114,9 @@ impl From<bootstrap::BootstrapError> for CommandError {
     fn from(value: bootstrap::BootstrapError) -> Self {
         Self {
             code: value.public_code(),
+            // Ces refus se nomment déjà par leur code : rien à ajouter, et un
+            // champ vide vaut mieux qu'un détail qui ne dirait rien de plus.
+            detail: None,
         }
     }
 }
@@ -107,6 +125,9 @@ impl From<native_helper::NativeHelperError> for CommandError {
     fn from(value: native_helper::NativeHelperError) -> Self {
         Self {
             code: value.public_code(),
+            // Ces refus se nomment déjà par leur code : rien à ajouter, et un
+            // champ vide vaut mieux qu'un détail qui ne dirait rien de plus.
+            detail: None,
         }
     }
 }
@@ -210,6 +231,7 @@ fn with_core<T>(
 ) -> Result<T, CommandError> {
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     operation(&mut local.core).map_err(Into::into)
 }
@@ -218,6 +240,9 @@ impl From<PlanConsentError> for CommandError {
     fn from(error: PlanConsentError) -> Self {
         Self {
             code: error.public_code(),
+            // Ces refus se nomment déjà par leur code : rien à ajouter, et un
+            // champ vide vaut mieux qu'un détail qui ne dirait rien de plus.
+            detail: None,
         }
     }
 }
@@ -226,6 +251,9 @@ impl From<PublicationPlanError> for CommandError {
     fn from(error: PublicationPlanError) -> Self {
         Self {
             code: error.public_code(),
+            // Ces refus se nomment déjà par leur code : rien à ajouter, et un
+            // champ vide vaut mieux qu'un détail qui ne dirait rien de plus.
+            detail: None,
         }
     }
 }
@@ -235,6 +263,7 @@ fn json_request_body<'a>(request: &'a Request<'_>) -> Result<&'a serde_json::Val
         InvokeBody::Json(value) => Ok(value),
         InvokeBody::Raw(_) => Err(CommandError {
             code: "bootstrap_request_refused",
+            detail: None,
         }),
     }
 }
@@ -312,6 +341,7 @@ fn start_bootstrap(
     let input = bootstrap::parse_start_envelope(json_request_body(&request)?)?;
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     local.start_bootstrap(input)
 }
@@ -324,6 +354,7 @@ fn bootstrap_status(
     let request_id = bootstrap::parse_request_envelope(json_request_body(&request)?)?;
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let view = match local.bootstrap.status(&request_id) {
         Ok(view) => view,
@@ -375,6 +406,7 @@ fn cancel_bootstrap(
     let request_id = bootstrap::parse_request_envelope(json_request_body(&request)?)?;
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     match local.bootstrap.status(&request_id) {
         Ok(_) => {}
@@ -395,6 +427,7 @@ fn lock_console(state: State<'_, ConsoleRuntime>) -> Result<(), CommandError> {
         Ok(mut local) => local.lock().map_err(CommandError::from),
         Err(_) => Err(CommandError {
             code: "console_unavailable",
+            detail: None,
         }),
     };
     let network_result = state
@@ -402,6 +435,7 @@ fn lock_console(state: State<'_, ConsoleRuntime>) -> Result<(), CommandError> {
         .lock()
         .map_err(|_| CommandError {
             code: "console_unavailable",
+            detail: None,
         })
         .map(|mut network| network.clear_sessions());
     local_result?;
@@ -422,6 +456,7 @@ fn pair_controller(
     let replacing = input.mode == "recovery";
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let active = network.pair(input, generation, &state.request_generation, |candidate| {
         if state.request_generation.load(Ordering::SeqCst) != generation {
@@ -442,6 +477,7 @@ fn pair_controller(
     }
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     local
         .core
@@ -458,6 +494,7 @@ fn read_infrastructure(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let view = network
         .read_infrastructure(&association, generation, &state.request_generation)
@@ -483,6 +520,7 @@ fn read_machines(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     network
         .read_machines(&association, generation, &state.request_generation)
@@ -502,6 +540,7 @@ fn read_external_elements(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     network
         .read_external_elements(&association, generation, &state.request_generation)
@@ -518,6 +557,7 @@ fn withdraw_external_element(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     network
         .withdraw_external_element(
@@ -586,6 +626,7 @@ fn read_plan_pair(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let view = network.build_user_service_plan(
         &association,
@@ -612,6 +653,7 @@ fn read_plan_pair(
         .map(|entry| entry.definition_document.clone())
         .ok_or(CommandError {
             code: "definition_absent",
+            detail: None,
         })?;
 
     let presented = PresentedPublicationPlan::verify(&view)?;
@@ -627,6 +669,7 @@ fn read_plan_pair(
     // for a second pair built from the same request.
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     local.plan_pair = Some(HeldPlanPair {
         presented,
@@ -660,6 +703,7 @@ fn open_plan_consent(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     if local.core.status()?.lock_state != "unlocked" {
         return Err(vault::VaultError::Locked.into());
@@ -695,6 +739,7 @@ fn plan_consent_status(
 ) -> Result<PlanConsentSessionView, CommandError> {
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let view = local.plan_consent.status(&request_id)?;
     if view.state == "answered" {
@@ -749,6 +794,7 @@ fn read_plan_dispatches(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     network
         .read_plan_dispatches(&association, generation, &state.request_generation)
@@ -785,6 +831,7 @@ fn submit_plan_decision(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     if !local.plan_consent.confirmed(&request_id) {
         return Err(PlanConsentError::RequestRefused.into());
@@ -812,6 +859,7 @@ fn submit_plan_decision(
 
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     network
         .submit_plan_approval(
@@ -833,6 +881,7 @@ fn unix_seconds() -> Result<u64, CommandError> {
         .map(|elapsed| elapsed.as_secs())
         .map_err(|_| CommandError {
             code: "console_unavailable",
+            detail: None,
         })
 }
 
@@ -848,6 +897,7 @@ fn cancel_plan_consent(
 ) -> Result<(), CommandError> {
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     local.plan_consent.status(&request_id)?;
     local.native_helper.cancel(&request_id)?;
@@ -877,6 +927,7 @@ fn read_service_definitions(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let view =
         network.read_service_definitions(&association, generation, &state.request_generation)?;
@@ -903,6 +954,7 @@ fn freeze_service_definition(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let view = network.freeze_service_definition(
         &association,
@@ -920,6 +972,7 @@ fn freeze_service_definition(
     )
     .ok_or(CommandError {
         code: "response_refused",
+        detail: None,
     })
 }
 
@@ -942,6 +995,7 @@ fn project_service_definitions(
             )
             .ok_or(CommandError {
                 code: "response_refused",
+                detail: None,
             })?,
         );
     }
@@ -960,6 +1014,7 @@ fn logout_session(
     let association = with_core(&state, |core| core.association(&infrastructure_id))?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     network.logout(&association).map_err(Into::into)
 }
@@ -973,6 +1028,7 @@ fn rotate_device(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let active = network.rotate_device(
         association,
@@ -1047,10 +1103,12 @@ fn resume_recovery_key_rotation(
             .cloned()
             .ok_or(CommandError {
                 code: "console_unavailable",
+                detail: None,
             })?;
         let result = {
             let mut network = state.network.lock().map_err(|_| CommandError {
                 code: "console_unavailable",
+                detail: None,
             })?;
             network.rotate_recovery_key(
                 association,
@@ -1084,12 +1142,14 @@ fn put_infrastructure(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     let view =
         network.put_infrastructure(&association, &label, generation, &state.request_generation)?;
     drop(network);
     let persisted_label = view.label.clone().ok_or(CommandError {
         code: "response_refused",
+        detail: None,
     })?;
     with_core(&state, |core| {
         core.update_association_label(&infrastructure_id, persisted_label)
@@ -1109,6 +1169,7 @@ fn put_machine(
     let association = active_association(&state, &infrastructure_id, generation)?;
     let mut network = state.network.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     network
         .put_machine(
@@ -1138,6 +1199,7 @@ fn active_association(
     let active = {
         let mut network = state.network.lock().map_err(|_| CommandError {
             code: "console_unavailable",
+            detail: None,
         })?;
         network.activate_pending(association, generation, &state.request_generation)?
     };
@@ -1146,6 +1208,7 @@ fn active_association(
     }
     let mut local = state.local.lock().map_err(|_| CommandError {
         code: "console_unavailable",
+        detail: None,
     })?;
     local.core.store_association(active.clone(), true)?;
     Ok(active)

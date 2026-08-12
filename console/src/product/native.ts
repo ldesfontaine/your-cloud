@@ -49,11 +49,16 @@ export type NativeErrorCode =
 
 export class NativeOperationError extends Error {
   readonly code: NativeErrorCode;
+  /// Quel contrôle a refusé, quand le code seul ne suffit pas à agir. Le cœur
+  /// ne le renseigne que là où sa phrase ne dit rien de la suite ; c’est une
+  /// chaîne que le produit a choisie, jamais un écho de ce qui a été reçu.
+  readonly detail: string | null;
 
-  constructor(code: NativeErrorCode) {
-    super(code);
+  constructor(code: NativeErrorCode, detail: string | null = null) {
+    super(detail ? `${code}: ${detail}` : code);
     this.name = "NativeOperationError";
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -80,7 +85,9 @@ function toNativeError(value: unknown): NativeOperationError {
     typeof value.code === "string" &&
     knownErrorCodes.has(value.code as NativeErrorCode)
   ) {
-    return new NativeOperationError(value.code as NativeErrorCode);
+    const detail =
+      "detail" in value && typeof value.detail === "string" ? value.detail : null;
+    return new NativeOperationError(value.code as NativeErrorCode, detail);
   }
   return new NativeOperationError("console_unavailable");
 }
