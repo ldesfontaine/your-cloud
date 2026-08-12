@@ -282,10 +282,10 @@ export function App() {
   useEffect(() => {
     if (
       selectedInfrastructure &&
-      // La vue Plans lit le parc elle aussi : la position qu’une machine a
-      // rapportée est ce que la signature doit nommer, et une vue qui
-      // l’ignorerait signerait une position devinée.
-      ["summary", "fleet", "observations", "external", "profile", "plans"].includes(view)
+      // La vue Plans n’est plus de cette liste. Elle a besoin du parc, mais
+      // daté de l’instant où elle construit une paire — pas de l’instant où on
+      // est entré dans l’écran. Elle le lit donc elle-même, à ce moment-là.
+      ["summary", "fleet", "observations", "external", "profile"].includes(view)
     ) {
       void loadSelected();
     }
@@ -464,7 +464,6 @@ export function App() {
             <PlansView
               infrastructureId={selectedAssociation.infrastructure_id}
               definitions={definitions}
-              machines={machines}
               initialSlug={deploySlug}
               onRefresh={() => void loadDefinitions()}
             />

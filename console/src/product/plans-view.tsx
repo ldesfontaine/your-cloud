@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Banner, Button, Card, Field, TextInput } from "../design/primitives";
 import { operationErrorDetail, operationErrorMessage } from "./errors";
 import type {
-  MachinesView,
   PlanConsentSessionView,
   PlanDispatchEntryView,
   PlanDispatchState,
@@ -77,15 +76,16 @@ function instant(unixSeconds: number): string {
 export function PlansView({
   definitions,
   infrastructureId,
-  machines,
   initialSlug,
   onRefresh,
 }: {
   definitions: ServiceDefinitionsProjection | null;
   infrastructureId: string;
-  // Le parc, pour la seule valeur que la signature doit nommer : la position
-  // que la machine visée a elle-même rapportée. Cette vue ne la choisit pas.
-  machines: MachinesView | null;
+  // Le parc n'est plus reçu ici. La seule valeur que cette vue en tirait — la
+  // position que la machine visée a elle-même rapportée — doit dater du moment
+  // où la paire est construite, et un parc reçu en propriété date, lui, du
+  // dernier changement de vue.
+  //
   // Le nom qu'un geste « Déployer » a nommé, s'il y en a eu un. C'est tout ce
   // qui traverse depuis la vue Services : aucun plan, aucun document, aucune
   // empreinte — le Controller construit la paire et cette vue la relit.
@@ -98,6 +98,28 @@ export function PlansView({
   const [localPort, setLocalPort] = useState("");
   const [originHost, setOriginHost] = useState("");
   const [pair, setPair] = useState<PlanPairPresentation | null>(null);
+  // La position et l’époque de la machine visée, lues au dernier moment qui
+  // précède encore la construction de la paire, et tenues avec elle.
+  //
+  // Le parc reçu en propriété n’est relu qu’au changement de vue : après un
+  // lancement, il décrit un monde d’avant. La signature qui suivait nommait
+  // alors une position déjà dépassée, et le Controller refusait — ce qui était
+  // juste. Le contrat dit que cette Console apprend la position par la vue des
+  // machines ; il ne dit pas qu’elle peut l’apprendre une fois pour toutes.
+  //
+  // Elles sont retenues plutôt que relues au moment de signer, pour deux
+  // raisons : ce qui est signé est alors la position lue quand la paire a été
+  // construite, et elles restent attachées à la machine pour laquelle cette
+  // paire existe, même si le champ du formulaire change ensuite.
+  //
+  // Résiduel, nommé : entre la construction de la paire et la soumission, une
+  // position peut encore bouger. C’est alors une concurrence réelle, bornée par
+  // « au plus une approbation gaspillée », et non une péremption systématique.
+  const [target, setTarget] = useState<{
+    machineId: string;
+    reported: number;
+    epoch: number;
+  } | null>(null);
   const [session, setSession] = useState<PlanConsentSessionView | null>(null);
   const [dispatches, setDispatches] = useState<PlanDispatchEntryView[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
@@ -150,6 +172,18 @@ export function PlansView({
     setFailureDetail(null);
     setBusy(true);
     try {
+      // Le parc et les lancements sont relus ici, avant que le Controller ne
+      // construise quoi que ce soit : c’est le dernier moment où la position
+      // que la signature nommera peut encore être apprise du produit plutôt
+      // que d’un souvenir.
+      const [fleet, launched] = await Promise.all([
+        nativeConsole.readMachines(infrastructureId),
+        nativeConsole.readPlanDispatches(infrastructureId),
+      ]);
+      // Le plus récent d'abord, comme partout ailleurs dans cette vue : c'est
+      // le dernier lancement d'une machine qui porte son époque.
+      const recent = [...launched.dispatches].reverse();
+      setDispatches(recent);
       const port = Number.parseInt(localPort, 10);
       const presentation = await nativeConsole.readPlanPair(
         infrastructureId,
@@ -161,10 +195,17 @@ export function PlansView({
         Number.isNaN(port) ? 0 : port,
         originHost,
       );
+      const machine = fleet.machines.find((entry) => entry.machine_id === machineId) ?? null;
+      setTarget({
+        machineId,
+        reported: machine?.command_position.last_reported_sequence ?? 0,
+        epoch: recent.find((entry) => entry.machine_id === machineId)?.approval_epoch ?? 1,
+      });
       setPair(presentation);
       setSession(null);
     } catch (error: unknown) {
       setPair(null);
+      setTarget(null);
       setFailure(operationErrorMessage(error));
       setFailureDetail(operationErrorDetail(error));
     } finally {
@@ -209,24 +250,25 @@ export function PlansView({
   // cette supposition est fausse, la machine refuse en nommant sa propre
   // position, cette phrase est montrée sans être réécrite, et le coût est une
   // approbation — exactement la borne que le contrat a écrite.
+  //
+  // Elles ne sont pas non plus lues ici : elles ont été lues quand cette paire
+  // a été construite, et elles sont retenues avec elle. Sans paire retenue, il
+  // n’y a aucune position à nommer, donc rien à signer.
   const submitDecision = useCallback(async () => {
-    if (!session || !session.confirmed) return;
+    if (!session || !session.confirmed || !target) return;
     setFailure(null);
     setFailureDetail(null);
     setBusy(true);
     try {
-      const machine = machines?.machines.find((entry) => entry.machine_id === machineId) ?? null;
-      const reported = machine?.command_position.last_reported_sequence ?? 0;
-      const epoch =
-        dispatches.find((entry) => entry.machine_id === machineId)?.approval_epoch ?? 1;
       await nativeConsole.submitPlanDecision(
         infrastructureId,
         session.request_id,
-        epoch,
-        reported + 1,
+        target.epoch,
+        target.reported + 1,
       );
       setSession(null);
       setPair(null);
+      setTarget(null);
       await loadDispatches();
     } catch (error: unknown) {
       // La session est dépensée côté natif quoi qu’il arrive : une
@@ -238,7 +280,7 @@ export function PlansView({
     } finally {
       setBusy(false);
     }
-  }, [session, machines, machineId, dispatches, infrastructureId, loadDispatches]);
+  }, [session, target, infrastructureId, loadDispatches]);
 
   return (
     <div className="yc-stack">
