@@ -16,6 +16,10 @@ build/
 /tests/artifacts/*
 !/tests/artifacts/README.md
 
+# Aire de travail locale de préparation d'une séance (brouillons de fermeture,
+# feuille d'exécution). Survit à la session sans entrer dans l'historique.
+/septembre-2026/
+
 # Routeurs, propositions et caches propres aux assistants locaux.
 /AGENTS.md
 /AGENTS.proposal.md
