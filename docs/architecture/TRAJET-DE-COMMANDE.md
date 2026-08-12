@@ -564,6 +564,20 @@ Les options sont une liste positive, et chacune retire quelque chose :
 - La connexion et l'authentification sont bornées serré, à dix secondes : rien
   n'a encore été écrit, et dépasser signifie une machine injoignable — un refus
   avant octets.
+
+**Dette nommée : « avant le premier octet » est déduit, pas observé.** Le
+Controller distingue un échec du client d'un refus de la machine par une
+conjonction — le client sort `255` et rien n'a été lu — parce que l'écriture du
+wrapper, elle, ne dit pas ce qu'on croirait : elle enregistre que les octets
+sont entrés dans le **tube**, pas qu'ils ont atteint la machine, et un wrapper
+de quelques kibioctets y tient même quand la poignée de main n'a jamais abouti.
+Avoir cru l'inverse a fait enregistrer des machines jamais jointes comme ayant
+refusé, avec les mots du client local pour phrase de la machine (`#132`).
+L'ambiguïté qui reste est écrite : une commande distante sortant elle-même
+`255` sans écrire un octet serait lue comme `non lancé`, et cette erreur va dans
+la direction sûre. **Ce qui serait juste plutôt que sûr** est de n'écrire le
+wrapper qu'après un signe que la commande distante tourne ; cela change le
+protocole de lancement et appartient à son propre chantier.
 - L'exécution n'est pas bornée par un nombre choisi : elle est bornée par **la
   durée de vie restante de l'approbation qui la permet**, dont le plafond est
   déjà une constante du produit (`approval.MaxLifetimeSeconds = 900`). Un

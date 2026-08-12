@@ -316,6 +316,32 @@ func TestTheConclusionNeverInventsAStrongerState(t *testing.T) {
 			observed: true,
 		},
 		{
+			// The same failure **as it really happens**. This case is the one
+			// the LAB found: the wrapper fits the pipe buffer, so it is written
+			// even though the handshake never completed, and the write flag
+			// alone therefore cannot tell this apart. Held here with
+			// `WroteStandardInput: true` on purpose — the case above encoded
+			// the belief that a client failure means nothing was written, and
+			// that belief is what let the product answer « the machine
+			// refused » and keep OpenSSH's man-in-the-middle warning as the
+			// *machine's* sentence.
+			name: "a host key that changed, with the wrapper already in the pipe",
+			result: commandResult{
+				WroteStandardInput: true, ExitCode: 255,
+				StandardError: []byte("@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@"),
+			},
+			state:    DispatchNotLaunched,
+			observed: true,
+		},
+		{
+			// A machine that cannot be reached at all is the ordinary case of a
+			// homelab, not a laboratory attack, and it answers the same 255.
+			name:     "a machine that is simply switched off",
+			result:   commandResult{WroteStandardInput: true, ExitCode: 255, StandardError: []byte("Connection timed out")},
+			state:    DispatchNotLaunched,
+			observed: true,
+		},
+		{
 			name:     "a machine that refused and said why",
 			result:   commandResult{WroteStandardInput: true, ExitCode: 1, StandardError: []byte("sequence 5 is not the exact successor of 3")},
 			state:    DispatchMachineRefused,

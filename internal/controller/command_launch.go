@@ -241,6 +241,14 @@ type CommandDispatcher struct {
 // and this service deliberately runs the client with no environment at all.
 const sshClientProgram = "/usr/bin/ssh"
 
+// sshClientFailureExitCode is the status OpenSSH reserves for **its own**
+// failures — a host key that does not match the pin, a machine that cannot be
+// reached, an authentication that did not pass — as opposed to the status of
+// the remote command, which it passes through. Measured against a real `sshd`
+// rather than assumed: a substituted host key and an unreachable address both
+// answer 255.
+const sshClientFailureExitCode = 255
+
 // NewSSHDispatcher builds the one engine whose effects leave this machine, with
 // the real OpenSSH client and the real clock.
 //
@@ -506,6 +514,38 @@ func concludeLaunch(
 	}
 	if result.Err != nil {
 		return unreported("the channel closed before this Controller could read an answer")
+	}
+	// The client failed on its own account, and the machine never spoke.
+	//
+	// `WroteStandardInput` is not enough to tell this apart, and that is the
+	// defect this branch exists for: it records that the wrapper entered the
+	// **pipe**, not that it reached the machine. A wrapper of a few kibibytes
+	// fits the pipe buffer, so it is written even when the handshake never
+	// completed — and the conclusion below would then read « the machine
+	// refused » and keep the client's own words as the *machine's sentence*.
+	// Under a real substitution the human would read OpenSSH's
+	// « REMOTE HOST IDENTIFICATION HAS CHANGED … man-in-the-middle attack »
+	// quoted as the answer of the machine being impersonated. That is a
+	// security defect rather than an ergonomic one, and it is why this is
+	// decided before the refusal branch.
+	//
+	// The discriminant is a **conjunction**: OpenSSH reserves 255 for its own
+	// failures — measured here against a real `sshd`, both for a changed host
+	// key and for an unreachable machine — and a launch that reached the forced
+	// command would have produced an answer to read. The residual ambiguity is
+	// named rather than hidden: a remote command that itself exited 255 without
+	// writing one byte would be classed `not launched`. That errs in the safe
+	// direction, the same one as `launched, unreported` — the product says the
+	// weaker of the two things it might mean.
+	//
+	// The client's text is deliberately **not** carried into the observation:
+	// by contract that field is this Controller's own account of its own
+	// attempt, drawn from a closed set and bounded to 256 bytes, and OpenSSH's
+	// warning is neither this product's words nor within that bound. What is
+	// lost is a diagnostic, and it is named as a debt rather than smuggled into
+	// a field that would then mean two different things.
+	if result.ExitCode == sshClientFailureExitCode && len(result.StandardOutput) == 0 {
+		return notLaunched("the client could not open a session with this machine; nothing was sent")
 	}
 	if result.ExitCode != 0 && len(result.StandardOutput) == 0 {
 		// A refusal renders no report: the machine exited in failure and wrote
