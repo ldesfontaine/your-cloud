@@ -458,6 +458,16 @@ LoadCredential=command-identities:/etc/your-cloud/command-identities
   root-owned dont chaque entrée est nommée par un identifiant de machine la
   respecte, et l'ensemble est copié dans le répertoire privé de credentials du
   service à son démarrage, puis disparaît avec lui.
+- **Ce que « copié » veut dire exactement, mesuré plutôt que supposé.** Une
+  source répertoire n'est **pas reproduite en répertoire** : `systemd` en charge
+  chaque fichier comme un credential distinct nommé `ID_FICHIER`, à plat dans
+  `$CREDENTIALS_DIRECTORY`. La fiche de `lab-machine-1` s'y lit
+  `command-endpoints_lab-machine-1.json`, et aucun `command-endpoints/`
+  n'existe. Le code lit donc ce que l'unité produit ; **l'unité est l'autorité**,
+  parce qu'elle est ce que le paquet installe, et il n'y a qu'une vérité entre
+  les deux : l'identifiant du credential dans l'unité et le préfixe dans le
+  lecteur. Avoir supposé l'inverse a rendu le maillon 4 inatteignable en
+  production jusqu'à ce que la preuve `#128` le constate (`#130`).
 - **`DynamicUser` et `ProtectHome` sont ici une propriété, pas une
   contrainte.** Le Controller n'a ni foyer, ni `~/.ssh`, ni configuration
   utilisateur : chaque entrée du client SSH doit être un chemin explicite sous
@@ -468,6 +478,21 @@ LoadCredential=command-identities:/etc/your-cloud/command-identities
   nécessairement la lire ; cette protection réduit l'exposition aux autres
   comptes, elle ne protège pas d'une compromission complète du Controller — la
   limite déjà écrite pour les clés opérationnelles, inchangée.
+- **« Lisible par le service » est tenu par le lieu, pas par le mode du
+  fichier**, et c'est un modèle de custody nommé plutôt qu'un relâchement. Un
+  credential matérialisé appartient à `root`, porte le mode `0440` et n'ouvre
+  l'accès au service que par une **ACL** : le modèle « fichier privé que je
+  possède », celui de `~/.ssh`, ne décrit aucune forme jamais livrée. Ce que le
+  lecteur exige est donc l'ancrage — le fichier vit dans le répertoire de
+  credentials que `systemd` a donné à ce service, jamais sous un chemin
+  libre —, un propriétaire qui est `root` ou lui-même et aucun troisième, **les
+  bits « other » interdits** — les bits groupe étant le mécanisme d'octroi et
+  non une fuite — et l'ouverture `O_NOFOLLOW`, pour qu'un nom ancré ne soit
+  jamais une porte hors de l'ancrage. Ce qui garde le secret est le montage :
+  un `tmpfs` dédié en `mode=700,nosuid,nodev,noexec,nosymfollow`, dont le
+  répertoire est `0550 root:root`. **Le risque résiduel est la confiance dans
+  cette matérialisation**, et c'est la confiance que tout le modèle d'unité de
+  ce produit accorde déjà à `systemd`.
 
 ### Où l'adresse et la clé d'hôte vivent : une fiche d'endpoint, hors de l'inventaire
 

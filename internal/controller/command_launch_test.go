@@ -43,25 +43,38 @@ func testHostKeyBlob() string {
 // launchFixture lays the two root-owned places the launch reads and the runtime
 // directory it derives into, all under the test's own private directory.
 type launchFixture struct {
-	dispatcher *CommandDispatcher
-	runner     *recordingRunner
-	endpoints  string
-	identities string
-	runtime    string
-	now        time.Time
+	dispatcher     *CommandDispatcher
+	runner         *recordingRunner
+	endpointPrefix string
+	identityPrefix string
+	runtime        string
+	now            time.Time
 }
 
+// newLaunchFixture lays the credentials out **exactly as systemd materialises
+// them**, and that is the point of this fixture rather than a detail of it.
+//
+// An earlier version created two real directories and wrote one file inside
+// each. Every case passed, and the shipped product could not launch a single
+// command: the unit passes each root-owned directory as one credential, and
+// systemd flattens a directory credential into `ID_FILENAME` entries in
+// `$CREDENTIALS_DIRECTORY` — it never reproduces the directory. The code walked
+// into a subdirectory that exists on disk and never exists at runtime, so every
+// dispatch spent a human approval to conclude `not launched`. The LAB proof of
+// `#128` found it; no unit test could, because this one had built the world the
+// code expected instead of the world systemd delivers.
 func newLaunchFixture(t *testing.T) launchFixture {
 	t.Helper()
 	root := privateTestDirectory(t)
-	endpoints := filepath.Join(root, "endpoints")
-	identities := filepath.Join(root, "identities")
+	credentials := filepath.Join(root, "credentials")
 	runtime := filepath.Join(root, "runtime")
-	for _, directory := range []string{endpoints, identities, runtime} {
+	for _, directory := range []string{credentials, runtime} {
 		if err := os.Mkdir(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
+	endpointPrefix := filepath.Join(credentials, "command-endpoints")
+	identityPrefix := filepath.Join(credentials, "command-identities")
 	sheet, err := json.Marshal(commandEndpoint{
 		SchemaVersion: commandEndpointSchema,
 		MachineID:     "lab-machine-1",
@@ -73,22 +86,30 @@ func newLaunchFixture(t *testing.T) launchFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(endpoints, "lab-machine-1.json"), sheet, 0o600); err != nil {
+	if err := os.WriteFile(endpointPrefix+"_lab-machine-1.json", sheet, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(identities, "lab-machine-1"), []byte("a private half"), 0o600); err != nil {
+	if err := os.WriteFile(identityPrefix+"_lab-machine-1", []byte("a private half"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	// The shape the code must never go back to looking for. If a future change
+	// reintroduces a directory walk, these two make it fail here rather than in
+	// production: they are what systemd does *not* create.
+	for _, absent := range []string{endpointPrefix, identityPrefix} {
+		if _, err := os.Stat(absent); !os.IsNotExist(err) {
+			t.Fatalf("%s must not exist: systemd never materialises a credential directory", absent)
+		}
 	}
 	runner := &recordingRunner{}
 	now := time.Unix(1_700_000_000, 0).UTC()
-	dispatcher, err := newCommandDispatcher(testInfrastructureID, "/usr/bin/ssh", endpoints, identities, runtime,
+	dispatcher, err := newCommandDispatcher(testInfrastructureID, "/usr/bin/ssh", endpointPrefix, identityPrefix, runtime,
 		runner, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
 	return launchFixture{
 		dispatcher: dispatcher, runner: runner,
-		endpoints: endpoints, identities: identities, runtime: runtime, now: now,
+		endpointPrefix: endpointPrefix, identityPrefix: identityPrefix, runtime: runtime, now: now,
 	}
 }
 
@@ -146,7 +167,7 @@ func TestTheLaunchPassesOnlyWhatItNamed(t *testing.T) {
 	}
 	// The identity is an explicit path under the credentials directory: this
 	// service has no home, and nothing may be picked up by default.
-	identity := filepath.Join(fixture.identities, "lab-machine-1")
+	identity := fixture.identityPrefix + "_lab-machine-1"
 	if !strings.Contains(joined, "-i "+identity) {
 		t.Fatalf("the launch did not name its one identity: %v", fixture.runner.arguments)
 	}
@@ -383,11 +404,11 @@ func TestALaunchWithoutItsEnrolmentFactsSendsNothing(t *testing.T) {
 		fixture := newLaunchFixture(t)
 		switch missing {
 		case "endpoint":
-			if err := os.Remove(filepath.Join(fixture.endpoints, "lab-machine-1.json")); err != nil {
+			if err := os.Remove(fixture.endpointPrefix + "_lab-machine-1.json"); err != nil {
 				t.Fatal(err)
 			}
 		case "identity":
-			if err := os.Remove(filepath.Join(fixture.identities, "lab-machine-1")); err != nil {
+			if err := os.Remove(fixture.identityPrefix + "_lab-machine-1"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -400,6 +421,114 @@ func TestALaunchWithoutItsEnrolmentFactsSendsNothing(t *testing.T) {
 			t.Fatalf("missing %s: a client was still run", missing)
 		}
 	}
+}
+
+// TestTheCustodyOfACredentialIsHeldByItsPlace holds the four invariants of the
+// custody model this palier really runs under (`#130`). The old model — « a
+// private file I own », no group bits, owner equal to this process — described
+// `~/.ssh` and refused the only shape systemd ever delivers. These are the
+// invariants of the world the service is actually in, and each refusal is
+// exercised so that the model cannot be widened by accident.
+func TestTheCustodyOfACredentialIsHeldByItsPlace(t *testing.T) {
+	// The shape systemd really materialises: root-owned, mode 0440, granting
+	// this process through an ACL. It must be accepted, because refusing it is
+	// the whole of `#130`.
+	t.Run("the delivered shape is read", func(t *testing.T) {
+		fixture := newLaunchFixture(t)
+		sheet := fixture.endpointPrefix + "_lab-machine-1.json"
+		if err := os.Chmod(sheet, 0o440); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readCommandCredential(sheet, filepath.Dir(sheet), maxCommandEndpointBytes); err != nil {
+			t.Fatalf("the shape systemd delivers must be readable: %v", err)
+		}
+	})
+
+	// Anchored: a credential is a name directly inside the credentials
+	// directory, never a free path. A caller cannot aim this reader elsewhere.
+	t.Run("a path outside the credentials directory is refused", func(t *testing.T) {
+		fixture := newLaunchFixture(t)
+		outside := filepath.Join(privateTestDirectory(t), "command-endpoints_lab-machine-1.json")
+		if err := os.WriteFile(outside, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		anchor := filepath.Dir(fixture.endpointPrefix)
+		if _, err := readCommandCredential(outside, anchor, maxCommandEndpointBytes); err == nil {
+			t.Fatal("a credential outside the anchored directory was read")
+		}
+		if err := requireCommandIdentity(outside, anchor); err == nil {
+			t.Fatal("an identity outside the anchored directory was accepted")
+		}
+	})
+
+	// The « other » bits are the leak; the group bits are the grant.
+	t.Run("a credential any account may read is refused", func(t *testing.T) {
+		fixture := newLaunchFixture(t)
+		sheet := fixture.endpointPrefix + "_lab-machine-1.json"
+		identity := fixture.identityPrefix + "_lab-machine-1"
+		for _, path := range []string{sheet, identity} {
+			if err := os.Chmod(path, 0o444); err != nil {
+				t.Fatal(err)
+			}
+		}
+		anchor := filepath.Dir(sheet)
+		if _, err := readCommandCredential(sheet, anchor, maxCommandEndpointBytes); err == nil {
+			t.Fatal("a world-readable credential was read")
+		}
+		if err := requireCommandIdentity(identity, anchor); err == nil {
+			t.Fatal("a world-readable identity was accepted")
+		}
+	})
+
+	// Owner: root materialised it, or this process owns it. A third owner is a
+	// theft, and it is refused even inside the anchored directory.
+	//
+	// Constructing that case needs the power to give a file away, so it runs
+	// where the LAB runs this suite — as root — and says so rather than passing
+	// silently when it could not be built.
+	t.Run("a credential owned by a third account is refused", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("giving a file to a third account needs root; this case is exercised in the LAB")
+		}
+		fixture := newLaunchFixture(t)
+		sheet := fixture.endpointPrefix + "_lab-machine-1.json"
+		identity := fixture.identityPrefix + "_lab-machine-1"
+		// `nobody` is the account no service of this product ever runs as.
+		const thirdAccount = 65534
+		for _, path := range []string{sheet, identity} {
+			if err := os.Chown(path, thirdAccount, thirdAccount); err != nil {
+				t.Fatal(err)
+			}
+		}
+		anchor := filepath.Dir(sheet)
+		if _, err := readCommandCredential(sheet, anchor, maxCommandEndpointBytes); err == nil {
+			t.Fatal("a credential owned by a third account was read")
+		}
+		if err := requireCommandIdentity(identity, anchor); err == nil {
+			t.Fatal("an identity owned by a third account was accepted")
+		}
+	})
+
+	// A symbolic link is never a credential, even under the right name in the
+	// right directory: an anchored name must not be a door out of the anchor.
+	t.Run("a symbolic link is refused", func(t *testing.T) {
+		fixture := newLaunchFixture(t)
+		elsewhere := filepath.Join(privateTestDirectory(t), "elsewhere")
+		if err := os.WriteFile(elsewhere, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := fixture.endpointPrefix + "_lab-machine-9.json"
+		if err := os.Symlink(elsewhere, link); err != nil {
+			t.Fatal(err)
+		}
+		anchor := filepath.Dir(link)
+		if _, err := readCommandCredential(link, anchor, maxCommandEndpointBytes); err == nil {
+			t.Fatal("a symbolic link was read as a credential")
+		}
+		if err := requireCommandIdentity(link, anchor); err == nil {
+			t.Fatal("a symbolic link was accepted as an identity")
+		}
+	})
 }
 
 // TestTheLaunchRefusesPathsItCouldNotOwn: every path of the launch is absolute

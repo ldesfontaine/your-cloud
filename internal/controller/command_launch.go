@@ -185,8 +185,33 @@ type commandResult struct {
 type CommandDispatcher struct {
 	infrastructure string
 	program        string
-	endpoints      string
-	identities     string
+	// endpointPrefix and identityPrefix are **prefixes**, not directories, and
+	// the difference is the whole reason this palier could not launch anything
+	// before it was written down.
+	//
+	// The unit the package delivers passes each of the two root-owned
+	// directories as one credential — `LoadCredential=command-endpoints:/etc/...`
+	// — because the package knows no machine and a unit naming sixty-four of
+	// them would carry machine-specific configuration. When the source of a
+	// credential is a directory, systemd does not reproduce that directory: it
+	// loads every file in it as a **separate credential named `ID_FILENAME`**,
+	// flat, in `$CREDENTIALS_DIRECTORY`. Measured on systemd 257: two sheets in
+	// `/etc/your-cloud/command-endpoints/` materialise as
+	// `command-endpoints_lab-machine-1.json` and
+	// `command-endpoints_lab-machine-2.json`, and no `command-endpoints/`
+	// directory exists at all.
+	//
+	// This code therefore composes what the unit really produces rather than
+	// what the directory on disk looks like. The unit is the authority — it is
+	// what the package installs — and there is one truth between the two: the
+	// credential ID in the unit and the prefix these fields hold.
+	endpointPrefix string
+	identityPrefix string
+	// credentials is the directory both prefixes sit directly inside — the one
+	// systemd gave this service — and it is the anchor every credential path is
+	// held against. It is derived from the prefixes rather than passed beside
+	// them so the two can never name different places.
+	credentials    string
 	runtime        string
 	runner         commandRunner
 	now            func() time.Time
@@ -202,11 +227,12 @@ const sshClientProgram = "/usr/bin/ssh"
 // NewSSHDispatcher builds the one engine whose effects leave this machine, with
 // the real OpenSSH client and the real clock.
 //
-// The three directories are the only places it reads, and each is named by the
-// caller rather than discovered here: the credentials directory systemd fills
-// with the command identities, the root-owned directory of endpoint sheets the
-// enrolment wrote, and the runtime directory the known hosts are derived into
-// and which disappears with the service.
+// The two credential arguments are the **prefixes** systemd's flattening
+// produces — `$CREDENTIALS_DIRECTORY/command-identities` and
+// `.../command-endpoints` — never directories to walk into; see the field
+// comments on CommandDispatcher for what the unit really materialises. The
+// runtime directory is the one the known hosts are derived into, and which
+// disappears with the service.
 func NewSSHDispatcher(infrastructureID, identities, endpoints, runtime string) (*CommandDispatcher, error) {
 	return newCommandDispatcher(infrastructureID, sshClientProgram, endpoints, identities, runtime,
 		systemCommandRunner{maxAnswerBytes: maxCommandAnswerBytes}, time.Now)
@@ -230,8 +256,9 @@ func newCommandDispatcher(infrastructureID, program, endpoints, identities, runt
 	}
 	return &CommandDispatcher{
 		infrastructure: infrastructureID,
-		program:        program, endpoints: endpoints, identities: identities,
-		runtime: runtime, runner: runner, now: now,
+		program:        program, endpointPrefix: endpoints, identityPrefix: identities,
+		credentials: filepath.Dir(endpoints),
+		runtime:     runtime, runner: runner, now: now,
 		maxStderrBytes: maxDispatchMachineSentenceBytes,
 	}, nil
 }
@@ -249,8 +276,11 @@ func (dispatcher *CommandDispatcher) Dispatch(record DispatchRecord, wrapper []b
 		// Nothing was opened, and the Controller saw why.
 		return notLaunched("this machine has no usable command endpoint on this Controller")
 	}
-	identity := filepath.Join(dispatcher.identities, record.MachineID)
-	if err := requireCommandIdentity(identity); err != nil {
+	// The machine identifier reached this line through readEndpoint above, which
+	// refuses anything `machineid.Validate` does not accept: no separator and no
+	// traversal can enter the name of a private key from here.
+	identity := dispatcher.identityPrefix + "_" + record.MachineID
+	if err := requireCommandIdentity(identity, dispatcher.credentials); err != nil {
 		return notLaunched("this Controller holds no command identity for this machine")
 	}
 	remaining, ok := dispatcher.remainingAuthority(record)
@@ -289,8 +319,8 @@ func (dispatcher *CommandDispatcher) readEndpoint(machineID string) (commandEndp
 	if machineid.Validate(machineID) != nil {
 		return commandEndpoint{}, errors.New("malformed machine identifier")
 	}
-	path := filepath.Join(dispatcher.endpoints, machineID+".json")
-	data, err := readCommandCredential(path, maxCommandEndpointBytes)
+	path := dispatcher.endpointPrefix + "_" + machineID + ".json"
+	data, err := readCommandCredential(path, dispatcher.credentials, maxCommandEndpointBytes)
 	if err != nil {
 		return commandEndpoint{}, err
 	}
@@ -304,30 +334,75 @@ func (dispatcher *CommandDispatcher) readEndpoint(machineID string) (commandEndp
 	return endpoint, nil
 }
 
-// requireCommandIdentity refuses to hand the client a path that is not a
-// regular private file belonging to this service. The private half never leaves
-// this Controller and enters no document, no report and no process argument
-// beyond this path.
-func requireCommandIdentity(path string) error {
-	info, err := os.Lstat(path)
+// requireCommandIdentity refuses to hand the client a path that is not an
+// anchored, regular, unreadable-by-others file. It holds the same four
+// invariants as readCommandCredential — anchored, owned by root or by this
+// service, no « other » bits, never a symbolic link — because it guards the
+// same kind of object under the same custody model; it merely never reads the
+// bytes, since what happens to this path is that OpenSSH is handed it.
+//
+// `Lstat` rather than `Stat` is what refuses the symbolic link here: a link
+// would fail `IsRegular`, so an anchored name can never point out of the
+// anchored directory.
+func requireCommandIdentity(path, anchor string) error {
+	cleaned := filepath.Clean(path)
+	if anchor == "" || filepath.Dir(cleaned) != filepath.Clean(anchor) {
+		return errors.New("a command identity must live in the credentials directory of this service")
+	}
+	info, err := os.Lstat(cleaned)
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("a command identity must be a regular private file")
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o007 != 0 {
+		return errors.New("a command identity must be a regular file no other account may read")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || (stat.Uid != 0 && stat.Uid != uint32(os.Geteuid())) {
+		return errors.New("a command identity must be materialised by root or owned by this service")
 	}
 	return nil
 }
 
 // readCommandCredential reads one file the service was *handed* rather than one
-// it wrote itself, which is why it is not `readPrivateStateFile`: a credential
-// is delivered read-only, so its mode is not the `0600` of this package's own
-// state. What is held is what matters either way — a regular file, no group or
-// other bits, belonging to this service account, and bounded before it is
-// parsed. The enrolment writes these root-owned; systemd copies them into the
-// service's private credential directory at start, and they disappear with it.
-func readCommandCredential(path string, maximum int64) ([]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+// it wrote itself.
+//
+// The guard this function holds is not a relaxation of an earlier one: it is a
+// **different custody model**, because the earlier one described a world this
+// service never runs in. That one encoded « a private file I own », the
+// `~/.ssh` model — no group or other bits, owner equal to this process. systemd
+// credentials are never that, under any unit: measured on systemd 257 under the
+// packaged unit, a materialised credential is owned by `root`, carries mode
+// `0440` and grants this service its access through an **ACL**. The old guard
+// therefore refused the only shape ever delivered, and the launch could not
+// read a single identity in production (`#130`).
+//
+// What holds the secret is the place, not the file mode, and the invariants
+// below encode that place:
+//
+//   - **anchored** — the file must live under the credentials directory systemd
+//     gave this service. A free path is refused outright, so no caller can aim
+//     this reader at a file someone else can write;
+//   - **owner** — `root` or this process, and nothing else. `root` materialised
+//     it, or this process owns it; a third owner is a theft;
+//   - **mode** — the « other » bits are forbidden. The group bits are systemd's
+//     granting mechanism, not a leak;
+//   - **no symbolic link** — `O_NOFOLLOW`, so an anchored name can never be a
+//     door out of the anchored directory.
+//
+// The store itself is a dedicated read-only tmpfs mounted
+// `mode=700,nosuid,nodev,noexec,nosymfollow`, whose directory is `0550
+// root:root`: no other account can even traverse into it. Trusting that
+// materialisation is the residual risk, and it is the same trust every other
+// credential of this unit already rests on.
+func readCommandCredential(path, anchor string, maximum int64) ([]byte, error) {
+	// The anchor is compared on the cleaned path before anything is opened: a
+	// credential is only ever a name directly inside the directory systemd
+	// filled, never a descendant reached through a component of its own.
+	cleaned := filepath.Clean(path)
+	if anchor == "" || filepath.Dir(cleaned) != filepath.Clean(anchor) {
+		return nil, errors.New("a command credential must live in the credentials directory of this service")
+	}
+	file, err := os.OpenFile(cleaned, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -336,12 +411,12 @@ func readCommandCredential(path string, maximum int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("a command credential must be a regular file readable by nobody else")
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o007 != 0 {
+		return nil, errors.New("a command credential must be a regular file no other account may read")
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Geteuid()) {
-		return nil, errors.New("a command credential must belong to this service account")
+	if !ok || (stat.Uid != 0 && stat.Uid != uint32(os.Geteuid())) {
+		return nil, errors.New("a command credential must be materialised by root or owned by this service")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maximum+1))
 	if err != nil || len(data) == 0 || int64(len(data)) > maximum {
