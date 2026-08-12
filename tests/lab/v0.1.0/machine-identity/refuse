@@ -52,17 +52,29 @@ address_of() { [[ "$1" == "$one" ]] && echo "$address_one" || echo "$address_two
 # The remote command is a parameter of its own rather than a trailing argument:
 # `ssh` reads the first non-option word as the host, so a helper that appended
 # the host after a command would silently be measuring a name resolution.
+# La moitié privée d'une identité de commande vit là où le Controller la garde
+# — le répertoire que le produit a frappé — et jamais dans le répertoire des
+# clés que ce harnais génère pour son propre accès. La résolution est ici, une
+# fois, pour qu'aucune épreuve ne dial avec la mauvaise moitié sans le dire.
+identity_of() { # identity_of <name>
+  if [[ -f "$state/command-identities/$1" ]]; then
+    printf '%s' "$state/command-identities/$1"
+  else
+    printf '%s' "$state/identities/$1"
+  fi
+}
+
 bounded() { # bounded <key machine> <target machine> [ssh option...]
   local key=$1 target=$2
   shift 2
-  timeout 30 ssh -i "$state/identities/$key" "${common[@]}" "$@" \
+  timeout 30 ssh -i "$(identity_of "$key")" "${common[@]}" "$@" \
     "$account@$(address_of "$target")"
 }
 
 bounded_running() { # bounded_running <key> <target> <command> [ssh option...]
   local key=$1 target=$2 remote=$3
   shift 3
-  timeout 30 ssh -i "$state/identities/$key" "${common[@]}" "$@" \
+  timeout 30 ssh -i "$(identity_of "$key")" "${common[@]}" "$@" \
     "$account@$(address_of "$target")" "$remote"
 }
 
@@ -174,7 +186,7 @@ esac
 echo
 echo "== SFTP =="
 sftp_probe() { # sftp_probe <user> <key>
-  timeout 20 sftp -o IdentityFile="$state/identities/$2" "${common[@]}" \
+  timeout 20 sftp -o IdentityFile="$(identity_of "$2")" "${common[@]}" \
     -b /dev/null "$1@$address_one" >"$work/sftp.$1" 2>&1
   echo $?
 }

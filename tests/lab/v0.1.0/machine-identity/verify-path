@@ -32,8 +32,14 @@ fail() { report "$1" "FAILED: $2"; failures=$((failures + 1)); }
 common=(-o IdentitiesOnly=yes -o UserKnownHostsFile="$state/known_hosts"
   -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10)
 
+# La moitié privée de l'identité de commande vit là où le Controller la garde —
+# le répertoire que le produit a frappé —, jamais dans le répertoire des clés
+# que ce harnais génère pour l'accès personnel. C'est la même séparation qu'en
+# production : le Controller dial avec ce qu'il détient, pas avec ce qu'un
+# harnais a posé à côté.
 through_the_new_path() {
-  timeout 30 ssh -i "$state/identities/$machine" "${common[@]}" "$account@$address" 2>&1
+  timeout 30 ssh -i "$state/command-identities/$machine" "${common[@]}" \
+    "$account@$address" 2>&1
 }
 
 echo "== the Controller walks the new path it just installed =="
@@ -42,10 +48,22 @@ echo "== the Controller walks the new path it just installed =="
 answer=$(through_the_new_path <"$state/observed/$machine.approval.json") || true
 echo "$answer" | sed 's/^/    /'
 
-operation=$(echo "$answer" | awk -F': ' '/^operation:/ {print $2}')
-reported_machine=$(echo "$answer" | awk -F': ' '/^machine:/ {print $2}')
-consumed=$(echo "$answer" | awk -F': ' '/^consumed sequence:/ {print $2}')
-changed=$(echo "$answer" | awk -F': ' '/^changed:/ {print $2}')
+# Le rapport arrive en JSON, et c'est la commande forcée qui l'impose : son
+# entrée `authorized_keys` est comparée octet pour octet et n'accepte aucun
+# argument libre, donc ce chemin ne peut pas demander un format. Le rendu en
+# lignes reste derrière `--format=text` pour l'humain qui lance l'Auxiliaire à
+# la main sur sa machine ; il n'est pas ce qu'un programme lit.
+#
+# Les champs sont extraits du document, jamais d'une présentation : la ligne de
+# transport que `ssh` écrit avant la réponse — l'avertissement de pseudo-terminal
+# et le foyer inexistant du compte verrouillé — n'appartient pas au rapport, et
+# une extraction qui lirait la première ligne lirait celle-là.
+field() { echo "$answer" | sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+number() { echo "$answer" | sed -n "s/.*\"$1\":\\([0-9]*\\).*/\\1/p" | head -1; }
+operation=$(field operation)
+reported_machine=$(field machine_id)
+consumed=$(number consumed_sequence)
+changed=$(echo "$answer" | sed -n 's/.*"changed":\([a-z]*\).*/\1/p' | head -1)
 if [[ -z "$operation" || -z "$reported_machine" ]]; then
   fail "the Auxiliary answered through the forced command" "$answer"
   exit 1

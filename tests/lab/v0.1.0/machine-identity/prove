@@ -369,11 +369,19 @@ interrupt() {
       COMPLETE*) ;;
       *) fail "a clean stop before $step left an unwindable Controller ledger: $output" ;;
     esac
-    # The forced key is never present before the binary is: read off the
-    # machine, at every stop point, rather than argued from the sequence.
+    # La clé forcée est lue sur la machine à chaque point d'arrêt, jamais
+    # déduite de la séquence — et ce qui est attendu dépend du point : un arrêt
+    # avant l'étape `key` la trouve absente, un arrêt après la trouve posée.
+    # C'est la propriété que la dixième étape a rendue exprimable : `endpoint`
+    # s'arrête après `key`, et exiger l'absence là masquerait qu'elle a bien
+    # été posée.
     output=$("$labctl" ssh "$target_vm" -- \
       "test -e /etc/your-cloud/authorized-keys/your-cloud-auxiliary && echo key-present || echo key-absent")
     case "$step:$output" in
+      endpoint:key-present)
+        echo "at the stop before $step, the forced key is already posed, as the sequence says" ;;
+      endpoint:*)
+        fail "a stop before $step found no forced key, though the sequence poses it first: $output" ;;
       *:key-absent) echo "at the stop before $step, the forced key is absent" ;;
       *) fail "a stop before $step left a forced key behind: $output" ;;
     esac
