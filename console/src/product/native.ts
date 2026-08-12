@@ -25,27 +25,48 @@ import type {
   PlanDispatchesView,
 } from "./models";
 
-export type NativeErrorCode =
-  | "console_unavailable"
-  | "console_locked"
-  | "invalid_input"
-  | "authentication_failed"
-  | "association_failed"
-  | "session_expired"
-  | "controller_unavailable"
-  | "response_refused"
-  | "bootstrap_busy"
-  | "bootstrap_expired"
-  | "bootstrap_request_refused"
-  | "native_assistant_unavailable"
-  | "plan_absent"
-  | "definition_absent"
-  | "plan_consent_request_refused"
-  | "plan_consent_expired"
-  | "plan_consent_unavailable"
-  | "unverified_plan"
-  | "unconfirmed_plan"
-  | "foreign_infrastructure";
+/// Le vocabulaire fermé des refus, en **une** liste.
+///
+/// Le type, la garde d’exécution et la table des phrases en dérivent tous les
+/// trois. Ils ont été trois listes tenues à la main, et elles ont divergé : la
+/// garde s’était arrêtée à un palier antérieur, si bien que huit codes que le
+/// cœur émettait réellement étaient rendus à l’humain comme « la Console ne
+/// peut pas terminer cette opération », alors que leur phrase existait, écrite,
+/// juste à côté. Une seule source rend cette divergence impossible à écrire.
+const nativeErrorCodes = [
+  "console_unavailable",
+  "console_locked",
+  "invalid_input",
+  "authentication_failed",
+  "association_failed",
+  "session_expired",
+  "controller_unavailable",
+  "response_refused",
+  "bootstrap_busy",
+  "bootstrap_expired",
+  "bootstrap_request_refused",
+  "native_assistant_unavailable",
+  "plan_absent",
+  "definition_absent",
+  "plan_consent_request_refused",
+  "plan_consent_expired",
+  "plan_consent_unavailable",
+  "unverified_plan",
+  "unconfirmed_plan",
+  "foreign_infrastructure",
+  // Les six refus de `POST /v0/plan-approvals` — la seule route dont l’effet
+  // sort de cette machine. Chacun nomme une suite différente, et c’est
+  // exactement ce qu’aucun d’eux ne pouvait dire tant que la Console ne les
+  // connaissait pas.
+  "approval_signature_invalid",
+  "approval_expired",
+  "approval_pair_mismatch",
+  "approval_definition_mismatch",
+  "approval_sequence_invalid",
+  "approval_already_dispatched",
+] as const;
+
+export type NativeErrorCode = (typeof nativeErrorCodes)[number];
 
 export class NativeOperationError extends Error {
   readonly code: NativeErrorCode;
@@ -62,20 +83,7 @@ export class NativeOperationError extends Error {
   }
 }
 
-const knownErrorCodes = new Set<NativeErrorCode>([
-  "console_unavailable",
-  "console_locked",
-  "invalid_input",
-  "authentication_failed",
-  "association_failed",
-  "session_expired",
-  "controller_unavailable",
-  "response_refused",
-  "bootstrap_busy",
-  "bootstrap_expired",
-  "bootstrap_request_refused",
-  "native_assistant_unavailable",
-]);
+const knownErrorCodes: ReadonlySet<NativeErrorCode> = new Set(nativeErrorCodes);
 
 function toNativeError(value: unknown): NativeOperationError {
   if (
@@ -287,6 +295,21 @@ export function localErrorMessage(code: NativeErrorCode): string {
       return "Ce plan n’a pas été confirmé dans la fenêtre native. Rien ne peut être signé.";
     case "foreign_infrastructure":
       return "Ce plan nomme une autre infrastructure que celle à laquelle cette Console est associée.";
+    // Les six refus du trajet de commande. Chacun dit la même chose sur l’effet
+    // — le Controller a refusé avant tout lancement — puis nomme une suite
+    // différente, parce que ce qui doit être repris n’est pas le même.
+    case "approval_signature_invalid":
+      return "Le Controller n’a pas reconnu la signature de cette approbation. Rien n’a été lancé. Approuvez de nouveau ; si le refus se répète, l’identité de cette Console doit être renouvelée.";
+    case "approval_expired":
+      return "L’autorité de cette approbation avait expiré en arrivant au Controller. Rien n’a été lancé. Rouvrez la fenêtre et approuvez de nouveau.";
+    case "approval_pair_mismatch":
+      return "La paire soumise n’est pas celle que cette approbation nomme. Rien n’a été lancé. Relisez la paire, puis approuvez de nouveau.";
+    case "approval_definition_mismatch":
+      return "La définition soumise n’est pas la révision gelée que ce plan épingle. Rien n’a été lancé. Relisez la paire depuis la révision attendue.";
+    case "approval_sequence_invalid":
+      return "La position de cette machine a bougé depuis la lecture de ce plan : l’approbation vise une position déjà dépassée. Rien n’a été lancé. Le plan doit être reconstruit depuis la position actuelle, puis approuvé de nouveau.";
+    case "approval_already_dispatched":
+      return "Cette approbation a déjà été lancée : ses octets signés ne valent qu’une fois. Rien de nouveau n’a été lancé. Consultez les lancements avant de reconstruire un plan.";
     case "console_unavailable":
       return "La Console ne peut pas terminer cette opération.";
   }

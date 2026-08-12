@@ -98,6 +98,20 @@ pub(crate) enum NetworkError {
     /// answer to write into this Console's own account of itself.
     #[error("Controller response refused: {0}")]
     ResponseRefused(&'static str),
+    /// The Controller refused a submitted approval, and named which refusal.
+    ///
+    /// This is the opposite of the variant above: the answer is *well formed*
+    /// and says no. Folding it into « Controller unavailable » would tell a
+    /// human that the liaison failed when in truth their authority was read and
+    /// declined — and would hide the one sentence that names what to do next.
+    ///
+    /// The string is one of the closed list this Console holds in
+    /// `approval_refusal`, chosen by matching what was received; it is never the
+    /// received bytes themselves. That distinction is the whole safety of
+    /// letting a remote name a public code: a Controller can steer this Console
+    /// among sentences it already wrote, never into one it did not.
+    #[error("plan approval refused: {0}")]
+    ApprovalRefused(&'static str),
     #[error("request was cancelled")]
     Cancelled,
     #[error("local Console state is unavailable")]
@@ -121,6 +135,10 @@ impl NetworkError {
             Self::SessionExpired => "session_expired",
             Self::ControllerUnavailable | Self::Cancelled => "controller_unavailable",
             Self::ResponseRefused(_) => "response_refused",
+            // The refusal *is* the code. It was chosen from `approval_refusal`'s
+            // closed list, so it belongs to this Console's vocabulary exactly
+            // like the literals around it.
+            Self::ApprovalRefused(code) => code,
             Self::ConsoleUnavailable => "console_unavailable",
         }
     }
@@ -1951,6 +1969,11 @@ fn decode_response<T: DeserializeOwned>(
     {
         return Err(NetworkError::ResponseRefused("decode_response:6"));
     }
+    // A named refusal of a submitted approval keeps its name up to the surface.
+    // Everything else keeps the two answers this function has always given.
+    if let Some(refusal) = approval_refusal(status, &problem.error_code) {
+        return Err(NetworkError::ApprovalRefused(refusal));
+    }
     if status == StatusCode::UNAUTHORIZED {
         Err(NetworkError::SessionExpired)
     } else {
@@ -1994,7 +2017,37 @@ fn known_problem(status: StatusCode, code: &str) -> bool {
             | (503, "relay_unavailable")
             | (503, "projection_unavailable")
             | (503, "controller_state_unavailable")
-    )
+    ) || approval_refusal(status, code).is_some()
+}
+
+/// The six refusals of `POST /v0/plan-approvals`, and nothing else.
+///
+/// They are held apart from the list above because they are not the same kind
+/// of answer. The codes above say the request was malformed, the session was
+/// not held, the state disagreed — things a Console reports as a liaison
+/// problem. These six say the authority itself was read and declined, and each
+/// one names a different next step for the human who signed it. Losing that
+/// distinction is what made every legitimate refusal of the only route whose
+/// effect leaves the machine read as « la réponse reçue ne respecte pas le
+/// contrat de sécurité ».
+///
+/// The status is part of the identity, not decoration: five are refused
+/// authorities (`422`), and one — bytes already spent — is the single conflict
+/// a durable state can answer (`409`). A code arriving under the wrong status
+/// is not this refusal, and is not accepted as one.
+///
+/// The returned string is this Console's own literal, matched from what was
+/// received and never taken from it.
+fn approval_refusal(status: StatusCode, code: &str) -> Option<&'static str> {
+    match (status.as_u16(), code) {
+        (422, "approval_signature_invalid") => Some("approval_signature_invalid"),
+        (422, "approval_expired") => Some("approval_expired"),
+        (422, "approval_pair_mismatch") => Some("approval_pair_mismatch"),
+        (422, "approval_definition_mismatch") => Some("approval_definition_mismatch"),
+        (422, "approval_sequence_invalid") => Some("approval_sequence_invalid"),
+        (409, "approval_already_dispatched") => Some("approval_already_dispatched"),
+        _ => None,
+    }
 }
 
 fn validate_identity_challenge(
@@ -2990,6 +3043,118 @@ mod tests {
 
     use super::*;
     use crate::vault::ConsoleCore;
+
+    /// Les six refus du trajet de commande, avec le statut que le Controller
+    /// leur donne.
+    const APPROVAL_REFUSALS: [(u16, &str); 6] = [
+        (422, "approval_signature_invalid"),
+        (422, "approval_expired"),
+        (422, "approval_pair_mismatch"),
+        (422, "approval_definition_mismatch"),
+        (422, "approval_sequence_invalid"),
+        (409, "approval_already_dispatched"),
+    ];
+
+    /// Présente à la Console un document de refus **tel que le Controller
+    /// l'écrit** : mêmes en-têtes, même corps, même ordre de champs que
+    /// `writeProblem`. Rien n'est simulé du côté de la Console — c'est son
+    /// `decode_response` réel qui lit une vraie réponse HTTP.
+    ///
+    /// Le serveur est un socket de test, pas une doublure du produit : il ne
+    /// remplace aucun composant, il tient la place du réseau.
+    fn refusal_as_the_controller_writes_it(status: u16, code: &str) -> NetworkError {
+        use std::io::Write as _;
+        use std::net::TcpListener;
+
+        let reason = StatusCode::from_u16(status)
+            .expect("le statut du refus doit être un statut HTTP")
+            .canonical_reason()
+            .expect("le statut du refus doit avoir une raison canonique");
+        let request_id = URL_SAFE_NO_PAD.encode([7u8; 16]);
+        let body = format!(
+            "{{\"schema_version\":1,\"error_code\":\"{code}\",\"request_id\":\"{request_id}\"}}"
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("le socket de test doit se lier");
+        let port = listener.local_addr().unwrap().port();
+        let served = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("la requête de test doit arriver");
+            let mut discarded = [0u8; 2048];
+            let _ = stream.read(&mut discarded);
+            let head = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(body.as_bytes()).unwrap();
+            stream.flush().unwrap();
+        });
+
+        // Le produit installe ce fournisseur avant de construire le moindre
+        // client ; un client de test s'y plie comme les autres.
+        ensure_rustls_provider().expect("le fournisseur rustls doit s'installer");
+        let client = Client::builder()
+            .build()
+            .expect("le client de test doit se construire");
+        let response = client
+            .post(format!("http://127.0.0.1:{port}/v0/plan-approvals"))
+            .header(ACCEPT, "application/json")
+            .send()
+            .expect("le refus servi doit revenir");
+        let outcome = decode_response::<PlanDispatchAcceptedView>(
+            response,
+            RESPONSE_MAX_BYTES,
+            &[StatusCode::OK],
+        );
+        served.join().expect("le socket de test doit se refermer");
+        outcome.expect_err("un document de refus ne peut jamais être lu comme un succès")
+    }
+
+    /// Le défaut que ce cas ferme : la Console ne connaissait aucun des six
+    /// refus de `POST /v0/plan-approvals`. Un code inconnu tombait dans le refus
+    /// générique, et **tout** refus légitime de la seule route dont l'effet sort
+    /// de la machine s'affichait « la réponse reçue ne respecte pas le contrat
+    /// de sécurité ». Aucune suite ne l'avait vu parce qu'aucune ne présentait à
+    /// la Console un refus tel que le Controller l'émet : celle-ci le fait.
+    #[test]
+    fn les_six_refus_du_trajet_de_commande_gardent_leur_nom() {
+        for (status, code) in APPROVAL_REFUSALS {
+            let refused = refusal_as_the_controller_writes_it(status, code);
+            assert_eq!(
+                refused.public_code(),
+                code,
+                "{code} sous {status} doit remonter sous son propre nom"
+            );
+            // Le nom suffit : la raison sert au refus qui n'en a pas d'autre.
+            assert_eq!(refused.detail(), None, "{code} se nomme déjà lui-même");
+        }
+    }
+
+    /// Le statut fait partie de l'identité du refus. Cinq sont des autorités
+    /// refusées (`422`) et un seul est le conflit qu'un état durable peut
+    /// répondre (`409`) : un code servi sous l'autre statut n'est pas ce refus,
+    /// et la Console ne doit pas le prendre pour lui.
+    #[test]
+    fn un_refus_servi_sous_un_autre_statut_n_est_pas_ce_refus() {
+        for (status, code) in APPROVAL_REFUSALS {
+            let other = if status == 409 { 422 } else { 409 };
+            assert_eq!(
+                approval_refusal(StatusCode::from_u16(other).unwrap(), code),
+                None
+            );
+            assert!(
+                !known_problem(StatusCode::from_u16(other).unwrap(), code),
+                "{code} sous {other} n'appartient à aucun vocabulaire"
+            );
+        }
+        // Et un code que le Controller n'émet pas ne devient pas un refus parce
+        // qu'il en porte la forme.
+        assert_eq!(
+            approval_refusal(StatusCode::UNPROCESSABLE_ENTITY, "approval_whatever"),
+            None
+        );
+    }
 
     #[test]
     fn origins_and_identifiers_are_exact() {
