@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Build the installable candidate from the synced sources, then install it.
+#
+# The build runs where every product build of this project runs: on the LAB
+# machine, never on the pilot. It proves it pulls nothing from a network at the
+# moment it runs — `npm ci --offline` and `CARGO_NET_OFFLINE` — because the
+# ground it needs was placed at provision time from the versioned locks.
+#
+# `npm run tauri build` runs `tsc --noEmit` before `vite build`, so a type this
+# harness got wrong reddens here rather than at the pilot: this is the only
+# type check of the Console this project has, the workstation carrying no
+# `node_modules`.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+sources=/root/your-cloud-console-build
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+[[ -f "$sources/package.json" ]] || fail "the console sources are not synced; run the sync phase first"
+
+# The disk guard, and it is not decoration: on 12 August 2026 a release build
+# succeeded and `dpkg --install` then died on « No space left on device »,
+# because build trees of earlier sessions were still sitting under /root. A
+# candidate that builds and cannot install is an hour spent for nothing, so the
+# room is measured *before* the build rather than discovered after it.
+available=$(df --output=avail -k / | tail -1)
+[[ "$available" -ge 4194304 ]] || {
+  echo "  /root, by size:" >&2
+  du -sh /root/* 2>/dev/null | sort -rh | head -5 >&2
+  fail "this machine has $((available / 1024)) MiB free; a release build and its .deb need at least 4 GiB"
+}
+echo "  free space before the build: $((available / 1024)) MiB"
+
+# shellcheck disable=SC1091
+. /root/.cargo/env
+# The frontend build scripts refuse to run outside an isolated environment;
+# this machine is exactly the LAB VM that marker exists to name.
+export YOUR_CLOUD_EXECUTION_ENV=lab
+export CARGO_NET_OFFLINE=true
+# One job: this machine has 2 vCPUs and 2 GiB, and a second rustc in flight is
+# how the OOM reaper chooses a victim. The swapfile absorbs the peaks of one.
+export CARGO_BUILD_JOBS=1
+
+cd "$sources"
+
+echo "  npm ci --offline (from the cache the recipe warmed)"
+npm ci --offline --no-audit --no-fund --loglevel=error
+
+echo "  tauri build --bundles deb (offline, one job)"
+# The kept build tree accumulates one bundle per version it ever produced, and a
+# directory holding two candidates is exactly what the uniqueness guard below
+# exists to refuse. The bundle output is cheap to recreate — the costly caches
+# live under target/ and are not touched — so it is emptied first.
+rm -rf src-tauri/target/release/bundle/deb
+npm run --silent tauri -- build --bundles deb
+
+mapfile -t candidates < <(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' 2>/dev/null)
+[[ ${#candidates[@]} -eq 1 ]] || fail "expected exactly one .deb, found ${#candidates[@]}: ${candidates[*]-none}"
+deb=${candidates[0]}
+
+package=$(dpkg-deb --field "$deb" Package)
+version=$(dpkg-deb --field "$deb" Version)
+[[ "$package" == your-cloud ]] || fail "the bundle names the package $package"
+
+echo "  installing $deb"
+dpkg --install "$deb" >/dev/null
+
+for binary in /usr/bin/your-cloud-console /usr/bin/your-cloud-native-bootstrap-assistant; do
+  [[ -x "$binary" ]] || fail "$binary is absent after installation"
+done
+
+printf '  candidate: package=%s version=%s sha256=%s\n' \
+  "$package" "$version" "$(sha256sum "$deb" | cut -d' ' -f1)"
+echo "BUILD_INSTALLED_OK"

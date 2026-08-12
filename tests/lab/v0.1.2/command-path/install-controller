@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# Mount the Controller of this proof on lab-vps, in the three phases the order of
+# authorities forces.
+#
+#   init   place the product binary, create the private state and let the
+#          Controller mint its own identity. Nothing serves yet, and nothing
+#          could: the run's PKI is generated *for* the two identifiers this
+#          phase produces, and a reader manifest naming another installation is
+#          refused;
+#   mint   strike the command identity of one machine, with the product's own
+#          binary and its own subcommand. This is the half of link 4 that every
+#          past proof replaced by a fixture: the Controller keeps the private
+#          half and hands back only the public half and its fingerprint;
+#   serve  place the credentials — the three TLS ones and the two directories
+#          the command path needs — write the unit and start the real
+#          Controller with one enrolment window open.
+#
+# This is the product's own Controller, started from the product's own binary,
+# with the dispatcher the product attaches itself. Nothing on the command path
+# is synthetic here: if `NewSSHDispatcher` could not be built, the two routes
+# would not exist at all, and this proof would fail at its first submission
+# rather than pass against a door that never opens.
+#
+# Two things belong to the harness and are named as such: the account and the
+# state directory, because the private state must be mode 0700 and owned by the
+# process that opens it; and the source address the Controller reaches the Relay
+# from, because the product pins that source and this flat topology holds no
+# such address.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+phase=${1:?usage: install-controller <init|mint|serve> ...}
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+
+controller_account=your-cloud-controller
+controller_state=/var/lib/your-cloud-controller
+window_sheet=/run/your-cloud-controller/window.json
+
+case "$phase" in
+  init)
+    binary=${2:?usage: install-controller init <product-binary>}
+    [[ -s "$binary" ]] || fail "the product binary was not carried here"
+
+    # The clock guard the external-element install carries, reused unchanged.
+    # Every constat of this proof is a *date* — an approval's lifetime, a
+    # dispatch's instants — and a clock stepped mid-run would make an honest
+    # `expired` read `valid`, which reads exactly like a defect it is not.
+    [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]] \
+      || fail "this machine's clock is not synchronised: it stamps every approval lifetime this proof reads"
+    clock_before=$(date -u +%s)
+    sleep 2
+    clock_drift=$(( $(date -u +%s) - clock_before - 2 ))
+    [[ ${clock_drift#-} -le 1 ]] \
+      || fail "this machine's clock moved ${clock_drift}s in two seconds: every deadline it derives would be arbitrary"
+    note "clock" "synchronised, no step in two seconds"
+
+    id -u "$controller_account" >/dev/null 2>&1 \
+      || useradd --system --no-create-home --home-dir "$controller_state" --shell /usr/sbin/nologin "$controller_account"
+    install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud
+    install -o root -g root -m 0755 "$binary" "$artifact"
+    note "product binary" "$(sha256sum "$artifact" | cut -d' ' -f1)"
+
+    # The OpenSSH client the Controller launches. It is the distribution's, and
+    # the contract names that as the residual risk it accepts: the product
+    # bounds what it passes, never what OpenSSH is.
+    command -v ssh >/dev/null || fail "this Controller has no OpenSSH client to launch"
+    note "OpenSSH client" "$(ssh -V 2>&1 | head -1)"
+
+    rm -rf "$controller_state"
+    install -d -o "$controller_account" -g "$controller_account" -m 0700 "$controller_state"
+    install -d -m 0700 -o root -g root "$state"
+
+    identities=$(runuser -u "$controller_account" -- "$artifact" controller init --state-dir="$controller_state")
+    controller_id=${identities#controller_id=}
+    controller_id=${controller_id%% *}
+    infrastructure_id=${identities##*infrastructure_id=}
+    note "Controller" "$controller_id"
+    note "infrastructure" "$infrastructure_id"
+
+    printf 'CONTROLLER_ID=%s\n' "$controller_id"
+    printf 'INFRASTRUCTURE_ID=%s\n' "$infrastructure_id"
+    ;;
+
+  mint)
+    machine=${2:?usage: install-controller mint <machine>}
+    install -d -o root -g root -m 0700 "$command_identities" "$command_endpoints"
+
+    # The product strikes the pair. Not `ssh-keygen`, not this harness: the
+    # subcommand the Controller itself runs in production, on the binary this
+    # perimeter installed. What it prints is all that may ever leave.
+    minted=$("$artifact" controller mint-command-identity \
+      -machine "$machine" -identity-dir "$command_identities")
+    public=$(printf '%s' "$minted" | sed -n 's/^public_key=//p')
+    fingerprint=$(printf '%s' "$minted" | sed -n 's/^fingerprint=//p')
+    [[ -n "$public" && -n "$fingerprint" ]] \
+      || fail "the Controller minted no usable command identity for $machine"
+    note "command identity" "$machine, fingerprint $fingerprint"
+
+    # The private half is named here only to assert it never travels: its mode
+    # is read back, and no phase of this proof ever prints its bytes.
+    private=$command_identities/$machine
+    [[ -f "$private" ]] || fail "the Controller kept no private half for $machine"
+    mode=$(stat -c '%U:%G %a' "$private")
+    [[ "$mode" == "root:root 600" ]] \
+      || fail "the private half of $machine's identity is $mode rather than root:root 600"
+    note "private half" "$mode, never printed and never carried"
+
+    printf 'PUBLIC_KEY=%s\n' "$public"
+    printf 'FINGERPRINT=%s\n' "$fingerprint"
+    ;;
+
+  serve)
+    credentials=${2:?usage: install-controller serve <credentials> <allowed-source> <listen-address> <relay-host-address>}
+    allowed_source=${3:?usage: install-controller serve <credentials> <allowed-source> <listen-address> <relay-host-address>}
+    listen_address=${4:?usage: install-controller serve <credentials> <allowed-source> <listen-address> <relay-host-address>}
+    relay_host_address=${5:?usage: install-controller serve <credentials> <allowed-source> <listen-address> <relay-host-address>}
+    # `open` until a Console has associated, `closed` afterwards. This is not a
+    # convenience: a Controller that already holds an active device **refuses**
+    # to open a second enrolment window — « Controller identity state conflicts
+    # with requested window » — and exits 2. That refusal is right, a second
+    # window being a second Console, and this harness serves the two shapes the
+    # product really has rather than restarting into a failure.
+    window=${6:-open}
+
+    # The listen address is **given** rather than guessed. An earlier version of
+    # this script read the first global address of the machine, and once the
+    # synthetic reader source below was placed on the same interface it started
+    # serving there — where nobody was calling. The caller reads the LAB
+    # inventory and knows this address for certain; this script does not.
+    ip -4 -o addr show scope global | grep -qw "$listen_address" \
+      || fail "$listen_address is not an address this machine holds"
+    note "listen address" "$listen_address, given by the caller"
+
+    install -o root -g root -m 0644 "$credentials/controller-reader.crt" /etc/your-cloud/controller-reader.crt
+    install -o root -g root -m 0600 "$credentials/controller-reader.key" /etc/your-cloud/controller-reader.key
+    install -o root -g root -m 0644 "$credentials/relay-reader-ca.crt" /etc/your-cloud/relay-reader-ca.crt
+
+    [[ -d "$command_identities" ]] || fail "no command identity was ever minted on this Controller"
+    [[ -n "$(ls -A "$command_endpoints" 2>/dev/null)" ]] \
+      || fail "no endpoint sheet reached this Controller: the launch would have nowhere to go"
+
+    # The Relay is required, and this proof learned why the hard way. It is true
+    # that `controller serve` comes up with a Relay endpoint that never answers:
+    # its reader is lazy, and observations are indeed not on the command path.
+    # But **attaching a machine to the inventory is**: `PUT /v0/machines` reads
+    # the Relay snapshot and refuses a machine it cannot see reported `active`
+    # (`503 relay_unavailable`, else `422 machine_not_active`, `http.go:454`),
+    # and `POST /v0/plan-approvals` refuses a machine that is not in the
+    # inventory. A Controller without a Relay can serve, associate a Console,
+    # and never command anything.
+    #
+    # The source address the reader listener of the Relay is pinned to. The
+    # Controller is never told about it: the kernel is, so that the connection
+    # this process makes on its own leaves from the address the product expects.
+    # It is a fact of this flat topology and never a behaviour of the product.
+    interface=$(ip -4 route show default | awk '{print $5; exit}')
+    [[ -n "$interface" ]] || fail "this machine has no default route to reach the Relay through"
+    ip -4 addr replace "$controller_source/32" dev "$interface"
+    ip -4 route replace "$relay_address/32" via "$relay_host_address" src "$controller_source"
+    note "the reader source" "$controller_source toward $relay_address via $relay_host_address"
+
+    case "$window" in
+      open) window_arguments=" --window=enrollment --window-sheet=$window_sheet" ;;
+      closed) window_arguments="" ;;
+      *) fail "a Controller serves with an open window or a closed one, never $window" ;;
+    esac
+    note "enrolment window" "$window"
+
+    # The unit is the packaged one of `packaging/server-bundle/units`, reduced to
+    # what this flat LAB can carry — a fixed account rather than `DynamicUser`,
+    # because the private state of this perimeter is created before the service
+    # and must survive it. The five `LoadCredential` lines are the packaged ones
+    # verbatim, including the two directories the command path reads.
+    cat >/etc/systemd/system/"$controller_unit" <<UNIT
+[Unit]
+Description=Your Cloud Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$controller_account
+Group=$controller_account
+RuntimeDirectory=your-cloud-controller
+RuntimeDirectoryMode=0700
+UMask=0077
+LoadCredential=controller-reader.crt:/etc/your-cloud/controller-reader.crt
+LoadCredential=controller-reader.key:/etc/your-cloud/controller-reader.key
+LoadCredential=relay-reader-ca.crt:/etc/your-cloud/relay-reader-ca.crt
+LoadCredential=command-identities:$command_identities
+LoadCredential=command-endpoints:$command_endpoints
+ExecStart=$artifact controller serve --state-dir=$controller_state --listen=$listen_address:9443 --allowed-source=$allowed_source --relay-endpoint=$relay_address:$relay_reader_port$window_arguments
+Restart=no
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ReadWritePaths=$controller_state
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    systemctl daemon-reload
+    systemctl reset-failed "$controller_unit" 2>/dev/null || true
+    systemctl restart "$controller_unit"
+    systemctl enable "$controller_unit" >/dev/null 2>&1 || true
+    if [[ "$window" == open ]]; then
+      for attempt in $(seq 1 30); do
+        [[ -s "$window_sheet" ]] && break
+        sleep 1
+        [[ $attempt -lt 30 ]] || {
+          journalctl -u "$controller_unit" -n 40 --no-pager >&2
+          fail "the Controller never wrote its one-time enrolment sheet"
+        }
+      done
+      cp "$window_sheet" "$state/window.json"
+      chmod 0644 "$state/window.json"
+      printf 'WINDOW_SHEET=%s\n' "$state/window.json"
+    else
+      sleep 3
+    fi
+    [[ "$(unit_state "$controller_unit")" == active ]] || {
+      journalctl -u "$controller_unit" -n 40 --no-pager >&2
+      fail "the Controller did not come up"
+    }
+    note "Controller" "$(unit_state "$controller_unit"), API on $listen_address:9443"
+    printf 'CONTROLLER_LISTEN=%s\n' "$listen_address"
+    ;;
+
+  *)
+    fail "install-controller takes init, mint or serve"
+    ;;
+esac

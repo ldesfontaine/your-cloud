@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Everything the Console oracle needs, inside the virtual screen `run` opened.
+#
+# One pilot only, and it is the installed product: `/usr/bin/your-cloud-console`,
+# the binary the `.deb` of this run really placed, driven through `tauri-driver`
+# proxying the same WebKitWebDriver the Linux Console paints with. There is no
+# fixture pilot here and there deliberately cannot be one: this proof exists to
+# exercise the command path with the product's own binaries, and a bundle served
+# beside the application would be exactly the substitution it must refuse.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+stage=${1:?usage: inside <stage> <window-sheet>}
+window_sheet=${2:?usage: inside <stage> <window-sheet>}
+
+application=/usr/bin/your-cloud-console
+output="$here/output"
+driver_port=4444
+native_port=4445
+
+install -d -m 0755 "$output"
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+[[ -x "$application" ]] || fail "$application is absent; build and install the candidate first"
+# Only the stage that associates needs the Controller's one-time sheet; the
+# later ones open a Console that already holds this run's association.
+if [[ "$stage" == associate ]]; then
+  [[ -s "$window_sheet" ]] || fail "the Controller's one-time enrolment sheet is absent or empty"
+fi
+
+# The gate waits on the ports, not on a route: `tauri-driver` owes no `/status`
+# before its first session, and a probe that demanded one would wait forever on
+# a healthy driver. The probe lives entirely in its subshell — the descriptor
+# closes with it.
+wait_for_port() {
+  local label=$1 port=$2 attempt
+  for attempt in $(seq 1 120); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+      echo "  $label ready after $attempt attempts"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "FAILED: $label never opened port $port" >&2
+  return 1
+}
+
+# The Console's state root is **kept between stages**, and emptied only by the
+# stage that associates.
+#
+# This is forced by the product rather than chosen. An association is a
+# one-shot exchange: the Controller that already holds an active device refuses
+# to open a second enrolment window, so a stage that wiped the vault would face
+# a Controller it can no longer associate with, and the whole run would be
+# stuck one screen after the start. The vault, its keys and the association
+# therefore live across the stages of one run, exactly as they do for a human
+# who opens the Console twice.
+state_root=/root/your-cloud-lab-command-path/console-state
+if [[ "$stage" == associate ]]; then
+  rm -rf "$state_root"
+fi
+export XDG_DATA_HOME="$state_root/data" XDG_CONFIG_HOME="$state_root/config" XDG_CACHE_HOME="$state_root/cache"
+install -d -m 0700 "$state_root" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+
+/root/.cargo/bin/tauri-driver \
+  --native-driver /usr/bin/WebKitWebDriver \
+  --port "$driver_port" --native-port "$native_port" \
+  >"$output/tauri-driver.log" 2>&1 &
+driver_pid=$!
+cleanup() {
+  kill "$driver_pid" 2>/dev/null || true
+  wait "$driver_pid" 2>/dev/null || true
+  pkill -x your-cloud-console 2>/dev/null || true
+  pkill -x your-cloud-native-bootstrap-assistant 2>/dev/null || true
+  # The state root deliberately survives: see above. `remove` takes it away.
+}
+trap cleanup EXIT
+
+wait_for_port "tauri-driver" "$driver_port"
+wait_for_port "the native WebKitWebDriver" "$native_port"
+echo "  engine $(dpkg-query -W -f '${Version}' libwebkit2gtk-4.1-0 2>/dev/null || echo '?') (WebKitGTK), proxied by tauri-driver"
+echo "  candidate $(dpkg-query -W -f '${Version}' your-cloud 2>/dev/null || echo '?')"
+
+# `-u` and the fault handler are not decoration: a pilot of this kind has died
+# by signal without a line of explanation, and a red that cannot name its reason
+# is a harness defect of its own. The oracle's exit code is echoed so the log
+# carries the verdict even when the transport that returned it does not survive.
+set +e
+python3 -u -X faulthandler "$here/console-oracle.py" \
+  --base-url "http://127.0.0.1:$driver_port" \
+  --application "$application" \
+  --window-sheet "$window_sheet" \
+  --secrets "$state_root/vault.json" \
+  --machine "${3:-}" \
+  --output "$output/command-path-$stage.json" \
+  --stage "$stage"
+oracle_status=$?
+set -e
+echo "  oracle exit: $oracle_status"
+exit "$oracle_status"

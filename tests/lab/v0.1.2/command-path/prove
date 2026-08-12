@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+# Drive the command-path proof: the whole journey from the human who approves to
+# the machine that reports, with the product's own binaries and nothing else.
+#
+# This is the milestone's proof under the rule written at
+# `docs/contribution/QUALITE.md`: **no fixture replaces a component of the
+# product on this path.** Every past proof of this repository crossed links 3, 4
+# and 5 by a fixture — a synthetic signer, a synthetic Console, a piped
+# wrapper — and each said so. Here the real Console builds the pair, the real
+# native window collects the consent, the real core signs, the real Controller
+# receives, spends the sequence and launches over SSH, and the real Auxiliary
+# applies on another machine.
+#
+# Three machines, three authorities, none interchangeable:
+#
+#   lab-console    the human's machine: the installed `.deb`, its WebView, its
+#                  native helper and its vault. Nothing of the server side;
+#   lab-vps        the Controller: the product binary, the command identities,
+#                  the endpoint sheets, and the only side that opens an SSH
+#                  session toward a machine;
+#   lab-machine-1  the machine: the Auxiliary account, the forced command, the
+#                  anchor, its own anti-replay position, and the Go toolchain
+#                  this LAB builds the server binary with.
+#
+# The Relay is **not** optional here, and this harness records why rather than
+# rediscovering it. A Controller serves perfectly well with a Relay endpoint
+# that never answers — its reader is lazy — and observations are genuinely not
+# on the command path. But a machine only enters the inventory through
+# `PUT /v0/machines`, which reads the Relay snapshot and refuses a machine it
+# cannot see reported `active`; and an approval for a machine outside the
+# inventory is refused `machine_not_active`. The Relay and the Daemon are
+# therefore the gate of link 4, not furniture.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [artifact | controller | console | associate | collect | remove | all]
+
+  artifact    build the product binary on the machine that carries Go
+  controller  init the real Controller on lab-vps and start it serving
+  console     sync the console sources, build the .deb and install it
+  associate   drive the real Console to its association with that Controller
+  collect     bring the structured results and the captures back
+  remove      take the perimeter away from the three machines and prove it
+  all         everything above in order, removing even when a step fails
+
+The three machines must already exist, be running and be provisioned:
+
+  tools/labctl topology create quick
+  tools/provision-lab all
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  artifact | controller | console | associate | collect | remove | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+harness=$(cd -- "$(dirname -- "$0")" && pwd)
+labctl="$root/tools/labctl"
+console_vm=lab-console
+controller_vm=lab-vps
+machine_vm=lab-machine-1
+expected_origin=your-cloud/labctl
+remote_harness=/root/your-cloud-lab-command-path
+remote_state=/root/lab-command-path
+remote_build=/root/command-path-build
+result_root="$root/tests/artifacts/proofs/command-path"
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+workdir=$(mktemp -d)
+# The values one phase observes and a later one needs live outside the run's
+# temporary directory on purpose: the subcommands are meant to be usable one at
+# a time while the perimeter stays mounted. Not one of them is a secret — two
+# identifiers and the Controller's own one-time sheet, which expires by itself.
+carried="${TMPDIR:-/tmp}/your-cloud-lab-command-path"
+mkdir -p "$carried"
+trap 'rm -rf "$workdir"' EXIT
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+announce() { printf '\n==> %s\n' "$*"; }
+
+# The revision the artefacts belong to. A dirty tree is named as dirty rather
+# than passed off as the commit it sits on.
+revision() {
+  local head dirty=
+  head=$(cd "$root" && git rev-parse HEAD)
+  if ! (cd "$root" && git diff --quiet) \
+    || ! (cd "$root" && git diff --cached --quiet) \
+    || [[ -n "$(cd "$root" && git ls-files --others --exclude-standard)" ]]; then
+    dirty=+worktree
+  fi
+  printf '%s%s' "$head" "$dirty"
+}
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+deploy() { # deploy <vm> <script>...
+  local vm=$1 script
+  shift
+  "$labctl" ssh "$vm" -- "install -d -m 0700 $remote_harness"
+  for script in "$@"; do
+    "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$script"
+  done
+}
+
+# --------------------------------------------------------------------------
+# artifact — the server binary, built where Go lives and never on the pilot.
+# --------------------------------------------------------------------------
+build_artifact() {
+  announce "building the product binary on $machine_vm — $(inventory "$machine_vm")"
+  tar -C "$root" -czf "$workdir/sources.tgz" go.mod go.sum cmd internal
+  "$labctl" copy-to "$machine_vm" "$workdir/sources.tgz" "$remote_build.tgz" >/dev/null
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+export PATH=\$PATH:/usr/local/go/bin LC_ALL=C.UTF-8
+rm -rf $remote_build && install -d -m 0700 $remote_build
+tar -C $remote_build -xzmf $remote_build.tgz && rm -f $remote_build.tgz
+cd $remote_build && go build -o $remote_build/your-cloud ./cmd/your-cloud"
+  "$labctl" copy-from "$machine_vm" "$remote_build/your-cloud" "$carried/your-cloud" >/dev/null
+  echo "  product binary: $(sha256sum "$carried/your-cloud" | cut -d' ' -f1)"
+}
+
+# --------------------------------------------------------------------------
+# controller — the real Controller, serving, with the dispatcher attached.
+# --------------------------------------------------------------------------
+mount_controller() {
+  local controller_address machine_address console_address
+  controller_address=$(inventory "$controller_vm")
+  machine_address=$(inventory "$machine_vm")
+  console_address=$(inventory "$console_vm")
+  [[ -s "$carried/your-cloud" ]] || fail "no product binary is carried; run the artifact phase first"
+
+  announce "mounting the Controller on $controller_vm — $controller_address"
+  deploy "$controller_vm" common install-controller
+  "$labctl" copy-to "$controller_vm" "$carried/your-cloud" "$remote_harness/your-cloud" >/dev/null
+
+  local identifiers
+  identifiers=$("$labctl" ssh "$controller_vm" -- \
+    "$remote_harness/install-controller init $remote_harness/your-cloud")
+  echo "$identifiers"
+  local controller_id infrastructure_id
+  controller_id=$(printf '%s' "$identifiers" | sed -n 's/^CONTROLLER_ID=//p')
+  infrastructure_id=$(printf '%s' "$identifiers" | sed -n 's/^INFRASTRUCTURE_ID=//p')
+  [[ -n "$controller_id" && -n "$infrastructure_id" ]] \
+    || fail "the Controller minted no identity of its own"
+  printf '%s' "$infrastructure_id" >"$carried/infrastructure-id"
+
+  # The run's PKI, generated on the machine that carries Go, *after* the
+  # identity above: a reader manifest naming another installation is refused,
+  # and rightly. Only the Controller's three leaves ever leave that machine.
+  "$labctl" copy-to "$machine_vm" "$root/tests/lab/v0.0.3/generate-runtime-pki.go" \
+    "$remote_build/labpki-main.go" >/dev/null
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+export PATH=\$PATH:/usr/local/go/bin LC_ALL=C.UTF-8
+cd $remote_build && install -d labpki && mv labpki-main.go labpki/main.go
+rm -rf $remote_build/pki
+go run ./labpki -output $remote_build/pki \
+  -controller-id $controller_id -infrastructure-id $infrastructure_id"
+  install -d -m 0700 "$workdir/creds"
+  local leaf
+  for leaf in controller-reader.crt controller-reader.key relay-reader-ca.crt; do
+    "$labctl" copy-from "$machine_vm" "$remote_build/pki/controller/$leaf" "$workdir/creds/$leaf" >/dev/null
+    "$labctl" copy-to "$controller_vm" "$workdir/creds/$leaf" "$remote_harness/creds-$leaf" >/dev/null
+  done
+  "$labctl" ssh "$controller_vm" -- "
+set -e
+install -d -m 0700 $remote_harness/creds
+for leaf in controller-reader.crt controller-reader.key relay-reader-ca.crt; do
+  mv $remote_harness/creds-\$leaf $remote_harness/creds/\$leaf
+done"
+
+  # The command identity of the machine, struck by the product's own binary.
+  "$labctl" ssh "$controller_vm" -- "$remote_harness/install-controller mint $machine_vm"
+
+  # The endpoint sheet. Its host key is read through the managed LAB channel and
+  # pinned; no side of this harness ever trusts a first answer on the wire.
+  "$labctl" copy-from "$machine_vm" /etc/ssh/ssh_host_ed25519_key.pub "$workdir/host.pub" >/dev/null
+  local host_key
+  host_key=$(awk '$1 == "ssh-ed25519" {print $2; exit}' "$workdir/host.pub")
+  [[ -n "$host_key" ]] || fail "no ed25519 host key could be read from $machine_vm"
+  "$labctl" ssh "$controller_vm" -- "
+set -e
+install -d -m 0700 /etc/your-cloud/command-endpoints
+printf '%s' '{\"schema_version\":1,\"machine_id\":\"$machine_vm\",\"host\":\"$machine_address\",\"port\":22,\"account\":\"your-cloud-auxiliary\",\"host_key\":\"$host_key\"}' \
+  >/etc/your-cloud/command-endpoints/$machine_vm.json
+chmod 0600 /etc/your-cloud/command-endpoints/$machine_vm.json"
+
+  # The allowed source is one exact address, and the product refuses anything
+  # wider: the Console's own, and nothing else on this network.
+  local served
+  served=$("$labctl" ssh "$controller_vm" -- \
+    "$remote_harness/install-controller serve $remote_harness/creds $console_address/32 $machine_address")
+  echo "$served"
+  "$labctl" copy-from "$controller_vm" "$remote_state/window.json" "$carried/window.json" >/dev/null
+  chmod 0600 "$carried/window.json"
+  printf '%s' "$controller_address" >"$carried/controller-address"
+  echo "  the Controller's one-time sheet is carried, and it expires by itself"
+}
+
+# --------------------------------------------------------------------------
+# console — the candidate, built and installed on the human's machine.
+# --------------------------------------------------------------------------
+mount_console() {
+  local console_address
+  console_address=$(inventory "$console_vm")
+  announce "syncing the console sources to $console_vm — $console_address"
+  # `-m` re-stamps every file to now, so the build caches that survive under
+  # `target/` can never mistake an older synced file for an already-built one.
+  tar czf "$workdir/console.tgz" -C "$root" \
+    --exclude=console/node_modules \
+    --exclude=console/dist \
+    --exclude=console/dist-reflow \
+    --exclude=console/src-tauri/target \
+    --exclude=console/src-tauri/binaries \
+    console
+  "$labctl" ssh "$console_vm" -- "install -d -m 0700 /root/your-cloud-console-build"
+  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" /root/your-cloud-console-build/console.tgz >/dev/null
+  "$labctl" ssh "$console_vm" -- "
+set -e
+tar xzf /root/your-cloud-console-build/console.tgz -C /root/your-cloud-console-build -m --strip-components=1
+rm -f /root/your-cloud-console-build/console.tgz"
+
+  announce "building and installing the candidate on $console_vm (offline, one job)"
+  # The swap this build needs does not come back by itself after a boot, and a
+  # release build of the Tauri stack without it ends in the OOM reaper rather
+  # than in a candidate.
+  "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
+  deploy "$console_vm" common run inside console-oracle.py build
+  "$labctl" ssh "$console_vm" -- "$remote_harness/build"
+}
+
+# --------------------------------------------------------------------------
+# associate — the real Console, driven, against that real Controller.
+# --------------------------------------------------------------------------
+associate() {
+  local console_address controller_address infrastructure_id
+  console_address=$(inventory "$console_vm")
+  [[ -s "$carried/window.json" ]] || fail "no enrolment sheet is carried; run the controller phase first"
+  controller_address=$(cat "$carried/controller-address")
+  infrastructure_id=$(cat "$carried/infrastructure-id")
+
+  # The LAB carries no resolver, and the origins the Controller writes into its
+  # own sheet are names. The name is pointed at the machine that really serves
+  # it; nothing of the product is changed to fit the LAB.
+  announce "pointing the Controller's own names at $controller_address"
+  "$labctl" ssh "$console_vm" -- "
+set -e
+name=controller.$infrastructure_id.your-cloud.test
+sed -i \"/ \$name\$/d\" /etc/hosts
+printf '%s %s\n' '$controller_address' \"\$name\" >>/etc/hosts
+getent hosts \"\$name\""
+
+  # The sheet expires by itself, and a Controller restarted here writes a fresh
+  # one: the association is driven against a window that is still open rather
+  # than against one this harness hoped had survived the build.
+  announce "reopening a window on the Controller, and carrying its fresh sheet"
+  "$labctl" ssh "$controller_vm" -- "
+set -e
+systemctl restart your-cloud-controller.service
+for attempt in \$(seq 1 30); do
+  [ -s /run/your-cloud-controller/window.json ] && break
+  sleep 1
+done
+cp /run/your-cloud-controller/window.json $remote_state/window.json
+chmod 0644 $remote_state/window.json"
+  "$labctl" copy-from "$controller_vm" "$remote_state/window.json" "$carried/window.json" >/dev/null
+  "$labctl" copy-to "$console_vm" "$carried/window.json" "$remote_harness/window.json" >/dev/null
+
+  announce "driving the installed Console to its association"
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run associate $remote_harness/window.json"
+}
+
+collect() {
+  announce "collecting the structured results"
+  install -d -m 0755 "$result_root/$run_id"
+  "$labctl" copy-from "$console_vm" "$remote_harness/output" "$workdir/collected" >/dev/null 2>&1 || true
+  local produced="$workdir/collected"
+  [[ -d "$produced" ]] || produced="$workdir/collected/output"
+  [[ -d "$produced" ]] && cp -a "$produced/." "$result_root/$run_id/" || true
+  chmod -R u+rw "$result_root/$run_id" 2>/dev/null || true
+  echo "  under: $result_root/$run_id/"
+}
+
+remove() {
+  local status=0
+  announce "removing the perimeter from the three machines"
+  "$labctl" ssh "$controller_vm" -- "
+systemctl disable --now your-cloud-controller.service 2>/dev/null || true
+rm -f /etc/systemd/system/your-cloud-controller.service
+systemctl daemon-reload 2>/dev/null || true
+# The private halves of the command identities are destroyed, not merely
+# unlinked: they are the one secret this perimeter ever held.
+if [ -d /etc/your-cloud/command-identities ]; then
+  find /etc/your-cloud/command-identities -type f -exec shred -u {} + 2>/dev/null || true
+fi
+rm -rf /etc/your-cloud/command-identities /etc/your-cloud/command-endpoints \
+  /etc/your-cloud/controller-reader.crt /etc/your-cloud/controller-reader.key \
+  /etc/your-cloud/relay-reader-ca.crt /var/lib/your-cloud-controller \
+  $remote_harness $remote_state" || status=1
+  "$labctl" ssh "$machine_vm" -- "rm -rf $remote_build $remote_build.tgz $remote_harness" || status=1
+  # The candidate, the harness, and the name this run pointed at a Controller.
+  #
+  # The build tree is *shared* with the reflow proof at the same path and both
+  # sync the same sources there, so it is not deleted: a cold release build of
+  # the Tauri stack costs over an hour on this machine. What is deleted is the
+  # part that is pure output and cheap to remake — the `.deb` bundle — and the
+  # free space is printed, because the failure this hygiene exists for did not
+  # look like a disk problem: on 12 August 2026 the build succeeded and the
+  # install died on « No space left on device », an hour after the cause.
+  "$labctl" ssh "$console_vm" -- "
+dpkg --purge your-cloud >/dev/null 2>&1 || true
+rm -rf $remote_harness
+rm -rf /root/your-cloud-console-build/src-tauri/target/release/bundle
+sed -i '/your-cloud.test\$/d' /etc/hosts
+printf '  free space on the pilot after this pass: %s MiB\n' \"\$((\$(df --output=avail -k / | tail -1) / 1024))\"" || status=1
+  rm -rf "$carried"
+  local pair vm path
+  for pair in "$controller_vm $remote_harness" "$controller_vm /etc/your-cloud/command-identities" \
+    "$machine_vm $remote_build" "$console_vm $remote_harness"; do
+    read -r vm path <<<"$pair"
+    "$labctl" ssh "$vm" -- "test ! -e $path" \
+      || { echo "FAILED: $path is still present in $vm" >&2; status=1; }
+  done
+  [[ $status -eq 0 ]] || fail "the perimeter removal is not proven"
+  echo "  perimeter removed from the three machines"
+}
+
+case "$command" in
+  artifact) build_artifact ;;
+  controller) mount_controller ;;
+  console) mount_console ;;
+  associate) associate ;;
+  collect) collect ;;
+  remove) remove ;;
+  all)
+    status=0
+    build_artifact || status=$?
+    [[ $status -eq 0 ]] && { mount_controller || status=$?; }
+    [[ $status -eq 0 ]] && { mount_console || status=$?; }
+    [[ $status -eq 0 ]] && { associate || status=$?; }
+    collect || true
+    remove || status=${status:-1}
+    [[ $status -eq 0 ]] || fail "the command-path proof failed with $status"
+    echo
+    echo "PROVE_COMMAND_PATH_OK revision=$(revision)"
+    ;;
+esac

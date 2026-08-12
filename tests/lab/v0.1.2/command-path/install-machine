@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# Mount the machine of this proof on lab-machine-1, in the phases the order of
+# authorities forces.
+#
+#   relay  the Relay and the Daemon of this run. They are not observability
+#          furniture here: `PUT /v0/machines` reads the Relay snapshot and
+#          refuses a machine it cannot see reported `active`, so this is the
+#          gate a machine enters the Controller's inventory through — and an
+#          approval for a machine outside that inventory is refused
+#          `machine_not_active`;
+#   enrol  the ordered enrolment of `#126`, whose ten-step sequence is proven
+#          green: the artefact, the locked account, the anchor, the empty
+#          anti-replay position, the bounded elevation and — last — the forced
+#          key. The order is the contract's: no instant exists in which a key
+#          opens a command that is not there;
+#   ground the rootless ground a user service really needs, and the run's own
+#          image origin, trusted for the length of the run.
+#
+# What is **pruned** from the `v0.1.1` perimeter, and why, piece by piece:
+#
+#   - **the passage (WireGuard, `yc-link0`, its bounding table)** — the private
+#     passage is the second door of `v0.1.1`. Nothing on the command path
+#     traverses it;
+#   - **the confinement table (`your-cloud-egress`) and the synthetic
+#     neighbour** — they exist to prove a confined service reaches no neighbour
+#     of the LAN, which is a `v0.1.1` constat about the service, not about the
+#     path that commanded it;
+#   - **the public entrypoint, `slirp4netns`, the declared names and their
+#     routes** — the service this proof deploys declares **no origin**, which is
+#     a configuration the product supports and refuses to contradict ("a plan
+#     carrying an origin for a definition that consumes none is refused"). No
+#     entrypoint is needed to observe that a service was really posed;
+#   - **the second machine of the scenario** — one machine is what a command
+#     path needs. `v0.1.1` used two to prove a service on each side of a
+#     passage;
+#   - **the fixture's `-anchor`** — it mints an anchor for a *synthetic* key,
+#     and this proof's anchor must carry the **real** approval key of the real
+#     Console. That key is read from the Controller's own device record after
+#     the association, which is why this phase runs after it.
+#
+# What is **kept**, because each is a component of the product on this path:
+# rootless Podman and its user namespace, the Quadlet unit the Auxiliary
+# writes, the digest the Auxiliary verifies before it runs anything, and a
+# service that really answers. The image origin is the environment's, and it is
+# the one `v0.1.1` already proved rather than a second apparatus.
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common
+. "$here/common"
+
+phase=${1:?usage: install-machine <relay|enrol|ground> ...}
+
+fail() {
+  echo "FAILED: $*" >&2
+  exit 1
+}
+
+case "$phase" in
+  relay)
+    credentials=${2:?usage: install-machine relay <credentials> <controller-address>}
+    controller_address=${3:?usage: install-machine relay <credentials> <controller-address>}
+
+    install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud
+    [[ -x "$artifact" ]] || fail "the product binary is not installed on this machine yet"
+
+    install -o root -g root -m 0644 "$credentials/relay.crt" /etc/your-cloud/relay.crt
+    install -o root -g root -m 0600 "$credentials/relay.key" /etc/your-cloud/relay.key
+    install -o root -g root -m 0644 "$credentials/daemon-ca.crt" /etc/your-cloud/daemon-ca.crt
+    install -o root -g root -m 0644 "$credentials/relay-reader.crt" /etc/your-cloud/relay-reader.crt
+    install -o root -g root -m 0600 "$credentials/relay-reader.key" /etc/your-cloud/relay-reader.key
+    install -o root -g root -m 0644 "$credentials/controller-reader-ca.crt" /etc/your-cloud/controller-reader-ca.crt
+    install -o root -g root -m 0644 "$credentials/enrollment.json" /etc/your-cloud/enrollment.json
+    install -o root -g root -m 0644 "$credentials/relay-reader.json" /etc/your-cloud/relay-reader.json
+    install -o root -g root -m 0644 "$credentials/daemon.crt" /etc/your-cloud/daemon.crt
+    install -o root -g root -m 0600 "$credentials/daemon.key" /etc/your-cloud/daemon.key
+    install -o root -g root -m 0644 "$credentials/relay-ca.crt" /etc/your-cloud/relay-ca.crt
+    printf '%s\n' '{"schema":1,"role":"relay-candidate"}' >/etc/your-cloud/relay-candidate.json
+    chmod 0644 /etc/your-cloud/relay-candidate.json
+
+    # The two addresses the product's binaries insist on. The Relay refuses to
+    # listen anywhere but the first; its reader listener refuses every source
+    # but the second. This flat LAB holds neither, so the harness places one
+    # here and routes the other to the machine that will hold it. It is a fact
+    # of the topology and never a behaviour of the product.
+    interface=$(ip -4 route show default | awk '{print $5; exit}')
+    ip -4 addr replace "$relay_address/32" dev "$interface"
+    ip -4 route replace "$controller_source/32" via "$controller_address"
+    grep -q "^$relay_address $relay_name\$" /etc/hosts \
+      || printf '%s %s\n' "$relay_address" "$relay_name" >>/etc/hosts
+    note "the Relay's own address" "$relay_address, reached by name $relay_name"
+
+    cat >/etc/systemd/system/"$relay_unit" <<UNIT
+[Unit]
+Description=Your Cloud observation Relay and private reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=your-cloud-relay
+StateDirectory=your-cloud-relay
+StateDirectoryMode=0700
+UMask=0077
+LoadCredential=relay.crt:/etc/your-cloud/relay.crt
+LoadCredential=relay.key:/etc/your-cloud/relay.key
+LoadCredential=daemon-ca.crt:/etc/your-cloud/daemon-ca.crt
+LoadCredential=relay-reader.crt:/etc/your-cloud/relay-reader.crt
+LoadCredential=relay-reader.key:/etc/your-cloud/relay-reader.key
+LoadCredential=controller-reader-ca.crt:/etc/your-cloud/controller-reader-ca.crt
+ExecStart=$artifact relay --listen=$relay_address:$relay_ingestion_port
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+ReadOnlyPaths=/etc/your-cloud/enrollment.json /etc/your-cloud/relay-candidate.json /etc/your-cloud/relay-reader.json
+InaccessiblePaths=-/etc/your-cloud/daemon.key -/etc/your-cloud/controller-reader.key
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    cat >/etc/systemd/system/"$daemon_unit" <<UNIT
+[Unit]
+Description=Your Cloud observation Daemon
+After=network-online.target $relay_unit
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=your-cloud-daemon
+StateDirectory=your-cloud-daemon
+StateDirectoryMode=0700
+LoadCredential=daemon.crt:/etc/your-cloud/daemon.crt
+LoadCredential=daemon.key:/etc/your-cloud/daemon.key
+LoadCredential=relay-ca.crt:/etc/your-cloud/relay-ca.crt
+ExecStart=$artifact daemon --machine-id=$machine_id --relay-url=https://$relay_name:$relay_ingestion_port
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+InaccessiblePaths=-/etc/your-cloud/relay.key -/etc/your-cloud/relay-reader.key -/etc/your-cloud/daemon-ca.crt -/etc/your-cloud/enrollment.json -/etc/your-cloud/relay-candidate.json
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    systemctl daemon-reload
+    systemctl reset-failed "$relay_unit" "$daemon_unit" 2>/dev/null || true
+    # `restart`, never `enable --now`. `LoadCredential` copies the credentials
+    # into the service's private directory **at start**, so a unit that is
+    # already active keeps the certificates of the previous run: this harness
+    # spent a diagnosis on « tls: bad certificate » raised by a Controller
+    # holding a freshly issued authority against a Relay still presenting the
+    # leaf of the run before. Enabling is separate, and idempotent.
+    systemctl enable "$relay_unit" "$daemon_unit" >/dev/null 2>&1 || true
+    systemctl restart "$relay_unit"
+    systemctl restart "$daemon_unit"
+    sleep 3
+    [[ "$(unit_state "$relay_unit")" == active ]] || {
+      journalctl -u "$relay_unit" -n 30 --no-pager >&2
+      fail "the Relay did not come up"
+    }
+    [[ "$(unit_state "$daemon_unit")" == active ]] || {
+      journalctl -u "$daemon_unit" -n 30 --no-pager >&2
+      fail "the Daemon did not come up"
+    }
+    note "Relay" "$(unit_state "$relay_unit"), on $relay_address:$relay_ingestion_port and :$relay_reader_port"
+    note "Daemon" "$(unit_state "$daemon_unit"), publishing as $machine_id"
+    ;;
+
+  enrol)
+    carried_anchor=${2:?usage: install-machine enrol <anchor> <entry> <sudoers>}
+    carried_entry=${3:?usage: install-machine enrol <anchor> <entry> <sudoers>}
+    carried_sudoers=${4:?usage: install-machine enrol <anchor> <entry> <sudoers>}
+
+    package_directory=/usr/lib/your-cloud
+    key_directory=/etc/your-cloud/authorized-keys
+    sshd_drop_in=/etc/ssh/sshd_config.d/60-your-cloud-command-path.conf
+
+    # 1. artifact — first, always.
+    install -d -m 0755 -o root -g root "$package_directory"
+    install -m 0755 -o root -g root "$artifact" "$machine_binary"
+
+    # 2. account — locked, passwordless, no home, and the one shell `sshd` runs
+    #    a forced command through.
+    id "$account" >/dev/null 2>&1 \
+      || useradd --system --no-create-home --home-dir /nonexistent --shell /bin/sh "$account"
+    passwd --lock "$account" >/dev/null
+    usermod --shell /bin/sh --home /nonexistent "$account"
+
+    # 3. anchor — which key may approve on this machine, under which epoch. It
+    #    carries the **real** approval key of the real Console, read from the
+    #    Controller's own device record; no synthetic seed appears anywhere on
+    #    this path.
+    install -d -m 0755 -o root -g root /etc/your-cloud
+    install -m 0600 -o root -g root "$carried_anchor" "$anchor"
+
+    # 4. anti-replay position — empty. A machine that consumed nothing is what
+    #    makes the first sequence the first.
+    install -d -m 0700 -o root -g root /var/lib/your-cloud-auxiliary
+    rm -f "$replay" /var/lib/your-cloud-auxiliary/approval-state.lock
+
+    # 5. elevation — one invocation, environment reset, no SETENV, no password.
+    install -m 0440 -o root -g root "$carried_sudoers" "$elevation_rule"
+    visudo -c -f "$elevation_rule" >/dev/null
+
+    # 6. forced key — last, and refused outright if the binary it names is
+    #    absent.
+    [[ -x "$machine_binary" ]] \
+      || fail "the forced key names a binary that is not installed: $machine_binary"
+    install -d -m 0755 -o root -g root "$key_directory"
+    install -m 0644 -o root -g root "$carried_entry" "$forced_key"
+    cat >"$sshd_drop_in" <<EOF
+# LAB perimeter of the command-path proof. Removed by remove.
+Match User $account
+    AuthorizedKeysFile $key_directory/%u
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    AllowTcpForwarding no
+    PermitTunnel no
+    PermitUserRC no
+EOF
+    chmod 0644 "$sshd_drop_in"
+    sshd -t
+    systemctl reload ssh
+
+    note "account" "$(getent passwd "$account" | cut -d: -f1,7)"
+    note "anchor" "$(sha256sum "$anchor" | cut -d' ' -f1)"
+    note "forced key" "$(sha256sum "$forced_key" | cut -d' ' -f1)"
+    note "anti-replay position" "$([[ -e $replay ]] && echo present || echo empty)"
+    echo "ENROLLED machine=$machine_id"
+    ;;
+
+  ground)
+    origin_address=${2:?usage: install-machine ground <origin-address> <authority>}
+    authority=${3:?usage: install-machine ground <origin-address> <authority>}
+    origin_host_name=registry.lab.your-cloud.test
+    origin_anchor=/usr/local/share/ca-certificates/lab-command-path-authority.crt
+
+    # The rootless ground, read rather than assumed. Each is a component the
+    # Auxiliary really uses when it poses a user service.
+    command -v podman >/dev/null || fail "the target has no Podman: run tools/provision-lab"
+    command -v newuidmap >/dev/null || fail "the target has no newuidmap: run tools/provision-lab"
+    command -v update-ca-certificates >/dev/null \
+      || fail "the target cannot extend its trust store: the origin of this run's image would be unreachable"
+    note "Podman" "$(podman --version)"
+
+    # HARNESS ACT 1: the run's authority enters this machine's trust store, so a
+    # rootless engine can verify the origin it pulls from. Declaring the origin
+    # *insecure* in the registry policy would have been smaller to write and
+    # would have weakened the machine instead, so it is not what this does.
+    install -m 0644 -o root -g root "$authority" "$origin_anchor"
+    update-ca-certificates >/dev/null 2>&1
+    note "HARNESS ACT: the run's authority" "trusted by this machine for the length of the run"
+
+    # HARNESS ACT 2: the origin's name resolves to the machine that serves it.
+    # The LAB carries no resolver, and the repository a definition names has to
+    # resolve to something.
+    sed -i "/ $origin_host_name\$/d" /etc/hosts
+    printf '%s %s\n' "$origin_address" "$origin_host_name" >>/etc/hosts
+    note "HARNESS ACT: the origin's name" "$origin_host_name resolves to $origin_address"
+    ;;
+
+  *)
+    fail "install-machine takes relay, enrol or ground"
+    ;;
+esac
