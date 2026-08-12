@@ -48,9 +48,13 @@ staged=/root/lab-machine-identity-artifact
 remote_harness=/root/your-cloud-lab-machine-identity
 fixture=$state/fixture
 signer=$state/lab-approval-signer
-# Le binaire du produit, celui-là même qui sera installé sur les machines : la
-# frappe des identités de commande n'est pas une fixture.
+# Deux emplois du même binaire, et deux modes qui le disent. `artifact` est la
+# charge que l'enrôlement transporte vers la machine : elle n'a pas à être
+# exécutable ici. `controller_binary` est ce que le Controller exécute
+# lui-même — c'est ainsi qu'il frappe les identités de commande en production,
+# et la frappe n'est donc pas une fixture.
 artifact=$state/artifact
+controller_binary=$state/controller-binary
 seed=7
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -131,13 +135,14 @@ setup() {
 set -e
 rm -rf $state
 install -d -m 0700 $state $state/identities $state/anchors $state/entries \
-  $state/fingerprints $state/names $state/observed $state/command-identities
-  $state/command-endpoints
+  $state/fingerprints $state/names $state/observed \
+  $state/command-identities $state/command-endpoints
 ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/operator
 ssh-keygen -q -t ed25519 -N '' -C '' -f $state/identities/permissive
 chmod 0600 $state/identities/*"
 
   "$labctl" ssh "$console_vm" -- "install -m 0644 $staged/your-cloud $state/artifact \
+    && install -m 0755 $staged/your-cloud $state/controller-binary \
     && install -m 0700 $staged/lab-approval-signer $signer"
 
   # The host keys are read through the managed LAB channel and pinned. No side
@@ -203,7 +208,7 @@ for machine in $target_vm $console_vm; do
   # ssh-keygen : c'est la moitié du maillon 4 que toutes les preuves passées
   # remplaçaient par une fixture. Le Controller garde la moitié privée et ne
   # rend que la moitié publique et son empreinte.
-  minted=\$($artifact controller mint-command-identity -machine \$machine \
+  minted=\$($controller_binary controller mint-command-identity -machine \$machine \
     -identity-dir $state/command-identities)
   public=\$(printf '%s' \"\$minted\" | sed -n 's/^public_key=//p')
   fingerprint=\$(printf '%s' \"\$minted\" | sed -n 's/^fingerprint=//p')
