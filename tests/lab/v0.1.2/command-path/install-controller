@@ -162,26 +162,49 @@ case "$phase" in
     # serving there — where nobody was calling. The caller reads the LAB
     # inventory and knows this address for certain; this script does not.
     #
-    # NAMED DEBT, to be settled before this proof is declared green: on
-    # 12 August 2026 this guard refused an address the machine demonstrably
-    # held, and the very same call passed unchanged a minute later. The cause
-    # is not established — a DHCP renewal is the suspicion, not the finding.
-    # The retry below makes the guard deterministic against a momentary
-    # absence without weakening what it refuses, but a harness that reddens
-    # for a reason nobody can name produces reds that accuse nothing, and this
-    # comment stays until the cause is either explained or ruled out.
+    # On 12 August 2026 this guard refused an address the machine demonstrably
+    # held, and the very same call passed unchanged a minute later.
+    #
+    # What has since been RULED OUT, measured rather than argued: the DHCP
+    # renewal that was the standing suspicion. This address is a one-hour
+    # lease from the LAB's own server, and a recorder sampling the table four
+    # times a second across a renewal at T1 — 2400 samples over two windows,
+    # spanning six full passes of this proof — saw the address present in
+    # every single one. A renewal does not remove it, not for a quarter of a
+    # second. The suspicion is dead; the cause is still not reproduced.
+    #
+    # So the method changed rather than the hypothesis. The old form could not
+    # tell two different worlds apart: `ip | grep -q` answers « no » both when
+    # the address is absent and when `ip` rendered nothing at all — the first
+    # accuses the network, the second accuses this instrument. It now keeps
+    # `ip`'s exit code and the size of what it rendered, and says which of the
+    # two it saw, with the lease state beside it. The next occurrence will
+    # therefore explain itself here instead of costing another investigation.
     held=no
+    reason=
     for attempt in $(seq 1 5); do
-      if ip -4 -o addr show scope global | grep -qw "$listen_address"; then
+      table=$(ip -4 -o addr show scope global 2>&1)
+      code=$?
+      lines=$(printf '%s' "$table" | grep -c . || true)
+      if [[ $code -ne 0 || $lines -eq 0 ]]; then
+        # The instrument, not the world: `ip` failed or rendered an empty
+        # table. Saying so is the whole point — an empty reading is not an
+        # absent address.
+        reason="ip rendered nothing (exit $code, $lines lines)"
+      elif printf '%s\n' "$table" | grep -qw "$listen_address"; then
         held=yes
-        [[ $attempt -eq 1 ]] || note "listen address" "seen on attempt $attempt, not the first"
+        [[ $attempt -eq 1 ]] || note "listen address" \
+          "seen on attempt $attempt, not the first — previous attempt: $reason"
         break
+      else
+        reason="the table was read ($lines lines) and did not hold it; lease: $(
+          printf '%s\n' "$table" | grep -o 'valid_lft [0-9a-z]*' | head -1)"
       fi
       sleep 1
     done
     [[ "$held" == yes ]] || {
-      ip -4 -o addr show scope global >&2
-      fail "$listen_address is not an address this machine holds, after five attempts"
+      printf '%s\n' "$table" >&2
+      fail "$listen_address is not an address this machine holds, after five attempts — $reason"
     }
     note "listen address" "$listen_address, given by the caller"
 
