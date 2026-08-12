@@ -1366,6 +1366,57 @@ fn sync_directory(directory: &Path) -> Result<(), VaultError> {
 mod tests {
     use super::*;
 
+    /// L'attaquant qui a la phrase lit la clé d'appareil, avec le code du produit.
+    ///
+    /// Ce n'est pas un composant du produit remplacé : c'est un acteur hostile
+    /// qui, ayant volé la phrase, ouvre le coffre exactement comme la Console
+    /// l'ouvre — même `ConsoleCore`, même Argon2id, même Stronghold. Il ne
+    /// réimplémente aucune crypto et il **lit** l'état scellé, ne l'écrit
+    /// jamais. Le mandataire de rejeu du LAB en a besoin parce que 9443 exige un
+    /// certificat d'appareil épinglé par empreinte exacte : sans cette clé, un
+    /// intercepteur ne peut pas même parler au Controller.
+    ///
+    /// Il n'extrait **que** la clé d'appareil. La graine humaine reste dans le
+    /// coffre : le rejeu greffe ses octets périmés sur une session que la vraie
+    /// Console frappe, et c'est cette abstention qui fait que le refus démontre
+    /// l'anti-rejeu du registre plutôt qu'une session forgée.
+    ///
+    /// `#[ignore]` comme le test d'enrôlement LAB voisin : jamais dans une passe
+    /// ordinaire, jamais dans le `.deb`.
+    #[test]
+    #[ignore = "attacker tool: reads a real vault, driven by the command-path replay proof"]
+    fn attacker_reads_the_device_credential_from_a_stolen_phrase() {
+        let state = std::env::var("YC_ATTACKER_STATE_DIR")
+            .expect("the vault state directory must be explicit");
+        let phrase =
+            std::env::var("YC_ATTACKER_PHRASE").expect("the stolen unlock phrase must be explicit");
+        let infrastructure = std::env::var("YC_ATTACKER_INFRA")
+            .expect("the target infrastructure id must be explicit");
+        let output = std::env::var("YC_ATTACKER_OUT").expect("the output path must be explicit");
+
+        let mut core = ConsoleCore::new(PathBuf::from(state));
+        core.unlock(phrase)
+            .expect("the stolen phrase must open the vault");
+        let association = core
+            .association(&infrastructure)
+            .expect("the target association must be present");
+
+        // Exactement ce qu'un mTLS vers 9443 exige, et rien de la graine
+        // humaine. L'origine et l'épingle du serveur accompagnent, pour que
+        // l'intercepteur présente à la Console le certificat que le Controller
+        // présente et refuse tout autre.
+        let payload = serde_json::json!({
+            "device_certificate_pem": association.device_certificate_pem,
+            "device_private_key_pem": association.device_private_key_pem,
+            "server_ca_pem": association.server_ca_pem,
+            "server_spki_sha256": association.server_spki_sha256,
+            "origin": association.summary.origin,
+            "device_id": association.device_id,
+        });
+        std::fs::write(&output, serde_json::to_vec(&payload).unwrap())
+            .expect("the attacker's read must be writable");
+    }
+
     #[test]
     fn official_french_wordlist_is_pinned() {
         validate_wordlist().expect("the pinned wordlist must match the contract");
