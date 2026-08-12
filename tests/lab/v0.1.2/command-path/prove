@@ -108,6 +108,10 @@ scratch_directory=/var/scratch
 command_endpoints=/etc/your-cloud/command-endpoints
 forced_key=/etc/your-cloud/authorized-keys/your-cloud-auxiliary
 replay_state=/var/lib/your-cloud-auxiliary/approval-state.json
+# The account the forced command runs as, and where a hostile case may put a
+# program that account has to be able to execute.
+account=your-cloud-auxiliary
+forger_path=/usr/local/lib/your-cloud/lab-forge-report
 result_root="$root/tests/artifacts/proofs/command-path"
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 workdir=$(mktemp -d)
@@ -524,13 +528,11 @@ run_journey() {
   absent=sha256:$(printf 'a%.0s' {1..64})
 
   announce "the failure that reaches the machine and comes back"
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
-    $machine_vm $absent journal-manquant"
+  journey_once journal-manquant "$absent"
   read_dispatch "rolled_back_after_controlled_failure" 1 "the controlled failure"
 
   announce "the success that really poses a service"
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
-    $machine_vm $digest journal-de-bord"
+  journey_once journal-de-bord "$digest"
   read_dispatch "applied" 2 "the applied deployment"
 }
 
@@ -564,9 +566,27 @@ read_dispatch() {
 # --------------------------------------------------------------------------
 
 # journey_once <slug> <digest> — one full approval, driven by the Console.
+#
+# The Controller's own journal for the same window of time is captured whatever
+# the outcome, and that is the half this proof had never named: a
+# `response_refused` says the Controller **answered** and the Console refused
+# its answer, so the two accounts have to be read side by side. A Console tape
+# alone can only ever say which call broke, never what came back.
 journey_once() {
+  local slug=$1 digest=$2 started outcome=0
+  started=$(date -u +%Y-%m-%d\ %H:%M:%S)
   "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
-    $machine_vm $2 $1"
+    $machine_vm $digest $slug" || outcome=$?
+  "$labctl" ssh "$controller_vm" -- \
+    "journalctl -u your-cloud-controller.service --since '$started' --no-pager -o short-iso" \
+    >"$workdir/controller-$slug.log" 2>/dev/null || true
+  install -d -m 0755 "$result_root/$run_id"
+  cp "$workdir/controller-$slug.log" "$result_root/$run_id/controller-$slug.log" 2>/dev/null || true
+  if [[ $outcome -ne 0 ]]; then
+    echo "  the Controller's own account over the same window:"
+    sed -n '1,40p' "$workdir/controller-$slug.log" | sed 's/^/    /'
+  fi
+  return $outcome
 }
 
 # last_record <field> — one field of the Controller's own last record.
@@ -582,7 +602,7 @@ machine_position() {
 }
 
 refuse_constats() {
-  local digest before_position position state observation records_before records_after
+  local digest before_position position state observation sentence records_before records_after
   digest=$(tr -d '\r\n' <"$carried/image-digest")
 
   # ---- a machine substituted: the pinned host key no longer matches --------
@@ -639,18 +659,29 @@ sleep 3"
   # nothing is applied and nothing is consumed on the machine — what is under
   # test is only what the Controller does with an answer that does not name
   # this dispatch.
+  # The forger lives where the **Auxiliary's account** can reach it, and not in
+  # this harness's own directory. `$remote_harness` is `0700` under `/root`:
+  # `sshd` runs the forced command as `your-cloud-auxiliary`, which cannot
+  # traverse it, so a forger placed there is never executed at all — the forced
+  # command fails, nothing is written to standard output, and the dispatch
+  # concludes `machine_refused` for a reason that has nothing to do with the
+  # case under test. Measured on the layout rather than guessed from the state.
   "$labctl" copy-to "$machine_vm" "$harness/_forger/forge-report" \
-    "$remote_harness/forge-report" >/dev/null
+    "$forger_path" >/dev/null
   "$labctl" ssh "$machine_vm" -- "
 set -e
-chmod 0755 $remote_harness/forge-report
+chmod 0755 $forger_path
+sudo -n -u $account test -x $forger_path
 cp $forced_key $forced_key.kept
-sed -i 's#command=\"[^\"]*\"#command=\"$remote_harness/forge-report\"#' $forced_key
-grep -q 'forge-report' $forced_key"
+sed -i 's#command=\"[^\"]*\"#command=\"$forger_path\"#' $forced_key
+grep -q '$forger_path' $forced_key"
   journey_once journal-menteur "$digest"
   state=$(last_record state)
   observation=$(last_record controller_observation)
-  echo "  the dispatch: $state — « $observation »"
+  sentence=$(last_record machine_sentence)
+  echo "  the dispatch: $state"
+  echo "  what the Controller observed: « $observation »"
+  echo "  what it kept as the machine's own words: « ${sentence:0:120} »"
   [[ "$state" == launched_unreported ]] \
     || fail "a forged report concluded « $state » rather than « launched_unreported »"
   [[ "$(last_record reported_outcome)" == "" ]] \

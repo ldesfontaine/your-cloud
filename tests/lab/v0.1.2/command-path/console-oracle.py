@@ -108,6 +108,26 @@ class Driver:
             {"script": script, "args": list(arguments)},
         )
 
+    def execute_async(self, script: str, *arguments: object, seconds: int = 120) -> object:
+        """Run a script that finishes by calling the callback it is handed.
+
+        The synchronous form cannot await, and every command of this product is
+        a promise: a diagnostic that could not await would only ever be able to
+        say « a promise was created ».
+        """
+        request(
+            self.base_url,
+            "POST",
+            f"/session/{self.session_id}/timeouts",
+            {"script": seconds * 1000},
+        )
+        return request(
+            self.base_url,
+            "POST",
+            f"/session/{self.session_id}/execute/async",
+            {"script": script, "args": list(arguments)},
+        )
+
     def screenshot(self) -> str:
         return str(request(self.base_url, "GET", f"/session/{self.session_id}/screenshot") or "")
 
@@ -637,6 +657,12 @@ def build_pair(driver: Driver, machine: str, digest: str, port: int, report: dic
 
 def approve_in_native_window(driver: Driver, report: dict) -> None:
     """Open the real window, answer it through X11, and say what that attests."""
+    # The consent session this opens lives `MAX_ASSISTANT_REMAINING_MILLIS`
+    # — five minutes — and is cleared the moment it expires, taking the signing
+    # gesture with it. Every step from here is therefore timed, so that a
+    # missing button can be told apart from a pilot that simply took too long.
+    opened_at = time.monotonic()
+    report["consent_opened_at"] = opened_at
     click(driver, "Lire et approuver dans la fenêtre native")
     window = await_native_window()
     facts = native_window_facts(window)
@@ -659,6 +685,19 @@ def approve_in_native_window(driver: Driver, report: dict) -> None:
     report["native_window"]["answered"] = "approve, by the window's own mnemonic (alt+a)"
     if not native_window_gone(window):
         raise RuntimeError("the native window is still mapped after it answered")
+    # What the screen offers **the instant the window has answered**, before the
+    # signing gesture is reached for. It situates the moment the session
+    # disappears when it disappears, instead of leaving only the after.
+    report["after_window"] = {
+        "seconds_since_consent_opened": round(time.monotonic() - report["consent_opened_at"], 1),
+        "buttons": driver.execute(
+            "return [...document.querySelectorAll('button')]"
+            ".filter((e) => e.textContent.includes('Signer')"
+            "            || e.textContent.includes('Lire et approuver')"
+            "            || e.textContent.includes('Annuler'))"
+            ".map((e) => ({ text: e.textContent.trim().slice(0, 60), disabled: e.disabled }));"
+        ),
+    }
 
 
 def sign_and_launch(driver: Driver, report: dict) -> None:
@@ -671,6 +710,9 @@ def sign_and_launch(driver: Driver, report: dict) -> None:
     """
     before = driver.execute("return document.querySelectorAll('.yc-dispatch').length;")
     before = before if isinstance(before, int) else 0
+    opened_at = report.get("consent_opened_at")
+    if opened_at is not None:
+        report["seconds_before_signing"] = round(time.monotonic() - opened_at, 1)
     click_then_wait(
         driver,
         "Signer et lancer",
@@ -716,6 +758,167 @@ return {
 """
 
 
+# A recorder at the door of the product, not a snapshot taken after the fact.
+#
+# A snapshot cannot catch a transient: asking « what is refusing? » once the
+# screen is already broken answers « nothing », which is exactly what happened
+# here — seven reads all answered `ok` at the instant of a failure caused by a
+# call that had already come and gone. This wraps `__TAURI_INTERNALS__.invoke`
+# and keeps every call in a circular buffer: name, a summary of the arguments,
+# whether it resolved or rejected, the rejection code, and when.
+#
+# It observes and forwards. The original function is called with the original
+# arguments and its result is returned untouched; nothing of the product's
+# behaviour depends on the buffer. It is the same door the frontend uses.
+INSTALL_RECORDER = """
+if (window.__ycRecorder) { return 'already installed'; }
+const internals = window.__TAURI_INTERNALS__;
+const buffer = [];
+const LIMIT = 400;
+const started = Date.now();
+const installed = [];
+
+// The transport, wrapped as well as the surface above it.
+//
+// Wrapping `__TAURI_INTERNALS__.invoke` alone recorded nothing at all — an
+// empty tape while the application demonstrably worked — because the frontend
+// bundle binds its reference when it loads, long before a WebDriver session
+// exists to wrap anything. The IPC itself is a `fetch` to the `ipc:` scheme, and
+// that call is made afresh every time, so it is the one place an observer that
+// arrives late can still see everything.
+if (typeof window.fetch === 'function') {
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const url = String(typeof input === 'string' ? input : (input && input.url) || '');
+    if (url.indexOf('ipc') === -1) { return originalFetch(input, init); }
+    const at = Date.now() - started;
+    const record = { at, name: 'ipc:' + url.split('/').pop(), via: 'fetch' };
+    return originalFetch(input, init).then(
+      (response) => {
+        record.outcome = response.ok ? 'resolved' : 'rejected';
+        record.code = 'http:' + response.status;
+        record.millis = Date.now() - started - at;
+        push(record);
+        return response;
+      },
+      (error) => {
+        record.outcome = 'threw'; record.code = codeOf(error);
+        record.millis = Date.now() - started - at;
+        push(record); throw error;
+      },
+    );
+  };
+  installed.push('fetch');
+}
+
+if (!internals || typeof internals.invoke !== 'function') {
+  window.__ycRecorder = { buffer, started };
+  return installed.length ? 'installed: ' + installed.join(',') : 'no IPC surface';
+}
+installed.push('invoke');
+const original = internals.invoke.bind(internals);
+internals.invoke = function (name, args, options) {
+  const at = Date.now() - started;
+  const record = { at, name, args: summarise(args) };
+  let answer;
+  try { answer = original(name, args, options); }
+  catch (error) { record.outcome = 'threw'; record.code = codeOf(error); push(record); throw error; }
+  if (!answer || typeof answer.then !== 'function') { record.outcome = 'value'; push(record); return answer; }
+  return answer.then(
+    (value) => { record.outcome = 'resolved'; record.millis = Date.now() - started - at; push(record); return value; },
+    (error) => {
+      record.outcome = 'rejected';
+      record.code = codeOf(error);
+      record.millis = Date.now() - started - at;
+      push(record);
+      throw error;
+    },
+  );
+};
+function push(record) { buffer.push(record); if (buffer.length > LIMIT) { buffer.shift(); } }
+function codeOf(error) {
+  if (error && typeof error === 'object' && 'code' in error) { return error.code; }
+  return String(error).slice(0, 120);
+}
+function summarise(args) {
+  if (!args || typeof args !== 'object') { return null; }
+  const kept = {};
+  for (const [key, value] of Object.entries(args)) {
+    // Never the values themselves: a recorder that copied a phrase or a code
+    // would be a recorder that writes a secret into a proof artefact.
+    kept[key] = typeof value === 'string' ? 'str:' + value.length : typeof value;
+  }
+  return kept;
+}
+window.__ycRecorder = { buffer, started };
+return 'installed: ' + installed.join(',');
+"""
+
+READ_RECORDER = """
+if (!window.__ycRecorder) { return null; }
+return window.__ycRecorder.buffer.slice(-60);
+"""
+
+
+def install_recorder(driver: Driver, report: dict) -> None:
+    report["recorder"] = driver.execute(INSTALL_RECORDER)
+
+
+def read_recorder(driver: Driver) -> object:
+    try:
+        return driver.execute(READ_RECORDER)
+    except Exception as failure:  # noqa: BLE001 — the tape must not hide the verdict
+        return {"recorder_unreadable": f"{type(failure).__name__}: {failure}"}
+
+
+# Which command of the product refuses, asked of the product's own IPC.
+#
+# A banner says « an operation was refused » and never which one, so a pilot
+# that only reads banners can do nothing but guess — and guessing is what cost
+# the previous session three wrong answers on this very symptom. This asks each
+# read the views perform, one at a time, and keeps the code each one returns.
+# It changes nothing: `__TAURI_INTERNALS__.invoke` is the same door the
+# frontend's own `invoke` goes through.
+PROBE_COMMANDS = """
+const done = arguments[arguments.length - 1];
+(async () => {
+  const internals = window.__TAURI_INTERNALS__;
+  if (!internals || typeof internals.invoke !== 'function') {
+    return { unavailable: 'this build exposes no IPC surface to ask' };
+  }
+  const call = async (name, args) => {
+    try { await internals.invoke(name, args || {}); return 'ok'; }
+    catch (error) {
+      if (error && typeof error === 'object' && 'code' in error) return error.code;
+      return String(error);
+    }
+  };
+  const answers = { console_status: await call('console_status') };
+  let infrastructure = null;
+  try {
+    const status = await internals.invoke('console_status');
+    infrastructure = (status.associations && status.associations[0])
+      ? status.associations[0].infrastructure_id : null;
+  } catch (error) { answers.status_error = String(error); }
+  if (!infrastructure) { return answers; }
+  answers.infrastructure_id = infrastructure;
+  for (const name of ['read_machines', 'read_service_definitions', 'read_plan_dispatches',
+                      'read_infrastructure', 'read_external_elements']) {
+    answers[name] = await call(name, { infrastructureId: infrastructure });
+  }
+  return answers;
+})().then(done, (error) => done({ probe_failed: String(error) }));
+"""
+
+
+def probe_commands(driver: Driver) -> object:
+    """Name the refusal instead of inferring it from a banner."""
+    try:
+        return driver.execute_async(PROBE_COMMANDS)
+    except Exception as failure:  # noqa: BLE001 — a probe must not mask the verdict
+        return {"probe_unreadable": f"{type(failure).__name__}: {failure}"}
+
+
 def capture_screen(driver: Driver) -> dict[str, object]:
     """The sentences the Console is showing right now, read from its own DOM.
 
@@ -725,6 +928,17 @@ def capture_screen(driver: Driver) -> dict[str, object]:
     try:
         return {
             "heading": driver.execute(HEADING),
+            # Every button the screen offers, with the two things that decide
+            # whether a gesture is reachable: the exact text and whether it is
+            # disabled. A pilot that reports « no button reads X » without this
+            # cannot tell an absent control from one that is merely busy, or
+            # from one whose label changed while it loads.
+            "buttons": driver.execute(
+                "return [...document.querySelectorAll('button')].map((e) => ({"
+                "  text: e.textContent.trim().slice(0, 60),"
+                "  disabled: e.disabled,"
+                "}));"
+            ),
             "alerts": driver.execute(
                 "return [...document.querySelectorAll("
                 "'[role=alert], .yc-error, .yc-alert, .yc-refusal, .yc-prose')]"
@@ -754,6 +968,9 @@ def main() -> int:
     report: dict[str, object] = {"stage": arguments.stage}
     driver = Driver(arguments.base_url, arguments.application)
     try:
+        # The recorder goes on before the first gesture, so the tape covers the
+        # whole run rather than starting once something has already gone wrong.
+        install_recorder(driver, report)
         if arguments.stage == "associate":
             with open(arguments.window_sheet, encoding="utf-8") as handle:
                 sheet = json.load(handle)
@@ -794,6 +1011,12 @@ def main() -> int:
         # the product's own refusal is a harness defect rather than a finding:
         # the sentence on the screen is the whole point of this palier.
         report["screen"] = capture_screen(driver)
+        # And which command refused, asked of the product rather than guessed
+        # from the banner above.
+        report["commands"] = probe_commands(driver)
+        # The tape: every call the product made, in order, with what each
+        # answered. This is what a snapshot cannot give.
+        report["tape"] = read_recorder(driver)
         status = 1
     finally:
         driver.close()
