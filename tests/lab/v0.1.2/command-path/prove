@@ -35,13 +35,26 @@ export LC_ALL=C.UTF-8
 
 usage() {
   cat >&2 <<'EOF'
-usage: prove [artifact | controller | console | associate | collect | remove | all]
+usage: prove [artifact | controller | console | associate | relay | enrol |
+              attach | origin | journey | verify | collect | remove | all]
 
   artifact    build the product binary on the machine that carries Go
-  controller  init the real Controller on lab-vps and start it serving
+  controller  init the real Controller on lab-vps and start it serving, with
+              one enrolment window open
   console     sync the console sources, build the .deb and install it
-  associate   drive the real Console to its association with that Controller
-  collect     bring the structured results and the captures back
+  associate   drive the real Console to its association with that Controller,
+              then close the window: a Controller holding an active device
+              refuses to open a second one, and it is right to
+  relay        stand the Relay and the Daemon up — the gate a machine enters
+              the Controller's inventory through
+  enrol       pose the anchor carrying the **real** approval key of the real
+              Console, the forced command and the bounded elevation
+  attach      rattach the machine from the Console's own Parc view
+  origin      build this run's image, serve it, and ground the machine for it
+  journey     the whole path twice: the failure that reaches the machine and
+              comes back, then the success that really poses a service
+  verify      read the posed service from outside the product
+  collect     bring the structured results back
   remove      take the perimeter away from the three machines and prove it
   all         everything above in order, removing even when a step fails
 
@@ -56,7 +69,8 @@ EOF
 command=${1:-all}
 [[ $# -le 1 ]] || usage
 case "$command" in
-  artifact | controller | console | associate | collect | remove | all) ;;
+  artifact | controller | console | associate | relay | enrol | attach | origin \
+    | journey | verify | collect | remove | all) ;;
   *) usage ;;
 esac
 
@@ -70,6 +84,20 @@ expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-command-path
 remote_state=/root/lab-command-path
 remote_build=/root/command-path-build
+remote_origin=/root/lab-command-path-origin
+# The origin of this run's image. It is the environment, not the product: the
+# name, the repository and the apparatus are `v0.1.1`'s, reused rather than
+# rebuilt, and it is served from the Controller's machine only because that is a
+# third host neither the Console nor the machine is.
+origin_host=registry.lab.your-cloud.test
+origin_repository="$origin_host/lab/synthetic-app"
+# The service this run really poses, and the three values that must agree
+# across three documents: the frozen definition, the plan, and the Quadlet unit
+# the Auxiliary writes.
+service_slug=journal-de-bord
+service_account=your-cloud-user-$service_slug
+service_port=18090
+scratch_directory=/var/scratch
 result_root="$root/tests/artifacts/proofs/command-path"
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 workdir=$(mktemp -d)
@@ -151,6 +179,9 @@ mount_controller() {
 
   announce "mounting the Controller on $controller_vm — $controller_address"
   deploy "$controller_vm" common install-controller
+  "$labctl" ssh "$controller_vm" -- "install -d -m 0700 $remote_origin"
+  "$labctl" copy-to "$controller_vm" "$harness/serve-origin" "$remote_origin/serve-origin" >/dev/null
+  "$labctl" ssh "$controller_vm" -- "chmod 0700 $remote_origin/serve-origin"
   "$labctl" copy-to "$controller_vm" "$carried/your-cloud" "$remote_harness/your-cloud" >/dev/null
 
   local identifiers
@@ -190,7 +221,11 @@ for leaf in controller-reader.crt controller-reader.key relay-reader-ca.crt; do
 done"
 
   # The command identity of the machine, struck by the product's own binary.
-  "$labctl" ssh "$controller_vm" -- "$remote_harness/install-controller mint $machine_vm"
+  # Only the public half is carried; the private one never leaves that machine.
+  "$labctl" ssh "$controller_vm" -- "$remote_harness/install-controller mint $machine_vm" \
+    | tee "$workdir/minted"
+  sed -n 's/^PUBLIC_KEY=//p' "$workdir/minted" | awk '{print $1, $2}' >"$carried/command-public-key"
+  [[ -s "$carried/command-public-key" ]] || fail "the Controller minted no public half to carry"
 
   # The endpoint sheet. Its host key is read through the managed LAB channel and
   # pinned; no side of this harness ever trusts a first answer on the wire.
@@ -207,13 +242,8 @@ chmod 0600 /etc/your-cloud/command-endpoints/$machine_vm.json"
 
   # The allowed source is one exact address, and the product refuses anything
   # wider: the Console's own, and nothing else on this network.
-  local served
-  served=$("$labctl" ssh "$controller_vm" -- \
-    "$remote_harness/install-controller serve $remote_harness/creds $console_address/32 $machine_address")
-  echo "$served"
-  "$labctl" copy-from "$controller_vm" "$remote_state/window.json" "$carried/window.json" >/dev/null
-  chmod 0600 "$carried/window.json"
   printf '%s' "$controller_address" >"$carried/controller-address"
+  serve_controller open
   echo "  the Controller's one-time sheet is carried, and it expires by itself"
 }
 
@@ -270,24 +300,269 @@ sed -i \"/ \$name\$/d\" /etc/hosts
 printf '%s %s\n' '$controller_address' \"\$name\" >>/etc/hosts
 getent hosts \"\$name\""
 
-  # The sheet expires by itself, and a Controller restarted here writes a fresh
-  # one: the association is driven against a window that is still open rather
-  # than against one this harness hoped had survived the build.
-  announce "reopening a window on the Controller, and carrying its fresh sheet"
-  "$labctl" ssh "$controller_vm" -- "
-set -e
-systemctl restart your-cloud-controller.service
-for attempt in \$(seq 1 30); do
-  [ -s /run/your-cloud-controller/window.json ] && break
-  sleep 1
-done
-cp /run/your-cloud-controller/window.json $remote_state/window.json
-chmod 0644 $remote_state/window.json"
-  "$labctl" copy-from "$controller_vm" "$remote_state/window.json" "$carried/window.json" >/dev/null
+  # The sheet the Controller wrote when it was started with a window open. It
+  # is carried the way a human carries it, and it expires by itself.
   "$labctl" copy-to "$console_vm" "$carried/window.json" "$remote_harness/window.json" >/dev/null
 
   announce "driving the installed Console to its association"
   "$labctl" ssh "$console_vm" -- "$remote_harness/run associate $remote_harness/window.json"
+
+  # And the window closes behind it. This is not tidiness: a Controller holding
+  # an active device refuses to open a second enrolment window and exits, so a
+  # perimeter left with `--window` cannot be restarted at all afterwards.
+  announce "closing the enrolment window: one Console, one association"
+  serve_controller closed
+}
+
+# serve_controller <open|closed> — the two shapes the product really has.
+serve_controller() {
+  local window=$1 controller_address machine_address console_address
+  controller_address=$(inventory "$controller_vm")
+  machine_address=$(inventory "$machine_vm")
+  console_address=$(inventory "$console_vm")
+  "$labctl" ssh "$controller_vm" -- "$remote_harness/install-controller serve \
+    $remote_harness/creds $console_address/32 $controller_address $machine_address $window"
+  if [[ "$window" == open ]]; then
+    "$labctl" copy-from "$controller_vm" "$remote_state/window.json" "$carried/window.json" >/dev/null
+    chmod 0600 "$carried/window.json"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# relay — the gate a machine enters the inventory through.
+# --------------------------------------------------------------------------
+mount_relay() {
+  local controller_address
+  controller_address=$(inventory "$controller_vm")
+  announce "standing the Relay and the Daemon up on $machine_vm"
+  deploy "$machine_vm" common install-machine
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+install -d -m 0755 /usr/local/lib/your-cloud
+install -m 0755 $remote_build/your-cloud /usr/local/lib/your-cloud/your-cloud
+install -d -m 0700 $remote_build/relay-credentials
+cp $remote_build/pki/relay/relay.crt $remote_build/pki/relay/relay.key \
+   $remote_build/pki/relay/relay-reader.crt $remote_build/pki/relay/relay-reader.key \
+   $remote_build/pki/relay/relay-reader.json $remote_build/pki/relay/enrollment.json \
+   $remote_build/pki/relay/daemon-ca.crt $remote_build/pki/relay/controller-reader-ca.crt \
+   $remote_build/relay-credentials/
+cp $remote_build/pki/machine-1/daemon.crt $remote_build/pki/machine-1/daemon.key \
+   $remote_build/pki/machine-1/relay-ca.crt $remote_build/relay-credentials/"
+  "$labctl" ssh "$machine_vm" -- \
+    "$remote_harness/install-machine relay $remote_build/relay-credentials $controller_address"
+}
+
+# --------------------------------------------------------------------------
+# enrol — the anchor carries the real approval key of the real Console, which
+# is why this phase can only run after the association.
+# --------------------------------------------------------------------------
+enrol_machine() {
+  local infrastructure_id human_key public
+  infrastructure_id=$(cat "$carried/infrastructure-id")
+
+  announce "reading the approval key the real Console published to this Controller"
+  human_key=$("$labctl" ssh "$controller_vm" -- \
+    "python3 -c 'import json;print(json.load(open(\"/var/lib/private/your-cloud-controller/identity.json\"))[\"active\"][\"human_public_key\"])'" \
+    | tr -d '\r\n')
+  [[ -n "$human_key" ]] || fail "this Controller holds no active device: the Console never associated"
+  echo "  the machine will accept approvals from this key, and no other"
+
+  # The anchor is composed here from the Controller's own device record. In
+  # production the Assistant writes it during the enrolment; that path is
+  # `#126`'s and is proven by `machine-identity`. It is upstream of the command
+  # path rather than on it, and the report says so.
+  printf '{"schema_version":1,"infrastructure_id":"%s","machine_id":"%s","approval_epoch":1,"approval_public_key":"%s"}' \
+    "$infrastructure_id" "$machine_vm" "$human_key" >"$workdir/anchor.json"
+
+  # The forced-command entry and the elevation rule are rendered by the
+  # product's own module, through the contract-test binary that exposes it —
+  # never composed by this harness. It is built from this run's sources.
+  announce "rendering the entry and the elevation rule with the product's own module"
+  "$labctl" ssh "$console_vm" -- "
+set -e
+. /root/.cargo/env
+cd /root/your-cloud-console-build/src-tauri
+export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8
+cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
+  --features machine-identity-contract-test --bin your-cloud-machine-identity-fixture >/dev/null 2>&1
+install -m 0700 target/debug/your-cloud-machine-identity-fixture $remote_harness/identity-fixture"
+
+  public=$(cat "$carried/command-public-key")
+  "$labctl" ssh "$console_vm" -- \
+    "$remote_harness/identity-fixture render-entry $public" >"$workdir/entry"
+  "$labctl" ssh "$console_vm" -- \
+    "$remote_harness/identity-fixture render-elevation" >"$workdir/sudoers"
+  [[ -s "$workdir/entry" && -s "$workdir/sudoers" ]] \
+    || fail "the product's own module rendered no entry or no elevation rule"
+
+  announce "enrolling $machine_vm in the order the contract fixes"
+  local file
+  for file in anchor.json entry sudoers; do
+    "$labctl" copy-to "$machine_vm" "$workdir/$file" "$remote_harness/$file" >/dev/null
+  done
+  "$labctl" ssh "$machine_vm" -- "$remote_harness/install-machine enrol \
+    $remote_harness/anchor.json $remote_harness/entry $remote_harness/sudoers"
+}
+
+# --------------------------------------------------------------------------
+# attach — from the Console's own Parc view, through the Relay's snapshot.
+# --------------------------------------------------------------------------
+attach_machine() {
+  announce "attaching $machine_vm to the inventory, from the Console"
+  "$labctl" ssh "$console_vm" -- \
+    "$remote_harness/run attach $remote_harness/window.json $machine_vm"
+}
+
+# --------------------------------------------------------------------------
+# origin — this run's image, its origin, and the ground a user service needs.
+#
+# Everything here is the environment rather than the product, and it is the
+# apparatus `v0.1.1` already proved rather than a second one. What is kept is
+# what a user service really uses: rootless Podman, the Quadlet unit the
+# Auxiliary writes, the digest it verifies, and a service that answers.
+# --------------------------------------------------------------------------
+mount_origin() {
+  local controller_address
+  controller_address=$(inventory "$controller_vm")
+
+  announce "building this run's application, its image and the authority that signs the origin"
+  "$labctl" copy-to "$machine_vm" "$root/tests/lab/v0.1.1/user-service/_fixture/main.go" \
+    "$remote_build/labfixture-main.go" >/dev/null
+  "$labctl" copy-to "$machine_vm" "$root/tests/lab/v0.1.1/user-service/_app/main.go" \
+    "$remote_build/labapp-main.go" >/dev/null
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+export PATH=\$PATH:/usr/local/go/bin LC_ALL=C.UTF-8
+cd $remote_build
+install -d labfixture labapp bin
+mv labfixture-main.go labfixture/main.go
+mv labapp-main.go labapp/main.go
+# The binaries go under bin/ and not beside the packages: `go build -o` onto a
+# path a source directory already occupies fails « is a directory », and this
+# module root already holds the packages named after them.
+go build -o $remote_build/bin/labfixture ./labfixture
+CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o $remote_build/bin/synthetic-app ./labapp
+rm -rf authority issued image
+./bin/labfixture -authority -authority-directory $remote_build/authority
+chmod 0700 authority
+./bin/labfixture -issue -authority-directory $remote_build/authority -out $remote_build/issued \
+  -route-host $origin_host
+./bin/labfixture -image-build -binary $remote_build/bin/synthetic-app -out $remote_build/image >/dev/null
+cat $remote_build/image/manifest.digest"
+  "$labctl" copy-from "$machine_vm" "$remote_build/image/manifest.digest" "$carried/image-digest" >/dev/null
+  local digest
+  digest=$(tr -d '\r\n' <"$carried/image-digest")
+  [[ "$digest" == sha256:* ]] || fail "the image build reported no digest"
+  echo "  the image this run pins: $origin_repository@$digest"
+
+  announce "serving the origin from $controller_vm, and grounding $machine_vm for it"
+  tar_from_machine origin.tgz "image issued authority/authority.crt"
+  "$labctl" ssh "$controller_vm" -- "install -d -m 0700 $remote_origin"
+  "$labctl" copy-to "$controller_vm" "$workdir/origin.tgz" "$remote_origin/origin.tgz" >/dev/null
+  "$labctl" copy-from "$machine_vm" "$remote_build/bin/labfixture" "$workdir/labfixture" >/dev/null
+  "$labctl" copy-to "$controller_vm" "$workdir/labfixture" "$remote_origin/fixture" >/dev/null
+  "$labctl" ssh "$controller_vm" -- "
+set -e
+cd $remote_origin
+tar xzf origin.tgz && rm -f origin.tgz
+chmod 0700 fixture
+cp issued/$origin_host.crt origin.crt
+cp issued/$origin_host.key origin.key
+$remote_origin/serve-origin start"
+
+  "$labctl" copy-from "$machine_vm" "$remote_build/authority/authority.crt" "$carried/authority.crt" >/dev/null
+  "$labctl" copy-to "$machine_vm" "$carried/authority.crt" "$remote_harness/authority.crt" >/dev/null
+  "$labctl" ssh "$machine_vm" -- \
+    "$remote_harness/install-machine ground $controller_address $remote_harness/authority.crt"
+
+  # The fetch is read before any plan depends on it: a pull that fails later
+  # would otherwise be indistinguishable from a machine that refused.
+  "$labctl" ssh "$machine_vm" -- "
+code=\$(curl -sS -o /dev/null -w '%{http_code}' \
+  'https://$origin_host/v2/lab/synthetic-app/manifests/$digest' \
+  -H 'Accept: application/vnd.oci.image.manifest.v1+json')
+[ \"\$code\" = 200 ] || { echo \"FAILED: the origin answered \$code for this run's digest\" >&2; exit 1; }
+echo '  the machine reaches this run'\''s image by digest, over the run'\''s own TLS'"
+}
+
+# tar_from_machine <name> <paths> — carry a tree off the machine that built it.
+tar_from_machine() {
+  local name=$1 paths=$2
+  "$labctl" ssh "$machine_vm" -- "tar -C $remote_build -czf $remote_build/$name $paths"
+  "$labctl" copy-from "$machine_vm" "$remote_build/$name" "$workdir/$name" >/dev/null
+}
+
+# --------------------------------------------------------------------------
+# journey — the whole path, twice.
+#
+# The failure comes first and it is deliberate rather than incidental: a
+# digest no origin serves proves the path reaches the machine, that the
+# Auxiliary refuses what it cannot verify, that it rolls back, and that its
+# report climbs back through the channel the Controller opened. A success
+# alone could not tell « the machine applied » from « nothing was checked ».
+# --------------------------------------------------------------------------
+run_journey() {
+  local digest absent
+  digest=$(tr -d '\r\n' <"$carried/image-digest")
+  absent=sha256:$(printf 'a%.0s' {1..64})
+
+  announce "the failure that reaches the machine and comes back"
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
+    $machine_vm $absent journal-manquant"
+  read_dispatch "rolled_back_after_controlled_failure" 1 "the controlled failure"
+
+  announce "the success that really poses a service"
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
+    $machine_vm $digest journal-de-bord"
+  read_dispatch "applied" 2 "the applied deployment"
+}
+
+# read_dispatch <expected outcome> <expected sequence> <label> — the Controller's
+# own record, read from the machine that holds it, never from what the Console
+# displayed.
+#
+# The sequence is asserted as well as the outcome, and that is the anti-replay
+# position made observable: the second journey may only be the **successor** of
+# the position the machine itself reported consuming in the first.
+read_dispatch() {
+  local expected=$1 sequence=$2 label=$3 outcome
+  # One line, deliberately: a multi-line program handed to `ssh` is re-split by
+  # the remote shell, and a probe that breaks on quoting reads like a red.
+  outcome=$("$labctl" ssh "$controller_vm" -- \
+    "python3 -c \"import json,sys; r=json.load(open('/var/lib/private/your-cloud-controller/dispatches.json'))['records'][-1]; print(r['state'], r['reported_outcome'], r['sequence'])\"")
+  echo "  the Controller's own record: $outcome"
+  case "$outcome" in
+    "reported $expected $sequence") ;;
+    *) fail "$label concluded « $outcome » rather than « reported $expected $sequence »" ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
+# verify — the service, read from outside the product.
+# --------------------------------------------------------------------------
+verify_service() {
+  local digest
+  digest=$(tr -d '\r\n' <"$carried/image-digest")
+  announce "reading the posed service from outside the product"
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+unit=/var/lib/$service_account/.config/containers/systemd/$service_account.container
+[ -f \$unit ] || { echo 'FAILED: the Auxiliary wrote no Quadlet unit' >&2; exit 1; }
+grep -q 'Image=$origin_repository@$digest' \$unit \
+  || { echo 'FAILED: the unit does not pin the digest the human approved' >&2; exit 1; }
+grep -q 'PublishPort=127.0.0.1:$service_port:' \$unit \
+  || { echo 'FAILED: the unit does not publish the port the plan named' >&2; exit 1; }
+grep -q 'Tmpfs=$scratch_directory' \$unit \
+  || { echo 'FAILED: the tmpfs of the frozen definition did not reach the unit' >&2; exit 1; }
+echo '  the unit pins the approved digest, the named port and the declared tmpfs'
+answer=\$(curl -sS --max-time 15 http://127.0.0.1:$service_port/)
+printf '%s\n' \"\$answer\" | grep -q 'slug=$service_slug' \
+  || { echo \"FAILED: the service answered without naming its slug: \$answer\" >&2; exit 1; }
+# The application refuses to serve when the scratch its definition declares is
+# absent, so this line is the definition arriving rather than a formality.
+printf '%s\n' \"\$answer\" | grep -q 'scratch=writable' \
+  || { echo \"FAILED: the service does not hold the scratch its definition declared: \$answer\" >&2; exit 1; }
+echo '  the service answers, names its slug, and holds the scratch it was given'"
 }
 
 collect() {
@@ -304,6 +579,12 @@ collect() {
 remove() {
   local status=0
   announce "removing the perimeter from the three machines"
+  # The origin first, and by its own script rather than by a `pkill`: it is a
+  # `setsid` listener that outlives the session that started it, so a pass that
+  # forgot it would leave a machine serving an image to whatever comes next.
+  # `stop` asserts the silence rather than reporting one it did not verify.
+  "$labctl" ssh "$controller_vm" -- \
+    "test -x $remote_origin/serve-origin && $remote_origin/serve-origin stop || true" || status=1
   "$labctl" ssh "$controller_vm" -- "
 systemctl disable --now your-cloud-controller.service 2>/dev/null || true
 rm -f /etc/systemd/system/your-cloud-controller.service
@@ -315,9 +596,37 @@ if [ -d /etc/your-cloud/command-identities ]; then
 fi
 rm -rf /etc/your-cloud/command-identities /etc/your-cloud/command-endpoints \
   /etc/your-cloud/controller-reader.crt /etc/your-cloud/controller-reader.key \
-  /etc/your-cloud/relay-reader-ca.crt /var/lib/your-cloud-controller \
-  $remote_harness $remote_state" || status=1
-  "$labctl" ssh "$machine_vm" -- "rm -rf $remote_build $remote_build.tgz $remote_harness" || status=1
+  /etc/your-cloud/relay-reader-ca.crt /var/lib/private/your-cloud-controller \
+  /var/lib/your-cloud-controller $remote_harness $remote_state $remote_origin" || status=1
+
+  # The machine gives back everything: the Relay and the Daemon, the service
+  # this run really posed, the two harness acts, and the enrolment.
+  #
+  # **This dismantling is the harness's, not the product's**, and the report
+  # says so: returning a machine by an approved `remove_user_service` plan
+  # would be a second journey and a stronger constat, and it is named as the
+  # next one to write rather than quietly skipped. What is asserted here is
+  # only that the machine is given back, not that the product knows how to
+  # give it back — that belongs to `v0.1.1`, which proved it.
+  "$labctl" ssh "$machine_vm" -- "
+systemctl disable --now your-cloud-relay.service your-cloud-daemon.service 2>/dev/null || true
+rm -f /etc/systemd/system/your-cloud-relay.service /etc/systemd/system/your-cloud-daemon.service
+systemctl daemon-reload 2>/dev/null || true
+if id $service_account >/dev/null 2>&1; then
+  loginctl disable-linger $service_account 2>/dev/null || true
+  pkill -9 -u $service_account 2>/dev/null || true
+  sleep 2
+  userdel -r -f $service_account 2>/dev/null || true
+fi
+/usr/sbin/nft delete table inet your-cloud-egress 2>/dev/null || true
+rm -f /usr/local/share/ca-certificates/lab-command-path-authority.crt
+update-ca-certificates --fresh >/dev/null 2>&1 || true
+sed -i '/ $origin_host\$/d' /etc/hosts
+rm -f /etc/ssh/sshd_config.d/60-your-cloud-command-path.conf
+sshd -t >/dev/null 2>&1 && systemctl reload ssh >/dev/null 2>&1 || true
+rm -rf /etc/your-cloud /var/lib/your-cloud-auxiliary /usr/lib/your-cloud \
+  /usr/local/lib/your-cloud /etc/systemd/system/your-cloud-egress-rules.service \
+  $remote_build $remote_build.tgz $remote_harness" || status=1
   # The candidate, the harness, and the name this run pointed at a Controller.
   #
   # The build tree is *shared* with the reflow proof at the same path and both
@@ -336,7 +645,9 @@ printf '  free space on the pilot after this pass: %s MiB\n' \"\$((\$(df --outpu
   rm -rf "$carried"
   local pair vm path
   for pair in "$controller_vm $remote_harness" "$controller_vm /etc/your-cloud/command-identities" \
-    "$machine_vm $remote_build" "$console_vm $remote_harness"; do
+    "$controller_vm $remote_origin" "$machine_vm $remote_build" \
+    "$machine_vm /etc/your-cloud/approval-anchor.json" \
+    "$machine_vm /var/lib/your-cloud-auxiliary" "$console_vm $remote_harness"; do
     read -r vm path <<<"$pair"
     "$labctl" ssh "$vm" -- "test ! -e $path" \
       || { echo "FAILED: $path is still present in $vm" >&2; status=1; }
@@ -350,15 +661,38 @@ case "$command" in
   controller) mount_controller ;;
   console) mount_console ;;
   associate) associate ;;
+  relay) mount_relay ;;
+  enrol) enrol_machine ;;
+  attach) attach_machine ;;
+  origin) mount_origin ;;
+  journey) run_journey ;;
+  verify) verify_service ;;
   collect) collect ;;
   remove) remove ;;
   all)
+    # The order is the order of authorities, and not one step of it is a
+    # convenience: the Console cannot associate before a Controller serves with
+    # a window, the anchor cannot be posed before the Console has published the
+    # key it will carry, a machine cannot enter the inventory before the Relay
+    # reports it, and no plan can be approved for a machine outside it.
     status=0
-    build_artifact || status=$?
-    [[ $status -eq 0 ]] && { mount_controller || status=$?; }
-    [[ $status -eq 0 ]] && { mount_console || status=$?; }
-    [[ $status -eq 0 ]] && { associate || status=$?; }
+    step() {
+      [[ $status -eq 0 ]] || return 0
+      "$@" || status=$?
+    }
+    step build_artifact
+    step mount_controller
+    step mount_console
+    step associate
+    step mount_relay
+    step enrol_machine
+    step attach_machine
+    step mount_origin
+    step run_journey
+    step verify_service
     collect || true
+    # Removal always runs, red or green: a perimeter left behind is a machine
+    # that lies to the next proof.
     remove || status=${status:-1}
     [[ $status -eq 0 ]] || fail "the command-path proof failed with $status"
     echo

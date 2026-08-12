@@ -94,7 +94,9 @@ python3 -u -X faulthandler "$here/console-oracle.py" \
   --window-sheet "$window_sheet" \
   --secrets "$state_root/vault.json" \
   --machine "${3:-}" \
-  --output "$output/command-path-$stage.json" \
+  ${4:+--digest "$4"} \
+  ${5:+--slug "$5"} \
+  --output "$output/command-path-$stage${5:+-$5}.json" \
   --stage "$stage"
 oracle_status=$?
 set -e

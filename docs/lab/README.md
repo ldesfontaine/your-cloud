@@ -470,8 +470,45 @@ L'existence d'une topologie dans `labctl` signifie uniquement que l'outil sait
 la créer. Une capacité devient prouvée seulement après une exécution réelle,
 documentée et reproductible dans le LAB approprié.
 
+## La preuve de la milestone `v0.1.2` : `tests/lab/v0.1.2/command-path/prove`
+
+[`tests/lab/v0.1.2/command-path/prove`](../../tests/lab/v0.1.2/command-path/prove)
+est l'entrée d'orchestration de la milestone « La Console aux commandes »
+(`#122`), et la **première preuve de ce dépôt sous la règle sans fixture** de
+[`QUALITE.md`](../contribution/QUALITE.md) : aucun composant du produit n'y est
+remplacé sur le trajet prouvé, et la liste de ces remplacements est vide.
+
+Les trois machines de `quick` tiennent trois autorités qui ne sont pas
+interchangeables : `lab-console` est la machine de l'humain — le `.deb` de la
+passe, sa WebView, son helper natif et son coffre, et rien du côté serveur ;
+`lab-vps` est le Controller, seul côté qui ouvre une session vers une machine ;
+`lab-machine-1` est la machine — l'Auxiliaire, l'ancre, sa position anti-rejeu,
+Podman rootless, et le Relay par lequel elle entre dans l'inventaire.
+
+Le Relay n'est pas du mobilier d'observabilité sur ce trajet : `PUT /v0/machines`
+lit son instantané et refuse une machine qu'il ne voit pas rapportée active, et
+une approbation nommant une machine hors inventaire est refusée. Il est la porte
+d'entrée du maillon 4.
+
+Le trajet est parcouru **deux fois**, et l'ordre est délibéré : un plan épinglant
+un digest qu'aucune origine ne sert d'abord — le lancement atteint la machine,
+l'Auxiliaire refuse, revient en arrière et rapporte —, puis le plan qui pose
+réellement le service. Un succès seul ne distinguerait pas « la machine a
+appliqué » de « rien n'a été vérifié ».
+
 ## Rapports exécutés
 
+- [`v0.1.2` — le trajet de commande entier, sans fixture](v0.1.2-command-path.md) :
+  passage `quick` du 12 août 2026 pour #128. La Console installée gèle une
+  définition, « Déployer » ne porte qu'un nom, la **vraie fenêtre native** —
+  processus GTK séparé, conduit par XTEST et non par un événement synthétique que
+  GTK ignore — recueille le consentement, le cœur signe, le Controller consomme
+  la séquence puis lance par SSH, et l'Auxiliaire pose un service qui répond. La
+  passe a trouvé trois défauts qu'aucune suite ne voyait : un dernier geste
+  jamais câblé, [#130](https://github.com/ldesfontaine/your-cloud/issues/130) —
+  aucune identité de commande lisible telle que le paquet la livre — et
+  [#131](https://github.com/ldesfontaine/your-cloud/issues/131) — aucun
+  lancement ne joignait une machine sur le port SSH par défaut.
 - [`v0.1.1` — le moteur des services utilisateur, prouvé une fois](v0.1.1-user-service.md) :
   passage `quick` du 8 août 2026 pour #121, **vert après deux rouges produit**.
   Une application synthétique écrite pour exercer le moteur entièrement — deux

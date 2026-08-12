@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Serve this run's image as an OCI distribution origin, and take it away again.
+#
+# Nothing of the product runs here. What listens is the harness's own fixture
+# binary — the one `v0.1.1` already proved, built from the synchronised sources
+# on the machine that carries Go — serving the read half of the distribution API
+# over this run's own TLS, out of a static tree.
+#
+# It lives on the Controller's machine for one reason only: a service that pulls
+# an image over the network must pull it from somewhere that is neither itself
+# nor the human's laptop. The Controller's machine is the third host this
+# topology has. Nothing of the command path passes through it.
+#
+# `stop` exists because a listener left behind is a machine that lies to the
+# next proof, and because a `setsid` process outlives the session that started
+# it: `remove` calls this, red or green.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+command=${1:?usage: serve-origin <start|stop|status>}
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+repository=registry.lab.your-cloud.test/lab/synthetic-app
+port=443
+pidfile="$here/origin.pid"
+log="$here/origin.log"
+
+listening() { ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; }
+
+running() {
+  [[ -f "$pidfile" ]] || return 1
+  local pid
+  pid=$(cat "$pidfile" 2>/dev/null) || return 1
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+case "$command" in
+  start)
+    [[ -x "$here/fixture" ]] || { echo "FAILED: no origin binary was placed here" >&2; exit 1; }
+    [[ -f "$here/image/manifest.json" ]] || { echo "FAILED: no image tree was placed here" >&2; exit 1; }
+    if running; then
+      kill "$(cat "$pidfile")" 2>/dev/null || true
+      sleep 1
+    fi
+    rm -f "$pidfile" "$log"
+    setsid nohup "$here/fixture" -origin \
+      -origin-root "$here/image" \
+      -image-repository "$repository" \
+      -origin-listen ":$port" \
+      -origin-certificate "$here/origin.crt" \
+      -origin-key "$here/origin.key" >"$log" 2>&1 &
+    echo $! >"$pidfile"
+    for _ in $(seq 1 20); do
+      listening && break
+      sleep 1
+    done
+    if listening; then
+      echo "  origin: serving $repository on :$port"
+      echo "  origin: digest $(cat "$here/image/manifest.digest")"
+    else
+      echo "FAILED: the origin never listened" >&2
+      tail -5 "$log" >&2 || true
+      exit 1
+    fi
+    ;;
+  stop)
+    if running; then
+      kill "$(cat "$pidfile")" 2>/dev/null || true
+      sleep 1
+    fi
+    # The listener is what matters, not the file: a stale pidfile must never
+    # let this report a silence it did not verify.
+    rm -f "$pidfile"
+    if listening; then
+      echo "FAILED: something is still listening on :$port" >&2
+      exit 1
+    fi
+    echo "  origin: stopped, and nothing listens on :$port"
+    ;;
+  status)
+    listening && echo "  origin: listening on :$port" || echo "  origin: silent"
+    ;;
+  *)
+    echo "usage: serve-origin <start|stop|status>" >&2
+    exit 2
+    ;;
+esac

@@ -145,12 +145,20 @@ return true;
 HEADING = "const h = document.querySelector('h1'); return h ? h.textContent.trim() : null;"
 
 
-def wait_until(driver: Driver, script: str, expected: object = True, seconds: int = 60, label: str = "") -> None:
+def wait_until(
+    driver: Driver,
+    script: str,
+    expected: object = True,
+    seconds: int = 60,
+    label: str = "",
+    argument: object = None,
+) -> None:
     deadline = time.monotonic() + seconds
     last: object = None
+    arguments = () if argument is None else (argument,)
     while time.monotonic() < deadline:
         try:
-            last = driver.execute(script)
+            last = driver.execute(script, *arguments)
         except (http.client.RemoteDisconnected, ConnectionResetError):
             last = "<transport cut>"
         if last == expected:
@@ -175,6 +183,7 @@ def click_then_wait(
     expected: object = True,
     seconds: int = 60,
     description: str = "",
+    argument: object = None,
 ) -> None:
     """Click, then hold the click to its observable effect.
 
@@ -187,7 +196,8 @@ def click_then_wait(
         except (http.client.RemoteDisconnected, ConnectionResetError):
             pass
         try:
-            wait_until(driver, effect, expected, seconds=seconds, label=description or label)
+            wait_until(driver, effect, expected, seconds=seconds,
+                       label=description or label, argument=argument)
             return
         except RuntimeError:
             if attempt == 2:
@@ -205,6 +215,11 @@ def fill(driver: Driver, values: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 WINDOW_TITLE = "Approuver cette opération"
+
+# The container path the synthetic application writes its start marker into.
+# It is named here because two documents must agree on it: the `tmpfs` line of
+# the definition and the environment line the image reads.
+SCRATCH_DIRECTORY = "/var/scratch"
 
 
 def xdotool(*arguments: str) -> str | None:
@@ -260,13 +275,26 @@ def answer_native_window(window: str, response: str) -> None:
 
     The two buttons the product builds carry GTK mnemonics — `_Approuver et
     signer` and `_Refuser` — so `alt+a` and `alt+r` activate exactly the
-    control the human would click, and never a default this harness chose.
+    control a human would click, and never a default this harness chose.
+
+    The keystroke is delivered by **XTEST**, not by `key --window`. A
+    `--window` keystroke is an `XSendEvent` synthetic event, and GTK ignores
+    those by design — this harness watched the window stay open under one. XTEST
+    events enter through the server's own input path, indistinguishable from a
+    keyboard's, which is both the mechanism that works and the honest one to
+    claim. There is no window manager on this screen, so focus is set
+    explicitly rather than by activation.
     """
     keys = {"approve": "alt+a", "refuse": "alt+r"}
     if response not in keys:
         raise RuntimeError(f"a window is answered approve or refuse, never {response!r}")
-    xdotool("windowactivate", "--sync", window)
-    xdotool("key", "--window", window, "--clearmodifiers", keys[response])
+    xdotool("windowraise", window)
+    xdotool("windowfocus", "--sync", window)
+    # The pointer is put over the window too: with no window manager, some GTK
+    # builds route key events by pointer position rather than by input focus.
+    xdotool("mousemove", "--window", window, "50", "50")
+    time.sleep(0.5)
+    xdotool("key", "--clearmodifiers", keys[response])
 
 
 def native_window_gone(window: str, seconds: int = 60) -> bool:
@@ -439,6 +467,237 @@ def attach_machine(driver: Driver, machine_id: str, report: dict) -> None:
     report["fleet_after"] = capture_screen(driver)
 
 
+def freeze_definition(driver: Driver, slug: str, repository: str, port: int, report: dict) -> None:
+    """Write a definition in the Console and freeze it.
+
+    Nothing is pasted and nothing is assembled: the fields are the product's
+    own, and freezing is the product's own gesture. The definition declares
+    **no origin**, which is a configuration the product supports and enforces —
+    a plan carrying an origin for a definition that consumes none is refused.
+    That is what lets this proof stand up a real user service without an
+    entrypoint, and it is a decision rather than a shortcut.
+    """
+    click_then_wait(driver, "Services", HEADING, "Services", description="the Services view")
+    fill(
+        driver,
+        {
+            "#definition-slug": slug,
+            "#definition-repository": repository,
+            "#definition-port": str(port),
+            # The scratch the image demands under a read-only filesystem. The
+            # application refuses to serve without it rather than degrading
+            # quietly, so this line is what makes « the service answers » a
+            # constat rather than a hope.
+            "#definition-tmpfs": SCRATCH_DIRECTORY,
+            "#definition-environment": "\n".join(
+                [
+                    f"YC_LAB_SLUG={slug}",
+                    f"YC_LAB_LISTEN_PORT={port}",
+                    f"YC_LAB_SCRATCH_DIR={SCRATCH_DIRECTORY}",
+                ]
+            ),
+        },
+    )
+    # The consequences panel is the **only** door to freezing, and that is the
+    # product's decision rather than a step this pilot could skip: the panel is
+    # where the sentences a frozen revision commits to are read, and the freeze
+    # button exists nowhere else. The button enables only once the core has
+    # reviewed the draft, so the wait is on the button, not on a delay.
+    wait_until(
+        driver,
+        "return [...document.querySelectorAll('button')].some("
+        "(e) => e.textContent.trim() === 'Voir ce que la machine recevra' && !e.disabled);",
+        seconds=120,
+        label="the draft becoming reviewable",
+    )
+    click_then_wait(
+        driver,
+        "Voir ce que la machine recevra",
+        "return document.querySelectorAll('.yc-sentence-list li').length > 0;",
+        seconds=120,
+        description="the consequences panel",
+    )
+    report["consequences"] = driver.execute(
+        "return [...document.querySelectorAll('.yc-sentence-list li')]"
+        ".map((e) => e.textContent.trim());"
+    )
+    # The effect names **this** definition. An earlier version waited for any
+    # « Déployer cette révision » button to exist, and the second journey of a
+    # run passed that wait instantly against the card the first journey had
+    # frozen — a condition satisfied by the previous step is not a condition.
+    click_then_wait(
+        driver,
+        "Geler cette révision",
+        "return [...document.querySelectorAll('.yc-definition__slug')]"
+        ".some((e) => e.textContent.trim() === arguments[0]);",
+        seconds=180,
+        description=f"the revision of « {slug} » freezing",
+        argument=slug,
+    )
+    report["frozen"] = {"slug": slug, "by": "the Console's own freeze gesture"}
+
+
+# The deploy button of **one** definition, found through the card that names it.
+# A run freezes more than one definition, and every card carries a button with
+# the same words: clicking « the first one that reads Déployer » deployed the
+# wrong revision until this was scoped.
+DEPLOY_THE_DEFINITION = """
+const wanted = arguments[0];
+const heading = [...document.querySelectorAll('.yc-definition__slug')]
+  .find((element) => element.textContent.trim() === wanted);
+if (!heading) return 'no definition named ' + wanted;
+let node = heading;
+for (let depth = 0; depth < 8 && node; depth += 1) {
+  const button = [...node.querySelectorAll('button')]
+    .find((candidate) => candidate.textContent.trim() === 'Déployer cette révision'
+      && !candidate.disabled);
+  if (button) { button.click(); return true; }
+  node = node.parentElement;
+}
+return 'no deploy button beside ' + wanted;
+"""
+
+
+def deploy_gesture(driver: Driver, slug: str, report: dict) -> None:
+    """« Déployer » — the one gesture that carries a slug and nothing else.
+
+    No document is pasted, no digest is typed, no field is copied across: this
+    is constat 2 of the contract, and it is exercised rather than asserted.
+    """
+    deadline = time.monotonic() + 60
+    answer: object = None
+    while time.monotonic() < deadline:
+        answer = driver.execute(DEPLOY_THE_DEFINITION, slug)
+        if answer is True:
+            break
+        time.sleep(0.25)
+    if answer is not True:
+        raise RuntimeError(f"the deploy gesture of « {slug} » was unreachable: {answer}")
+    wait_until(
+        driver,
+        HEADING,
+        "Plans",
+        seconds=120,
+        label="the Plans view reached by the deploy gesture",
+    )
+    carried = driver.execute(
+        "const e = document.querySelector('#yc-plan-slug');"
+        "return e ? e.value : null;"
+    )
+    report["deploy_gesture"] = {
+        "slug_carried": carried,
+        "claim": "the slug travelled; no plan, no document and no digest did",
+    }
+
+
+def build_pair(driver: Driver, machine: str, digest: str, port: int, report: dict) -> None:
+    """Ask the Controller to build and freeze the pair, and read back phrases."""
+    fill(
+        driver,
+        {
+            "#yc-plan-machine": machine,
+            "#yc-plan-image": digest,
+            "#yc-plan-port": str(port),
+        },
+    )
+    click_then_wait(
+        driver,
+        "Déployer",
+        "return document.querySelectorAll('.yc-plan-lines li').length > 0;",
+        seconds=180,
+        description="the pair the Controller built",
+    )
+    lines = driver.execute(
+        "return [...document.querySelectorAll('.yc-plan-lines li')]"
+        ".map((e) => e.textContent.trim());"
+    )
+    report["pair"] = {
+        "confirmation_lines": lines,
+        "claim": "built and frozen by the Controller, rendered as sentences by the Console",
+    }
+
+
+def approve_in_native_window(driver: Driver, report: dict) -> None:
+    """Open the real window, answer it through X11, and say what that attests."""
+    click(driver, "Lire et approuver dans la fenêtre native")
+    window = await_native_window()
+    facts = native_window_facts(window)
+    if facts["title"] != WINDOW_TITLE:
+        raise RuntimeError(f"the window that opened is titled {facts['title']!r}")
+    report["native_window"] = {
+        **facts,
+        "attests": "a separate GTK process really mapped this window; it is not the WebView",
+        "does_not_attest": "that a human read the sentences it shows",
+    }
+    answer_native_window(window, "approve")
+    wait_until(
+        driver,
+        "return [...document.querySelectorAll('*')].some("
+        "(e) => e.children.length === 0"
+        " && e.textContent.trim() === 'Approuvé dans la fenêtre native');",
+        seconds=120,
+        label="the core receiving the window's answer",
+    )
+    report["native_window"]["answered"] = "approve, by the window's own mnemonic (alt+a)"
+    if not native_window_gone(window):
+        raise RuntimeError("the native window is still mapped after it answered")
+
+
+def sign_and_launch(driver: Driver, report: dict) -> None:
+    """The one gesture whose effect leaves this machine.
+
+    The effect is a dispatch **more** than the history already held, never « a
+    dispatch exists »: the second journey of a run would otherwise be satisfied
+    by the first one's record and would never notice its own submission was
+    refused.
+    """
+    before = driver.execute("return document.querySelectorAll('.yc-dispatch').length;")
+    before = before if isinstance(before, int) else 0
+    click_then_wait(
+        driver,
+        "Signer et lancer",
+        "return document.querySelectorAll('.yc-dispatch').length > arguments[0];",
+        seconds=300,
+        description=f"a dispatch beyond the {before} the history already held",
+        argument=before,
+    )
+    # The history re-renders as the view reloads it, so the read is retried
+    # rather than taken on the first frame: a null here is a lost observation,
+    # not an absent dispatch.
+    entry: object = None
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        entry = driver.execute(DISPATCH_SUMMARY)
+        if entry:
+            break
+        time.sleep(0.5)
+    if not entry:
+        raise RuntimeError("the dispatch appeared and could not be read back")
+    report["dispatch"] = entry
+
+
+# What one dispatch row says, read as the human reads it: the journey in four
+# steps, the sentence of its state, and the machine's own words when it spoke.
+DISPATCH_SUMMARY = """
+const entry = document.querySelector('.yc-dispatch');
+if (!entry) return null;
+const text = (selector) => {
+  const node = entry.querySelector(selector);
+  return node ? node.textContent.trim() : null;
+};
+return {
+  machine: text('.yc-dispatch-machine'),
+  operation: text('.yc-dispatch-operation'),
+  journey: [...entry.querySelectorAll('.yc-journey li')].map((e) => e.textContent.trim()),
+  state_sentence: text('.yc-prose'),
+  machine_sentence: text('.yc-machine-sentence'),
+  observation: text('.yc-observation'),
+  facts: [...entry.querySelectorAll('.yc-dispatch-facts dt, .yc-dispatch-facts dd')]
+    .map((e) => e.textContent.trim()),
+};
+"""
+
+
 def capture_screen(driver: Driver) -> dict[str, object]:
     """The sentences the Console is showing right now, read from its own DOM.
 
@@ -467,6 +726,11 @@ def main() -> int:
     parser.add_argument("--stage", default="associate")
     parser.add_argument("--secrets", required=True)
     parser.add_argument("--machine", default="")
+    parser.add_argument("--slug", default="journal-de-bord")
+    parser.add_argument("--repository", default="registry.lab.your-cloud.test/lab/synthetic-app")
+    parser.add_argument("--container-port", type=int, default=8080)
+    parser.add_argument("--local-port", type=int, default=18090)
+    parser.add_argument("--digest", default="")
     arguments = parser.parse_args()
 
     report: dict[str, object] = {"stage": arguments.stage}
@@ -489,6 +753,15 @@ def main() -> int:
             unlock(driver, phrase, report)
             select_infrastructure(driver)
 
+        if arguments.stage == "journey":
+            # The whole path, in one session, as one human would walk it.
+            freeze_definition(
+                driver, arguments.slug, arguments.repository, arguments.container_port, report
+            )
+            deploy_gesture(driver, arguments.slug, report)
+            build_pair(driver, arguments.machine, arguments.digest, arguments.local_port, report)
+            approve_in_native_window(driver, report)
+            sign_and_launch(driver, report)
         if arguments.stage == "attach":
             # The Parc view is the first screen that reads the machines
             # projection, and the gate a machine enters the inventory through.

@@ -21,11 +21,11 @@
 # would not exist at all, and this proof would fail at its first submission
 # rather than pass against a door that never opens.
 #
-# Two things belong to the harness and are named as such: the account and the
-# state directory, because the private state must be mode 0700 and owned by the
-# process that opens it; and the source address the Controller reaches the Relay
-# from, because the product pins that source and this flat topology holds no
-# such address.
+# One thing belongs to the harness and is named as such: the source address the
+# Controller reaches the Relay from, because the product pins that source and
+# this flat topology holds no such address. The account, the state directory and
+# the credential mechanism are the packaged ones, unchanged — see the unit below
+# for why that is a property of this proof rather than a courtesy.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common
@@ -38,8 +38,21 @@ fail() {
   exit 1
 }
 
+# The state path and the account are the **packaged** ones, deliberately, and
+# this harness learned why the hard way. An earlier version ran the service
+# under a static `User=` with its own state directory, because that was easier
+# to create before the service existed. It measured a Controller nobody ships:
+# systemd hands credentials to a static user through an ACL, leaving them
+# root-owned and group-readable, and to a `DynamicUser` by chowning them to the
+# transient account — and the code that reads a command credential checks both
+# owner and mode. A proof run under the wrong one says nothing about the other.
+#
+# So the unit below is the packaged unit, and the state lives where
+# `DynamicUser=yes` plus `StateDirectory=` puts it: `/var/lib/private/…`,
+# created root-owned before the service and adopted by it, exactly as the
+# `.deb` installation of `#55` does it.
 controller_account=your-cloud-controller
-controller_state=/var/lib/your-cloud-controller
+controller_state=/var/lib/private/your-cloud-controller
 window_sheet=/run/your-cloud-controller/window.json
 
 case "$phase" in
@@ -60,8 +73,6 @@ case "$phase" in
       || fail "this machine's clock moved ${clock_drift}s in two seconds: every deadline it derives would be arbitrary"
     note "clock" "synchronised, no step in two seconds"
 
-    id -u "$controller_account" >/dev/null 2>&1 \
-      || useradd --system --no-create-home --home-dir "$controller_state" --shell /usr/sbin/nologin "$controller_account"
     install -d -o root -g root -m 0755 /usr/local/lib/your-cloud /etc/your-cloud
     install -o root -g root -m 0755 "$binary" "$artifact"
     note "product binary" "$(sha256sum "$artifact" | cut -d' ' -f1)"
@@ -72,11 +83,28 @@ case "$phase" in
     command -v ssh >/dev/null || fail "this Controller has no OpenSSH client to launch"
     note "OpenSSH client" "$(ssh -V 2>&1 | head -1)"
 
+    # Root-owned and 0700 before the service exists, adopted by the transient
+    # account at start: this is the sequence the packaged installation follows.
     rm -rf "$controller_state"
-    install -d -o "$controller_account" -g "$controller_account" -m 0700 "$controller_state"
+    install -d -o root -g root -m 0700 "$controller_state"
     install -d -m 0700 -o root -g root "$state"
 
-    identities=$(runuser -u "$controller_account" -- "$artifact" controller init --state-dir="$controller_state")
+    # The command identities of the Controller that stood here before, if any.
+    #
+    # They are destroyed rather than kept, and the product itself explains why:
+    # it refuses to mint a second identity for a machine that already has one —
+    # « replacing it is a rotation, not a mint » — and rotation belongs to the
+    # Controller replacement contract, not to an installation. An identity is
+    # held by *one* Controller; this phase creates a new one, so the previous
+    # Controller's identities died with it and a machine still trusting them
+    # trusts nobody. Shredded rather than unlinked: they are private halves.
+    if [[ -d "$command_identities" ]]; then
+      find "$command_identities" -type f -exec shred -u {} + 2>/dev/null || true
+      note "the previous Controller's identities" "destroyed: an identity belongs to one Controller"
+    fi
+    rm -rf "$command_identities" "$command_endpoints"
+
+    identities=$("$artifact" controller init --state-dir="$controller_state")
     controller_id=${identities#controller_id=}
     controller_id=${controller_id%% *}
     infrastructure_id=${identities##*infrastructure_id=}
@@ -133,8 +161,28 @@ case "$phase" in
     # synthetic reader source below was placed on the same interface it started
     # serving there — where nobody was calling. The caller reads the LAB
     # inventory and knows this address for certain; this script does not.
-    ip -4 -o addr show scope global | grep -qw "$listen_address" \
-      || fail "$listen_address is not an address this machine holds"
+    #
+    # NAMED DEBT, to be settled before this proof is declared green: on
+    # 12 August 2026 this guard refused an address the machine demonstrably
+    # held, and the very same call passed unchanged a minute later. The cause
+    # is not established — a DHCP renewal is the suspicion, not the finding.
+    # The retry below makes the guard deterministic against a momentary
+    # absence without weakening what it refuses, but a harness that reddens
+    # for a reason nobody can name produces reds that accuse nothing, and this
+    # comment stays until the cause is either explained or ruled out.
+    held=no
+    for attempt in $(seq 1 5); do
+      if ip -4 -o addr show scope global | grep -qw "$listen_address"; then
+        held=yes
+        [[ $attempt -eq 1 ]] || note "listen address" "seen on attempt $attempt, not the first"
+        break
+      fi
+      sleep 1
+    done
+    [[ "$held" == yes ]] || {
+      ip -4 -o addr show scope global >&2
+      fail "$listen_address is not an address this machine holds, after five attempts"
+    }
     note "listen address" "$listen_address, given by the caller"
 
     install -o root -g root -m 0644 "$credentials/controller-reader.crt" /etc/your-cloud/controller-reader.crt
@@ -172,11 +220,17 @@ case "$phase" in
     esac
     note "enrolment window" "$window"
 
-    # The unit is the packaged one of `packaging/server-bundle/units`, reduced to
-    # what this flat LAB can carry — a fixed account rather than `DynamicUser`,
-    # because the private state of this perimeter is created before the service
-    # and must survive it. The five `LoadCredential` lines are the packaged ones
-    # verbatim, including the two directories the command path reads.
+    # The unit is the packaged one of `packaging/server-bundle/units`, and the
+    # parts that decide how a credential reaches this process are carried
+    # **verbatim**: `DynamicUser=yes`, `StateDirectory=`, `UMask=0077`, the
+    # hardening, and the five `LoadCredential` lines including the two
+    # directories the command path reads. What differs is only what this flat
+    # LAB forces — the listen and Relay addresses, and `Restart=no` so a refusal
+    # stays readable instead of being restarted over.
+    #
+    # The fidelity is the point rather than the politeness: the owner and the
+    # mode of a materialised credential depend on `DynamicUser`, and the reader
+    # of a command credential checks both.
     cat >/etc/systemd/system/"$controller_unit" <<UNIT
 [Unit]
 Description=Your Cloud Controller
@@ -185,8 +239,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+DynamicUser=yes
 User=$controller_account
-Group=$controller_account
+StateDirectory=your-cloud-controller
+StateDirectoryMode=0700
 RuntimeDirectory=your-cloud-controller
 RuntimeDirectoryMode=0700
 UMask=0077
@@ -207,7 +263,6 @@ ProtectHome=yes
 ProtectClock=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
-ReadWritePaths=$controller_state
 RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictNamespaces=yes
 RestrictRealtime=yes
