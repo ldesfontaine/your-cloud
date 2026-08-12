@@ -45,8 +45,15 @@ import urllib.parse
 REQUEST_TIMEOUT = 120
 
 
-def request(base_url: str, method: str, path: str, body: object = None) -> dict:
-    """One bounded WebDriver call, with the driver's own error text kept.
+def request(base_url: str, method: str, path: str, body: object = None) -> object:
+    """One bounded WebDriver call, returning the `value` the driver sent.
+
+    It returns that value **whatever its type** — a string, a list, an object,
+    `None` — and never a wrapper around it. An earlier version unwrapped
+    dictionaries here and left the caller to unwrap again, so every script that
+    returned an object read back as nothing at all: the dispatch summary of
+    this proof was silently `null` from its first run. A transport that
+    sometimes unwraps is a transport that lies about the shape of an answer.
 
     A WebDriver error carries the reason the product refused in its `message`;
     swallowing it would turn every refusal into the same opaque red.
@@ -62,12 +69,12 @@ def request(base_url: str, method: str, path: str, body: object = None) -> dict:
     finally:
         connection.close()
     if not raw:
-        return {}
+        return None
     answer = json.loads(raw)
     value = answer.get("value")
     if isinstance(value, dict) and "error" in value:
         raise RuntimeError(f"{value.get('error')}: {value.get('message', '').strip()}")
-    return value if isinstance(value, dict) else {"value": value}
+    return value
 
 
 class Driver:
@@ -82,7 +89,8 @@ class Driver:
             "/session",
             {"capabilities": {"alwaysMatch": capabilities}},
         )
-        self.session_id = response.get("sessionId") or response.get("value", {}).get("sessionId")
+        session = response if isinstance(response, dict) else {}
+        self.session_id = session.get("sessionId")
         if not self.session_id:
             raise RuntimeError(f"the driver opened no session: {response!r}")
 
@@ -93,17 +101,15 @@ class Driver:
             pass
 
     def execute(self, script: str, *arguments: object) -> object:
-        answer = request(
+        return request(
             self.base_url,
             "POST",
             f"/session/{self.session_id}/execute/sync",
             {"script": script, "args": list(arguments)},
         )
-        return answer.get("value")
 
     def screenshot(self) -> str:
-        answer = request(self.base_url, "GET", f"/session/{self.session_id}/screenshot")
-        return str(answer.get("value", ""))
+        return str(request(self.base_url, "GET", f"/session/{self.session_id}/screenshot") or "")
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +540,18 @@ def freeze_definition(driver: Driver, slug: str, repository: str, port: int, rep
         description=f"the revision of « {slug} » freezing",
         argument=slug,
     )
+    # The card bearing this slug is necessary and not sufficient: a perimeter
+    # that already holds a revision of the same name satisfies it without the
+    # click having succeeded at all. So the refusal banner is read too, and a
+    # freeze that the Console refused reddens here rather than letting the
+    # journey continue on somebody else's revision.
+    refusal = driver.execute(
+        "const banner = [...document.querySelectorAll('[role=alert], .yc-banner')]"
+        ".find((e) => e.textContent.includes('Opération refusée'));"
+        "return banner ? banner.textContent.trim() : null;"
+    )
+    if refusal:
+        raise RuntimeError(f"the freeze of « {slug} » was refused: {refusal}")
     report["frozen"] = {"slug": slug, "by": "the Console's own freeze gesture"}
 
 

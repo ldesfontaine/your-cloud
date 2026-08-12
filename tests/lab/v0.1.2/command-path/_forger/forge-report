@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""A machine that lies about what it did.
+
+This stands where the forced command stands, for one hostile case and no other.
+It is **not** a fixture of the product: it replaces nothing the product does on
+the proven path — it plays a compromised machine, which is a thing the contract
+says the Controller must survive and which no honest machine would ever be.
+
+What it forges is a report that is well formed in every respect but one: it
+names **another machine**. That is the first branch of the ingestion table of
+`docs/architecture/TRAJET-DE-COMMANDE.md`, and it is the cheapest lie to tell
+without also having to lie convincingly about digests — a report that got any of
+the five wrong is not a report about this launch, and the Controller is expected
+to discard it whole rather than take the parts that match.
+
+It consumes its standard input and does nothing with it. That is deliberate: a
+machine that answers without reading is exactly a machine whose answer proves
+nothing about what happened, and the Controller must not be able to tell the
+difference by trusting the answer.
+"""
+
+import json
+import sys
+
+# The wrapper is read and dropped: nothing here acts on it, and nothing here
+# touches the machine. Reading it to the end keeps the writer on the other side
+# from seeing a closed pipe, so what is under test is the ingestion of an
+# answer rather than a broken channel.
+sys.stdin.buffer.read()
+
+report = {
+    "schema_version": 1,
+    "operation": "deploy_user_service",
+    "infrastructure_id": "00000000-0000-4000-8000-000000000000",
+    # The lie, and the only one: no dispatch of this Controller ever names it.
+    "machine_id": "lab-machine-9",
+    "approval_epoch": 1,
+    "consumed_sequence": 1,
+    "plan_sha256": "0" * 64,
+    "rollback_sha256": "0" * 64,
+    "privileges": [],
+}
+json.dump(report, sys.stdout, separators=(",", ":"))
+sys.stdout.write("\n")

@@ -36,7 +36,7 @@ export LC_ALL=C.UTF-8
 usage() {
   cat >&2 <<'EOF'
 usage: prove [artifact | controller | console | associate | relay | enrol |
-              attach | origin | journey | verify | collect | remove | all]
+              attach | origin | journey | refuse | verify | collect | remove | all]
 
   artifact    build the product binary on the machine that carries Go
   controller  init the real Controller on lab-vps and start it serving, with
@@ -53,6 +53,8 @@ usage: prove [artifact | controller | console | associate | relay | enrol |
   origin      build this run's image, serve it, and ground the machine for it
   journey     the whole path twice: the failure that reaches the machine and
               comes back, then the success that really poses a service
+  refuse      what the path does when the world lies to it: a substituted
+              machine, and a machine that forges its own report
   verify      read the posed service from outside the product
   collect     bring the structured results back
   remove      take the perimeter away from the three machines and prove it
@@ -70,7 +72,7 @@ command=${1:-all}
 [[ $# -le 1 ]] || usage
 case "$command" in
   artifact | controller | console | associate | relay | enrol | attach | origin \
-    | journey | verify | collect | remove | all) ;;
+    | journey | refuse | verify | collect | remove | all) ;;
   *) usage ;;
 esac
 
@@ -98,6 +100,14 @@ service_slug=journal-de-bord
 service_account=your-cloud-user-$service_slug
 service_port=18090
 scratch_directory=/var/scratch
+# The three product paths this orchestrator reads or mutates from outside. They
+# are repeated here rather than sourced from `common`, which is the vocabulary
+# of the scripts that run **on** the machines: this one runs on the pilot and
+# never sources it, and an empty variable in an `ssh` string is a command that
+# silently means something else.
+command_endpoints=/etc/your-cloud/command-endpoints
+forced_key=/etc/your-cloud/authorized-keys/your-cloud-auxiliary
+replay_state=/var/lib/your-cloud-auxiliary/approval-state.json
 result_root="$root/tests/artifacts/proofs/command-path"
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 workdir=$(mktemp -d)
@@ -457,7 +467,14 @@ cat $remote_build/image/manifest.digest"
 
   announce "serving the origin from $controller_vm, and grounding $machine_vm for it"
   tar_from_machine origin.tgz "image issued authority/authority.crt"
-  "$labctl" ssh "$controller_vm" -- "install -d -m 0700 $remote_origin"
+  # Any origin still listening from an earlier pass is stopped **before** its
+  # binary is overwritten. A running executable cannot be replaced — the copy
+  # fails `ETXTBSY`, which `scp` reports only as « dest open … Failure » — and a
+  # perimeter built on top of a listener nobody accounted for is a perimeter
+  # serving an image this run never built.
+  "$labctl" ssh "$controller_vm" -- "
+test -x $remote_origin/serve-origin && $remote_origin/serve-origin stop || true
+install -d -m 0700 $remote_origin"
   "$labctl" copy-to "$controller_vm" "$workdir/origin.tgz" "$remote_origin/origin.tgz" >/dev/null
   "$labctl" copy-from "$machine_vm" "$remote_build/bin/labfixture" "$workdir/labfixture" >/dev/null
   "$labctl" copy-to "$controller_vm" "$workdir/labfixture" "$remote_origin/fixture" >/dev/null
@@ -535,6 +552,120 @@ read_dispatch() {
     "reported $expected $sequence") ;;
     *) fail "$label concluded « $outcome » rather than « reported $expected $sequence »" ;;
   esac
+}
+
+# --------------------------------------------------------------------------
+# refuse — what the path does when something lies to it.
+#
+# Every case here is a **hostile mutation of the world**, never of the product:
+# a sheet that pins another key, a machine whose forced command answers
+# something else. The binaries are the ones the successful journey used, and
+# each case is put back before the next runs.
+# --------------------------------------------------------------------------
+
+# journey_once <slug> <digest> — one full approval, driven by the Console.
+journey_once() {
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
+    $machine_vm $2 $1"
+}
+
+# last_record <field> — one field of the Controller's own last record.
+last_record() {
+  "$labctl" ssh "$controller_vm" -- \
+    "python3 -c \"import json; r=json.load(open('/var/lib/private/your-cloud-controller/dispatches.json'))['records'][-1]; print(r['$1'])\""
+}
+
+# machine_position — what the machine itself has consumed, read on the machine.
+machine_position() {
+  "$labctl" ssh "$machine_vm" -- \
+    "python3 -c \"import json;print(json.load(open('$replay_state'))['consumed_sequence'])\" 2>/dev/null || echo none"
+}
+
+refuse_constats() {
+  local digest before_position position state observation records_before records_after
+  digest=$(tr -d '\r\n' <"$carried/image-digest")
+
+  # ---- a machine substituted: the pinned host key no longer matches --------
+  announce "hostile: the pinned host key of this machine no longer matches"
+  before_position=$(machine_position)
+  records_before=$("$labctl" ssh "$controller_vm" -- \
+    "python3 -c \"import json;print(len(json.load(open('/var/lib/private/your-cloud-controller/dispatches.json'))['records']))\"")
+  # A different, well-formed Ed25519 host key blob: the sheet stays a sheet the
+  # Controller can read, so what is refused is the **pin**, not the document.
+  "$labctl" ssh "$controller_vm" -- "
+set -e
+cp $command_endpoints/$machine_vm.json $command_endpoints/$machine_vm.json.kept
+python3 - <<'PY'
+import base64, json, os, pathlib
+path = pathlib.Path('$command_endpoints/$machine_vm.json')
+sheet = json.loads(path.read_text())
+blob = b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20' + os.urandom(32)
+sheet['host_key'] = base64.b64encode(blob).decode()
+path.write_text(json.dumps(sheet, separators=(',', ':')))
+PY
+systemctl restart your-cloud-controller.service
+sleep 3"
+  journey_once journal-usurpe "$digest"
+  state=$(last_record state)
+  observation=$(last_record controller_observation)
+  echo "  the dispatch: $state — « $observation »"
+  [[ "$state" == not_launched ]] \
+    || fail "a machine whose host key changed concluded « $state » rather than « not_launched »"
+  [[ -n "$observation" ]] || fail "the Controller refused without observing why"
+
+  # ---- and the sequence was spent before a single byte was written ---------
+  announce "hostile: what that refusal cost, on each side"
+  position=$(machine_position)
+  records_after=$("$labctl" ssh "$controller_vm" -- \
+    "python3 -c \"import json;print(len(json.load(open('/var/lib/private/your-cloud-controller/dispatches.json'))['records']))\"")
+  echo "  the machine's own position: $before_position before, $position after"
+  echo "  the Controller's records: $records_before before, $records_after after"
+  [[ "$position" == "$before_position" ]] \
+    || fail "the machine consumed a sequence for a launch that never reached it"
+  [[ "$records_after" -eq $((records_before + 1)) ]] \
+    || fail "the Controller wrote no record for an authority it had already accepted"
+  echo "  the authority was spent on the Controller and nowhere else: the record"
+  echo "  precedes the connection, and no wrapper was ever written"
+
+  "$labctl" ssh "$controller_vm" -- "
+mv $command_endpoints/$machine_vm.json.kept $command_endpoints/$machine_vm.json
+systemctl restart your-cloud-controller.service
+sleep 3"
+
+  # ---- a machine that lies in its report -----------------------------------
+  announce "hostile: the machine answers a report about another machine"
+  before_position=$(machine_position)
+  # The forced command is replaced by a forger. The Auxiliary never runs, so
+  # nothing is applied and nothing is consumed on the machine — what is under
+  # test is only what the Controller does with an answer that does not name
+  # this dispatch.
+  "$labctl" copy-to "$machine_vm" "$harness/_forger/forge-report" \
+    "$remote_harness/forge-report" >/dev/null
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+chmod 0755 $remote_harness/forge-report
+cp $forced_key $forced_key.kept
+sed -i 's#command=\"[^\"]*\"#command=\"$remote_harness/forge-report\"#' $forced_key
+grep -q 'forge-report' $forced_key"
+  journey_once journal-menteur "$digest"
+  state=$(last_record state)
+  observation=$(last_record controller_observation)
+  echo "  the dispatch: $state — « $observation »"
+  [[ "$state" == launched_unreported ]] \
+    || fail "a forged report concluded « $state » rather than « launched_unreported »"
+  [[ "$(last_record reported_outcome)" == "" ]] \
+    || fail "a forged report reached the fields a real one fills"
+  position=$(machine_position)
+  [[ "$position" == "$before_position" ]] \
+    || fail "the machine's position moved though its Auxiliary never ran"
+  echo "  the report was discarded, the state stayed the weaker of the two,"
+  echo "  and nothing of it reached the fields a real report fills"
+
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+mv $forced_key.kept $forced_key
+grep -q 'auxiliary approve' $forced_key"
+  echo "  the machine's forced command is back"
 }
 
 # --------------------------------------------------------------------------
@@ -666,6 +797,7 @@ case "$command" in
   attach) attach_machine ;;
   origin) mount_origin ;;
   journey) run_journey ;;
+  refuse) refuse_constats ;;
   verify) verify_service ;;
   collect) collect ;;
   remove) remove ;;
@@ -676,9 +808,29 @@ case "$command" in
     # key it will carry, a machine cannot enter the inventory before the Relay
     # reports it, and no plan can be approved for a machine outside it.
     status=0
+    # Each phase runs in a subshell that re-arms `errexit` itself, and both
+    # halves of that sentence are load-bearing.
+    #
+    # The subshell is what makes the promise of removal true: `fail` exits, so a
+    # phase that failed used to take this whole script with it, and neither
+    # `collect` nor `remove` ever ran — the comment claiming removal always runs
+    # was simply false.
+    #
+    # `set -e` is re-armed **inside** because a command on the left of `||` runs
+    # with `errexit` suppressed, and that suppression reaches into the subshell.
+    # A phase wrapped as `( … ) || status=$?` therefore ignored every failing
+    # command it contained and ran on to its own assertions, which is how a
+    # hostile journey that never even reached its window was measured as though
+    # it had. The `set +e` around the call is what lets the status be read
+    # instead of ending the script.
     step() {
       [[ $status -eq 0 ]] || return 0
-      "$@" || status=$?
+      local outcome=0
+      set +e
+      ( set -e; "$@" )
+      outcome=$?
+      set -e
+      [[ $outcome -eq 0 ]] || status=$outcome
     }
     step build_artifact
     step mount_controller
@@ -690,6 +842,7 @@ case "$command" in
     step mount_origin
     step run_journey
     step verify_service
+    step refuse_constats
     collect || true
     # Removal always runs, red or green: a perimeter left behind is a machine
     # that lies to the next proof.
