@@ -585,6 +585,15 @@ journey_once() {
   if [[ $outcome -ne 0 ]]; then
     echo "  the Controller's own account over the same window:"
     sed -n '1,40p' "$workdir/controller-$slug.log" | sed 's/^/    /'
+    # The journal says nothing about requests — this service logs its listening
+    # addresses and little else — so the authoritative answer to « was this
+    # submission accepted? » is the registry it writes. It is **read**, never
+    # touched: a harness that edited this state would stop measuring the
+    # product.
+    echo "  the dispatch registry as the Controller holds it:"
+    "$labctl" ssh "$controller_vm" -- \
+      "python3 -c \"import json; rs=json.load(open('/var/lib/private/your-cloud-controller/dispatches.json'))['records']; print(len(rs), 'enregistrements'); [print(' ', r['sequence'], r['state'], repr(r['reported_outcome']), r['definition_slug']) for r in rs]\"" \
+      2>&1 | sed 's/^/    /' || true
   fi
   return $outcome
 }
