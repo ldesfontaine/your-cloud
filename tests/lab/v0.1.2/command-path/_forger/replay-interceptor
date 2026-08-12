@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""An external hostile actor that captures signed approval bytes and replays them.
+
+This is **not** a fixture of the product. It replaces no component on the proven
+path: the real Console still builds the pair, the real native window collects
+the consent, the real core signs, and the real Controller receives every byte.
+This program stands only where a network attacker stands — between the Console
+and `:9443`, on the wire — and does two things no honest party would: it keeps a
+copy of one exchange, and it plays that copy back after the Controller has
+restarted.
+
+What it attests, and what it does not, is written where it is used
+(`tests/lab/v0.1.2/command-path/prove`). In one line: it proves that a signed
+approval, once spent, cannot be launched a second time — even by an attacker who
+has compromised the transport (it holds the Controller's own server key, read
+from the Controller's disk) **and** stolen the Console's device credential (read
+from the vault with the phrase, by the product's own code), and who resubmits
+the exact bytes onto a session the real Console freshly and legitimately opened.
+
+It never holds the human signing key. That abstention is the whole point: the
+session it replays onto is a real one the Console minted, so the refusal it
+draws — `409 approval_already_dispatched` — can only come from the Controller's
+durable dispatch registry, never from a session it forged.
+
+How it works, in three acts, driven by `prove`:
+
+  serve     A TLS man-in-the-middle in front of :9443. It terminates the
+            Console's connection presenting the Controller's server certificate
+            (so the Console's pinning is satisfied) and re-originates to the
+            real Controller presenting the stolen device certificate (so the
+            Controller's mutual-TLS and its exact-fingerprint pin are
+            satisfied). Every request is forwarded faithfully; the POST to
+            /v0/plan-approvals is recorded whole, and the Authorization bearer
+            of every request is remembered — the last one seen is always the
+            Console's currently-valid session.
+
+  replay    Open a fresh connection to the real Controller with the stolen
+            device certificate, and send the recorded approval POST **verbatim**
+            except for its Authorization header, which is replaced by the bearer
+            last seen on the wire — the one the Console minted after the restart.
+            Print the status line the Controller returns.
+
+The two acts are one long-lived process and a control socket, because the
+capture has to survive across the Console runs that happen between them.
+"""
+
+import json
+import os
+import socket
+import ssl
+import sys
+import threading
+
+
+def log(message):
+    sys.stderr.write(f"[interceptor] {message}\n")
+    sys.stderr.flush()
+
+
+class Capture:
+    """What the wire yielded, held for the replay that comes later."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.approval = None  # raw bytes of the POST /v0/plan-approvals request
+        self.last_bearer = None  # the most recent Authorization value seen
+        self.approvals_seen = 0
+
+    def note_request(self, method, path, headers, body):
+        authorization = headers.get("authorization")
+        with self.lock:
+            if authorization is not None:
+                self.last_bearer = authorization
+            if method == "POST" and path == "/v0/plan-approvals":
+                self.approval = {"headers": headers, "body": body}
+                self.approvals_seen += 1
+                log(f"captured approval #{self.approvals_seen} ({len(body)} body bytes)")
+
+
+def read_headers(stream):
+    """Read one HTTP message head. Returns (start_line, {lower_name: value}, raw_head)."""
+    raw = bytearray()
+    while b"\r\n\r\n" not in raw:
+        chunk = stream.recv(1)
+        if not chunk:
+            if not raw:
+                return None, None, None
+            break
+        raw += chunk
+    head = bytes(raw).split(b"\r\n\r\n", 1)[0]
+    lines = head.split(b"\r\n")
+    start_line = lines[0].decode("latin1")
+    headers = {}
+    for line in lines[1:]:
+        if not line:
+            continue
+        name, _, value = line.partition(b":")
+        headers[name.decode("latin1").strip().lower()] = value.decode("latin1").strip()
+    return start_line, headers, bytes(raw)
+
+
+def read_body(stream, headers):
+    """Read exactly Content-Length bytes; this product never sends chunked."""
+    length = int(headers.get("content-length", "0"))
+    body = bytearray()
+    while len(body) < length:
+        chunk = stream.recv(min(65536, length - len(body)))
+        if not chunk:
+            break
+        body += chunk
+    return bytes(body)
+
+
+def upstream_context(device_cert, device_key, server_ca):
+    """A client context that presents the stolen device identity and pins the CA."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.maximum_version = ssl.TLSVersion.TLSv1_3
+    context.load_cert_chain(certfile=device_cert, keyfile=device_key)
+    context.load_verify_locations(cafile=server_ca)
+    # The Console reaches the Controller by a name the LAB resolves; the
+    # certificate carries that name and the interceptor must check it against
+    # the same name, not against the address it dials.
+    context.check_hostname = True
+    return context
+
+
+def downstream_context(controller_cert, controller_key):
+    """A server context that impersonates the Controller to the Console."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.maximum_version = ssl.TLSVersion.TLSv1_3
+    context.load_cert_chain(certfile=controller_cert, keyfile=controller_key)
+    # The Console presents a client certificate. The interceptor does not verify
+    # it — it is not the Controller, and what it wants is the plaintext behind
+    # the handshake, not to authorise the peer. The real Controller downstream
+    # still verifies everything, against the device certificate the interceptor
+    # itself presents.
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+class Interceptor:
+    def __init__(self, config):
+        self.config = config
+        self.capture = Capture()
+        self.upstream = upstream_context(
+            config["device_cert"], config["device_key"], config["server_ca"]
+        )
+        self.downstream = downstream_context(
+            config["controller_cert"], config["controller_key"]
+        )
+        self.upstream_addr = config["upstream_addr"]
+        self.upstream_port = int(config["upstream_port"])
+        self.server_name = config["server_name"]
+
+    def dial_controller(self):
+        raw = socket.create_connection((self.upstream_addr, self.upstream_port), timeout=30)
+        return self.upstream.wrap_socket(raw, server_hostname=self.server_name)
+
+    def handle_client(self, client_raw):
+        try:
+            client = self.downstream.wrap_socket(client_raw, server_side=True)
+        except ssl.SSLError as error:
+            log(f"downstream handshake failed: {error}")
+            client_raw.close()
+            return
+        try:
+            upstream = self.dial_controller()
+        except OSError as error:
+            log(f"upstream connect failed: {error}")
+            client.close()
+            return
+        try:
+            self.pump(client, upstream)
+        finally:
+            for sock in (client, upstream):
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    def pump(self, client, upstream):
+        """A full HTTP/1.1 keep-alive loop, parsing every message both ways.
+
+        reqwest pools connections, so more than one request rides a single TLS
+        connection: a proxy that recorded only the first would miss the approval
+        whenever a read preceded it on the same socket. Every request and every
+        response is therefore parsed by Content-Length — this product never
+        chunks, since the Console refuses a Transfer-Encoding outright — and the
+        loop continues until either side asks to close.
+        """
+        while True:
+            req_start, req_headers, req_raw = read_headers(client)
+            if req_start is None:
+                return
+            method, path = (req_start.split(" ") + ["", ""])[:2]
+            req_body = read_body(client, req_headers)
+            self.capture.note_request(method, path, req_headers, req_body)
+            upstream.sendall(req_raw + req_body)
+
+            resp_start, resp_headers, resp_raw = read_headers(upstream)
+            if resp_start is None:
+                return
+            resp_body = read_body(upstream, resp_headers)
+            client.sendall(resp_raw + resp_body)
+
+            if (
+                req_headers.get("connection", "").lower() == "close"
+                or resp_headers.get("connection", "").lower() == "close"
+            ):
+                return
+
+    def serve(self):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((self.config["listen_addr"], int(self.config["listen_port"])))
+        listener.listen(16)
+        log(
+            f"serving on {self.config['listen_addr']}:{self.config['listen_port']}, "
+            f"re-originating to {self.upstream_addr}:{self.upstream_port} "
+            f"as {self.server_name}"
+        )
+        control = threading.Thread(target=self.control_loop, daemon=True)
+        control.start()
+        while True:
+            client_raw, _ = listener.accept()
+            threading.Thread(
+                target=self.handle_client, args=(client_raw,), daemon=True
+            ).start()
+
+    def control_loop(self):
+        """A tiny line protocol on a unix socket: `status` and `replay`."""
+        path = self.config["control_socket"]
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(path)
+        server.listen(4)
+        while True:
+            conn, _ = server.accept()
+            with conn:
+                command = conn.recv(4096).decode("utf-8").strip()
+                if command == "status":
+                    with self.capture.lock:
+                        conn.sendall(
+                            json.dumps(
+                                {
+                                    "approvals_seen": self.capture.approvals_seen,
+                                    "has_bearer": self.capture.last_bearer is not None,
+                                }
+                            ).encode()
+                        )
+                elif command == "replay":
+                    conn.sendall(self.replay().encode())
+                else:
+                    conn.sendall(b'{"error":"unknown command"}')
+
+    def replay(self):
+        """Resubmit the captured approval onto the freshest session seen."""
+        with self.capture.lock:
+            approval = self.capture.approval
+            bearer = self.capture.last_bearer
+        if approval is None:
+            return json.dumps({"error": "no approval was captured"})
+        if bearer is None:
+            return json.dumps({"error": "no session bearer was ever seen"})
+        # Rebuild the exact POST, replacing only the Authorization line. Every
+        # other header is the one the Console really sent — the Host in
+        # particular, which the Controller checks byte-for-byte (it carries the
+        # `:9443` the Console dials with, and a Host without it is refused
+        # `scope_forbidden` before any authority is even read).
+        headers = dict(approval["headers"])
+        headers["authorization"] = bearer
+        head = "POST /v0/plan-approvals HTTP/1.1\r\n"
+        for name, value in headers.items():
+            head += f"{name}: {value}\r\n"
+        head += "\r\n"
+        try:
+            upstream = self.dial_controller()
+        except OSError as error:
+            return json.dumps({"error": f"replay connect failed: {error}"})
+        try:
+            upstream.sendall(head.encode("latin1") + approval["body"])
+            start_line, response_headers, _ = read_headers(upstream)
+            response_body = read_body(upstream, response_headers or {})
+            error_code = None
+            try:
+                error_code = json.loads(response_body).get("error_code")
+            except (ValueError, AttributeError):
+                pass
+            return json.dumps(
+                {
+                    "status_line": start_line,
+                    "error_code": error_code,
+                    "bearer_was_fresh": True,
+                }
+            )
+        finally:
+            try:
+                upstream.close()
+            except OSError:
+                pass
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.stderr.write("usage: replay-interceptor <config.json>\n")
+        return 2
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        config = json.load(handle)
+    Interceptor(config).serve()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

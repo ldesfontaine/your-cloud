@@ -55,6 +55,8 @@ usage: prove [artifact | controller | console | associate | relay | enrol |
               comes back, then the success that really poses a service
   refuse      what the path does when the world lies to it: a substituted
               machine, and a machine that forges its own report
+  replay      the fourth hostile constat: an external actor captures a signed
+              approval and replays it after the Controller restarts
   verify      read the posed service from outside the product
   collect     bring the structured results back
   remove      take the perimeter away from the three machines and prove it
@@ -72,7 +74,7 @@ command=${1:-all}
 [[ $# -le 1 ]] || usage
 case "$command" in
   artifact | controller | console | associate | relay | enrol | attach | origin \
-    | journey | refuse | verify | collect | remove | all) ;;
+    | journey | refuse | replay | verify | collect | remove | all) ;;
   *) usage ;;
 esac
 
@@ -709,6 +711,207 @@ grep -q 'auxiliary approve' $forced_key"
 }
 
 # --------------------------------------------------------------------------
+# replay — the fourth hostile constat, and the one that needs an attacker on
+# the wire: a signed approval, once spent, replayed after the Controller has
+# restarted.
+#
+# The interceptor is an **external hostile actor, not a fixture**. It replaces
+# no component of the product: the real Console builds the pair, the real window
+# consents, the real core signs, the real Controller receives every byte. It
+# only stands where a network attacker stands, and it is granted two things the
+# constat says the attacker may have — the transport (it reads the Controller's
+# own server key from the Controller's disk) and the device credential (it reads
+# it from the vault, with the phrase, by the product's own code). It is **not**
+# granted the human signing key: the session it replays onto is one the real
+# Console freshly and legitimately opens, so the refusal can only come from the
+# durable dispatch registry, never from a session the attacker forged.
+#
+# What this does NOT attest is named in the LAB report: that the transport held
+# (its keys were handed over, not broken), that the Console's pinning held (it
+# was satisfied by the real cert, not tested), and that anything but
+# POST /v0/plan-approvals is refused on replay.
+# --------------------------------------------------------------------------
+replay_constat() {
+  local console_address controller_address infrastructure_id name digest
+  console_address=$(inventory "$console_vm")
+  controller_address=$(cat "$carried/controller-address")
+  infrastructure_id=$(cat "$carried/infrastructure-id")
+  name=controller.$infrastructure_id.your-cloud.test
+  digest=$(tr -d '\r\n' <"$carried/image-digest")
+  local replay_dir=/root/lab-command-path-replay
+  local control_socket=$replay_dir/control.sock
+
+  # The teardown must run on the reds it most needs to clean up after — an
+  # interceptor left listening on :9443 with the name still pointed at it would
+  # poison the next phase. `fail` exits rather than returns, so a tail after the
+  # assertions would be skipped exactly then. The work therefore runs in a
+  # subshell whose exit is caught, and the teardown runs in the parent whatever
+  # the verdict: the name goes back and the attacker is shredded, red or green.
+  local outcome=0
+  ( set -e; replay_work ) || outcome=$?
+  # The interceptor's own log is brought back before the secrets are shredded:
+  # on a red it is the only account of what the attacker saw on the wire, and a
+  # teardown that destroyed it with the keys would leave a red that accuses
+  # nothing. The keys themselves are shredded — they are the one thing this
+  # perimeter must never leave behind.
+  "$labctl" copy-from "$console_vm" "$replay_dir/interceptor.log" \
+    "$workdir/replay-interceptor.log" >/dev/null 2>&1 || true
+  install -d -m 0755 "$result_root/$run_id"
+  cp "$workdir/replay-interceptor.log" "$result_root/$run_id/" 2>/dev/null || true
+  "$labctl" ssh "$console_vm" -- "
+systemctl stop lab-replay-interceptor.service 2>/dev/null || true
+sed -i \"/ $name\$/d\" /etc/hosts
+printf '%s %s\n' '$controller_address' '$name' >>/etc/hosts
+find $replay_dir -type f -exec shred -u {} + 2>/dev/null || true
+rm -rf $replay_dir" || true
+  [[ $outcome -eq 0 ]] || exit "$outcome"
+}
+
+# replay_work — the constat itself, run in a subshell so its `fail` is caught and
+# the perimeter is always given back. It reads the variables replay_constat set.
+replay_work() {
+  announce "the replay: an external actor steals the credentials it needs"
+  # The device credential, read from the vault by the product's own code. This
+  # is the attacker who has the phrase, opening the Console's own store exactly
+  # as the Console does — never a reimplementation, and a **read**, never a
+  # write. Only the device key comes out; the human seed stays sealed.
+  "$labctl" ssh "$console_vm" -- "
+set -e
+install -d -m 0700 $replay_dir
+phrase=\$(python3 -c \"import json;print(json.load(open('$remote_harness/console-state/vault.json'))['unlock_phrase'])\")
+cd /root/your-cloud-console-build/src-tauri
+. /root/.cargo/env
+YC_ATTACKER_STATE_DIR=$remote_harness/console-state/data/fr.your-cloud.console/native-vault \
+YC_ATTACKER_PHRASE=\"\$phrase\" \
+YC_ATTACKER_INFRA=$infrastructure_id \
+YC_ATTACKER_OUT=$replay_dir/device-credential.json \
+CARGO_BUILD_JOBS=1 cargo test --lib --quiet attacker_reads_the_device_credential_from_a_stolen_phrase -- --ignored >$replay_dir/reader.log 2>&1
+python3 - <<PY
+import json
+d=json.load(open('$replay_dir/device-credential.json'))
+open('$replay_dir/device.crt','w').write(d['device_certificate_pem'])
+open('$replay_dir/device.key','w').write(d['device_private_key_pem'])
+open('$replay_dir/server-ca.crt','w').write(d['server_ca_pem'])
+print('  device credential read from the vault for', d['device_id'])
+PY"
+
+  # The Controller's own server key, read from the Controller's disk: the
+  # transport compromise this constat grants. It is carried through the pilot
+  # and shredded on the Controller side the moment it is copied.
+  "$labctl" ssh "$controller_vm" -- "
+python3 - <<PY
+import json
+s=json.load(open('/var/lib/private/your-cloud-controller/identity.json'))
+open('/tmp/replay-controller.crt','w').write(s['server_certificate'])
+open('/tmp/replay-controller.key','w').write(s['server_private_key'])
+PY"
+  "$labctl" copy-from "$controller_vm" /tmp/replay-controller.crt "$workdir/controller.crt" >/dev/null
+  "$labctl" copy-from "$controller_vm" /tmp/replay-controller.key "$workdir/controller.key" >/dev/null
+  "$labctl" ssh "$controller_vm" -- "shred -u /tmp/replay-controller.crt /tmp/replay-controller.key"
+  "$labctl" copy-to "$console_vm" "$workdir/controller.crt" "$replay_dir/controller.crt" >/dev/null
+  "$labctl" copy-to "$console_vm" "$workdir/controller.key" "$replay_dir/controller.key" >/dev/null
+  "$labctl" copy-to "$console_vm" "$harness/_forger/replay-interceptor" "$replay_dir/replay-interceptor" >/dev/null
+
+  announce "standing the interceptor between the Console and :9443"
+  # The interceptor listens on the Console's own loopback; the Controller's name
+  # is pointed there so the Console dials the attacker without a line of the
+  # product changing. The attacker re-originates to the real address by IP,
+  # checking the real name against the real certificate.
+  "$labctl" ssh "$console_vm" -- "
+set -e
+chmod 0700 $replay_dir/replay-interceptor
+python3 - <<PY
+import json
+json.dump({
+  'listen_addr':'127.0.0.1','listen_port':9443,
+  'upstream_addr':'$controller_address','upstream_port':9443,
+  'server_name':'$name',
+  'controller_cert':'$replay_dir/controller.crt','controller_key':'$replay_dir/controller.key',
+  'device_cert':'$replay_dir/device.crt','device_key':'$replay_dir/device.key',
+  'server_ca':'$replay_dir/server-ca.crt','control_socket':'$control_socket',
+}, open('$replay_dir/config.json','w'))
+PY
+sed -i \"/ $name\$/d\" /etc/hosts
+printf '%s %s\n' '127.0.0.1' '$name' >>/etc/hosts
+systemctl stop lab-replay-interceptor.service 2>/dev/null || true
+systemd-run --unit=lab-replay-interceptor --collect \
+  --property=StandardOutput=append:$replay_dir/interceptor.log \
+  --property=StandardError=append:$replay_dir/interceptor.log \
+  /usr/bin/python3 $replay_dir/replay-interceptor $replay_dir/config.json
+sleep 2
+systemctl is-active lab-replay-interceptor.service"
+
+  announce "the capture journey: one real approval, made and consumed through the attacker"
+  # A whole real journey, on a slug of its own so it collides neither with the
+  # service the earlier journeys posed nor with a definition a previous run of
+  # this very phase already froze. Whether the launch applies or rolls back is
+  # irrelevant: the approval is spent by being submitted, before any launch, so
+  # its bytes are worth replaying either way.
+  local replay_slug=rejeu-$$
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
+    $machine_vm $digest $replay_slug" >"$workdir/replay-capture.log" 2>&1 \
+    || { sed -n '1,40p' "$workdir/replay-capture.log" | sed 's/^/    /'; fail "the capture journey did not complete"; }
+  local captured
+  captured=$("$labctl" ssh "$console_vm" -- \
+    "printf status | socat - UNIX-CONNECT:$control_socket 2>/dev/null || python3 -c \"import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect('$control_socket'); s.send(b'status'); sys.stdout.write(s.recv(4096).decode())\"")
+  echo "  the interceptor's tally: $captured"
+  echo "$captured" | grep -q '"approvals_seen": *[1-9]' \
+    || fail "the interceptor captured no approval on the wire"
+
+  announce "restarting the Controller: its in-memory sessions are gone, its registry is not"
+  local records_before position_before
+  records_before=$("$labctl" ssh "$controller_vm" -- \
+    "python3 -c \"import json;print(len(json.load(open('/var/lib/private/your-cloud-controller/dispatches.json'))['records']))\"")
+  position_before=$(machine_position)
+  "$labctl" ssh "$controller_vm" -- "systemctl restart your-cloud-controller.service; sleep 3"
+
+  announce "a fresh, legitimate session — opened by the real Console"
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run touch $remote_harness/window.json $machine_vm" \
+    >"$workdir/replay-touch.log" 2>&1 \
+    || { sed -n '1,40p' "$workdir/replay-touch.log" | sed 's/^/    /'; fail "the Console did not open a fresh session after the restart"; }
+
+  announce "the replay: the stale signed bytes, grafted onto that fresh session"
+  local verdict
+  verdict=$("$labctl" ssh "$console_vm" -- \
+    "python3 -c \"import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect('$control_socket'); s.send(b'replay'); sys.stdout.write(s.recv(4096).decode())\"")
+  echo "  the Controller's answer to the replay: $verdict"
+
+  # The whole constat, on the Controller's own terms.
+  local records_after position_after
+  records_after=$("$labctl" ssh "$controller_vm" -- \
+    "python3 -c \"import json;print(len(json.load(open('/var/lib/private/your-cloud-controller/dispatches.json'))['records']))\"")
+  position_after=$(machine_position)
+  echo "  records: $records_before before, $records_after after; machine position: $position_before then $position_after"
+
+  # The property is what the contract asks for: the replay is refused, no record
+  # is written, and the machine receives nothing. The **code** the refusal
+  # carries is measured, not assumed, and it revealed something worth the whole
+  # exercise: the Controller holds two independent, durable anti-replay gates,
+  # and this capture crosses the first of them.
+  #
+  # `approval_already_dispatched` (409) is the spent-digest gate: these exact
+  # signed bytes were consumed once. But it sits **after** the sequence gate in
+  # the handler, and the sequence gate — `approval_sequence_invalid` (422) —
+  # refuses an approval whose position the machine has already reported
+  # consuming. A capture journey that the machine reported therefore trips the
+  # sequence gate first, and that is the stronger of the two: the position is
+  # read from the durable registry the restart reloaded, so it is the machine's
+  # own attestation, not the Controller's memory, that refuses the replay.
+  #
+  # Either code proves the constat; a third does not. Both are asserted by name
+  # so that a future reordering of the two gates is a change this proof sees.
+  echo "$verdict" | grep -qE '"error_code": *"(approval_already_dispatched|approval_sequence_invalid)"' \
+    || fail "the replay was not refused by either durable anti-replay gate: $verdict"
+  echo "$verdict" | grep -qE '"status_line": *"HTTP/1.1 (409|422)' \
+    || fail "the replay drew a status other than 409/422: $verdict"
+  [[ "$records_before" == "$records_after" ]] \
+    || fail "the replay left a new record: $records_before -> $records_after"
+  [[ "$position_before" == "$position_after" ]] \
+    || fail "the replay moved the machine's own position: $position_before -> $position_after"
+  echo "  the replay was refused by a durable gate, no record was written, and the machine received nothing"
+}
+
+# --------------------------------------------------------------------------
 # verify — the service, read from outside the product.
 # --------------------------------------------------------------------------
 verify_service() {
@@ -838,6 +1041,7 @@ case "$command" in
   origin) mount_origin ;;
   journey) run_journey ;;
   refuse) refuse_constats ;;
+  replay) replay_constat ;;
   verify) verify_service ;;
   collect) collect ;;
   remove) remove ;;
@@ -883,6 +1087,7 @@ case "$command" in
     step run_journey
     step verify_service
     step refuse_constats
+    step replay_constat
     collect || true
     # Removal always runs, red or green: a perimeter left behind is a machine
     # that lies to the next proof.

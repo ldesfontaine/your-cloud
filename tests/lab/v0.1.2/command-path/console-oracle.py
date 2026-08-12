@@ -997,6 +997,15 @@ def main() -> int:
             build_pair(driver, arguments.machine, arguments.digest, arguments.local_port, report)
             approve_in_native_window(driver, report)
             sign_and_launch(driver, report)
+        if arguments.stage == "touch":
+            # A fresh session, and nothing else. After the Controller has
+            # restarted, its in-memory sessions are gone; the replay proof needs
+            # the Console to open a new, legitimate one so the interceptor has a
+            # valid bearer to graft the stale signed bytes onto. Reading the
+            # Parc is the cheapest authenticated act that mints one, and its
+            # reads carry the bearer over the wire the interceptor is watching.
+            click_then_wait(driver, "Parc", HEADING, "Parc", description="the Parc view")
+            report["touched"] = "a fresh session was opened by reading the Parc"
         if arguments.stage == "attach":
             # The Parc view is the first screen that reads the machines
             # projection, and the gate a machine enters the inventory through.
