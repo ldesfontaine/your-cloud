@@ -142,10 +142,27 @@ func validCommandHost(host string) bool {
 	return true
 }
 
-// knownHostsLine renders the one line the derived file holds. The bracketed
-// form is used unconditionally rather than only for a non-default port: one
-// shape means one thing to read, and OpenSSH accepts it for port 22 too.
+// knownHostsLine renders the one line the derived file holds, in the form
+// OpenSSH really looks the host up under.
+//
+// An earlier version wrote the bracketed `[host]:port` form unconditionally,
+// on the belief that « one shape means one thing to read, and OpenSSH accepts
+// it for port 22 too ». It does not, and the belief cost every launch to a
+// machine on the default port: OpenSSH looks up the **plain host** when the
+// port is 22 and the bracketed form only otherwise, so a pin written the other
+// way is a pin the client never finds. Measured against a real `sshd`: the
+// bracketed line answers « No ED25519 host key is known for <host> ... Host key
+// verification failed », the plain line authenticates.
+//
+// This is not a weaker pin — it is the same key, held just as strictly, written
+// where the client reads it. The shape is dictated by the program being
+// interoperated with, and this is the one place the product does not get to
+// choose its own convention.
 func (endpoint commandEndpoint) knownHostsLine() string {
+	if endpoint.Port == 22 {
+		return fmt.Sprintf("%s %s %s\n",
+			endpoint.Host, commandHostKeyAlgorithm, endpoint.HostKey)
+	}
 	return fmt.Sprintf("[%s]:%d %s %s\n",
 		endpoint.Host, endpoint.Port, commandHostKeyAlgorithm, endpoint.HostKey)
 }

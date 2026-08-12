@@ -244,7 +244,12 @@ func TestTheKnownHostIsDerivedAndHoldsOnlyTheMachineReached(t *testing.T) {
 	fixture.dispatcher.Dispatch(launchRecord(fixture, 900), []byte("{}"))
 	derived = inspecting.knownHostsContent
 
-	expected := "[192.0.2.10]:22 ssh-ed25519 " + testHostKeyBlob() + "\n"
+	// The plain host, because the port is 22. This assertion held the bracketed
+	// form until a real `sshd` was put behind it: OpenSSH looks a host up under
+	// `[host]:port` only when the port is not 22, so the bracketed line was a
+	// pin the client never found and every launch to a default-port machine
+	// failed « Host key verification failed ». The shape belongs to OpenSSH.
+	expected := "192.0.2.10 ssh-ed25519 " + testHostKeyBlob() + "\n"
 	if derived != expected {
 		t.Fatalf("the derived known host is %q rather than %q", derived, expected)
 	}
@@ -257,6 +262,17 @@ func TestTheKnownHostIsDerivedAndHoldsOnlyTheMachineReached(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("the derived known host survived its launch: %v", entries)
+	}
+
+	// And the other regime, so the rule is held at both ends rather than at the
+	// one this LAB happens to use: a machine reached on another port is written
+	// in the bracketed form, which is where OpenSSH looks it up then.
+	elsewhere := commandEndpoint{
+		Host: "192.0.2.10", Port: 2222, HostKey: testHostKeyBlob(),
+	}
+	expectedElsewhere := "[192.0.2.10]:2222 ssh-ed25519 " + testHostKeyBlob() + "\n"
+	if line := elsewhere.knownHostsLine(); line != expectedElsewhere {
+		t.Fatalf("a machine on another port is pinned as %q rather than %q", line, expectedElsewhere)
 	}
 }
 
