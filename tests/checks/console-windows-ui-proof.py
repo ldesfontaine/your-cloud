@@ -36,6 +36,11 @@ class ScreenshotRasterError(AssertionError):
 # harnais la monte et le constate — parce que l'assistant gèle les adresses
 # du nom AVANT d'afficher le consentement (contrat de #52).
 SYNTHETIC_TARGET_NAME = "controller.example.test"
+# L'adresse que les deux harnais gèlent pour ce nom : TEST-NET-1 (RFC 5737),
+# ni boucle locale ni adresse de la machine — le gel refuse explicitement les
+# deux. Nommée une seule fois ici, et attendue telle quelle dans la fenêtre.
+SYNTHETIC_TARGET_ADDRESS = "192.0.2.10"
+
 
 def paeth_predictor(left: int, above: int, upper_left: int) -> int:
     estimate = left + above - upper_left
@@ -1052,9 +1057,15 @@ def capture_windows_native_prompt(output: pathlib.Path) -> dict[str, object]:
     accept_control = user32.GetDlgItem(dialog, 1)
     if not all((scope_control, countdown_control, refuse_control, accept_control)) or secret_control:
         raise AssertionError("native Win32 consent controls drifted")
+    # La ligne « Adresses » n'est pas décorative : c'est le constat que
+    # l'assistant a résolu le nom **une seule fois**, gelé ce qu'il a obtenu, et
+    # le montre à côté du nom — le consentement couvre alors le pair réellement
+    # composé, pas l'étiquette. L'exiger ici, c'est attester le contrat de #52
+    # plutôt que la seule présence d'une fenêtre.
     expected_scope = [
         "Parcours : création",
-        "Cible : infra_admin@controller.example.test:22",
+        f"Cible : infra_admin@{SYNTHETIC_TARGET_NAME}:22",
+        f"Adresses : {SYNTHETIC_TARGET_ADDRESS}",
         "Route d’accès : administrateur",
         "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "Étape : accès personnel",
