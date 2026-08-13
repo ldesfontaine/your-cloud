@@ -748,6 +748,12 @@ ne couvre pas Windows sans contrainte. La décision de placement des preuves
 [`#67`](https://github.com/ldesfontaine/your-cloud/issues/67) remplace donc
 cette position.
 
+Le passage du dépôt en public, le 12 août 2026, lève la rareté des minutes mais
+**ne referme pas** ce LAB Windows. Il ne tenait pas seulement au quota : une
+matrice hébergée atteste un candidat, elle n'offre ni la boucle courte d'un
+défaut à reproduire, ni une fenêtre réellement visible. Le placement des preuves
+reste celui de `#67` ; seule sa contrainte de coût a disparu.
+
 Ce LAB Windows minimal existe depuis le 4 août 2026. Il tient dans un seul
 domaine libvirt, `windows-eval` : Windows Server 2025 Standard Évaluation avec
 interface graphique — le même système que le runner `windows-2025` de la porte

@@ -107,9 +107,13 @@ d'évaluation Windows — puis fusionnées dans `main` jusqu'à `5edd48e`.
 Le mainteneur a fermé `#42` et `#35` le 5 août 2026 **sur cette preuve LAB
 seule**. Cette fermeture ne vaut pas attestation : aucune matrice native n'a
 couvert ce code et le dernier SHA porteur d'une preuve native reste `8ed2f57`.
-`#52`, `#53` et `#54` restent donc ouvertes et portent cette dette ; une seule
-matrice les couvrira sur un candidat de palier unique à la réinitialisation du
-cycle, vers le 1er septembre 2026.
+`#52`, `#53` et `#54` restent donc ouvertes et portent cette dette ; une matrice
+les couvrira sur un candidat de palier unique. L'échéance qui était écrite ici —
+la réinitialisation du cycle, vers le 1er septembre 2026 — est **caduque depuis
+le passage du dépôt en public** le 12 août 2026 : les minutes hébergées ne sont
+plus décomptées et la matrice ne dépend plus d'une fenêtre de quota
+([contrat de CI](../../contribution/CI.md)). La dette, elle, reste entière :
+seul un SHA réellement attesté la lève.
 
 Le mainteneur a ensuite fermé `#36`, `#37`, `#38`, `#39` et `#40` le 6 août
 2026, **sur la même base et sous la même réserve** : chacune est adossée à un
@@ -118,8 +122,9 @@ commentaire de fermeture qui nomme la dette qu'elle emporte, et aucune n'a été
 couverte par une porte hébergée. Le code est intégré à `main` par fast-forward,
 SHA préservés, jusqu'à `e89fae5`. **Le découpage exécutable du palier `#13` est
 donc entièrement coché à l'exception de `#41`**, qui est sa preuve globale et
-qui ne peut pas fermer avant le candidat : elle exige un SHA publié que le
-quota épuisé rend inatteignable jusqu'à la réinitialisation du cycle.
+qui ne peut pas fermer avant le candidat : elle exige un SHA publié et
+réellement attesté. Ce n'est plus le quota qui l'en sépare — il est levé depuis
+le passage en public — mais l'exécution de la matrice elle-même.
 
 Les deux pièces de `#41` qui ne dépendaient d'aucune porte hébergée sont
 acquises : l'orchestrateur
@@ -732,7 +737,9 @@ branche `console-controller` a été revalidée après review sur le commit prod
 exact `02fe4f5`. La porte native Linux/Windows finale a réussi sur le candidat
 produit `3b8f81f` dans le run `30710037004`, sans prétendre rejouer la topologie
 multi-VM. L'issue `#9` relie cette preuve au SHA intégré par fast-forward :
-`v0.0.3` est fermée. Le budget du projet reste nul. L'amorçage et le
+`v0.0.3` est fermée. Le budget du projet reste nul, **sauf pour la CI
+hébergée** : le dépôt étant public depuis le 12 août 2026, ses runners
+standard ne sont plus décomptés. L'amorçage et le
 remplacement du Controller appartiennent au contrat de `v0.1.0` et restent ouverts, mais
 leur socle helper/IPC `#43` est implémenté et prouvé sous Linux et Windows sur
 `f3fef79` par le run `30753216798`. `#45` est désormais prouvée et fermée ; les

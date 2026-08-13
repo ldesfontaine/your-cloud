@@ -163,8 +163,10 @@ SHA que la matrice hébergée a attesté.
 
 Préconditions, toutes vérifiées sur le même SHA candidat :
 
-1. la matrice native `workflow_dispatch`, précédée de
-   `tools/ci-usage --guard 100`, est entièrement verte sur ce SHA exact ;
+1. la matrice native `workflow_dispatch` est entièrement verte sur ce SHA
+   exact ; `tools/ci-usage --guard 100` la précède toujours, mais depuis le
+   passage du dépôt en public il **enregistre** la consommation au lieu de la
+   borner ([contrat de CI](../../contribution/CI.md)) ;
 2. la preuve complète est verte sur ce SHA, arbre propre, et ses artefacts
    portent `release.version` égal à la version de `console/package.json` ;
 3. les issues de palier requises sont fermées, et le suivi le montre.

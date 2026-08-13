@@ -56,6 +56,44 @@ comme pratiqué depuis
 s'hérite pas d'un SHA à l'autre ; ne pas rejouer la matrice n'autorise donc pas
 à attribuer une preuve native à un SHA qu'elle n'a pas couvert.
 
+## Le dépôt est public : la rareté des minutes est levée
+
+Le dépôt est passé public le 12 août 2026. Les runners standard de GitHub
+Actions n'y sont plus décomptés, et la contrainte qui gouvernait le rythme
+depuis le 3 août — un quota épuisé, une matrice à environ 98 minutes, une seule
+fenêtre par palier — cesse d'exister.
+
+Cette décision est du même genre que [`#67`](https://github.com/ldesfontaine/your-cloud/issues/67) :
+elle change le **coût** d'une preuve, jamais sa **valeur**.
+
+### Ce qui change
+
+| Avant | Après |
+|---|---|
+| `tools/ci-usage --guard 100` **bloque** avant toute matrice | il **informe** : la mesure reste enregistrée, elle n'interdit plus |
+| une seule matrice par candidat de palier, cumulant la dette de plusieurs issues | autant d'itérations que le vert en demande |
+| un rouge de matrice coûtait la fenêtre du palier | un rouge se diagnostique, se corrige et se relance sans cérémonie |
+| « le budget du projet reste nul » s'appliquait aussi à la CI | la règle du budget nul ne concerne plus la CI hébergée |
+
+Un rouge reste un rouge : il se **mesure** avant d'être corrigé. La gratuité
+retire la pression de la fenêtre, pas l'exigence d'établir une cause.
+
+### Ce qui ne change pas
+
+Rien de ce qui fait la valeur d'une preuve ne dépendait du quota, et rien n'est
+desserré ici :
+
+- **le placement des preuves** reste à trois étages — contrôles statiques au
+  poste, fonctionnel au LAB, attestation à la CI hébergée. Une matrice gratuite
+  n'autorise pas à y remonter ce que le LAB prouve mieux ;
+- **mesurer avant d'affirmer** : une cause s'établit, elle ne se suppose pas ;
+- **aucune fixture ne remplace un composant du produit** sur un trajet prouvé ;
+- **les trois états** — documenté, implémenté, prouvé — restent distingués ;
+- **un tag ne se pose que sur un SHA attesté** par une matrice entièrement
+  verte ; une preuve ne s'hérite toujours pas d'un SHA à l'autre ;
+- **aucune donnée personnelle** n'entre au dépôt, dont les règles d'exclusion
+  restent la garde.
+
 ## État actuel
 
 | Élément | État | Autorité |
