@@ -9,6 +9,12 @@ use std::{
 };
 
 use native_helper::{HelperInvocation, NativeHelperError, NativeHelperSupervisor};
+// Ce que rend une attente qui n'a pas encore conclu. Les trois emplois vivent
+// dans les cas `cfg(target_os = "linux")` de ce fichier, et l'import suit la
+// même borne : sous Windows, ces cas ne sont pas compilés et le nom n'aurait
+// personne pour l'employer.
+#[cfg(target_os = "linux")]
+use native_helper::NativeHelperPoll;
 use your_cloud_bootstrap_protocol::{
     AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
     BootstrapTarget, NativePromptKind,
