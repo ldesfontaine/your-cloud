@@ -32,6 +32,11 @@ class ScreenshotRasterError(AssertionError):
     """Reject a screenshot whose encoded raster cannot support visual proof."""
 
 
+# La cible synthétique que cette preuve déclare. Elle doit résoudre — le
+# harnais la monte et le constate — parce que l'assistant gèle les adresses
+# du nom AVANT d'afficher le consentement (contrat de #52).
+SYNTHETIC_TARGET_NAME = "controller.example.test"
+
 def paeth_predictor(left: int, above: int, upper_left: int) -> int:
     estimate = left + above - upper_left
     left_distance = abs(estimate - left)
@@ -1097,7 +1102,13 @@ def capture_windows_native_prompt(output: pathlib.Path) -> dict[str, object]:
         "title_exact": True,
         "png_signature_valid": True,
         "public_scope_machine_inspected": True,
-        "synthetic_target_present": True,
+        # Tirée de ce que la fenêtre a réellement affiché, jamais affirmée : une
+        # précondition qu'un harnais déclare sans la constater est exactement ce
+        # qui a laissé cette preuve rouge sans que personne ne sache pourquoi.
+        "synthetic_target_present": any(
+            line.startswith("Cible : ") and SYNTHETIC_TARGET_NAME in line
+            for line in observed_scope
+        ),
         "secret_control_machine_inspected": True,
         "secret_control_present": False,
     }

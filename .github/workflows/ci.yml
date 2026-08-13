@@ -294,21 +294,25 @@ jobs:
         run: ./tests/checks/console-windows-ci.ps1
 
       - name: Archiver le smoke WebView2 Windows
-        if: runner.os == 'Windows'
+        # `always()` et non le succès : sur un rouge, cette capture est la seule
+        # trace de ce que la fenêtre a montré, et c'est exactement là qu'elle
+        # manquait. Une étape d'archivage sautée sur échec produit des rouges
+        # qui n'accusent rien.
+        if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: console-windows-webview2-smoke
           path: ${{ runner.temp }}/your-cloud-windows-webview2-smoke
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Archiver le smoke WebKitGTK Linux
-        if: runner.os == 'Linux'
+        if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: console-linux-webkitgtk-smoke
           path: ${{ runner.temp }}/your-cloud-linux-webkitgtk-smoke
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
   plumber_policy:

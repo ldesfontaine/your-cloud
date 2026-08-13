@@ -10,6 +10,19 @@ package_name=
 hostile_stdout=
 hostile_stderr=
 temporary_root=
+# La cible synthétique que la preuve d'invite déclare. Elle doit **résoudre**,
+# et rien d'autre : depuis `#52`, l'assistant résout le nom une seule fois et
+# gèle ses adresses AVANT d'afficher le consentement, pour que la fenêtre
+# montre des faits vérifiés plutôt qu'une intention. Un nom qui ne résout pas
+# termine donc la session sans fenêtre — et c'est correct.
+#
+# L'adresse est de TEST-NET-1 (RFC 5737) et non une boucle locale, parce que le
+# gel refuse explicitement le loopback et toute adresse de la machine elle-même
+# (`Loopback`, `LocalInterface`). Aucun écouteur n'est monté et aucun ne doit
+# l'être : la préparation ne compose jamais la cible.
+synthetic_target_name=controller.example.test
+synthetic_target_address=192.0.2.10
+synthetic_target_mounted=false
 termination_poll_attempts=40
 termination_poll_interval=0.05
 
@@ -185,6 +198,10 @@ cleanup() {
   if [[ -n "$package_name" ]] && dpkg-query -W "$package_name" >/dev/null 2>&1; then
     sudo dpkg --remove "$package_name" >/dev/null || status=1
   fi
+  if [[ "$synthetic_target_mounted" == true ]]; then
+    sudo sed -i "/[[:space:]]$synthetic_target_name\$/d" /etc/hosts || status=1
+    synthetic_target_mounted=false
+  fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -241,6 +258,21 @@ hostile_stderr=
 
 : "${DISPLAY:?console-linux-ci must run inside an isolated X display}"
 : "${RUNNER_TEMP:?console-linux-ci requires the runner temporary directory}"
+
+# La cible synthétique est montée, puis **constatée** : une précondition qu'on
+# affirme sans la vérifier est exactement le défaut que cette preuve a laissé
+# passer pendant des semaines.
+sudo sed -i "/[[:space:]]$synthetic_target_name\$/d" /etc/hosts
+printf '%s %s\n' "$synthetic_target_address" "$synthetic_target_name" \
+  | sudo tee -a /etc/hosts >/dev/null
+synthetic_target_mounted=true
+resolved_target=$(getent hosts "$synthetic_target_name" | awk '{print $1; exit}')
+[[ "$resolved_target" == "$synthetic_target_address" ]] || {
+  echo "the synthetic target $synthetic_target_name resolved to '${resolved_target:-rien}' rather than $synthetic_target_address" >&2
+  exit 1
+}
+printf 'PASS: synthetic target %s resolves to %s, and nothing listens for it\n' \
+  "$synthetic_target_name" "$synthetic_target_address"
 temporary_root=$(mktemp -d)
 proof_root="$RUNNER_TEMP/your-cloud-linux-webkitgtk-smoke"
 rm -rf -- "$proof_root"

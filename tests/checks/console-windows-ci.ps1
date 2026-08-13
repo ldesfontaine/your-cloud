@@ -48,6 +48,13 @@ $proofReportPath = Join-Path $uiSmokeRoot "windows-webview2-smoke.json"
 $githubSha = $env:GITHUB_SHA
 $githubRunId = $env:GITHUB_RUN_ID
 $executionFailure = $null
+# La cible synthétique de la preuve d'invite : un seul nom, une seule adresse,
+# et le même patron que le harnais Linux. Elle est montée dans le fichier
+# `hosts` puis constatée, jamais supposée.
+$syntheticTargetName = "controller.example.test"
+$syntheticTargetAddress = "192.0.2.10"
+$syntheticTargetMounted = $false
+$hostsPath = Join-Path $env:SystemRoot "System32\drivers\etc\hosts"
 
 function Invoke-Native {
     param(
@@ -867,6 +874,31 @@ try {
     if (Test-Path -LiteralPath $uiSmokeRoot) {
         Remove-Item -LiteralPath $uiSmokeRoot -Recurse -Force
     }
+
+    # La cible synthétique que la preuve d'invite déclare. Elle doit résoudre,
+    # et rien d'autre : depuis #52, l'assistant résout le nom une seule fois et
+    # gèle ses adresses AVANT d'afficher le consentement, pour que la fenêtre
+    # montre des faits vérifiés plutôt qu'une intention. Un nom qui ne résout
+    # pas termine la session sans fenêtre — et c'est le produit qui a raison.
+    #
+    # L'adresse appartient à TEST-NET-1 (RFC 5737) et n'est ni une boucle
+    # locale ni une adresse de cette machine : le gel refuse explicitement les
+    # deux. Aucun écouteur n'est monté, et aucun ne doit l'être — la
+    # préparation ne compose jamais la cible.
+    Write-Host "CI Windows: mounting the synthetic target $syntheticTargetName"
+    $hostsContent = @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) |
+        Where-Object { $_ -notmatch "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+    $hostsContent += "$syntheticTargetAddress $syntheticTargetName"
+    Set-Content -LiteralPath $hostsPath -Value $hostsContent -Encoding ASCII
+    $syntheticTargetMounted = $true
+    $resolvedTarget = @(
+        [Net.Dns]::GetHostAddresses($syntheticTargetName) |
+            ForEach-Object { $_.IPAddressToString }
+    )
+    if ($resolvedTarget -notcontains $syntheticTargetAddress) {
+        throw "the synthetic target $syntheticTargetName resolved to '$($resolvedTarget -join ', ')' rather than $syntheticTargetAddress"
+    }
+    Write-Host "CI Windows: synthetic target resolves to $syntheticTargetAddress, and nothing listens for it"
     Write-Host "CI Windows: creating the synthetic code-signing certificate"
     $certificate = New-SelfSignedCertificate `
         -Type CodeSigningCert `
@@ -1871,6 +1903,23 @@ finally {
         }
         if (Test-Path -LiteralPath $temporaryRoot) {
             throw "temporary security material remained at $temporaryRoot"
+        }
+    }
+
+    # La cible synthétique est rendue, et son absence est constatée : une
+    # entrée `hosts` laissée derrière ferait résoudre un nom que la machine
+    # suivante n'a jamais déclaré.
+    Invoke-CleanupAction $cleanupFailures "synthetic target absence" {
+        if ($syntheticTargetMounted) {
+            $remaining = @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) |
+                Where-Object { $_ -notmatch "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+            Set-Content -LiteralPath $hostsPath -Value $remaining -Encoding ASCII
+            $syntheticTargetMounted = $false
+        }
+        $lingering = @(Get-Content -LiteralPath $hostsPath -ErrorAction SilentlyContinue) |
+            Where-Object { $_ -match "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+        if ($lingering.Count -ne 0) {
+            throw "the synthetic target $syntheticTargetName remained in $hostsPath"
         }
     }
 
