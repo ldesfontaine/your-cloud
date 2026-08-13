@@ -69,7 +69,7 @@ use bounded_process::{
     PIPE_EOF_TIMEOUT, REAP_TIMEOUT,
 };
 use canary_scan::file_contains;
-use native_helper::{NativeHelperPoll, NativeHelperSupervisor};
+use native_helper::{HelperInvocation, NativeHelperPoll, NativeHelperSupervisor};
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1, BootstrapAccessKind,
     BootstrapAction, BootstrapMode, BootstrapStep, BootstrapTarget, NativePromptKind,
@@ -1433,7 +1433,7 @@ fn a_console_launched_helper_reaches_the_personal_agent_and_opens_its_window() {
         .start_with_path(
             &path,
             &name,
-            supervised_personal_access_scope(),
+            HelperInvocation::Bootstrap(supervised_personal_access_scope()),
             Instant::now() + SUPERVISED_LEASE,
         )
         .expect("the Console supervisor must launch the helper");
@@ -1495,7 +1495,7 @@ fn a_window_that_needs_no_agent_is_never_given_one() {
         .start_with_path(
             &path,
             &name,
-            supervised_escalation_scope(),
+            HelperInvocation::Bootstrap(supervised_escalation_scope()),
             Instant::now() + SUPERVISED_LEASE,
         )
         .expect("the Console supervisor must launch the helper");
