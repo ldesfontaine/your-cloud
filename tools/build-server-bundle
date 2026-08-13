@@ -62,6 +62,19 @@ for unit in "${units[@]}"; do
   install -m 0644 "$packaging/units/$unit" "$root/$unit_directory/$unit"
 done
 
+# Les deux sources de credentials que l'unité du Controller nomme, livrées
+# **vides**. Sans elles, systemd échoue à l'étape CREDENTIALS et le Controller
+# ne démarre pas du tout — pas même sur une installation neuve où aucune
+# machine n'est encore enrôlée. Les livrer complète l'unité que le paquet
+# livre déjà inactive : le produit s'installe entier, et l'Assistant les
+# remplit à l'enrôlement.
+#
+# `0700 root:root` : elles reçoivent les moitiés privées des identités de
+# commande, et la custody que #130 a durcie commence au répertoire.
+for credential_directory in command-identities command-endpoints; do
+  install -d -m 0700 "$root/etc/your-cloud/$credential_directory"
+done
+
 install -d -m 0755 "$root/DEBIAN"
 sed "s/@VERSION@/$version/" "$packaging/debian/control" >"$root/DEBIAN/control"
 chmod 0644 "$root/DEBIAN/control"
