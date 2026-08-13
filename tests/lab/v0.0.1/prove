@@ -469,11 +469,15 @@ while IFS= read -r -d '' path; do
     && "$path" != */../* ]] \
     || fail "v0.0.1 Git file list contains an unsafe path"
   [[ "${path##*/}" != keys.txt ]] || continue
+  # Ce que le lot de sources prouvé ne contient jamais. La règle ne tient pas
+  # l'inventaire des répertoires de travail propres au poste : ceux-ci sont
+  # écartés par les règles d'exclusion du dépôt, que `--exclude-standard`
+  # honore ci-dessous, si bien qu'un répertoire apparu hier est déjà couvert
+  # sans que cette garde ait à le connaître. Ne restent nommés ici que le
+  # répertoire Git lui-même et les sorties de construction — qui, eux, ne
+  # changent pas.
   case "$path" in
-    AGENTS.md|AGENTS.proposal.md|CLAUDE.md)
-      continue
-      ;;
-    .git|.git/*|.agents|.agents/*|.codex|.codex/*|.claude|.claude/*|.cursor|.cursor/*)
+    .git|.git/*)
       continue
       ;;
     dist|dist/*|build|build/*|tests/artifacts/proofs|tests/artifacts/proofs/*)

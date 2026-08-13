@@ -20,11 +20,11 @@ build/
 # feuille d'exécution). Survit à la session sans entrer dans l'historique.
 /septembre-2026/
 
-# Routeurs, propositions et caches propres aux assistants locaux.
-/AGENTS.md
-/AGENTS.proposal.md
-/CLAUDE.md
-/.agents/
-/.codex/
-/.claude/
-/.cursor/
+# Répertoires cachés de la racine : aucun n'entre au dépôt, sauf ceux qui lui
+# appartiennent en propre. Un motif générique plutôt qu'une liste de noms, pour
+# deux raisons : la liste vieillissait à chaque nouvel outil de travail local, et
+# une règle d'exclusion n'a pas à tenir l'inventaire de ce qu'elle exclut. Les
+# fichiers de travail propres au poste restent couverts par l'exclusion locale
+# de la copie (`.git/info/exclude`), qui n'a pas à être publiée.
+/.*/
+!/.github/
