@@ -886,8 +886,10 @@ try {
     # deux. Aucun écouteur n'est monté, et aucun ne doit l'être — la
     # préparation ne compose jamais la cible.
     Write-Host "CI Windows: mounting the synthetic target $syntheticTargetName"
-    $hostsContent = @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) |
-        Where-Object { $_ -notmatch "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+    $hostsContent = @(
+        @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) |
+            Where-Object { $_ -notmatch "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+    )
     $hostsContent += "$syntheticTargetAddress $syntheticTargetName"
     Set-Content -LiteralPath $hostsPath -Value $hostsContent -Encoding ASCII
     $syntheticTargetMounted = $true
@@ -1333,10 +1335,60 @@ try {
         throw "ephemeral Windows UI proof profile was not created"
     }
     $automationProfilePath = $automationUserProfile.LocalPath
+
     $automationLocalData = Join-Path $automationUserProfile.LocalPath "AppData\Local"
     $automationRoamingData = Join-Path $automationUserProfile.LocalPath "AppData\Roaming"
     $applicationData = Join-Path $automationRoamingData "fr.your-cloud.console"
     $automationTemp = Join-Path $automationLocalData "Temp"
+
+    # L'agent personnel de ce compte, et son identité.
+    #
+    # Sous Windows, `serve_personal_access` termine l'étape AVANT tout
+    # affichage quand l'agent ne tient aucune identité : le repli par fichier
+    # de clé (#53) appartient au chemin GTK et n'existe pas ici. La fenêtre de
+    # consentement n'est donc atteignable qu'avec un agent qui tient quelque
+    # chose — exactement comme la preuve Linux monte le sien.
+    #
+    # Il est monté DANS LE CONTEXTE DU COMPTE QUI EXÉCUTE LA CONSOLE : l'agent
+    # OpenSSH chiffre ses clés par utilisateur, et une identité ajoutée sous un
+    # autre compte ne serait pas la sienne. Le profil vient d'être ouvert par
+    # une ouverture de session avec mot de passe, ce que `ssh-add` exige.
+    Write-Host "CI Windows: mounting the personal agent of the bounded account"
+    Set-Service -Name ssh-agent -StartupType Manual -ErrorAction Stop
+    Start-Service -Name ssh-agent -ErrorAction Stop
+    $agentScript = Join-Path $temporaryRoot "mount-agent.cmd"
+    Set-Content -LiteralPath $agentScript -Encoding ASCII -Value @(
+        '@echo off',
+        'ssh-keygen -q -t ed25519 -N "" -C yc-ci-synthetic -f "%~1" || exit /b 2',
+        'ssh-add "%~1" || exit /b 3',
+        'ssh-add -l > "%~2" 2>&1 || exit /b 4'
+    )
+    $agentKeyPath = Join-Path $automationTemp "yc-ci-agent-identity"
+    $agentListingPath = Join-Path $automationTemp "yc-ci-agent-identities.txt"
+    $agentMount = Start-Process `
+        -FilePath $env:ComSpec `
+        -ArgumentList @("/d", "/c", $agentScript, $agentKeyPath, $agentListingPath) `
+        -Credential $automationCredential `
+        -LoadUserProfile `
+        -PassThru
+    Wait-BoundedProcess `
+        -Process $agentMount `
+        -TimeoutSeconds 120 `
+        -Operation "personal agent mount for the bounded account"
+    if ($agentMount.ExitCode -ne 0) {
+        throw "precondition: agent sans identité — le montage a rendu $($agentMount.ExitCode)"
+    }
+    # La précondition est CONSTATÉE, jamais supposée : sans cela, un agent vide
+    # se lirait plus tard comme « aucune fenêtre n'est apparue », qui accuse le
+    # produit pour une carence du harnais.
+    $agentIdentities = @(
+        @(Get-Content -LiteralPath $agentListingPath -ErrorAction SilentlyContinue) |
+            Where-Object { $_ -match '^\s*\d+\s+\S+' }
+    )
+    if ($agentIdentities.Count -lt 1) {
+        throw "precondition: agent sans identité — ssh-add -l n'a listé aucune identité"
+    }
+    Write-Host "CI Windows: personal agent holds $($agentIdentities.Count) identity"
     $webViewDataRoot = Join-Path `
         $automationLocalData `
         "your-cloud-windows-webview2-smoke"
@@ -1911,13 +1963,17 @@ finally {
     # suivante n'a jamais déclaré.
     Invoke-CleanupAction $cleanupFailures "synthetic target absence" {
         if ($syntheticTargetMounted) {
-            $remaining = @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) |
-                Where-Object { $_ -notmatch "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+            $remaining = @(
+                @(Get-Content -LiteralPath $hostsPath -ErrorAction Stop) |
+                    Where-Object { $_ -notmatch "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+            )
             Set-Content -LiteralPath $hostsPath -Value $remaining -Encoding ASCII
             $syntheticTargetMounted = $false
         }
-        $lingering = @(Get-Content -LiteralPath $hostsPath -ErrorAction SilentlyContinue) |
-            Where-Object { $_ -match "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+        $lingering = @(
+            @(Get-Content -LiteralPath $hostsPath -ErrorAction SilentlyContinue) |
+                Where-Object { $_ -match "\s$([regex]::Escape($syntheticTargetName))\s*$" }
+        )
         if ($lingering.Count -ne 0) {
             throw "the synthetic target $syntheticTargetName remained in $hostsPath"
         }
