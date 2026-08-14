@@ -54,7 +54,25 @@ personal "sudo -n env YOUR_CLOUD_FAIL_AT='$fail_at' YOUR_CLOUD_CUT_AT='$cut_at' 
 
 # The ledger of the run, and what the machine really holds afterwards. Nothing
 # below is composed here: each file is the machine's own answer.
-personal "sudo -n cat /root/lab-machine-identity/ledger" >"$state/observed/$machine.ledger" || true
+#
+# The key step has just reloaded sshd, and that reload closes the port for an
+# instant — measured: the first connection attempt after a reload is refused.
+# A read landing in that window used to fail into `|| true`, handing `unwind`
+# an empty ledger the machine never wrote. The read therefore retries past the
+# window, and a ledger that still cannot be read is a loud failure — never an
+# empty observation: the ledger file always exists here, `enrol-machine`
+# initialises it before its first step.
+ledger_read=0
+for _ in 1 2 3; do
+  if personal "sudo -n cat /root/lab-machine-identity/ledger" \
+    >"$state/observed/$machine.ledger"; then
+    ledger_read=1
+    break
+  fi
+  sleep 2
+done
+[[ $ledger_read -eq 1 ]] \
+  || { echo "REFUSED: the machine ledger could not be read" >&2; exit 1; }
 
 # --------------------------------------------------------------------------
 # 7. endpoint — la fiche de commande, sur le Controller et jamais sur la
