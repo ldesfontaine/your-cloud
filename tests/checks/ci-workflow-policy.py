@@ -9,6 +9,14 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+NATIVE_MANIFEST = (
+    ROOT
+    / "console"
+    / "src-tauri"
+    / "crates"
+    / "native-bootstrap-assistant"
+    / "Cargo.toml"
+)
 
 
 class PolicyError(RuntimeError):
@@ -57,6 +65,36 @@ def direct_values(block: list[str], indent: int) -> dict[str, str]:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise PolicyError(message)
+
+
+def declared_native_test_targets() -> list[str]:
+    if not NATIVE_MANIFEST.is_file():
+        raise PolicyError("missing native assistant manifest")
+    section = None
+    targets: list[str] = []
+    for line in NATIVE_MANIFEST.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[["):
+            section = stripped
+            continue
+        if section == "[[test]]":
+            match = re.match(r'name\s*=\s*"([^"]+)"', stripped)
+            if match:
+                targets.append(match.group(1))
+    if not targets:
+        raise PolicyError("no [[test]] target found in the native manifest")
+    return targets
+
+
+def validate_native_test_targets(lines: list[str]) -> None:
+    """A target no gate builds rots without anyone knowing."""
+
+    workflow_text = "\n".join(lines)
+    for target in declared_native_test_targets():
+        require(
+            f"--test {target}" in workflow_text,
+            f"native test target {target!r} must be built or run by the gate",
+        )
 
 
 def validate() -> None:
@@ -130,6 +168,8 @@ def validate() -> None:
         ],
         "native matrix must contain exactly the declared Linux and Windows variants",
     )
+
+    validate_native_test_targets(lines)
 
 
 def main() -> int:

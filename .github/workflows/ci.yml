@@ -130,6 +130,29 @@ jobs:
         working-directory: console/src-tauri
         run: cargo +1.94.1 test --release --locked --workspace
 
+      # Ces contrats ne s'exécutent que là où leur périmètre existe (agent et
+      # sshd réels sur une autre machine, tuyau d'agent Windows). La porte les
+      # construit néanmoins : un code qu'aucune porte ne construit pourrit sans
+      # que personne ne le sache.
+      - name: Construire le contrat d'accès personnel sans l'exécuter
+        if: runner.os == 'Linux'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked --no-run
+          --package your-cloud-native-bootstrap-assistant
+          --features personal-access-contract-test
+          --test personal-access-contract
+
+      - name: Construire les contrats de transport Windows sans les exécuter
+        if: runner.os == 'Windows'
+        working-directory: console/src-tauri
+        run: >-
+          cargo +1.94.1 test --release --locked --no-run
+          --package your-cloud-native-bootstrap-assistant
+          --features windows-agent-pipe-contract-test,windows-personal-transport-contract-test
+          --test windows-agent-pipe-contract
+          --test windows-personal-transport-contract
+
       - name: Tester le contrat processus du helper Linux
         if: runner.os == 'Linux'
         working-directory: console/src-tauri
