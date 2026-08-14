@@ -312,9 +312,26 @@ incident() {
     [[ $waited -lt $bound ]] || break
     sleep 15
   done
-  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
-  [[ "$answer" == unreachable || "$answer" == no-answer ]] \
-    || fail "the stopped host answered again: $answer"
+  # Le fait que ce périmètre déclare est « le point de vue observe l'hôte
+  # injoignable », et ce fait met du temps à exister : tant que l'entrée de
+  # voisinage de l'hôte arrêté n'est pas `FAILED`, une tentative expire en
+  # `no-answer` au lieu du `No route to host` qui rend `unreachable` — mesuré
+  # sur la topologie : ~30 s de fenêtre après l'arrêt, réarmable par le trafic
+  # résiduel vers l'hôte mort. Or le module d'incident refuse `no-answer`
+  # (Ambiguous), à raison : un point de vue qui ne sait pas n'est pas un point
+  # de vue qui atteste. La sonde réessaie donc jusqu'à ce que l'observation
+  # existe, bornée ; un hôte qui répond reste un échec immédiat, et un point de
+  # vue toujours muet à la borne est un échec bruyant de l'instrument — jamais
+  # un périmètre déclaré à la place d'une observation.
+  local answer_deadline=$(($(date +%s) + 120))
+  while :; do
+    answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
+    [[ "$answer" != answered ]] || fail "the stopped host answered again: $answer"
+    [[ "$answer" != unreachable ]] || break
+    [[ $(date +%s) -lt $answer_deadline ]] \
+      || fail "the vantage still cannot qualify the silence: $answer"
+    sleep 5
+  done
   local silence=$(($(date +%s) - started_at))
   printf '%s %s\n' "$answer" "$silence" >"$workdir/silence.probe"
 
