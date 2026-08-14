@@ -3,77 +3,60 @@
 > ## ⚠️ En cours de développement — non fonctionnel pour un usage réel.
 >
 > **Aucune release publiée. Ne pas utiliser pour héberger quoi que ce soit.**
->
-> Ce dépôt est ouvert pour être lu, pas pour être installé. Les capacités
-> décrites plus bas sont à des états différents, et le tableau dit lequel pour
-> chacune, sans arrondir.
 
-## Ce que Your Cloud veut être
+## Objectif
 
 Héberger soi-même demande aujourd'hui de tenir dans sa tête ce que font une
-douzaine d'outils. Your Cloud vise l'inverse : **représenter son infrastructure,
-observer ses machines et déployer des services depuis une interface qui montre
-les opérations réellement exécutées** — jamais un bouton qui cache ce qu'il
-déclenche.
+douzaine d'outils. Your Cloud vise l'inverse : déclarer ses machines, les voir
+rapporter leur état, choisir un service, lire en phrases ce que la machine
+recevra, approuver, et regarder le résultat que la machine a réellement
+rapporté.
 
-Concrètement, une personne déclare ses machines, les voit rapporter leur état,
-choisit un service, lit en phrases ce que la machine recevra, approuve, et
-regarde le résultat que la machine a réellement rapporté. Ce que l'écran
-affiche est ce qui s'est produit, pas une promesse d'interface.
+Ce que l'écran affiche est ce qui s'est produit, pas une promesse d'interface :
+jamais un bouton qui cache ce qu'il déclenche.
 
 C'est un projet pour qui veut héberger ses propres services — un serveur loué,
 un mini-PC, une machine au grenier — et refuse d'échanger la simplicité contre
-l'opacité. Ce n'est pas une plateforme d'entreprise, ni un orchestrateur
-généraliste.
+l'opacité.
 
-## La philosophie : la construction vérifiable est le produit
+## Ce qui existe
 
-Chaque capacité passe par trois états, dans cet ordre, et la documentation les
-distingue explicitement : **définie**, puis **implémentée**, puis **prouvée**
-dans un environnement isolé.
+Chaque capacité listée ci-dessous est prouvée par des tests exécutés sur de
+vraies machines — les [rapports de preuve](docs/lab/README.md) le documentent.
 
-« Prouvée » a un sens strict ici. Une preuve exécute les binaires réels du
-produit sur de vraies machines, traverse le chemin d'échec avant le chemin de
-succès, et affronte des cas hostiles — une clé d'hôte changée, une machine qui
-ment sur ce qu'elle a fait, une autorité rejouée. Chaque preuve écrit aussi ce
-qu'elle **ne** prouve pas.
+- **Amorçage et enrôlement** — permet d'installer le Controller, d'enrôler une
+  machine et de remplacer le Controller sans perdre le parc.
+- **Observation du parc** — permet de voir ce que chaque machine rapporte
+  réellement, ancienneté affichée.
+- **Déploiement par plans signés** — permet de déployer les profils de
+  référence après lecture et approbation de ce que la machine recevra.
+- **Services utilisateur** — permet de déclarer sa propre application (image,
+  volumes, secrets) et de la déployer comme un profil.
+- **Publication HTTPS** — permet d'exposer un service par un point d'entrée
+  Traefik.
+- **Passage privé WireGuard** — permet de relier deux machines par un lien
+  chiffré sans rien publier.
+- **Commandes depuis la Console** — permet d'approuver un plan dans une fenêtre
+  native, de le signer, de le lancer par SSH et de lire le rapport de la
+  machine.
+- **Instantanés et restauration** — permet de sauvegarder et de restaurer les
+  volumes d'un service sur sa machine.
+- **Mode externe** — permet de déclarer un service existant sans le confier à
+  Your Cloud.
 
-Cette exigence est ce qui rend le tableau ci-dessous lisible : une ligne
-« prouvée » signifie qu'un rapport daté relie une capacité à un commit exact.
+## Prochaines versions
 
-## Capacités et leur état
+- Approbation des plans depuis la Console Windows, mise en page au zoom
+  texte 200 % sous Windows, signature Windows publiquement reconnue.
+- Gestion DNS Cloudflare : à partir de la v0.1.3.
+- Sauvegardes gérées : v0.2.0.
 
-| Capacité | État |
-|---|---|
-| Amorçage, enrôlement d'une machine, remplacement du Controller | prouvée par des tests (LAB) |
-| Observation du parc : la machine rapporte, le Controller enregistre | prouvée par des tests (LAB) |
-| Déploiement de services par plans signés — profils de référence | prouvée par des tests (LAB) |
-| Définitions de service utilisateur — image, volumes, secrets déclarés | prouvée par des tests (LAB) |
-| Publication HTTPS par point d'entrée Traefik | prouvée par des tests (LAB) |
-| Passage privé WireGuard entre deux machines | prouvée par des tests (LAB) |
-| Trajet de commande complet depuis la Console : fenêtre native, signature, lancement SSH, rapport | prouvée par des tests (LAB) |
-| Instantanés et restauration de volumes | prouvée par des tests (LAB) |
-| Mode externe : déclarer un service sans le gérer | prouvée par des tests (LAB) |
-| Mise en page sans coupe au zoom texte 200 % sous Windows | écrite, preuve en cours |
-| Approbation de plans depuis la Console Windows | prévue |
-| Signature Windows publiquement reconnue | prévue |
+## Limites
 
-## Les limites, dites franchement
-
-- **La Console Windows est en retrait.** Elle observe et lit un plan ; elle ne
-  recueille pas encore de signature — la moitié Win32 de la fenêtre
-  d'approbation est différée. Approuver un plan se fait depuis Linux.
-- **Les sauvegardes sont locales et à la demande.** Un instantané est déclenché
-  par un plan approuvé et reste sur la machine. Il n'y a ni planification, ni
-  copie hors machine : emporter une archive ailleurs relève des outils de la
-  personne qui héberge.
-- **DNS et TLS restent manuels.** Le nom de domaine, ses enregistrements et
-  l'obtention des certificats publics ne sont pas automatisés.
-- **Aucun SHA n'est encore attesté** par la matrice de construction hébergée
-  pour le travail récent : les preuves ci-dessus ont été exécutées depuis
-  l'arbre de travail. C'est écrit dans chaque rapport concerné.
-- **Debian 13 seulement**, sur `amd64`. Les autres distributions et
-  architectures attendent une preuve séparée.
+- La Console Windows observe et lit un plan ; approuver se fait depuis Linux.
+- Les sauvegardes restent locales et à la demande — aucune copie hors machine.
+- DNS et certificats TLS publics restent manuels.
+- Debian 13 sur `amd64` seulement.
 
 ## Pour lire plus loin
 
