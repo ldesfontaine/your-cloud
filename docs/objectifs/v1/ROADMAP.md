@@ -105,15 +105,20 @@ agent et un vrai `sudo` synthétiques, plus dix suites vertes dans la VM
 d'évaluation Windows — puis fusionnées dans `main` jusqu'à `5edd48e`.
 
 Le mainteneur a fermé `#42` et `#35` le 5 août 2026 **sur cette preuve LAB
-seule**. Cette fermeture ne vaut pas attestation : aucune matrice native n'a
-couvert ce code et le dernier SHA porteur d'une preuve native reste `8ed2f57`.
-`#52`, `#53` et `#54` restent donc ouvertes et portent cette dette ; une matrice
-les couvrira sur un candidat de palier unique. L'échéance qui était écrite ici —
+seule** — fermeture qui, alors, ne valait pas attestation : aucune matrice
+native n'avait couvert ce code et le dernier SHA porteur d'une preuve native
+restait `8ed2f57`. Cette dette est levée le 14 août 2026 : la matrice native
+[`31840505025`](https://github.com/ldesfontaine/your-cloud/actions/runs/31840505025)
+et la preuve complète `tests/lab/v0.1.0/prove complete`
+(`20260814T210052Z-310593`, 11 passes, artefacts déterministes, rapport
+scellé) couvrent le candidat unique `f7583e2`, que le tag `v0.1.0` désigne.
+`#52`, `#53` et `#54` ferment sur cette attestation. L'échéance qui était écrite ici —
 la réinitialisation du cycle, vers le 1er septembre 2026 — est **caduque depuis
 le passage du dépôt en public** le 12 août 2026 : les minutes hébergées ne sont
 plus décomptées et la matrice ne dépend plus d'une fenêtre de quota
-([contrat de CI](../../contribution/CI.md)). La dette, elle, reste entière :
-seul un SHA réellement attesté la lève.
+([contrat de CI](../../contribution/CI.md)). C'est ce qui a permis de lever la
+dette sans attendre septembre : seul un SHA réellement attesté la levait, et
+`f7583e2` l'est.
 
 Le mainteneur a ensuite fermé `#36`, `#37`, `#38`, `#39` et `#40` le 6 août
 2026, **sur la même base et sous la même réserve** : chacune est adossée à un

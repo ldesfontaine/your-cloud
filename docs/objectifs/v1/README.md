@@ -1161,7 +1161,9 @@ dans `v0.1.0`. Le jalon est contracté en issues dans la
 (`#115` à `#121`), dont l'issue de contrat
 [`#115`](https://github.com/ldesfontaine/your-cloud/issues/115) porte cette
 revalidation ; rien ne s'est implémenté avant qu'elle soit validée, et la
-`v0.1.1` ne sera pas déclarée atteinte avant le candidat attesté de `v0.1.0`. Le petit parcours
+`v0.1.1` est déclarée atteinte depuis le 14 août 2026 — le candidat `f7583e2`
+de `v0.1.0` étant attesté (matrice native `31840505025`, preuve complète,
+tag `v0.1.0`). Le petit parcours
 SSO OpenID Connect de Vaultwarden, demandé plus tôt pour ce jalon, passe à un
 jalon ultérieur **non numéroté** sans changer de réserve : fournisseur,
 placement et récupération seront choisis à son cadrage, et rien n'est installé
