@@ -322,19 +322,64 @@ matches_bytes() {
 
 nft_tables() { /usr/sbin/nft list tables 2>/dev/null | paste -sd'; ' - || echo none; }
 
+# Une lecture nft peut échouer transitoirement quand une autre transaction
+# netlink est en cours — les services gérés sous Podman manipulent aussi
+# nftables sur ces machines. Trois constats d'échec ont tenu la règle que le
+# jugement venait de manquer quelques millisecondes plus tôt : l'échec de
+# lecture, avalé, se faisait passer pour « absent » ou pour une table vide.
+# Ici, « absent » n'est prononcé que par nft lui-même (la table n'existe pas),
+# une lecture perdue est réessayée, et une lecture toujours perdue échoue
+# bruyamment plutôt que de témoigner.
+nft_list_table() { # nft_list_table <name> [--stateless] -> stdout, or 2=absent
+  local name=$1 flag=${2:-} attempt output error_file
+  error_file=$(mktemp)
+  for attempt in 1 2 3 4 5; do
+    if output=$(/usr/sbin/nft $flag list table "$link_table_family" "$name" \
+      2>"$error_file"); then
+      rm -f "$error_file"
+      printf '%s\n' "$output"
+      return 0
+    fi
+    if grep -q "No such file or directory" "$error_file"; then
+      rm -f "$error_file"
+      return 2
+    fi
+    sleep 1
+  done
+  cat "$error_file" >&2
+  rm -f "$error_file"
+  echo "REFUSED: nft could not list table $link_table_family $name" >&2
+  return 1
+}
+
 link_table_loaded() {
-  /usr/sbin/nft list table "$link_table_family" "$link_table_name" >/dev/null 2>&1 \
-    && echo loaded || echo absent
+  local status=0
+  nft_list_table "$link_table_name" >/dev/null || status=$?
+  case "$status" in
+    0) echo loaded ;;
+    2) echo absent ;;
+    *) return 1 ;;
+  esac
 }
 
 link_table_rules() {
-  /usr/sbin/nft --stateless list table "$link_table_family" "$link_table_name" 2>/dev/null \
-    | sed -e 's/^[[:space:]]*//' -e '/^$/d' || true
+  local output status=0
+  output=$(nft_list_table "$link_table_name" --stateless) || status=$?
+  case "$status" in
+    0) printf '%s\n' "$output" | sed -e 's/^[[:space:]]*//' -e '/^$/d' ;;
+    2) ;;
+    *) return 1 ;;
+  esac
 }
 
 foreign_table_loaded() {
-  /usr/sbin/nft list table "$link_table_family" "$foreign_table_name" >/dev/null 2>&1 \
-    && echo loaded || echo absent
+  local status=0
+  nft_list_table "$foreign_table_name" >/dev/null || status=$?
+  case "$status" in
+    0) echo loaded ;;
+    2) echo absent ;;
+    *) return 1 ;;
+  esac
 }
 
 # pose_foreign_table is one of the two places this harness changes a machine

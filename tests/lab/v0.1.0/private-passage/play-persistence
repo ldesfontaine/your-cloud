@@ -97,21 +97,7 @@ fi
 
 if [[ $bounds_back -eq 1 ]]; then
   expect "the bounding table, back in the kernel" "$(link_table_loaded)" loaded
-  # Mesuré deux fois : une lecture prise juste après le boot a montré la table
-  # sans la règle qu'une lecture prise quelques millisecondes plus tard tenait
-  # — le dump du constat d'échec contenait le port que le jugement venait de
-  # manquer. Une liste prise pendant que l'état du boot se stabilise n'est pas
-  # encore l'état du boot : la lecture réessaie donc brièvement, et seul un
-  # port toujours absent d'une lecture posée est un rouge.
-  port_bound=0
-  for _ in 1 2 3 4 5; do
-    if printf '%s\n' "$(link_table_rules)" | grep -qF "tcp dport $bounded_port"; then
-      port_bound=1
-      break
-    fi
-    sleep 2
-  done
-  if [[ $port_bound -eq 1 ]]; then
+  if printf '%s\n' "$(link_table_rules)" | grep -qF "tcp dport $bounded_port"; then
     report "the port the table bounds after the reboot" "$bounded_port"
   else
     red "the port the table bounds after the reboot" "$(link_table_rules | tr '\n' ' ')"
