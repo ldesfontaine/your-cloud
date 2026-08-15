@@ -28,8 +28,8 @@ use your_cloud_bootstrap_protocol::{
     BootstrapAction, BootstrapMode, BootstrapStep, BootstrapTarget, NativePromptKind,
 };
 use your_cloud_native_bootstrap_assistant::{
-    EXIT_CANCELLED, EXIT_INVALID_INVOCATION, EXIT_PROTOCOL_REFUSED, EXIT_UNAVAILABLE,
-    EXIT_WATCHDOG_EXPIRED, REQUIRED_MODE_ARGUMENT,
+    EXIT_CANCELLED, EXIT_INVALID_INVOCATION, EXIT_PROTOCOL_REFUSED, EXIT_REFUSED, EXIT_UNAVAILABLE,
+    EXIT_WATCHDOG_EXPIRED, REQUIRED_MODE_ARGUMENT, REQUIRED_VERIFY_EMBEDDED_MODE_ARGUMENT,
 };
 
 const REQUEST_ID: &str = "00112233445566778899aabbccddeeff";
@@ -182,6 +182,47 @@ fn wrong_argument_fails_closed_without_output() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let output = collect_output_bounded(command.spawn().unwrap(), PROCESS_TIMEOUT).unwrap();
+    assert_eq!(output.status.code(), Some(EXIT_INVALID_INVOCATION.into()));
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+/// Le mode de vérification du lot embarqué, exercé là où cette suite vit : un
+/// binaire d'arbre de travail, donc hors de la position installée. Le refus se
+/// nomme sur la sortie standard — c'est la même ligne que la preuve LAB
+/// asserte — et rien d'autre n'est écrit. Un binaire enrobé ou recopié reçoit
+/// exactement ceci, et c'est le comportement que la résolution promet.
+#[test]
+fn verify_embedded_mode_outside_the_attested_position_names_its_refusal() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
+    command
+        .arg(REQUIRED_VERIFY_EMBEDDED_MODE_ARGUMENT)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = collect_output_bounded(command.spawn().unwrap(), PROCESS_TIMEOUT).unwrap();
+
+    assert_eq!(output.status.code(), Some(EXIT_REFUSED.into()));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "REFUSED OutsideAttestedPosition\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+/// Le troisième mode tient son invocation à un argument exact, comme les deux
+/// autres : un argument de plus est une invocation invalide, pas une option.
+#[test]
+fn verify_embedded_mode_refuses_any_extra_argument() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_your-cloud-native-bootstrap-assistant"));
+    command
+        .arg(REQUIRED_VERIFY_EMBEDDED_MODE_ARGUMENT)
+        .arg("/tmp/somewhere-else")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = collect_output_bounded(command.spawn().unwrap(), PROCESS_TIMEOUT).unwrap();
+
     assert_eq!(output.status.code(), Some(EXIT_INVALID_INVOCATION.into()));
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());

@@ -582,6 +582,98 @@ fn valid_approval_arguments(arguments: impl IntoIterator<Item = OsString>) -> bo
         && arguments.next().is_none()
 }
 
+/// Le troisième mode, et le seul qui ne dialogue pas : dire ce que vaut le lot
+/// serveur que le paquet installé porte, puis se taire.
+///
+/// Il ne lit aucune trame et n'atteste aucun parent, et c'est une décision :
+/// ce mode ne tient aucun secret, ne dépense aucun privilège et n'ouvre aucune
+/// fenêtre — il lit trois fichiers que le paquet installe lisibles par tous et
+/// prononce un fait public. Ce qui remplace l'attestation du parent est celle
+/// de la **position** : la résolution dérive de `/proc/self/exe`, donc un
+/// binaire recopié hors de sa position installée ne trouve rien et le dit.
+/// L'autorité sur le verdict reste entière : `bundle::verify` contre l'ancre
+/// scellée, la même porte que le trajet d'installation emprunte.
+pub const REQUIRED_VERIFY_EMBEDDED_MODE_ARGUMENT: &str = "--verify-embedded-server-bundle";
+
+/// La seule version de lot que ce binaire accepte d'installer : la sienne.
+/// C'est le modèle de version unifié — un produit, une révision — scellé à la
+/// compilation comme l'ancre l'est, et pour la même raison : une version que
+/// quelque chose pourrait fournir après coup serait une version choisie par ce
+/// quelque chose.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+const EMBEDDED_EXPECTED_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// La session du troisième mode : borner, résoudre, lire, juger, prononcer.
+///
+/// Chaque verdict s'imprime par son nom — `VERIFIED …` ou `REFUSED …` — parce
+/// que la preuve LAB asserte des noms, jamais des codes de sortie. La sortie
+/// tient sur une ligne et il n'y en a qu'une.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub fn verify_embedded_main() -> u8 {
+    use installation::{anchor, bundle, embedded};
+
+    let session_started_at = Instant::now();
+    if hardening::apply().is_err() {
+        return EXIT_INTERNAL_FAILURE;
+    }
+    std::panic::set_hook(Box::new(|_| {}));
+
+    let _watchdog = match watchdog::Watchdog::start_at(session_started_at) {
+        Ok(watchdog) => watchdog,
+        Err(()) => return EXIT_INTERNAL_FAILURE,
+    };
+
+    if !valid_verify_embedded_arguments(std::env::args_os()) {
+        return EXIT_INVALID_INVOCATION;
+    }
+
+    let carried =
+        match embedded::from_attested_position().and_then(|location| embedded::read(&location)) {
+            Ok(carried) => carried,
+            Err(refusal) => {
+                println!("REFUSED {refusal:?}");
+                return EXIT_REFUSED;
+            }
+        };
+    match bundle::verify(
+        anchor::RELEASE_ANCHOR,
+        &carried.manifest,
+        &carried.signature,
+        EMBEDDED_EXPECTED_VERSION,
+        &carried.artifact,
+    ) {
+        Ok(verified) => {
+            println!(
+                "VERIFIED version={} target={} size={} sha256={}",
+                verified.version(),
+                verified.target(),
+                verified.size(),
+                verified.sha256(),
+            );
+            0
+        }
+        Err(refusal) => {
+            println!("REFUSED {refusal:?}");
+            EXIT_REFUSED
+        }
+    }
+}
+
+/// Les cibles jamais livrées disent « indisponible » plutôt que d'imiter un
+/// verdict que rien n'a rendu.
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn verify_embedded_main() -> u8 {
+    EXIT_UNAVAILABLE
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn valid_verify_embedded_arguments(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    let mut arguments = arguments.into_iter();
+    let _program = arguments.next();
+    arguments.next().as_deref() == Some(OsStr::new(REQUIRED_VERIFY_EMBEDDED_MODE_ARGUMENT))
+        && arguments.next().is_none()
+}
+
 fn valid_arguments(arguments: impl IntoIterator<Item = OsString>) -> bool {
     let mut arguments = arguments.into_iter();
     let _program = arguments.next();

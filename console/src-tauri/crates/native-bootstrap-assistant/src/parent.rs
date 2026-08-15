@@ -5,7 +5,10 @@ use crate::lease::UnbufferedStandardInput;
 const CONSOLE_EXECUTABLE_NAME: &str = "your-cloud-console.exe";
 const HELPER_EXECUTABLE_NAME: &str = "your-cloud-native-bootstrap-assistant.exe";
 const LINUX_CONSOLE_PATH: &str = "/usr/bin/your-cloud-console";
-const LINUX_HELPER_PATH: &str = "/usr/bin/your-cloud-native-bootstrap-assistant";
+/// Partagé avec `installation::embedded` : la position que ce module atteste
+/// est celle dont la résolution du lot embarqué dérive, et une seule constante
+/// garantit qu'elles ne peuvent pas se désynchroniser.
+pub(crate) const LINUX_HELPER_PATH: &str = "/usr/bin/your-cloud-native-bootstrap-assistant";
 const LINUX_INSTALL_DIRECTORY: &str = "/usr/bin";
 
 pub(crate) struct ParentGuard {

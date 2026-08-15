@@ -45,6 +45,9 @@ pub mod anchor;
 pub mod association;
 /// Judging the embedded `.deb` and its signed manifest before any privilege.
 pub mod bundle;
+/// La résolution du lot embarqué depuis la position attestée, et depuis rien
+/// d'autre.
+pub mod embedded;
 /// The ordered sequence, and the four witnesses it may not be built without.
 pub mod plan;
 /// Reaching every declared endpoint from the Controller, before any other
