@@ -43,6 +43,44 @@ pub const RELEASE_ANCHOR: &[u8; ANCHOR_PUBLIC_KEY_BYTES] =
 mod tests {
     use super::*;
     use crate::installation::bundle::{self, BundleRefusal};
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    /// Le message public sur lequel le mainteneur a prouvé qu'il détient la
+    /// moitié privée de l'ancre. Ses octets exacts, sans saut de ligne final.
+    const ANCHOR_PROOF_MESSAGE: &[u8] = b"your-cloud release anchor proof";
+
+    /// La signature qu'il a produite une fois, hors ligne, sur ce message.
+    const ANCHOR_PROOF_SIGNATURE: [u8; 64] = [
+        0x90, 0xb0, 0x54, 0x87, 0x98, 0x27, 0xea, 0xd1, 0x4b, 0x1d, 0x0e, 0xbe, 0x83, 0x18, 0xf6,
+        0xea, 0xca, 0x4c, 0x75, 0xda, 0x10, 0x88, 0x37, 0x5b, 0x43, 0x63, 0x89, 0xb9, 0x7b, 0x28,
+        0x94, 0x18, 0x43, 0x65, 0x9a, 0x6e, 0xb8, 0xfe, 0xcf, 0x47, 0x4c, 0xf8, 0xb1, 0xdc, 0x1c,
+        0xa8, 0x75, 0x4a, 0x31, 0xd7, 0x5b, 0xee, 0xa3, 0x3d, 0x48, 0x63, 0x95, 0xef, 0x2c, 0x0f,
+        0x20, 0x0e, 0xfe, 0x09,
+    ];
+
+    /// L'ancre scellée est celle dont le mainteneur détient la moitié privée.
+    ///
+    /// Le contrôle de forme ci-dessous ne dit que « ces trente-deux octets
+    /// décodent en un point de la courbe » — ce qu'une empreinte SHA-256 fait
+    /// une fois sur deux. Il scellerait sans bruit une clé dont personne ne
+    /// détient la moitié privée, et le produit ne l'apprendrait qu'à la
+    /// première release, sur un `SignatureNotByAnchor` que rien n'expliquerait.
+    ///
+    /// Cette signature-ci est le seul lien vérifiable entre l'ancre committée
+    /// et la clé hors ligne. Elle a été produite une fois, sur un message
+    /// public, et rien d'autre n'a besoin d'exister pour la relire. Une ancre
+    /// remplacée par une autre clé valide — accident de copie ou geste
+    /// délibéré — fait rougir ce test là où la forme la laisserait passer.
+    #[test]
+    fn the_sealed_anchor_is_the_one_its_holder_proved() {
+        let key = VerifyingKey::from_bytes(RELEASE_ANCHOR)
+            .expect("l'ancre scellée doit être une clé Ed25519");
+        key.verify(
+            ANCHOR_PROOF_MESSAGE,
+            &Signature::from_bytes(&ANCHOR_PROOF_SIGNATURE),
+        )
+        .expect("l'ancre scellée n'est pas celle dont la preuve de possession a été produite");
+    }
 
     /// L'ancre scellée est une clé, et le seul moyen de le dire est de la
     /// donner à la fonction qui refuse ce qui n'en est pas une.
