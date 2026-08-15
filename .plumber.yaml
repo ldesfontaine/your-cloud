@@ -17,6 +17,14 @@ github:
       trustedGithubActions:
         - getplumber/plumber
 
+    # Le job `server_bundle` construit dans un conteneur : un tag seul est un
+    # pointeur mobile qu'un registre peut déplacer sous la porte. Exiger le
+    # digest rend l'image immuable — c'est la même discipline que l'épinglage
+    # des actions par commit SHA, appliquée à l'image.
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      mustBePinnedByDigest: true
+
     pipelineMustNotEnableDebugTrace:
       enabled: true
       forbiddenVariables:

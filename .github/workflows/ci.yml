@@ -42,9 +42,68 @@ jobs:
       - name: Vérifier les sources v0.0.1
         run: ./tests/checks/source-v0.0.1 ci
 
+      # La mesure qui justifie le conteneur du job `server_bundle` : l'outillage
+      # du runner Ubuntu, confronté au verrou du lot. Elle observe et n'arbitre
+      # pas — une divergence ici est attendue, c'est précisément pourquoi le lot
+      # ne se construit jamais sur ce runner.
+      - name: Mesurer l'outillage dpkg-deb/xz du runner face au verrou du lot
+        run: |
+          printf 'observé sur ubuntu-24.04 :\n'
+          printf '  dpkg-deb %s\n' "$(dpkg-deb --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          printf '  xz       %s\n' "$(xz --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          printf 'verrou packaging/server-bundle/toolchain.lock :\n'
+          grep -v '^#' packaging/server-bundle/toolchain.lock | sed 's/^/  /'
+
+  server_bundle:
+    name: Lot serveur reproductible
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Le lot se construit dans l'environnement exact que le verrou d'outillage
+    # épingle : `debian:13` par digest — le tag seul est mobile, le digest ne
+    # l'est pas. `dpkg-deb` 1.22.22 est dans l'image, `xz` 5.8.1 vient du dépôt
+    # trixie, et `build-server-bundle` refuse toute dérive par son nom. Le
+    # runner Ubuntu, lui, porte d'autres versions — la mesure du job `source`
+    # le montre à chaque exécution.
+    container:
+      image: debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958
+    steps:
+      - name: Extraire les sources
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Installer xz depuis le dépôt trixie
+        run: apt-get update && apt-get install --yes xz-utils
+
+      - name: Installer Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.5"
+          cache: false
+
+      # Reconstruit le lot et le confronte octet pour octet au manifeste que le
+      # mainteneur a signé. La porte vérifie, elle ne signe jamais : la moitié
+      # privée de l'ancre n'existe dans aucun secret d'hébergement.
+      - name: Construire le lot et le confronter au manifeste signé
+        run: |
+          version=$(sed -n 's/^  "version": "\([0-9a-zA-Z.+-]*\)",$/\1/p' console/package.json | head -1)
+          test -n "$version"
+          mkdir -p server-bundle-out
+          ./tools/build-server-bundle "$version" . server-bundle-out
+          cmp server-bundle-out/bundle-manifest.json packaging/server-bundle/manifest/bundle-manifest.json
+          mv "server-bundle-out/your-cloud-server_${version}_amd64.deb" server-bundle-out/your-cloud-server.deb
+
+      - name: Publier le lot pour le job Console
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-bundle
+          path: server-bundle-out/your-cloud-server.deb
+          if-no-files-found: error
+          retention-days: 3
+
   console_platforms:
     name: Console ${{ matrix.label }}
-    needs: [source, plumber_policy]
+    needs: [source, plumber_policy, server_bundle]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -302,6 +361,17 @@ jobs:
           native_prompt_windows::tests::win32_identity_selection_binds_one_consent_to_one_chosen_fingerprint
           -- --ignored --exact --test-threads=1
 
+      # Le lot serveur vient du job conteneurisé, jamais d'une construction sur
+      # ce runner : l'outillage d'Ubuntu n'est pas celui du verrou, et la
+      # préparation du build de la Console re-vérifie de toute façon l'artefact
+      # déposé contre le manifeste signé avant de l'embarquer.
+      - name: Recevoir le lot serveur du job conteneurisé
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: server-bundle
+          path: console/src-tauri/server-bundle
+
       - name: Installer le pilote Tauri borné
         run: cargo +1.94.1 install tauri-driver --version 2.0.6 --locked
 
@@ -357,7 +427,7 @@ jobs:
           version: v0.4.8
           verify-attestation: "true"
           config-file: .plumber.yaml
-          controls: "actionsMustBePinnedByCommitSha,githubActionMustComeFromAuthorizedSources,pipelineMustNotEnableDebugTrace,pipelineMustNotUseDockerInDocker,reusableWorkflowsMustNotInheritSecrets,workflowMustNotExportEntireSecretsContext,securityJobsMustNotBeWeakened,pipelineMustNotExecuteUnverifiedScripts,workflowMustNotInjectUserInputInScripts,workflowMustNotWriteUntrustedContentToGitHubEnv,workflowMustNotUseDangerousTriggers,pullRequestTargetMustNotCheckoutHead,workflowsMustDeclarePermissions,workflowMustNotGrantPermissionsWriteAll"
+          controls: "actionsMustBePinnedByCommitSha,githubActionMustComeFromAuthorizedSources,containerImageMustNotUseForbiddenTags,pipelineMustNotEnableDebugTrace,pipelineMustNotUseDockerInDocker,reusableWorkflowsMustNotInheritSecrets,workflowMustNotExportEntireSecretsContext,securityJobsMustNotBeWeakened,pipelineMustNotExecuteUnverifiedScripts,workflowMustNotInjectUserInputInScripts,workflowMustNotWriteUntrustedContentToGitHubEnv,workflowMustNotUseDangerousTriggers,pullRequestTargetMustNotCheckoutHead,workflowsMustDeclarePermissions,workflowMustNotGrantPermissionsWriteAll"
           min-points: "100"
           fail-warnings: "true"
           soft-fail: "false"
@@ -384,7 +454,7 @@ jobs:
           --expected-source-identity "$PLUMBER_EXPECTED_SOURCE"
           --expected-project "$PLUMBER_EXPECTED_PROJECT"
           --expected-policy-hash
-          "sha256:3891f8bcecc443b540a388f08144496d86d613c4721cc4ca8edccb1dcf53707f"
+          "sha256:5364790bc238d1363e44d839ffec3a2f62918a99e40e52cd9b4408f521b30cdd"
 
       - name: Archiver le rapport Plumber validé
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -16,11 +16,12 @@ MAX_REPORT_BYTES = 8 * 1024 * 1024
 
 EXPECTED_MIN_POINTS = 100
 EXPECTED_POLICY_HASH = (
-    "sha256:3891f8bcecc443b540a388f08144496d86d613c4721cc4ca8edccb1dcf53707f"
+    "sha256:5364790bc238d1363e44d839ffec3a2f62918a99e40e52cd9b4408f521b30cdd"
 )
 REQUIRED_CONTROL_RESULTS = (
     "actionPinningResult",
     "authorizedActionSourcesResult",
+    "imageForbiddenTagsResult",
     "debugTraceResult",
     "dockerInDockerResult",
     "reusableSecretsResult",
