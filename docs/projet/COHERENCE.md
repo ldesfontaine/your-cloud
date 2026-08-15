@@ -31,6 +31,7 @@ sources.
 | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | Le cycle sûr validé du déploiement, de la publication, de la migration et du retrait d'un service |
 | `docs/architecture/SERVICE-UTILISATEUR.md` | Le contrat de la définition de service utilisateur : ce qu'elle peut dire, ce qui la gèle et ce qu'elle n'autorise jamais |
 | `docs/architecture/TRAJET-DE-COMMANDE.md` | Le contrat des cinq maillons entre l'humain qui approuve et la machine qui rapporte, et des bornes de ce trajet |
+| `docs/architecture/L-ASSISTANT-QUI-INSTALLE.md` | Le contrat d'exécution privilégiée de l'installation par l'Assistant : ce qu'il pose, constate et défait, et l'autorité qu'il réutilise sans l'étendre |
 | `docs/lab/` | Les preuves réellement exécutées, jamais une décision par elles-mêmes |
 | `docs/html/` | Des vues visuelles dérivées de leur Markdown, jamais une source indépendante |
 
