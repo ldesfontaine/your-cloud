@@ -254,14 +254,14 @@ def validate(
     security_metrics = _require_object(
         _require_object(report, "securityJobsWeakenedResult"), "metrics"
     )
-    _require_exact_integer(security_metrics, "securityJobsFound", 3)
+    _require_exact_integer(security_metrics, "securityJobsFound", 4)
     _require_exact_integer(security_metrics, "weakenedJobs", 0)
     pipeline_metrics = _require_object(report, "pipelineOriginMetrics")
-    _require_exact_integer(pipeline_metrics, "jobTotal", 3)
+    _require_exact_integer(pipeline_metrics, "jobTotal", 4)
     authorized_metrics = _require_object(
         _require_object(report, "authorizedActionSourcesResult"), "metrics"
     )
-    _require_exact_integer(authorized_metrics, "actionRefsTotal", 9)
+    _require_exact_integer(authorized_metrics, "actionRefsTotal", 13)
     permissions_metrics = _require_object(
         _require_object(report, "permissionsResult"), "metrics"
     )
