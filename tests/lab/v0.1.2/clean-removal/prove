@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# La preuve du retrait propre de la Console Linux.
+#
+# La question est simple et n'avait jamais été posée pour la Console elle-même :
+# après une désinstallation, que reste-t-il sur la machine ? Elle se répond par
+# des différences entre des recensements du disque, jamais par une inspection de
+# ce qu'on s'attend à trouver — chercher ce qu'on attend est la façon de ne pas
+# voir ce qu'on n'attend pas.
+#
+# Sept états, dans cet ordre, et chacun est un constat :
+#
+#   pristine   la machine rendue à son instantané `clean`, avant tout sol ;
+#   base       le sol posé — dépendances du paquet, sol du pilote, l'humain ;
+#   control    la même machine, relevée une seconde fois sans que rien n'arrive
+#              entre les deux. C'est le **plancher de bruit** : il dit combien
+#              d'entrées bougent toutes seules, et donc à partir de combien une
+#              différence veut dire quelque chose ;
+#   installed  le `.deb` installé ;
+#   used       la Console réellement lancée, un coffre créé, le formulaire
+#              d'association atteint sous le compte de l'humain ;
+#   removed    après `dpkg --remove` ;
+#   purged     après `apt-get purge`.
+#
+# `remove` et `purge` sont **deux mesures séparées**, parce que ce sont deux
+# constats : dpkg garde délibérément au premier ce qu'il n'efface qu'au second,
+# et un rapport qui ne mesurerait que le second tairait exactement cette
+# différence-là.
+#
+# Ce que cette preuve ne fait pas : elle ne crée ni ne détruit de topologie, et
+# elle ne parle qu'à `lab-console`.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$here/../../../.." && pwd)
+labctl="$root/tools/labctl"
+console_vm=lab-console
+human=humain
+remote=/opt/clean-removal
+
+run=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
+artifacts="$root/tests/artifacts/proofs/v0.1.2-clean-removal/$run"
+candidate=${CANDIDATE:?CANDIDATE doit nommer le .deb du tag à installer}
+driver=${TAURI_DRIVER:?TAURI_DRIVER doit nommer le binaire tauri-driver}
+
+announce() { printf '\n== %s\n' "$*"; }
+note() { printf '  %-40s %s\n' "$1" "$2"; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+install -d -m 0755 "$artifacts" "$artifacts/diff"
+
+# --------------------------------------------------------------------------
+# La garde d'inventaire. Elle précède toute mutation, et elle n'est pas une
+# formalité : une cible dont l'origine ou le gabarit ne sont pas ceux attendus
+# est traitée comme une production possible.
+# --------------------------------------------------------------------------
+announce "garde d'inventaire"
+inventory=$("$labctl" list --format=tsv)
+line=$(printf '%s\n' "$inventory" | awk -F'\t' -v vm="$console_vm" '$1 == vm')
+[[ -n "$line" ]] || fail "$console_vm est absente de l'inventaire"
+IFS=$'\t' read -r _ state address template topology origin <<<"$line"
+[[ "$origin" == "your-cloud/labctl" ]] || fail "origine inattendue pour $console_vm : $origin"
+[[ "$template" == "console" ]] || fail "gabarit inattendu pour $console_vm : $template"
+[[ "$topology" == "quick" ]] || fail "topologie inattendue pour $console_vm : $topology"
+for forbidden in 192.168.122.123 10.66.66.1; do
+  [[ ",$address," != *",$forbidden,"* ]] || fail "$console_vm porte l'adresse interdite $forbidden"
+done
+note "$console_vm" "$state — $address — $template/$topology — $origin"
+
+announce "le candidat"
+[[ -f "$candidate" ]] || fail "le candidat $candidate est absent"
+candidate_sha=$(sha256sum "$candidate" | cut -d' ' -f1)
+note "paquet" "$(basename "$candidate")"
+note "sha256" "$candidate_sha"
+note "taille" "$(stat -c %s "$candidate") octets"
+
+# --------------------------------------------------------------------------
+# La base réellement propre. `clean` est l'instantané pris par `labctl` à la
+# création de la machine : aucune chaîne d'outils, aucun arbre de construction,
+# rien de ce qui a produit le candidat.
+# --------------------------------------------------------------------------
+announce "retour de $console_vm à son instantané clean"
+"$labctl" revert "$console_vm" clean
+for attempt in $(seq 1 60); do
+  if "$labctl" ssh "$console_vm" -- true >/dev/null 2>&1; then
+    note "jointe après" "$attempt tentatives"
+    break
+  fi
+  sleep 2
+done
+"$labctl" ssh "$console_vm" -- true || fail "$console_vm n'est pas revenue"
+
+announce "dépôt du harnais dans $remote"
+"$labctl" ssh "$console_vm" -- "rm -rf $remote && install -d -m 0755 $remote"
+for file in census prepare compare inside run console-oracle.py; do
+  "$labctl" copy-to "$console_vm" "$here/$file" "$remote/$file" >/dev/null
+done
+"$labctl" copy-to "$console_vm" "$candidate" "$remote/candidate.deb" >/dev/null
+"$labctl" copy-to "$console_vm" "$driver" "$remote/tauri-driver" >/dev/null
+"$labctl" ssh "$console_vm" -- "chmod 0755 $remote/census $remote/prepare $remote/compare $remote/inside $remote/run $remote/console-oracle.py $remote/tauri-driver"
+remote_sha=$("$labctl" ssh "$console_vm" -- "sha256sum $remote/candidate.deb | cut -d' ' -f1" | tr -d '\r')
+[[ "$remote_sha" == "$candidate_sha" ]] || fail "le candidat déposé ($remote_sha) n'est pas celui mesuré ($candidate_sha)"
+note "candidat déposé" "sha256 identique"
+
+# La table du paquet, lue du paquet lui-même : c'est elle qui autorise à dire
+# « ce fichier est livré par le paquet » plutôt qu'à le supposer d'un chemin.
+"$labctl" ssh "$console_vm" -- "dpkg-deb -c $remote/candidate.deb" > "$artifacts/package-listing.txt"
+note "table du paquet" "$(wc -l < "$artifacts/package-listing.txt") entrées"
+
+# L'archive de contrôle, c'est-à-dire ce que le paquet promet de faire de
+# lui-même : ses conffiles et ses scripts de mainteneur. C'est elle qui décide
+# si `purge` a quoi que ce soit à faire de plus que `remove`, et une preuve qui
+# ne la lirait pas devrait deviner la réponse.
+"$labctl" ssh "$console_vm" -- "dpkg-deb --ctrl-tarfile $remote/candidate.deb | tar tvf -" \
+  > "$artifacts/package-control.txt"
+note "archive de contrôle" "$(wc -l < "$artifacts/package-control.txt") entrées"
+
+census() {
+  local label=$1
+  announce "recensement — $label"
+  "$labctl" ssh "$console_vm" -- "$remote/census $label"
+}
+
+census pristine
+announce "sol de la machine"
+"$labctl" ssh "$console_vm" -- "$remote/prepare $human"
+census base
+census control
+
+# --------------------------------------------------------------------------
+# L'installation, l'usage, puis les deux retraits.
+# --------------------------------------------------------------------------
+announce "installation du candidat"
+"$labctl" ssh "$console_vm" -- "dpkg --install $remote/candidate.deb && dpkg-query -W -f '\${Package} \${Version} \${Status}\n' your-cloud"
+census installed
+
+announce "usage réel — coffre créé, formulaire d'association atteint, sous $human"
+usage_status=0
+"$labctl" ssh "$console_vm" -- "su - $human -c '$remote/run'" || usage_status=$?
+"$labctl" copy-from "$console_vm" "$remote/output/usage.json" "$artifacts/usage.json" >/dev/null 2>&1 || true
+[[ $usage_status -eq 0 ]] || fail "la Console n'a pas atteint le formulaire d'association (voir usage.json)"
+census used
+
+announce "retrait n°1 — dpkg --remove"
+"$labctl" ssh "$console_vm" -- "dpkg --remove your-cloud"
+census removed
+
+announce "retrait n°2 — la purge"
+# `apt purge your-cloud` est le geste qu'un humain écrit, et il est tenté en
+# premier **pour être mesuré**, pas pour réussir : un paquet installé depuis un
+# fichier n'existe dans aucun dépôt, et apt refuse de nommer ce qu'aucun index
+# ne lui décrit — même quand dpkg le tient encore en `config-files`. Le refus
+# est donc consigné avec son texte exact, puis la purge est faite par `dpkg
+# --purge`, qui est ce que ce refus laisse comme chemin.
+apt_purge_status=0
+"$labctl" ssh "$console_vm" -- \
+  "DEBIAN_FRONTEND=noninteractive apt-get purge -y your-cloud" \
+  > "$artifacts/apt-purge.txt" 2>&1 || apt_purge_status=$?
+note "apt-get purge" "sortie $apt_purge_status"
+sed 's/^/    /' "$artifacts/apt-purge.txt"
+printf 'apt_purge_status\t%s\n' "$apt_purge_status" >> "$artifacts/apt-purge.txt"
+
+"$labctl" ssh "$console_vm" -- "dpkg --purge your-cloud 2>&1 || true" | tee -a "$artifacts/apt-purge.txt"
+census purged
+
+# --------------------------------------------------------------------------
+# Les différences. Chacune répond à une question, et une seule.
+# --------------------------------------------------------------------------
+announce "différences"
+# Le titre voyage par l'environnement plutôt que sur la ligne de commande : une
+# apostrophe dans une phrase française suffit à casser un argument cité, et une
+# preuve ne doit pas dépendre de la ponctuation de ses propres libellés.
+diff_pair() {
+  local before=$1 after=$2 name=$3 title=$4
+  "$labctl" ssh "$console_vm" -- \
+    "DIFF_TITLE=\"$title\" $remote/compare \
+      --before $remote/recensements/$before --after $remote/recensements/$after \
+      --package-listing $remote/package-listing.txt \
+      --output $remote/diff-$name.json"
+  "$labctl" copy-from "$console_vm" "$remote/diff-$name.json" "$artifacts/diff/$name.json" >/dev/null
+}
+
+"$labctl" copy-to "$console_vm" "$artifacts/package-listing.txt" "$remote/package-listing.txt" >/dev/null
+diff_pair base control bruit "plancher de bruit — rien ne survient entre les deux"
+diff_pair base installed installation "ce que dpkg --install a posé"
+diff_pair installed used usage "ce qu un usage réel a écrit"
+diff_pair used removed retrait-1 "diff n°1 — après dpkg --remove"
+diff_pair used purged retrait-2 "diff n°2 — après la purge"
+diff_pair base removed reste-remove "ce qui reste de la base après remove"
+diff_pair base purged reste-purge "ce qui reste de la base après purge"
+
+announce "rapatriement des recensements"
+"$labctl" ssh "$console_vm" -- "tar czf $remote/recensements.tgz -C $remote recensements"
+"$labctl" copy-from "$console_vm" "$remote/recensements.tgz" "$artifacts/recensements.tgz" >/dev/null
+
+{
+  printf 'run\t%s\n' "$run"
+  printf 'candidate\t%s\n' "$(basename "$candidate")"
+  printf 'candidate_sha256\t%s\n' "$candidate_sha"
+  printf 'human\t%s\n' "$human"
+  for label in pristine base control installed used removed purged; do
+    printf '%s\t%s\n' "$label" \
+      "$("$labctl" ssh "$console_vm" -- "grep '^entries' $remote/recensements/$label/summary.tsv | cut -f2" | tr -d '\r')"
+  done
+} > "$artifacts/result.tsv"
+
+announce "résultat"
+cat "$artifacts/result.tsv"
+echo
+echo "artefacts : $artifacts"
+echo "CLEAN_REMOVAL_MEASURED"

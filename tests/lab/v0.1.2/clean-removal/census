@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Un recensement du système de fichiers, pris toujours de la même façon.
+#
+# Ce que « ce qui reste après une désinstallation » veut dire n'est pas une
+# impression : c'est la différence entre deux listes prises par la même
+# commande, sur la même machine, à deux moments. Ce script est donc la seule
+# chose qui regarde le disque, et il le regarde toujours pareil — un recensement
+# pris autrement que celui auquel on le compare ne mesure que sa propre méthode.
+#
+# Trois fichiers par recensement, parce que ce sont trois questions :
+#
+#   entries.tsv   ce qui existe, avec son type, son mode, son propriétaire, sa
+#                 taille et, pour un lien, sa cible ;
+#   hashes.txt    le contenu des fichiers ordinaires, pour qu'« un fichier a
+#                 changé » soit un constat et non une déduction sur sa taille ;
+#   dpkg-status   ce que dpkg lui-même dit du paquet, plutôt qu'une lecture de
+#                 ses fichiers d'état — « connu, et dans quel état » est une
+#                 question à laquelle seul lui répond sans interprétation.
+#
+# Les exclusions sont ici, nommées et comptées, jamais silencieuses. Chacune
+# retire une zone dont le contenu bouge sans qu'aucun paquet n'y soit pour
+# quelque chose. Ce que le harnais en dit est vérifié plutôt qu'affirmé : `prove`
+# prend un recensement de **contrôle** juste après la base, sans que rien
+# n'arrive entre les deux, et le plancher de bruit qu'il donne est le chiffre
+# qui autorise à lire les autres différences.
+set -euo pipefail
+export LC_ALL=C
+
+label=${1:?usage: census <label>}
+root=/opt/clean-removal
+output="$root/recensements/$label"
+
+# `-xdev` suffirait pour les systèmes de fichiers virtuels — ils sont sur
+# d'autres périphériques — mais ils sont élagués nommément aussi : un lecteur ne
+# doit pas avoir à connaître la table de montage pour savoir ce qui a été
+# regardé.
+declare -a excluded=(
+  /proc                         # noyau, pas disque
+  /sys                          # noyau, pas disque
+  /dev                          # devtmpfs, recréé à chaque démarrage
+  /run                          # tmpfs, recréé à chaque démarrage
+  /tmp                          # volatil par définition
+  /var/tmp                      # volatil par définition
+  /var/log                      # journaux : toute commande y écrit, dont celles-ci
+  /var/cache                    # caches apt et polices, reconstruits à volonté
+  /var/lib/apt/lists            # index de paquets téléchargés par apt update
+  /var/lib/systemd/random-seed  # réécrit à chaque démarrage et à chaque arrêt
+  /opt/clean-removal            # l'espace de travail du harnais : il ne se mesure pas
+  /root/.bash_history           # écrit par les sessions du harnais lui-même
+)
+
+# `/var/lib/dpkg` n'est **pas** exclu, et c'est délibéré : c'est précisément là
+# que se lit la différence entre `remove` et `purge` — les scripts du paquet, ses
+# conffiles et son entrée d'état survivent au premier et disparaissent au second.
+# L'exclure retirerait de la mesure la moitié de ce qu'elle existe pour montrer.
+#
+# `/home` non plus n'est pas exclu, et c'est la même raison en sens inverse :
+# le coffre de l'humain vit là, et « le retrait garde-t-il le coffre » est une
+# des questions posées.
+
+sync
+install -d -m 0755 "$root/recensements" "$output"
+
+prune=()
+for path in "${excluded[@]}"; do
+  prune+=(-path "$path" -o)
+done
+
+printf '%s\n' "${excluded[@]}" > "$output/excluded.txt"
+
+find / -xdev \( "${prune[@]}" -false \) -prune -o \
+  -printf '%y\t%m\t%u\t%g\t%s\t%p\t%l\n' 2>/dev/null \
+  | LC_ALL=C sort > "$output/entries.tsv" || true
+
+find / -xdev \( "${prune[@]}" -false \) -prune -o -type f -print0 2>/dev/null \
+  | xargs -0 --no-run-if-empty sha256sum 2>/dev/null \
+  | LC_ALL=C sort -k2 > "$output/hashes.txt" || true
+
+dpkg-query -W -f '${Package}\t${Status}\t${Version}\n' your-cloud \
+  > "$output/dpkg-status.txt" 2>/dev/null \
+  || printf 'your-cloud\tabsent de la base dpkg\t-\n' > "$output/dpkg-status.txt"
+
+{
+  printf 'label\t%s\n' "$label"
+  printf 'entries\t%s\n' "$(wc -l < "$output/entries.tsv")"
+  printf 'hashed\t%s\n' "$(wc -l < "$output/hashes.txt")"
+  printf 'excluded\t%s\n' "${#excluded[@]}"
+} > "$output/summary.tsv"
+
+cat "$output/summary.tsv"

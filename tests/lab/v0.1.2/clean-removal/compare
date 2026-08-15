@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Deux recensements, et la différence exacte entre eux — rien d'interprété.
+
+Ce script ne décide pas si un résidu est acceptable : il dit ce qui est apparu,
+ce qui a disparu, ce qui a changé, et à quelle zone chaque chemin appartient. La
+classification — défaut produit, données de l'humain, artefact d'exécution — est
+un jugement, et un jugement se pose dans un rapport signé par quelqu'un, pas
+dans un script qui compte des lignes.
+
+La seule chose qu'il tranche est un fait vérifiable : un chemin **livré par le
+paquet** est reconnu comme tel parce qu'il figure dans la table du `.deb`
+lui-même, lue par `dpkg-deb -c`. Un fichier du paquet encore présent après un
+retrait est le seul verdict que des données suffisent à rendre.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# Les zones, dans l'ordre où elles sont essayées. Un chemin appartient à la
+# première qui le nomme.
+ZONES: list[tuple[str, tuple[str, ...]]] = [
+    ("dpkg", ("/var/lib/dpkg",)),
+    ("données", ("/home", "/root", "/etc/your-cloud", "/var/lib/your-cloud")),
+    ("système", ("/usr", "/etc", "/var", "/opt", "/srv", "/boot")),
+]
+
+
+def zone(path: str) -> str:
+    for name, prefixes in ZONES:
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes):
+            return name
+    return "autre"
+
+
+def entries(directory: Path) -> dict[str, tuple[str, ...]]:
+    table: dict[str, tuple[str, ...]] = {}
+    for line in (directory / "entries.tsv").read_text(encoding="utf-8", errors="replace").splitlines():
+        fields = line.split("\t")
+        if len(fields) < 6:
+            continue
+        kind, mode, owner, group, size, path = fields[:6]
+        target = fields[6] if len(fields) > 6 else ""
+        table[path] = (kind, mode, owner, group, size, target)
+    return table
+
+
+def hashes(directory: Path) -> dict[str, str]:
+    table: dict[str, str] = {}
+    for line in (directory / "hashes.txt").read_text(encoding="utf-8", errors="replace").splitlines():
+        digest, _, path = line.partition("  ")
+        if path:
+            table[path] = digest
+    return table
+
+
+def package_paths(listing: Path) -> set[str]:
+    """Les chemins que le `.deb` livre, lus de sa propre table.
+
+    `dpkg-deb -c` écrit six champs : mode, propriétaire/groupe, taille, date,
+    heure, puis le chemin — relatif, avec ou sans `./` selon la version. Le
+    chemin est donc pris comme **le sixième champ**, et jamais reconnu à un
+    préfixe : une première version cherchait `./`, ne le trouvait pas, et
+    rendait un ensemble vide. Le verdict « aucun fichier du paquet ne reste »
+    était alors vrai pour la seule raison qu'aucun fichier du paquet n'était
+    connu — un vert qui ne mesurait rien.
+
+    La fonction refuse donc une table qui ne lui rend aucun chemin : c'est la
+    seule protection contre ce vert-là.
+    """
+    delivered: set[str] = set()
+    for line in listing.read_text(encoding="utf-8", errors="replace").splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) < 6:
+            continue
+        path = fields[5].split(" -> ")[0].rstrip("/")
+        if path.startswith("./"):
+            path = path[1:]
+        elif not path.startswith("/"):
+            path = "/" + path
+        if path and path != "/":
+            delivered.add(path)
+    if not delivered:
+        raise SystemExit(f"la table {listing} ne rend aucun chemin : le verdict serait vide")
+    return delivered
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--before", required=True)
+    parser.add_argument("--after", required=True)
+    parser.add_argument("--package-listing")
+    parser.add_argument("--output", required=True)
+    # Le titre vient de l'environnement : une apostrophe dans une phrase
+    # française casse un argument cité à travers ssh, et une preuve ne doit pas
+    # dépendre de la ponctuation de ses propres libellés.
+    parser.add_argument("--title", default=os.environ.get("DIFF_TITLE", ""))
+    arguments = parser.parse_args()
+
+    before_directory, after_directory = Path(arguments.before), Path(arguments.after)
+    before, after = entries(before_directory), entries(after_directory)
+    before_hashes, after_hashes = hashes(before_directory), hashes(after_directory)
+    delivered = package_paths(
+        Path(arguments.package_listing) if arguments.package_listing else None
+    )
+
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = sorted(
+        path
+        for path in set(before) & set(after)
+        if before[path] != after[path]
+        or before_hashes.get(path, "") != after_hashes.get(path, "")
+    )
+
+    def describe(path: str, table: dict[str, tuple[str, ...]]) -> dict[str, object]:
+        kind, mode, owner, group, size, target = table[path]
+        record: dict[str, object] = {
+            "path": path,
+            "zone": zone(path),
+            "type": kind,
+            "mode": mode,
+            "owner": f"{owner}:{group}",
+            "livré_par_le_paquet": path in delivered,
+        }
+        if kind == "f":
+            record["size"] = int(size)
+        if target:
+            record["target"] = target
+        return record
+
+    report = {
+        "schema_version": 1,
+        "title": arguments.title,
+        "before": {
+            "label": before_directory.name,
+            "entries": len(before),
+            "dpkg": (before_directory / "dpkg-status.txt").read_text(encoding="utf-8").strip(),
+        },
+        "after": {
+            "label": after_directory.name,
+            "entries": len(after),
+            "dpkg": (after_directory / "dpkg-status.txt").read_text(encoding="utf-8").strip(),
+        },
+        "counts": {"added": len(added), "removed": len(removed), "changed": len(changed)},
+        "added": [describe(path, after) for path in added],
+        "removed": [describe(path, before) for path in removed],
+        "changed": [describe(path, after) for path in changed],
+    }
+    # Le seul verdict que des données rendent seules.
+    report["fichiers_du_paquet_encore_présents"] = sorted(
+        path for path in set(after) & delivered if after[path][0] != "d"
+    )
+
+    Path(arguments.output).write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
+
+    print(f"== {arguments.title or 'diff'}")
+    print(f"   avant {before_directory.name}: {len(before)} entrées — {report['before']['dpkg']}")
+    print(f"   après {after_directory.name}: {len(after)} entrées — {report['after']['dpkg']}")
+    print(f"   ajoutés {len(added)}   retirés {len(removed)}   modifiés {len(changed)}")
+    still = report["fichiers_du_paquet_encore_présents"]
+    print(f"   fichiers du paquet encore présents : {len(still)}")
+    for path in still[:20]:
+        print(f"     !! {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

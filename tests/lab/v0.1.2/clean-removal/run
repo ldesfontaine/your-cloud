@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Ouvre l'écran virtuel sur lequel la Console peint réellement, puis passe la
+# main à `inside`.
+#
+# `-noreset` n'est pas de la décoration : sans lui le serveur X se régénère entre
+# deux clients éphémères, et un pilote qui se reconnecte en cours de route trouve
+# un autre affichage. La même chaîne sert à la porte hébergée et aux preuves
+# antérieures, et elle est gardée identique exprès.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+mkdir -p "$here/output"
+exec dbus-run-session -- xvfb-run -a -e "$here/output/xvfb-errors.log" \
+  -s "-screen 0 1280x1024x24 -noreset" \
+  env NO_AT_BRIDGE=1 "$here/inside" "$@"

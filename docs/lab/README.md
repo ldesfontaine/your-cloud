@@ -496,8 +496,43 @@ l'Auxiliaire refuse, revient en arrière et rapporte —, puis le plan qui pose
 réellement le service. Un succès seul ne distinguerait pas « la machine a
 appliqué » de « rien n'a été vérifié ».
 
+## Le retrait propre : `tests/lab/v0.1.2/clean-removal/prove`
+
+[`tests/lab/v0.1.2/clean-removal/prove`](../../tests/lab/v0.1.2/clean-removal/prove)
+répond à une question que rien n'avait posée pour la Console : après une
+désinstallation, que reste-t-il sur la machine ? Elle ne parle qu'à
+`lab-console`, qu'elle rend d'abord à son instantané `clean`, et ne crée ni ne
+détruit de topologie.
+
+Sa méthode est une **différence entre recensements du disque** — jamais une
+inspection de ce qu'on s'attend à trouver, puisque chercher ce qu'on attend est
+la façon de ne pas voir ce qu'on n'attend pas. Sept états sont relevés, dont un
+**recensement de contrôle** pris juste après la base sans que rien n'arrive
+entre les deux : le plancher de bruit qu'il donne est le chiffre qui autorise à
+lire les autres différences, et il transforme les douze exclusions du
+recensement d'affirmations en constat.
+
+`remove` et `purge` y sont **deux mesures séparées**, parce que ce sont deux
+constats : un rapport qui ne mesurerait que le second tairait exactement ce que
+dpkg garde au premier. Le détail du harnais et ses trois choix de méthode sont
+dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
+
 ## Rapports exécutés
 
+- [`v0.1.2` — le retrait propre de la Console Linux](v0.1.2-clean-removal.md) :
+  passage du 15 août 2026 sur `lab-console`. Le `.deb` du tag `v0.1.0` est
+  installé sur une machine rendue à `clean`, la Console est réellement lancée
+  sous un compte non privilégié jusqu'au formulaire d'association, puis retirée
+  en deux mesures. Plancher de bruit **nul** ; l'installation pose **six
+  entrées** et rien sous `/etc` ni `/var` hors comptabilité dpkg ; le retrait
+  les reprend toutes et **aucun fichier du paquet ne survit** ; `apt purge`
+  **échoue** — apt ne nomme que ce qu'un dépôt lui décrit — et `dpkg --purge`
+  n'a rien de plus à effacer, le paquet ne livrant aucun conffile ni script de
+  mainteneur. Les 175 entrées qui restent sont **toutes** dans le foyer de
+  l'humain : le coffre chiffré et son enveloppe, conservés par conception, et
+  des caches du moteur de rendu. Limite dominante : **aucun paquet livré n'a été
+  prouvé** — ce dépôt n'en publie aucun, et la preuve porte sur la recette
+  d'empaquetage à la révision attestée.
 - [`v0.1.2` — le trajet de commande entier, sans fixture](v0.1.2-command-path.md) :
   passage `quick` du 12 août 2026 pour #128. La Console installée gèle une
   définition, « Déployer » ne porte qu'un nom, la **vraie fenêtre native** —
