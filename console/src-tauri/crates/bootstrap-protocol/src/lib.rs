@@ -545,8 +545,14 @@ mod tests {
     #[test]
     fn the_action_vocabulary_is_closed_and_its_wire_names_are_exact() {
         for (action, wire_name) in [
-            (BootstrapAction::AuditTargetReadOnly, "\"audit_target_read_only\""),
-            (BootstrapAction::InstallServerBundle, "\"install_server_bundle\""),
+            (
+                BootstrapAction::AuditTargetReadOnly,
+                "\"audit_target_read_only\"",
+            ),
+            (
+                BootstrapAction::InstallServerBundle,
+                "\"install_server_bundle\"",
+            ),
             (
                 BootstrapAction::ActivateApprovedController,
                 "\"activate_approved_controller\"",

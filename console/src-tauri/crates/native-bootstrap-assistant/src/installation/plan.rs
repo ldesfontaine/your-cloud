@@ -153,9 +153,11 @@ pub const fn authorized_steps(action: BootstrapAction) -> &'static [Step] {
             Step::CreateState,
             Step::InstallCredentialSources,
         ],
-        BootstrapAction::ActivateApprovedController => {
-            &[Step::ActivateController, Step::AssociateConsole, Step::Preflight]
-        }
+        BootstrapAction::ActivateApprovedController => &[
+            Step::ActivateController,
+            Step::AssociateConsole,
+            Step::Preflight,
+        ],
     }
 }
 
