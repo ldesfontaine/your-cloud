@@ -3,9 +3,15 @@
 
 `#133` demande deux durées et interdit de les fixer sur un avis : l'une borne le
 temps de lire un plan, l'autre le temps qu'une autorité confirmée reste
-inutilisée. Seule la première est une durée humaine, et c'est celle-ci que ce
-script mesure — la seconde ne contient aucun geste humain et se mesure au
-harnais, pas au chronomètre.
+inutilisée. **Les deux sont des durées humaines**, et ce script mesure les deux.
+
+La seconde l'est parce que le contrat le veut : le sondage du frontend s'arrête
+à l'état `answered` et ne soumet rien. `submit_plan_decision` n'a qu'un
+appelant, le bouton « Signer et lancer » de `plans-view.tsx`, et le commentaire
+posé à côté dit pourquoi — une soumission qui suivrait la fermeture de la
+fenêtre ferait de la fenêtre le déclencheur d'un effet, quand le contrat en fait
+un recueil de consentement. Entre la confirmation et la signature, un humain
+revient à la Console, lit ce qu'elle lui dit, et clique.
 
 Ce qui est affiché n'est pas une imitation : ce sont les lignes que
 `PresentedPublicationPlan::confirmation_lines()` produit, extraites du produit
@@ -68,7 +74,21 @@ def altered(line: str) -> str:
     return f"{head} {digest[:position]}{replacement}{digest[position + 1:]}"
 
 
-def reading(lines: list[str], reference: list[str], tampered: bool) -> tuple[float, bool]:
+# Le panneau que la Console rend une fois la fenêtre refermée sur une
+# confirmation, copié de `console/src/product/plans-view.tsx`. C'est lui que
+# l'humain lit avant de cliquer, et donc lui qui occupe le second intervalle.
+CONSOLE_AFTER_CONFIRMATION = (
+    "Approuvé dans la fenêtre native",
+    "Rien n’est encore parti. Signer scelle ces deux empreintes sous votre clé "
+    "et remet l’approbation au Controller, qui dépense la position de cette "
+    "machine avant d’ouvrir quoi que ce soit. C’est une autorité à un coup.",
+    "[ Signer et lancer ]",
+)
+
+
+def reading(
+    lines: list[str], reference: list[str], tampered: bool
+) -> tuple[float, float | None, bool]:
     shown = list(lines)
     if tampered:
         index = random.choice(digests(lines))
@@ -88,9 +108,24 @@ def reading(lines: list[str], reference: list[str], tampered: bool) -> tuple[flo
     answer = ""
     while answer not in {"o", "n"}:
         answer = input("Les deux empreintes de la fenêtre sont-elles celles de la Console ? [o/n] ").strip().lower()
-    elapsed = time.monotonic() - started
+    deliberating = time.monotonic() - started
     caught = (answer == "n") if tampered else (answer == "o")
-    return elapsed, caught
+
+    # Le second intervalle n'existe que sur une lecture qui aurait réellement
+    # confirmé : une lecture qui a repéré une altération n'atteint jamais le
+    # bouton, et la chronométrer mesurerait un geste qu'un humain n'aurait pas
+    # fait.
+    if answer != "o":
+        return deliberating, None, caught
+
+    print("\n=== La fenêtre s'est refermée. Vous revenez à la Console ===")
+    signing_started = time.monotonic()
+    badge, prose, button = CONSOLE_AFTER_CONFIRMATION
+    print(f"  [{badge}]")
+    print(f"  {prose}")
+    print(f"  {button}")
+    input("\nEntrée pour « cliquer » sur Signer et lancer. ")
+    return deliberating, time.monotonic() - signing_started, caught
 
 
 def main() -> int:
@@ -108,25 +143,46 @@ def main() -> int:
     tampered_at = random.randrange(arguments.lectures)
     results = []
     for index in range(arguments.lectures):
-        elapsed, caught = reading(lines, lines, index == tampered_at)
-        results.append((elapsed, index == tampered_at, caught))
-        print(f"  → {elapsed:.1f} s")
+        deliberating, signing, caught = reading(lines, lines, index == tampered_at)
+        results.append((deliberating, signing, index == tampered_at, caught))
+        signed = "—" if signing is None else f"{signing:.1f} s"
+        print(f"  → délibérer {deliberating:.1f} s   signer {signed}")
 
     print("\n=== Résultat ===")
-    for index, (elapsed, tampered, caught) in enumerate(results, start=1):
-        mark = "altérée" if tampered else "intacte "
+    print("  lecture   délibérer    signer   plan       empreinte altérée")
+    for index, (deliberating, signing, tampered, caught) in enumerate(results, start=1):
+        signed = "     —" if signing is None else f"{signing:6.1f}"
+        mark = "altéré " if tampered else "intact "
         verdict = "vue" if caught else "MANQUÉE"
-        print(f"  lecture {index}  {elapsed:6.1f} s  {mark}  {verdict}")
-    times = [elapsed for elapsed, _, _ in results]
-    print(f"  médiane {statistics.median(times):.1f} s   maximum {max(times):.1f} s")
-    missed = [index for index, (_, tampered, caught) in enumerate(results, start=1) if not caught]
+        print(f"  {index:^7}   {deliberating:6.1f} s   {signed} s   {mark}    {verdict}")
+
+    def bounds(label: str, values: list[float]) -> None:
+        if not values:
+            print(f"  {label} : aucune mesure")
+            return
+        print(
+            f"  {label} : médiane {statistics.median(values):.1f} s   "
+            f"maximum {max(values):.1f} s   ({len(values)} lecture(s))"
+        )
+
+    print()
+    bounds("délibérer          ", [d for d, _, _, _ in results])
+    bounds("autorité confirmée ", [s for _, s, _, _ in results if s is not None])
+
+    missed = [i for i, (_, _, _, caught) in enumerate(results, start=1) if not caught]
     if missed:
-        print(f"  !! lecture(s) {missed} : la réponse ne correspond pas à ce qui était affiché.")
+        print(f"\n  !! lecture(s) {missed} : la réponse ne correspond pas à ce qui était affiché.")
         print("     Un temps de lecture qui ne repère pas une empreinte altérée ne borne rien ;")
         print("     c'est un fait à porter au dossier de #133 avant d'en tirer une durée.")
+
     print()
-    print("La borne de délibération se pose au-dessus du maximum observé, pas de la médiane :")
+    print("Les deux bornes se posent au-dessus du maximum observé, pas de la médiane :")
     print("une borne calée sur le lecteur moyen coupe le lecteur attentif.")
+    print()
+    print("Et la seconde se pose au-dessus de ce maximum AUGMENTÉ d'une marge : cette")
+    print("feuille ne fait pas revenir de la fenêtre native à la Console, donc ce qu'elle")
+    print("donne du second intervalle est un plancher. Une borne trop courte refuserait le")
+    print("geste d'un humain qui a lu, compris et accepté.")
     return 0
 
 

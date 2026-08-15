@@ -38,12 +38,21 @@ const DELIBERATION_LIFETIME: Duration = Duration::from_millis(MAX_ASSISTANT_REMA
 /// Le temps qu'une **autorité confirmée** reste inutilisée avant de s'éteindre.
 ///
 /// C'est la seconde échéance, et elle ne mesure pas la même chose que la
-/// première. Celle-là borne une lecture humaine ; celle-ci borne l'intervalle
-/// entre « un humain a confirmé » et « la signature part », qui ne contient
-/// aucun geste humain — le sondage voit `answered` et soumet. Les deux étaient
-/// une seule échéance courant depuis l'ouverture, si bien que le temps
+/// première. Celle-là borne une lecture ; celle-ci borne l'intervalle entre
+/// « la fenêtre a rendu une confirmation » et « la signature part ». Les deux
+/// étaient une seule échéance courant depuis l'ouverture, si bien que le temps
 /// utilisable après l'approbation était ce qui restait des cinq minutes une
 /// fois la délibération faite : imprévisible, et potentiellement quasi nul.
+///
+/// **Cet intervalle contient un geste humain, et c'est ce qui décide de son
+/// échelle.** Le sondage du frontend s'arrête à l'état `answered` et ne soumet
+/// rien : `submit_plan_decision` n'a qu'un appelant, le bouton
+/// « Signer et lancer » de `plans-view.tsx`, et c'est une décision de contrat —
+/// une soumission qui suivrait la fermeture de la fenêtre ferait de la fenêtre
+/// le déclencheur d'un effet, quand le contrat en fait un recueil de
+/// consentement. Cette borne est donc **humaine et généreuse**, jamais à
+/// l'échelle d'un enchaînement de messages : une borne calée sur le pipeline
+/// rendrait tout humain réel expiré à son propre clic.
 ///
 /// **Ce chiffre est provisoire lui aussi, et délibérément pas un nombre
 /// inventé** : il reprend le plafond du protocole faute de mesure. Ce que ce
@@ -51,7 +60,8 @@ const DELIBERATION_LIFETIME: Duration = Duration::from_millis(MAX_ASSISTANT_REMA
 /// mord réellement sur la signature. Avant ce changement, rien ne balayait la
 /// session après une confirmation et l'autorité confirmée ne s'éteignait
 /// **jamais** ; toute valeur finie resserre donc, aucune n'élargit. `#133`
-/// reste ouverte jusqu'à ce que la mesure fixe les deux.
+/// reste ouverte jusqu'à ce que la mesure fixe les deux, et l'essai humain
+/// chronomètre les **deux** intervalles.
 const CONFIRMED_AUTHORITY_LIFETIME: Duration =
     Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS);
 
