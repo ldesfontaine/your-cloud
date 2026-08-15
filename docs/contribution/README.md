@@ -31,6 +31,8 @@ dans leurs sources documentaires dédiées.
   preuve réellement exécutée.
 - Appliquer le [contrat CI](CI.md) aux runners génériques et conserver la preuve
   multi-VM hors CI tant qu'un contrôleur LAB dédié n'existe pas.
+- Signer le lot serveur selon la [procédure de release](RELEASE.md) : la moitié
+  privée reste hors ligne, la porte hébergée atteste et ne signe jamais.
 - Un contrôle vert prouve la couverture et les liens, pas l'absence de
   contradiction sémantique : relire le sens avant de poursuivre.
 - Créer un ADR seulement si la décision est difficile à renverser, surprenante

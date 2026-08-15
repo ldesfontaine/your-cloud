@@ -663,6 +663,33 @@ santé du Controller.
 
 ## Distribution bornée
 
+**Pourquoi l'installateur porte les Agents plutôt que d'aller les chercher.** La
+question a été posée et tranchée : le lot reste embarqué. Trois raisons, dans
+l'ordre où elles pèsent.
+
+**La racine de confiance, au moment où elle compte.** L'Assistant tient l'accès
+personnel et s'apprête à élever ses privilèges : c'est l'instant du parcours où
+il possède le plus d'autorité. Aller chercher un binaire à ce moment-là
+déplacerait la racine de confiance vers un compte d'hébergement à l'instant T —
+la classe d'attaque que ce contrat exclut, et qu'aucune vérification postérieure
+ne rattrape, puisque c'est la source elle-même qui serait choisie par un tiers.
+Un lot embarqué est jugé contre une ancre scellée dans le binaire que l'humain a
+lui-même installé.
+
+**Un seul produit, une seule révision.** La version de l'installateur est celle
+des Agents qu'il pose (`#55`). Une cadence de publication séparée pour les
+daemons créerait des combinaisons de versions que rien ne prouve, et un parc
+dont on ne saurait plus dire ce qu'il porte.
+
+**Le chemin est celui que les preuves parcourent.** `#13` et `#41` ont exercé
+l'amorçage sur des machines réelles ; un téléchargement en ferait un chemin
+différent de celui qui a été prouvé.
+
+Conséquence directe sur ce que le projet publie : **aucun artefact de daemon
+séparé, et aucune signature de binaire serveur par une porte d'intégration
+continue.** L'intégration continue atteste une révision ; elle ne signe pas. Le
+paquet de la Console est la distribution.
+
 L'installateur de la Console pour `v0.1.0` contient l'Assistant et un unique
 paquet serveur `.deb` pour Debian 13 `amd64`. Ce paquet livre le binaire Go `your-cloud` et ses
 définitions d'installation statiques. Il ne porte ni configuration propre à une
