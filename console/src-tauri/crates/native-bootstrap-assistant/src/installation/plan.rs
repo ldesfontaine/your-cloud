@@ -28,6 +28,7 @@ use crate::installation::preflight::PreflightCleared;
 use crate::personal_access::audit::Role;
 use crate::personal_access::elevation::Elevation;
 use crate::personal_access::placement::ApprovedPlacement;
+use your_cloud_bootstrap_protocol::BootstrapAction;
 
 /// Where the package puts what it owns. These are the paths of the bounded
 /// distribution this palier fixes, not the `/usr/local` paths the earlier
@@ -128,6 +129,35 @@ pub const STEPS: [Step; 7] = [
     Step::AssociateConsole,
     Step::Preflight,
 ];
+
+/// La tranche contiguë de [`STEPS`] que chaque action du protocole approuve.
+///
+/// C'est ici que « une session ne peut pas produire un acte d'une autre
+/// action » cesse d'être une intention : l'exécutant du palier recevra une
+/// action et n'aura à sa main que la tranche qu'elle nomme, rendue par une
+/// fonction totale — une action ajoutée sans sa tranche ne compile pas.
+/// L'audit ne couvre rien : une session d'audit n'installe pas, et le dire
+/// par une tranche vide vaut mieux que de ne pas être appelable.
+///
+/// Les deux tranches d'installation séparent l'inerte de l'actif, exactement
+/// comme le contrat les approuve : poser s'arrête avant la première unité en
+/// écoute, activer commence à elle. Leur concaténation est [`STEPS`] dans son
+/// ordre — un test le tient, pour qu'aucune étape ne puisse être orpheline ou
+/// couverte deux fois.
+pub const fn authorized_steps(action: BootstrapAction) -> &'static [Step] {
+    match action {
+        BootstrapAction::AuditTargetReadOnly => &[],
+        BootstrapAction::InstallServerBundle => &[
+            Step::InstallPackage,
+            Step::WriteMachineConfiguration,
+            Step::CreateState,
+            Step::InstallCredentialSources,
+        ],
+        BootstrapAction::ActivateApprovedController => {
+            &[Step::ActivateController, Step::AssociateConsole, Step::Preflight]
+        }
+    }
+}
 
 /// Why an installation was not authorised.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -425,5 +455,27 @@ mod tests {
         assert!(CONTROLLER_STATE_DIRECTORY.ends_with("controller"));
         assert!(CREDENTIAL_SOURCE_DIRECTORY.contains("controller"));
         assert!(CONTROLLER_BUDGETS.tasks_max > 0 && CONTROLLER_BUDGETS.memory_max_mib > 0);
+    }
+
+    /// Les deux tranches d'installation, mises bout à bout, sont exactement
+    /// [`STEPS`] dans son ordre : aucune étape orpheline, aucune couverte deux
+    /// fois, et la coupure tombe exactement entre l'inerte et l'actif. L'audit
+    /// ne couvre rien.
+    #[test]
+    fn the_action_slices_cover_the_plan_exactly_once_and_split_inert_from_active() {
+        assert_eq!(
+            authorized_steps(BootstrapAction::AuditTargetReadOnly),
+            &[] as &[Step]
+        );
+
+        let install = authorized_steps(BootstrapAction::InstallServerBundle);
+        let activate = authorized_steps(BootstrapAction::ActivateApprovedController);
+        let concatenated: Vec<Step> = install.iter().chain(activate).copied().collect();
+        assert_eq!(concatenated, STEPS);
+
+        // La coupure : poser s'arrête avant la première unité en écoute,
+        // activer commence à elle.
+        assert_eq!(install.last(), Some(&Step::InstallCredentialSources));
+        assert_eq!(activate.first(), Some(&Step::ActivateController));
     }
 }

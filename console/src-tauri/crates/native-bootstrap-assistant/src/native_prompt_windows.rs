@@ -1332,6 +1332,10 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
     };
     let action = match scope.actions {
         [BootstrapAction::AuditTargetReadOnly] => "audit de la cible en lecture seule",
+        [BootstrapAction::InstallServerBundle] => "pose du lot serveur vérifié, rien n'écoute",
+        [BootstrapAction::ActivateApprovedController] => {
+            "activation du Controller approuvé, association et prévol"
+        }
     };
     let mut lines = vec![
         format!("Parcours : {mode}"),

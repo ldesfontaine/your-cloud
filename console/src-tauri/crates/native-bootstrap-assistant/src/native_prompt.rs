@@ -597,6 +597,10 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
     };
     let action = match scope.actions {
         [BootstrapAction::AuditTargetReadOnly] => "audit de la cible en lecture seule",
+        [BootstrapAction::InstallServerBundle] => "pose du lot serveur vérifié, rien n'écoute",
+        [BootstrapAction::ActivateApprovedController] => {
+            "activation du Controller approuvé, association et prévol"
+        }
     };
     let mut lines = vec![
         format!("Parcours : {mode}"),
@@ -837,6 +841,33 @@ mod tests {
         ] {
             let lines = logical_scope_lines(&scope(prompt));
             assert_eq!(lines, expected_lines);
+        }
+    }
+
+    /// Chaque action du vocabulaire porte sa propre phrase, et la fenêtre la
+    /// rend mot pour mot : l'humain approuve une action nommée, jamais un
+    /// libellé générique. Le `match` est total — une action ajoutée sans sa
+    /// phrase ne compile pas — et ce test fige les phrases elles-mêmes.
+    #[test]
+    fn each_action_of_the_vocabulary_carries_its_own_sentence() {
+        for (action, sentence) in [
+            (
+                BootstrapAction::AuditTargetReadOnly,
+                "Action : audit de la cible en lecture seule",
+            ),
+            (
+                BootstrapAction::InstallServerBundle,
+                "Action : pose du lot serveur vérifié, rien n'écoute",
+            ),
+            (
+                BootstrapAction::ActivateApprovedController,
+                "Action : activation du Controller approuvé, association et prévol",
+            ),
+        ] {
+            let mut with_action = scope(NativePromptKind::SudoPassword);
+            with_action.actions = [action];
+            let lines = logical_scope_lines(&with_action);
+            assert_eq!(lines.last().map(String::as_str), Some(sentence));
         }
     }
 

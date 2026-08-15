@@ -147,10 +147,26 @@ pub enum BootstrapStep {
     RootAccess,
 }
 
+/// Ce que l'humain approuve, jamais comment l'Assistant s'y prend.
+///
+/// Le vocabulaire est clos et une session en porte exactement une : un
+/// document qui annoncerait une action inconnue est refusé à la
+/// désérialisation, avant toute fenêtre. Les deux actions d'installation
+/// séparent ce qui doit l'être — poser des fichiers inertes et mettre un
+/// service en écoute sont deux natures d'actes, sous deux approbations — et
+/// la tranche du plan que chacune couvre est fixée par le module
+/// d'installation de l'Assistant, pas par l'appelant.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BootstrapAction {
     AuditTargetReadOnly,
+    /// Poser le lot vérifié, inerte : le paquet par `dpkg`, la configuration
+    /// de cette machine, l'état privé, les sources de credentials. Rien
+    /// n'écoute à la fin de cette action.
+    InstallServerBundle,
+    /// Mettre en écoute ce qui a été posé : la seule unité que le plan nomme,
+    /// l'association de cette Console, le prévol depuis le Controller.
+    ActivateApprovedController,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -520,6 +536,36 @@ mod tests {
         assert!(canonical_request_id(REQUEST_ID));
         assert!(!canonical_request_id("00112233445566778899AABBCCDDEEFF"));
         assert!(!canonical_request_id("../../forged"));
+    }
+
+    /// Le vocabulaire des actions est clos et ses noms de fil sont exacts :
+    /// chacune voyage sous son nom `snake_case` et revient identique. Un nom
+    /// que ce vocabulaire ne définit pas est refusé à la désérialisation —
+    /// avant toute fenêtre, avant tout acte.
+    #[test]
+    fn the_action_vocabulary_is_closed_and_its_wire_names_are_exact() {
+        for (action, wire_name) in [
+            (BootstrapAction::AuditTargetReadOnly, "\"audit_target_read_only\""),
+            (BootstrapAction::InstallServerBundle, "\"install_server_bundle\""),
+            (
+                BootstrapAction::ActivateApprovedController,
+                "\"activate_approved_controller\"",
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&action).unwrap(), wire_name);
+            assert_eq!(
+                serde_json::from_str::<BootstrapAction>(wire_name).unwrap(),
+                action
+            );
+        }
+
+        for unknown in [
+            "\"install_and_activate\"",
+            "\"transfer_authority\"",
+            "\"InstallServerBundle\"",
+        ] {
+            assert!(serde_json::from_str::<BootstrapAction>(unknown).is_err());
+        }
     }
 
     #[test]
