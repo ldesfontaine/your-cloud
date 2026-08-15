@@ -1,0 +1,34 @@
+# La copie exacte que la fenêtre native rend, extraite du produit lui-même.
+# Source : PresentedPublicationPlan::confirmation_lines() sur les vecteurs
+# épinglés de console/src-tauri/src/publication_plan.rs, révision b2a8452.
+# Une copie qui change rend cette feuille périmée : elle se régénère.
+#
+# famille	ligne
+private_service	Machine : lab-machine-1
+private_service	Opération : déployer le service privé à données
+private_service	Profil de service : vaultwarden
+private_service	Image : docker.io/vaultwarden/server
+private_service	Digest de l’image : sha256:ebdfe70701c60ac0c28c697e787cea767d7972940b786037b29fe0d507f821e8
+private_service	Port local : 127.0.0.1:8080
+private_service	Origine : https://vault.lab.your-cloud.test
+private_service	Volume persistant : /var/lib/your-cloud-svc-vaultwarden/data
+private_service	Ligne d’environnement : SIGNUPS_ALLOWED=false
+private_service	Ligne d’environnement : INVITATIONS_ALLOWED=false
+private_service	Ligne d’environnement : SHOW_PASSWORD_HINT=false
+private_service	Ligne d’environnement : DOMAIN=https://vault.lab.your-cloud.test
+private_service	Confinement de sortie : table inet your-cloud-egress, le service ne parle à personne : sortie refusée hors loopback et réponses
+private_service	Rollback : retirer le service privé à données, sur la même machine, le même profil, la même image, le même port et la même origine
+private_service	Empreinte du plan : b4d69bc7fcd277a5c165cd9494f2a88cb3ea8acf06f66906a10f831292f03372
+private_service	Empreinte du rollback : c1650b0d359671aafc7fc19bc1d0f050bcf561558cfe3a82bfd897c16d0c7ba0
+user_service	Machine : lab-machine-1
+user_service	Opération : déployer le service utilisateur
+user_service	Service défini : lab-notes
+user_service	Révision de la définition : c0f30d7c7f8635d2fb56445d7b75c6523b440d35de8e1867444c788e4b30f3ce
+user_service	Image : registry.lab.your-cloud.test/your-cloud/lab-notes
+user_service	Digest de l’image : sha256:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+user_service	Port local : 127.0.0.1:8080
+user_service	Origine : notes.lab.your-cloud.test, portée par les lignes de la définition qui nomment {origin_host}
+user_service	Ce que la révision décide : le compte, le foyer, les volumes, l’environnement et les noms de secrets viennent de la définition gelée sous cette empreinte, et d’aucun champ de ce plan
+user_service	Rollback : retirer le service utilisateur, sur la même machine, la même définition, la même révision, la même image, le même port et la même origine
+user_service	Empreinte du plan : 604b9300bb6f321d53759365cc7064fed1fc9b794b8afdbe811a1742d8133a59
+user_service	Empreinte du rollback : b2737aba239eb3d43326c43e1508687b33ade43ed5fd62a97cfe0866b6deabc8

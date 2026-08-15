@@ -833,9 +833,11 @@ fn submit_plan_decision(
         code: "console_unavailable",
         detail: None,
     })?;
-    if !local.plan_consent.confirmed(&request_id) {
-        return Err(PlanConsentError::RequestRefused.into());
-    }
+    // La borne mord ici, et c'est le seul endroit où elle compte : une autorité
+    // confirmée dont l'échéance a couru refuse de signer, et le dit par le refus
+    // qui nomme la suite — rouvrir la fenêtre — plutôt que par celui d'une
+    // demande qui n'a jamais existé (`#133`).
+    local.plan_consent.confirmed(&request_id)?;
     let Some(held) = local.plan_pair.as_ref() else {
         return Err(PlanConsentError::NoPlan.into());
     };

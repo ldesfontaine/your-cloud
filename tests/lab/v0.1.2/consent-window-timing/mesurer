@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Chronomètre ce que délibérer coûte réellement, sur la copie exacte du produit.
+
+`#133` demande deux durées et interdit de les fixer sur un avis : l'une borne le
+temps de lire un plan, l'autre le temps qu'une autorité confirmée reste
+inutilisée. Seule la première est une durée humaine, et c'est celle-ci que ce
+script mesure — la seconde ne contient aucun geste humain et se mesure au
+harnais, pas au chronomètre.
+
+Ce qui est affiché n'est pas une imitation : ce sont les lignes que
+`PresentedPublicationPlan::confirmation_lines()` produit, extraites du produit
+et conservées dans `copie.tsv`. Le terminal n'est pas la fenêtre GTK, et c'est
+la limite honnête de cet essai : il mesure le temps de **lire ce texte et de
+comparer ces empreintes**, pas l'ergonomie de la fenêtre.
+
+Une lecture sur les trois porte une empreinte **altérée d'un caractère**, tirée
+au sort et jamais annoncée. Sans elle, l'essai mesurerait un temps passé devant
+un texte ; avec elle, il dit aussi si ce temps achète quelque chose.
+
+    tests/lab/v0.1.2/consent-window-timing/mesurer private_service
+    tests/lab/v0.1.2/consent-window-timing/mesurer user_service --lectures 3
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+import statistics
+import sys
+import time
+from pathlib import Path
+
+SHEET = Path(__file__).resolve().parent / "copie.tsv"
+
+
+def copy_for(family: str) -> list[str]:
+    lines = []
+    for raw in SHEET.read_text(encoding="utf-8").splitlines():
+        if raw.startswith("#") or "\t" not in raw:
+            continue
+        name, _, line = raw.partition("\t")
+        if name == family:
+            lines.append(line)
+    if not lines:
+        raise SystemExit(f"la famille {family!r} est absente de {SHEET}")
+    return lines
+
+
+def digests(lines: list[str]) -> list[int]:
+    """Les index des deux lignes d'empreinte, reconnues à leur libellé.
+
+    Reconnaître « soixante-quatre caractères hexadécimaux » ne suffit pas : la
+    révision gelée d'une définition en est une aussi, et c'est bien la question
+    — le plan porte plusieurs longues chaînes qui se ressemblent, et seules deux
+    d'entre elles sont ce que la signature couvre.
+    """
+    found = [index for index, line in enumerate(lines) if line.startswith("Empreinte ")]
+    if len(found) != 2:
+        raise SystemExit(f"cette famille porte {len(found)} lignes d'empreinte, pas deux")
+    return found
+
+
+def altered(line: str) -> str:
+    """Un caractère de l'empreinte changé, et un seul."""
+    head, _, digest = line.rpartition(" ")
+    position = random.randrange(len(digest))
+    replacement = random.choice([c for c in "0123456789abcdef" if c != digest[position]])
+    return f"{head} {digest[:position]}{replacement}{digest[position + 1:]}"
+
+
+def reading(lines: list[str], reference: list[str], tampered: bool) -> tuple[float, bool]:
+    shown = list(lines)
+    if tampered:
+        index = random.choice(digests(lines))
+        shown[index] = altered(lines[index])
+
+    print("\n" * 3)
+    input("Prêt ? Entrée pour afficher le plan. ")
+    print("\n=== La Console affiche, à côté de la fenêtre, les deux empreintes du plan ===")
+    for index in digests(lines):
+        print(f"  {reference[index]}")
+    print("\n=== La fenêtre d'approbation ===")
+    for line in shown:
+        print(f"  {line}")
+    print()
+    started = time.monotonic()
+    input("Entrée quand vous avez fini de lire et de comparer. ")
+    answer = ""
+    while answer not in {"o", "n"}:
+        answer = input("Les deux empreintes de la fenêtre sont-elles celles de la Console ? [o/n] ").strip().lower()
+    elapsed = time.monotonic() - started
+    caught = (answer == "n") if tampered else (answer == "o")
+    return elapsed, caught
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("famille", choices=["private_service", "user_service"])
+    parser.add_argument("--lectures", type=int, default=3)
+    arguments = parser.parse_args()
+
+    lines = copy_for(arguments.famille)
+    characters = sum(len(line) for line in lines)
+    print(f"Famille : {arguments.famille}")
+    print(f"{len(lines)} phrases, {characters} caractères, 2 empreintes de 64 caractères.")
+    print("Lisez comme vous liriez pour de vrai. Rien n'est chronométré avant votre Entrée.")
+
+    tampered_at = random.randrange(arguments.lectures)
+    results = []
+    for index in range(arguments.lectures):
+        elapsed, caught = reading(lines, lines, index == tampered_at)
+        results.append((elapsed, index == tampered_at, caught))
+        print(f"  → {elapsed:.1f} s")
+
+    print("\n=== Résultat ===")
+    for index, (elapsed, tampered, caught) in enumerate(results, start=1):
+        mark = "altérée" if tampered else "intacte "
+        verdict = "vue" if caught else "MANQUÉE"
+        print(f"  lecture {index}  {elapsed:6.1f} s  {mark}  {verdict}")
+    times = [elapsed for elapsed, _, _ in results]
+    print(f"  médiane {statistics.median(times):.1f} s   maximum {max(times):.1f} s")
+    missed = [index for index, (_, tampered, caught) in enumerate(results, start=1) if not caught]
+    if missed:
+        print(f"  !! lecture(s) {missed} : la réponse ne correspond pas à ce qui était affiché.")
+        print("     Un temps de lecture qui ne repère pas une empreinte altérée ne borne rien ;")
+        print("     c'est un fait à porter au dossier de #133 avant d'en tirer une durée.")
+    print()
+    print("La borne de délibération se pose au-dessus du maximum observé, pas de la médiane :")
+    print("une borne calée sur le lecteur moyen coupe le lecteur attentif.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

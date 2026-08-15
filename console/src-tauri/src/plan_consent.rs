@@ -19,14 +19,41 @@ use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use your_cloud_bootstrap_protocol::{ApprovalConsentV1, MAX_ASSISTANT_REMAINING_MILLIS};
 
-/// How long a human is given to read one plan and answer.
+/// Le temps donné à un humain pour lire **un** plan et répondre.
 ///
-/// It is the ceiling the helper's own watchdog enforces, taken from the
-/// protocol rather than chosen here, so the window and the process that hosts
-/// it cannot disagree about when the session ended. A shorter figure would be a
-/// second deadline to keep in step; a longer one would be a lease the watchdog
-/// would cut without the Console knowing why.
-const CONSENT_LIFETIME: Duration = Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS);
+/// C'est le plafond que la montre du helper applique elle-même, pris du
+/// protocole plutôt que choisi ici, pour que la fenêtre et le processus qui la
+/// porte ne puissent pas être en désaccord sur le moment où la session a pris
+/// fin. Un chiffre plus court serait une seconde échéance à tenir en phase ;
+/// un plus long serait un bail que la montre couperait sans que la Console
+/// sache pourquoi.
+///
+/// **Ce chiffre est provisoire** : `#133` demande qu'il soit fixé par un essai
+/// humain chronométré sur la fenêtre réelle — 12 phrases, 942 caractères, deux
+/// empreintes de 64 caractères à comparer — et non par un avis. Il est laissé
+/// tel quel en attendant cette mesure, parce qu'une durée de vie d'autorité se
+/// change avec une justification, jamais pour arrondir un angle.
+const DELIBERATION_LIFETIME: Duration = Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS);
+
+/// Le temps qu'une **autorité confirmée** reste inutilisée avant de s'éteindre.
+///
+/// C'est la seconde échéance, et elle ne mesure pas la même chose que la
+/// première. Celle-là borne une lecture humaine ; celle-ci borne l'intervalle
+/// entre « un humain a confirmé » et « la signature part », qui ne contient
+/// aucun geste humain — le sondage voit `answered` et soumet. Les deux étaient
+/// une seule échéance courant depuis l'ouverture, si bien que le temps
+/// utilisable après l'approbation était ce qui restait des cinq minutes une
+/// fois la délibération faite : imprévisible, et potentiellement quasi nul.
+///
+/// **Ce chiffre est provisoire lui aussi, et délibérément pas un nombre
+/// inventé** : il reprend le plafond du protocole faute de mesure. Ce que ce
+/// palier livre est la *forme* — deux échéances distinctes, et une borne qui
+/// mord réellement sur la signature. Avant ce changement, rien ne balayait la
+/// session après une confirmation et l'autorité confirmée ne s'éteignait
+/// **jamais** ; toute valeur finie resserre donc, aucune n'élargit. `#133`
+/// reste ouverte jusqu'à ce que la mesure fixe les deux.
+const CONFIRMED_AUTHORITY_LIFETIME: Duration =
+    Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanConsentError {
@@ -75,12 +102,36 @@ struct PlanConsentSession {
     answered: Option<bool>,
 }
 
-#[derive(Default)]
 pub struct PlanConsentState {
     active: Option<PlanConsentSession>,
+    /// Les deux échéances, portées par l'état plutôt que lues des constantes au
+    /// point d'usage. C'est ce qui permet à une suite de **laisser la borne
+    /// s'écouler pour de vrai** en quelques dizaines de millisecondes : même
+    /// horloge, même code, même chemin, une durée plus courte.
+    deliberation: Duration,
+    confirmed_authority: Duration,
+}
+
+impl Default for PlanConsentState {
+    fn default() -> Self {
+        Self {
+            active: None,
+            deliberation: DELIBERATION_LIFETIME,
+            confirmed_authority: CONFIRMED_AUTHORITY_LIFETIME,
+        }
+    }
 }
 
 impl PlanConsentState {
+    #[cfg(test)]
+    fn with_lifetimes(deliberation: Duration, confirmed_authority: Duration) -> Self {
+        Self {
+            active: None,
+            deliberation,
+            confirmed_authority,
+        }
+    }
+
     /// Opens a session for one consent, and refuses a second.
     ///
     /// The identifier is drawn here rather than accepted from the caller: a
@@ -97,9 +148,9 @@ impl PlanConsentState {
         }
         let request_id = random_request_id().ok_or(PlanConsentError::Unavailable)?;
         let expires_at = now
-            .checked_add(CONSENT_LIFETIME)
+            .checked_add(self.deliberation)
             .ok_or(PlanConsentError::Unavailable)?;
-        let remaining = u64::try_from(CONSENT_LIFETIME.as_millis())
+        let remaining = u64::try_from(self.deliberation.as_millis())
             .map_err(|_| PlanConsentError::Unavailable)?;
         let consent = build(&request_id, remaining).ok_or(PlanConsentError::NoPlan)?;
         self.active = Some(PlanConsentSession {
@@ -140,20 +191,56 @@ impl PlanConsentState {
     ) -> Result<PlanConsentSessionView, PlanConsentError> {
         let now = Instant::now();
         self.require_active(request_id, now)?;
+        let confirmed_authority = self.confirmed_authority;
         let session = self.active.as_mut().expect("active session checked above");
         if session.answered.is_some() {
             return Err(PlanConsentError::RequestRefused);
         }
         session.answered = Some(confirmed);
+        // La seconde échéance est armée ici, et seulement par une confirmation :
+        // un refus ne porte aucune autorité qu'il faudrait borner. Ce qui court
+        // à partir de maintenant n'est plus le temps de lire — il a été pris —
+        // mais le temps qu'une autorité confirmée reste inutilisée.
+        if confirmed {
+            session.expires_at = now
+                .checked_add(confirmed_authority)
+                .ok_or(PlanConsentError::Unavailable)?;
+        }
         self.view(now)
     }
 
-    /// Whether this session was answered by a confirmation, for the one caller
-    /// entitled to act on it.
-    pub fn confirmed(&self, request_id: &str) -> bool {
-        self.active.as_ref().is_some_and(|session| {
-            session.request_id == request_id && session.answered == Some(true)
-        })
+    /// Whether this session was answered by a confirmation **whose authority has
+    /// not run out**, for the one caller entitled to act on it.
+    ///
+    /// Le balayage de l'expiration est ici, et il y est parce qu'il y manquait :
+    /// cette lecture était un `&self` sans `clear_if_expired`, et l'expiration
+    /// n'était balayée que par `require_active`, qu'appellent `status`,
+    /// `consent`, `answer` et `cancel`. Or le sondage du frontend s'arrête dès
+    /// l'état `answered` : après une confirmation, plus rien n'appelait
+    /// `require_active`, la session n'était jamais balayée, et la signature
+    /// aboutissait au-delà de la borne. Une durée de vie d'autorité qui ne
+    /// s'applique pas au geste qu'elle est censée borner n'est pas une durée de
+    /// vie (`#133`).
+    ///
+    /// Les deux refus sont distincts parce que la suite ne l'est pas : une
+    /// autorité échue se rouvre en relisant le plan et en approuvant de nouveau,
+    /// une session qui n'a jamais été confirmée n'a rien à rouvrir.
+    pub fn confirmed(&mut self, request_id: &str) -> Result<(), PlanConsentError> {
+        let now = Instant::now();
+        let expired = self
+            .active
+            .as_ref()
+            .is_some_and(|session| session.request_id == request_id && now >= session.expires_at);
+        self.clear_if_expired(now);
+        if expired {
+            return Err(PlanConsentError::Expired);
+        }
+        match self.active.as_ref() {
+            Some(session) if session.request_id == request_id && session.answered == Some(true) => {
+                Ok(())
+            }
+            Some(_) | None => Err(PlanConsentError::RequestRefused),
+        }
     }
 
     pub fn cancel(&mut self, request_id: &str) -> Result<(), PlanConsentError> {
@@ -266,7 +353,7 @@ mod tests {
         let answered = state.answer(&view.request_id, true).expect("one answer");
         assert_eq!(answered.state, "answered");
         assert!(answered.confirmed);
-        assert!(state.confirmed(&view.request_id));
+        assert_eq!(state.confirmed(&view.request_id), Ok(()));
 
         // Never twice: a session holding its answer is not one a second may
         // reach.
@@ -279,7 +366,10 @@ mod tests {
         let (view, _, _) = refused.start(consent_for).expect("a session");
         let answered = refused.answer(&view.request_id, false).expect("one answer");
         assert!(!answered.confirmed);
-        assert!(!refused.confirmed(&view.request_id));
+        assert_eq!(
+            refused.confirmed(&view.request_id),
+            Err(PlanConsentError::RequestRefused)
+        );
     }
 
     #[test]
@@ -291,9 +381,65 @@ mod tests {
             state.status(&view.request_id),
             Err(PlanConsentError::RequestRefused)
         );
-        assert!(!state.confirmed(&view.request_id));
+        assert_eq!(
+            state.confirmed(&view.request_id),
+            Err(PlanConsentError::RequestRefused)
+        );
         // And the seat is free again.
         assert!(state.start(consent_for).is_ok());
+    }
+
+    /// Une session confirmée dont la borne a échu **refuse de signer**, et la
+    /// borne s'écoule pour de vrai.
+    ///
+    /// C'est le cas qu'aucune suite ne tenait : elles exercent une session
+    /// confirmée immédiatement après sa réponse, et aucune ne laisse la borne
+    /// courir entre la confirmation et la signature. Rien n'est simulé ici —
+    /// même horloge, même chemin, seules les deux durées sont courtes, portées
+    /// par l'état pour que ce test dure des millisecondes et non cinq minutes.
+    #[test]
+    fn a_confirmed_authority_stops_signing_once_its_own_deadline_has_run() {
+        let deliberation = Duration::from_millis(400);
+        let confirmed_authority = Duration::from_millis(60);
+        let mut state = PlanConsentState::with_lifetimes(deliberation, confirmed_authority);
+        let (view, _, _) = state.start(consent_for).expect("a session");
+
+        // Juste après la confirmation, l'autorité est utilisable.
+        state.answer(&view.request_id, true).expect("one answer");
+        assert_eq!(state.confirmed(&view.request_id), Ok(()));
+
+        // La seconde échéance est bien une seconde échéance : elle court depuis
+        // la confirmation, et non depuis l'ouverture.
+        std::thread::sleep(confirmed_authority + Duration::from_millis(40));
+        assert_eq!(
+            state.confirmed(&view.request_id),
+            Err(PlanConsentError::Expired)
+        );
+        // Et la session est réellement partie, pas seulement jugée échue.
+        assert_eq!(
+            state.status(&view.request_id),
+            Err(PlanConsentError::RequestRefused)
+        );
+        assert!(state.start(consent_for).is_ok());
+    }
+
+    /// La borne de délibération, elle, mord toujours fenêtre ouverte — et le
+    /// réarmement ne la prolonge pas tant qu'aucune confirmation n'est venue.
+    #[test]
+    fn an_unanswered_window_still_expires_on_its_own_deadline() {
+        let mut state =
+            PlanConsentState::with_lifetimes(Duration::from_millis(60), Duration::from_secs(300));
+        let (view, _, _) = state.start(consent_for).expect("a session");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            state.confirmed(&view.request_id),
+            Err(PlanConsentError::Expired)
+        );
+        // Balayée par cette lecture même : la session ne survit pas à son constat.
+        assert_eq!(
+            state.status(&view.request_id),
+            Err(PlanConsentError::RequestRefused)
+        );
     }
 
     #[test]
