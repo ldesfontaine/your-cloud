@@ -3639,6 +3639,157 @@ for (const runtimeRoot of runtimeRoots) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Le vocabulaire fermé des refus, tenu par ses deux bouts.
+//
+// Côté vue, `native.ts` tient une liste unique dont dérivent le type, la garde
+// d'exécution et la table des phrases (`#134`) : depuis, une phrase manquante
+// est une erreur de compilation. Rien ne tenait l'autre bout. Le cœur émet ses
+// codes depuis une dizaine d'endroits indépendants, et trois phrases écrites —
+// `unverified_plan`, `unconfirmed_plan`, `foreign_infrastructure` — n'étaient
+// atteignables par aucun chemin, parce qu'un `public_code` repliait ces trois
+// refus de sécurité sur `invalid_input`, le code de la saisie mal formée
+// (`#136`). La phrase était écrite ; personne ne la choisissait.
+//
+// Cette garde confronte donc l'ensemble des codes que le cœur **émet** à
+// l'ensemble des phrases que la vue **porte**, dans les deux sens :
+//
+//   - un code émis hors de la liste tombe dans `toNativeError` et se rend
+//     comme « la Console ne peut pas terminer cette opération » ;
+//   - une phrase qu'aucun code émis n'atteint est une phrase morte — et un
+//     repli vers `invalid_input` sur un refus qui a sa propre phrase en
+//     fabrique une. C'est là que rougit le quatrième repli.
+//
+// Les corps sont lus accolades comptées plutôt qu'au motif : ils contiennent
+// des `match`. Les commentaires sont retirés d'abord, et les modules de test
+// aussi — un code que seule une suite construit n'est pas un code émis.
+{
+  const rustCommentsRemoved = (source) =>
+    source.replace(/\/\*[\s\S]*?\*\//gu, " ").replace(/\/\/[^\n]*/gu, " ");
+
+  /// Le bloc qui suit un marqueur, accolades comptées, retiré de la source.
+  const blocksRemoved = (source, marker) => {
+    let remaining = source;
+    for (let index = remaining.indexOf(marker); index >= 0; index = remaining.indexOf(marker)) {
+      const opening = remaining.indexOf("{", index);
+      if (opening < 0) return remaining.slice(0, index);
+      let depth = 0;
+      let cursor = opening;
+      for (; cursor < remaining.length; cursor += 1) {
+        if (remaining[cursor] === "{") depth += 1;
+        else if (remaining[cursor] === "}" && (depth -= 1) === 0) break;
+      }
+      remaining = remaining.slice(0, index) + remaining.slice(cursor + 1);
+    }
+    return remaining;
+  };
+
+  /// Les corps des fonctions portant ce nom, accolades comptées.
+  const namedFunctionBodies = (source, name) => {
+    const bodies = [];
+    for (let from = 0; ; ) {
+      const index = source.indexOf(`fn ${name}`, from);
+      if (index < 0) return bodies;
+      const opening = source.indexOf("{", index);
+      if (opening < 0) return bodies;
+      let depth = 0;
+      let cursor = opening;
+      for (; cursor < source.length; cursor += 1) {
+        if (source[cursor] === "{") depth += 1;
+        else if (source[cursor] === "}" && (depth -= 1) === 0) break;
+      }
+      bodies.push(source.slice(opening + 1, cursor));
+      from = cursor + 1;
+    }
+  };
+
+  /// Les codes qu'un corps rend : `=> "x"`, `=> { "x" }` et `=> Some("x")`.
+  const arms = (body) =>
+    [...body.matchAll(/=>\s*(?:\{\s*)?(?:Some\(\s*)?"([a-z_]+)"/gu)].map(([, code]) => code);
+
+  // Garde interne : le lecteur d'accolades voit les trois formes d'arme, ignore
+  // ce qu'un commentaire contient, ne prend pas la délégation pour un code, et
+  // le retrait des modules de test emporte bien le module et rien de plus.
+  {
+    const sample = rustCommentsRemoved(`
+      fn public_code(&self) -> &'static str {
+          match self {
+              // "commente" n'est pas un code
+              Self::A => "alpha",
+              Self::B | Self::C => {
+                  "beta"
+              }
+              Self::D(inner) => inner.public_code(),
+          }
+      }
+      fn approval_refusal(status: u16) -> Option<&'static str> {
+          match status { 422 => Some("gamma"), _ => None }
+      }
+      #[cfg(test)]
+      mod tests { fn helper() { let _ = CommandError { code: "delta" }; } }
+      fn after() {}
+    `);
+    const seen = [
+      ...namedFunctionBodies(sample, "public_code").flatMap(arms),
+      ...namedFunctionBodies(sample, "approval_refusal").flatMap(arms),
+    ];
+    if (seen.join(",") !== "alpha,beta,gamma") {
+      failures.push(`garde interne: lecture des armes de refus invalide (${seen.join(",")})`);
+    }
+    const withoutTests = blocksRemoved(sample, "#[cfg(test)]");
+    if (withoutTests.includes(`"delta"`) || !withoutTests.includes("fn after()")) {
+      failures.push("garde interne: retrait du module de test invalide");
+    }
+  }
+
+  const emitted = new Map();
+  for (const path of await filesBelow(join(consoleRoot, "src-tauri", "src"))) {
+    if (extname(path) !== ".rs") continue;
+    const source = blocksRemoved(
+      rustCommentsRemoved(normalizeSourceText(await readFile(path, "utf8"))),
+      "#[cfg(test)]",
+    );
+    const name = relative(consoleRoot, path);
+    const record = (code) => emitted.set(code, (emitted.get(code) ?? new Set()).add(name));
+    for (const function_ of ["public_code", "approval_refusal"]) {
+      for (const body of namedFunctionBodies(source, function_)) for (const code of arms(body)) record(code);
+    }
+    // Les refus que le cœur écrit sans passer par un `public_code`.
+    for (const [, code] of source.matchAll(/\bcode:\s*"([a-z_]+)"/gu)) record(code);
+  }
+
+  const vocabulary = nativeOperations.match(/const nativeErrorCodes = \[([\s\S]*?)\] as const;/u);
+  const phraseTable = nativeOperations.indexOf("export function localErrorMessage");
+  if (!vocabulary || phraseTable < 0) {
+    failures.push("src/product/native.ts: le vocabulaire fermé des refus est introuvable");
+  } else {
+    const declared = [...vocabulary[1].matchAll(/"([a-z_]+)"/gu)].map(([, code]) => code);
+    const phrased = new Set(
+      [...nativeOperations.slice(phraseTable).matchAll(/case "([a-z_]+)":/gu)].map(([, code]) => code),
+    );
+    for (const code of emitted.keys()) {
+      if (!declared.includes(code)) {
+        failures.push(
+          `vocabulaire des refus: le cœur émet ${code} (${[...emitted.get(code)].join(", ")}) hors de nativeErrorCodes`,
+        );
+      }
+    }
+    for (const code of declared) {
+      if (!emitted.has(code)) {
+        failures.push(`vocabulaire des refus: la phrase de ${code} n'est atteinte par aucun code émis`);
+      }
+      if (!phrased.has(code)) {
+        failures.push(`vocabulaire des refus: ${code} ne porte aucune phrase dans localErrorMessage`);
+      }
+    }
+    for (const code of phrased) {
+      if (!declared.includes(code)) {
+        failures.push(`vocabulaire des refus: localErrorMessage porte ${code}, absent de nativeErrorCodes`);
+      }
+    }
+  }
+}
+
 if (failures.length > 0) {
   for (const failure of failures) process.stderr.write(`source-contract: ${failure}\n`);
   process.exit(1);

@@ -79,10 +79,20 @@ pub enum PublicationPlanError {
 
 impl PublicationPlanError {
     pub fn public_code(&self) -> &'static str {
+        // Trois refus, trois codes, trois phrases. Ils ont été repliés sur
+        // `invalid_input` — le code de la saisie mal formée —, si bien qu'un
+        // refus de sécurité se rapportait à l'humain comme une faute de frappe
+        // (`#136`). Les phrases étaient écrites depuis toujours dans
+        // `localErrorMessage` ; ce qui manquait était le geste de les choisir.
+        //
+        // Aucun repli ne se réintroduit ici sans qu'un refus cesse de dire ce
+        // qu'il refuse : ces trois-là ne nomment pas un format, ils nomment une
+        // paire qui ment sur ses propres empreintes, une infrastructure
+        // étrangère et une confirmation qui n'existe pas.
         match self {
-            Self::UnverifiedPlan | Self::ForeignInfrastructure | Self::UnconfirmedPlan => {
-                "invalid_input"
-            }
+            Self::UnverifiedPlan => "unverified_plan",
+            Self::ForeignInfrastructure => "foreign_infrastructure",
+            Self::UnconfirmedPlan => "unconfirmed_plan",
             Self::Approval(error) => error.public_code(),
         }
     }
@@ -1912,6 +1922,77 @@ mod tests {
                 Err(PublicationPlanError::ForeignInfrastructure)
             ));
         }
+    }
+
+    /// Chaque refus de ce module porte son propre code, et aucun ne se présente
+    /// comme une saisie mal formée.
+    ///
+    /// Les trois phrases correspondantes existaient, écrites dans
+    /// `localErrorMessage`, sans qu'aucun chemin ne les atteigne : `public_code`
+    /// repliait les trois refus sur `invalid_input`, si bien qu'un refus de
+    /// sécurité — une paire qui ment sur ses propres empreintes, une
+    /// infrastructure étrangère, une confirmation qui n'existe pas — se
+    /// rapportait à l'humain comme une faute de frappe (`#136`).
+    ///
+    /// Les refus ne sont pas construits à la main : ils sortent des chemins qui
+    /// les émettent réellement, parce qu'un code juste sur une variante
+    /// fabriquée ne dirait rien de ce qu'un humain reçoit.
+    #[test]
+    fn each_refusal_of_this_module_carries_its_own_code() {
+        let record = association(INFRASTRUCTURE);
+        let presented = PresentedPublicationPlan::verify(&route_view()).unwrap();
+
+        // Une paire qui ne rend pas les empreintes qu'elle annonce.
+        let altered = PlanPairView {
+            plan_document: ROUTE_PLAN_DOCUMENT
+                .replace(r#""backend_port":8080"#, r#""backend_port":9090"#),
+            ..route_view()
+        };
+        let unverified = presented
+            .sign(&record, &altered, &presented.confirmed(), request())
+            .expect_err("une paire altérée ne se signe pas");
+
+        // Un plan qui nomme une autre infrastructure que celle associée.
+        let foreign = presented
+            .sign(
+                &association("8f14e45f-ceea-4167-a8b1-1f7bd0a0f4c3"),
+                &route_view(),
+                &presented.confirmed(),
+                request(),
+            )
+            .expect_err("un plan étranger ne se signe pas");
+
+        // Aucune confirmation ne couvre ces documents exacts.
+        let unconfirmed = presented
+            .sign(
+                &record,
+                &route_view(),
+                &PublicationPlanConfirmation::Refused,
+                request(),
+            )
+            .expect_err("un refus n'est pas une confirmation");
+
+        assert_eq!(unverified.public_code(), "unverified_plan");
+        assert_eq!(foreign.public_code(), "foreign_infrastructure");
+        assert_eq!(unconfirmed.public_code(), "unconfirmed_plan");
+
+        // Trois refus, trois codes : aucun repli, ni sur `invalid_input` ni de
+        // deux refus l'un sur l'autre.
+        let codes = [
+            unverified.public_code(),
+            foreign.public_code(),
+            unconfirmed.public_code(),
+        ];
+        let distinct: std::collections::BTreeSet<&&str> = codes.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            codes.len(),
+            "deux refus partagent un code : {codes:?}"
+        );
+        assert!(
+            !codes.contains(&"invalid_input"),
+            "un refus de sécurité se présente encore comme une saisie mal formée : {codes:?}"
+        );
     }
 
     /// A request outside the bounds of the envelope produces no signature, and
