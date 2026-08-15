@@ -28,3 +28,14 @@ build/
 # de la copie (`.git/info/exclude`), qui n'a pas à être publiée.
 /.*/
 !/.github/
+
+# Aucune moitié privée n'entre ici, jamais. Ce n'est pas une commodité : la
+# moitié privée de l'ancre de release vit hors ligne dans le gestionnaire de
+# mots de passe du mainteneur, et ce dépôt est public. Un `.pem` committé par
+# accident ne se rattrape pas — l'historique est publié, et l'ancre scellée
+# dans les binaires déjà installés ne peut pas être révoquée à distance.
+# Le geste de signature se fait donc hors du dépôt ; ce filet est là pour le
+# jour où il se fera dedans par mégarde.
+*.pem
+*.key
+release-anchor.pub.priv
