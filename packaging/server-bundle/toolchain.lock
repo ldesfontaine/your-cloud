@@ -1,0 +1,24 @@
+# Les deux outils dont dépend l'empreinte du lot serveur, épinglés.
+#
+# Le lot est reproductible octet pour octet : c'est ce qui permet au dépôt de
+# ne committer que le manifeste et sa signature plutôt qu'un binaire. Mais cette
+# reproductibilité tient à ces deux versions autant qu'aux sources — `dpkg-deb`
+# inscrit les horodatages de l'archive, `xz` en produit les octets. Une mise à
+# jour de l'un changerait l'empreinte sans qu'aucune source ait bougé, et
+# invaliderait la signature du mainteneur.
+#
+# Ce verrou n'est pas dans le manifeste, et c'est délibéré : le manifeste est le
+# document que la signature couvre, et `bundle::verify` refuse tout champ que
+# son schéma ne définit pas. Une préoccupation de construction n'a rien à faire
+# dans la racine de confiance.
+#
+# Ces valeurs sont celles de l'image Debian 13 que `labctl` pose, et celles du
+# conteneur `debian:13` épinglé par digest dans lequel la porte hébergée
+# construit le lot. Les deux environnements doivent rendre le même octet ; s'ils
+# divergent, la porte fait foi.
+#
+# Changer une de ces lignes est un acte en deux temps : re-épingler, puis
+# reproduire le lot et le re-signer. `build-server-bundle` refuse toute dérive
+# par un message qui le dit.
+dpkg-deb=1.22.22
+xz=5.8.1

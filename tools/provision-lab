@@ -208,6 +208,15 @@ provision_console() {
   fi
   note observed "$(remote lab-console ". /root/.cargo/env && cargo install --list | grep '^tauri-driver '")"
 
+  # Go, on the machine that builds the Console — and it is not a leftover of the
+  # server machines' recipe.
+  #
+  # The Console's package embeds the server bundle, and that bundle holds a
+  # static Go binary this machine has to produce: without the toolchain here,
+  # the Console cannot be built at all, and what it would produce instead is a
+  # package that promises a lot it does not carry.
+  ensure_go lab-console
+
   # The registry of crates the proofs build against, warmed here and not by the
   # proofs themselves.
   #
@@ -438,16 +447,46 @@ provision_vps() {
   ensure_passage_ground lab-vps
 }
 
+provisioned=()
 case "$target" in
-  lab-console) provision_console ;;
-  lab-machine-1) provision_machine ;;
-  lab-vps) provision_vps ;;
+  lab-console) provision_console; provisioned=(lab-console) ;;
+  lab-machine-1) provision_machine; provisioned=(lab-machine-1) ;;
+  lab-vps) provision_vps; provisioned=(lab-vps) ;;
   all)
     provision_console
     provision_machine
     provision_vps
+    provisioned=(lab-console lab-machine-1 lab-vps)
     ;;
 esac
 
-printf '\nPROVISION_LAB_OK rust=%s go=%s node=%s tauri-driver=%s\n' \
-  "$rust_version" "$go_version" "$node_version" "$tauri_driver_version"
+# The closing line reports **what landed on each machine**, read back from it,
+# rather than the versions this recipe pins.
+#
+# It used to print the pinned four whatever happened, and that line was read for
+# months as an inventory. It was not one: `lab-console` never received Go — only
+# the two container machines call `ensure_go` — and the summary said `go=1.26.5`
+# on a machine where `/usr/local/go` did not exist. The lie cost a session: a
+# harness that needed Go there found `command not found` after the line that had
+# just claimed otherwise.
+#
+# A tool absent is printed `absent`, not omitted: a missing column reads as an
+# oversight in the reporting, and the whole point of this change is that the
+# reporting stops being where the doubt lives.
+observed_tool() {
+  local vm=$1 probe=$2
+  remote "$vm" "$probe" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 \
+    || true
+}
+
+printf '\nPROVISION_LAB_OK\n'
+for vm in "${provisioned[@]}"; do
+  observed_rust=$(observed_tool "$vm" '. /root/.cargo/env 2>/dev/null && rustc --version')
+  observed_go=$(observed_tool "$vm" '/usr/local/go/bin/go version')
+  observed_node=$(observed_tool "$vm" 'node --version')
+  observed_driver=$(observed_tool "$vm" \
+    '. /root/.cargo/env 2>/dev/null && cargo install --list | grep "^tauri-driver "')
+  printf '  %-14s rust=%-8s go=%-8s node=%-9s tauri-driver=%s\n' "$vm" \
+    "${observed_rust:-absent}" "${observed_go:-absent}" \
+    "${observed_node:-absent}" "${observed_driver:-absent}"
+done

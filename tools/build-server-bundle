@@ -43,6 +43,52 @@ command -v dpkg-deb >/dev/null || fail "dpkg-deb is required to build the packag
 packaging="$source_root/packaging/server-bundle"
 [[ -d "$packaging" ]] || fail "no packaging definitions under $packaging"
 
+# --------------------------------------------------------------------------
+# L'outillage, épinglé — et pourquoi il l'est.
+#
+# Le lot est reproductible octet pour octet, et c'est ce qui permet au dépôt de
+# ne committer que le manifeste et sa signature plutôt qu'un binaire : chaque
+# build reconstruit le lot et refuse si l'empreinte ne correspond pas à ce que
+# le mainteneur a signé. Une porte qui *vérifie* vaut mieux qu'une porte qui
+# fait confiance.
+#
+# Mais cette reproductibilité tient à deux outils, pas seulement aux sources :
+# `dpkg-deb` inscrit les horodatages, et `xz` multi-thread ne produit pas deux
+# fois les mêmes octets. Les deux sont donc contraints plus bas — et leurs
+# versions sont confrontées à un verrou, parce qu'une mise à jour de l'un
+# changerait l'empreinte sans qu'aucune source ait bougé.
+#
+# Le verrou est un fichier de construction, **jamais un champ du manifeste** :
+# le manifeste est le document que la signature couvre, et `bundle::verify`
+# refuse tout champ que son schéma ne définit pas. Y écrire une version
+# d'outillage changerait la racine de confiance pour y loger une préoccupation
+# de build.
+#
+# Une dérive s'arrête ici, nommée. Elle ne se règle pas en re-signant à la
+# volée : re-épingler est un acte délibéré, et re-signer en est un second.
+lock="$packaging/toolchain.lock"
+[[ -f "$lock" ]] || fail "no toolchain lock under $lock"
+
+tool_version() { "$1" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
+observed_dpkg=$(tool_version dpkg-deb)
+observed_xz=$(tool_version xz)
+expected_dpkg=$(grep '^dpkg-deb=' "$lock" | cut -d= -f2)
+expected_xz=$(grep '^xz=' "$lock" | cut -d= -f2)
+
+if [[ "$observed_dpkg" != "$expected_dpkg" || "$observed_xz" != "$expected_xz" ]]; then
+  echo "FAILED: dérive d'outillage : re-épingler et re-signer" >&2
+  printf '  %-10s attendu %-10s observé %s\n' dpkg-deb "$expected_dpkg" "${observed_dpkg:-absent}" >&2
+  printf '  %-10s attendu %-10s observé %s\n' xz "$expected_xz" "${observed_xz:-absent}" >&2
+  printf '  le verrou est %s ; le manifeste signé devra être reproduit et re-signé\n' "$lock" >&2
+  exit 1
+fi
+
+# L'horodatage que `dpkg-deb` inscrira. C'est une constante et non la date du
+# jour : l'identité d'un lot est son manifeste, jamais l'heure à laquelle
+# quelqu'un l'a construit. `dpkg-deb` ramène à cette valeur tout horodatage
+# postérieur, ce qui rend l'archive indépendante du moment de la construction.
+export SOURCE_DATE_EPOCH=1700000000
+
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
 root="$staging/root"
@@ -85,7 +131,11 @@ done
 # --root-owner-group is what makes every packaged file root:root without the
 # build needing root itself.
 artifact="$output_dir/${package}_${version}_amd64.deb"
-dpkg-deb --build --root-owner-group "$root" "$artifact" >/dev/null
+# `--threads-max=1` n'est pas une économie de ressources : `xz` multi-thread
+# découpe son entrée en blocs dont le nombre dépend de la machine, et deux
+# constructions du même arbre y donnent deux archives différentes. Mesuré avant
+# d'être corrigé — 6 072 396 puis 6 072 220 octets pour un contenu identique.
+dpkg-deb --build --root-owner-group --threads-max=1 "$root" "$artifact" >/dev/null
 
 size=$(stat -c '%s' "$artifact")
 digest=$(sha256sum "$artifact" | cut -d' ' -f1)
