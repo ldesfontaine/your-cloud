@@ -1,9 +1,22 @@
 # L'Assistant qui installe : du lot vérifié au Controller qui tourne
 
 > **Statut :** contrat d'architecture de la milestone `v0.1.3`, rédigé le
-> 15 août 2026 sur le patron de l'issue `#122`. Les issues d'implémentation et
-> l'issue de preuve sont numérotées à l'ouverture de la milestone et référencées
-> ici dans le même changement. Ce document est une source canonique inscrite à
+> 15 août 2026 sur le patron de l'issue `#122` et porté par l'issue
+> [#143](https://github.com/ldesfontaine/your-cloud/issues/143). Issues
+> d'implémentation :
+> [#144](https://github.com/ldesfontaine/your-cloud/issues/144) (les deux
+> actions du protocole et leurs phrases),
+> [#145](https://github.com/ldesfontaine/your-cloud/issues/145) (l'exécution du
+> plan — commandes fixes, état constaté, registre),
+> [#146](https://github.com/ldesfontaine/your-cloud/issues/146) (« Créer une
+> infrastructure » aboutit). Preuve du palier sans fixture :
+> [#147](https://github.com/ldesfontaine/your-cloud/issues/147). Fermeture du
+> produit en queue de milestone :
+> [#148](https://github.com/ldesfontaine/your-cloud/issues/148) (release
+> téléchargeable), [#149](https://github.com/ldesfontaine/your-cloud/issues/149)
+> (parcours joué depuis Releases),
+> [#150](https://github.com/ldesfontaine/your-cloud/issues/150) (README
+> « Installation (Linux) »). Ce document est une source canonique inscrite à
 > [`docs/projet/COHERENCE.md`](../projet/COHERENCE.md) ; il ne redécide rien de
 > [`AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`](AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md),
 > qui reste l'autorité du contrat d'amorçage — il fixe **l'exécution** de ce que
