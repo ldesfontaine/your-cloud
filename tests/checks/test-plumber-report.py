@@ -38,7 +38,7 @@ class PlumberReportTests(unittest.TestCase):
                 "source": ".plumber.yaml",
                 "hash": PLUMBER_REPORT.EXPECTED_POLICY_HASH,
             },
-            "pipelineOriginMetrics": {"jobTotal": 3},
+            "pipelineOriginMetrics": {"jobTotal": 4},
             "plumberScore": {
                 "finalPoints": 100,
                 "score": "A",
@@ -56,11 +56,11 @@ class PlumberReportTests(unittest.TestCase):
                 "metrics": {},
             }
         report["securityJobsWeakenedResult"]["metrics"] = {
-            "securityJobsFound": 3,
+            "securityJobsFound": 4,
             "weakenedJobs": 0,
         }
         report["authorizedActionSourcesResult"]["metrics"] = {
-            "actionRefsTotal": 9,
+            "actionRefsTotal": 13,
             "actionRefsUnauthorized": 0,
         }
         report["permissionsResult"]["metrics"] = {
