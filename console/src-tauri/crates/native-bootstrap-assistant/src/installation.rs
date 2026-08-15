@@ -39,6 +39,8 @@
 //! never transfers authority: [`rollback::Ledger::authority_transferred`] exists
 //! to mark the boundary past which this module stops answering, not to cross it.
 
+/// L'ancre de release, scellée dans ce binaire à la compilation.
+pub mod anchor;
 /// Binding one Console to one Controller, freshly and for one infrastructure.
 pub mod association;
 /// Judging the embedded `.deb` and its signed manifest before any privilege.
