@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -231,6 +232,68 @@ func TestControllerHTTPBoundsMutationsAndRequiresFreshRelayAuthority(t *testing.
 	}
 	if response := fixture.request(http.MethodGet, "/v0/machines", "", "application/json", bearer, fixture.certificate); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"machine_id":"lab-machine-1"`) {
 		t.Fatalf("machine projection failed: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+// Le couple `(409, machine_not_active)` n'existe pas, et cette suite le tient
+// par ses deux bouts.
+//
+// La branche qui prétendait l'émettre était morte (`#137`) : une machine
+// absente de l'inventaire n'atteint la mutation qu'en ayant été rapportée
+// `active` par le Relay, le cas contraire ayant déjà répondu `422` et
+// retourné. Son retrait ne change donc rien d'observable — et c'est
+// exactement pourquoi deux constats valent mieux qu'un pour qu'elle ne
+// revienne pas :
+//
+//   - le refus qui rend cette branche morte est bien émis, et en `422`. Si ce
+//     retour anticipé disparaissait, la requête tomberait dans la mutation, y
+//     échouerait faute de `allowNew`, et répondrait `409` : ce test rougit ;
+//   - la seule voie qui atteint réellement le `409` avec une machine absente
+//     répond `state_conflict`. Si un repli vers `machine_not_active` y
+//     réapparaissait, ce test rougit.
+func TestControllerMachineConflictNeverClaimsMachineNotActive(t *testing.T) {
+	fixture := newControllerHTTPFixture(t)
+	state := fixture.authority.Snapshot()
+	bearer := "Bearer " + fixture.token
+	machineBody := `{"schema_version":1,"label":"Serveur principal"}`
+	refusal := func(response *httptest.ResponseRecorder) string {
+		var problem controllerProblem
+		if json.Unmarshal(response.Body.Bytes(), &problem) != nil {
+			t.Fatalf("le refus n'est pas un document de problème: %s", response.Body.String())
+		}
+		return problem.ErrorCode
+	}
+
+	// Rapportée, mais pas `active` : le refus qui borne toute la suite.
+	fixture.relay.mu.Lock()
+	fixture.relay.status = RelayAvailable
+	fixture.relay.err = nil
+	fixture.relay.snapshot = &RelaySnapshot{
+		SchemaVersion: 1, ControllerID: state.ControllerID, InfrastructureID: state.InfrastructureID,
+		SnapshotAt: fixture.current.UTC().Format(time.RFC3339Nano),
+		Machines:   []RelaySnapshotMachine{{MachineID: "lab-machine-1", EnrollmentStatus: "pending"}},
+	}
+	fixture.relay.mu.Unlock()
+	response := fixture.request(http.MethodPut, "/v0/machines/lab-machine-1", machineBody, "application/json", bearer, fixture.certificate)
+	if response.Code != http.StatusUnprocessableEntity || refusal(response) != "machine_not_active" {
+		t.Fatalf("machine absente et non active: status=%d code=%s", response.Code, refusal(response))
+	}
+
+	// Rapportée `active`, mais l'inventaire ne peut plus compter : la mutation
+	// échoue, machine toujours absente. C'est le seul `409` que cette voie
+	// atteint avec `!exists`, et il ne nomme pas l'activité de la machine.
+	fixture.relay.mu.Lock()
+	fixture.relay.snapshot.Machines[0].EnrollmentStatus = "active"
+	fixture.relay.mu.Unlock()
+	fixture.inventory.mu.Lock()
+	fixture.inventory.state.InventoryRevision = math.MaxUint64
+	fixture.inventory.mu.Unlock()
+	response = fixture.request(http.MethodPut, "/v0/machines/lab-machine-1", machineBody, "application/json", bearer, fixture.certificate)
+	if response.Code != http.StatusConflict || refusal(response) != "state_conflict" {
+		t.Fatalf("conflit de mutation sur machine absente: status=%d code=%s", response.Code, refusal(response))
+	}
+	if len(fixture.inventory.Snapshot().Machines) != 0 {
+		t.Fatal("un refus a laissé la machine dans l'inventaire")
 	}
 }
 

@@ -482,11 +482,13 @@ func (handler *ControllerHandler) serveMachine(response http.ResponseWriter, req
 			handler.writeProblem(response, http.StatusUnauthorized, "authentication_failed", 0)
 			return
 		}
-		code := "state_conflict"
-		if !exists && !allowNew {
-			code = "machine_not_active"
-		}
-		handler.writeProblem(response, http.StatusConflict, code, 0)
+		// `state_conflict` seul, et c'est un fait de lecture plutôt qu'un choix :
+		// une machine absente de l'inventaire n'arrive jamais ici sans que le
+		// Relay l'ait rapportée `active`, puisque le cas contraire a déjà répondu
+		// `422 machine_not_active` plus haut et retourné. Le couple
+		// `(409, machine_not_active)` est donc impossible sur cette voie, et
+		// `known_problem` côté Console ne le connaît pas — correctement.
+		handler.writeProblem(response, http.StatusConflict, "state_conflict", 0)
 		return
 	}
 	status := http.StatusOK
