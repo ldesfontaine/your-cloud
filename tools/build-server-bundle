@@ -96,9 +96,17 @@ root="$staging/root"
 # The binary. Static and trimmed: the package's dependency closure must be
 # satisfiable offline from the Debian 13 base, and a cgo build would put the
 # host's libc into that closure.
+#
+# `-buildvcs=false` n'est pas cosmétique : par défaut, `go build` estampille le
+# commit et l'état de l'arbre dans le binaire dès qu'un `.git` est présent.
+# L'identité du lot serait alors celle d'un commit — le manifeste signé
+# casserait au commit suivant sans qu'une source du serveur ait bougé, et le
+# même arbre rendrait des octets différents selon qu'il porte son `.git` ou
+# non. L'identité du lot est son manifeste : les sources Go, leur graphe de
+# modules et l'outillage épinglé, rien d'autre.
 install -d -m 0755 "$root/$(dirname "$binary_path")"
 ( cd "$source_root" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -mod=readonly -trimpath -o "$root/$binary_path" ./cmd/your-cloud )
+    go build -mod=readonly -buildvcs=false -trimpath -o "$root/$binary_path" ./cmd/your-cloud )
 chmod 0755 "$root/$binary_path"
 
 # The three units, delivered inactive. Nothing here enables or starts one.

@@ -1,3 +1,4 @@
+import { createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -513,11 +514,13 @@ if (
 }
 if (
   tauriConfig.build?.beforeBuildCommand !==
-    "npm run build:native-assistant && npm run build" ||
+    "npm run build:native-assistant && npm run build:server-bundle && npm run build" ||
   tauriConfig.build?.beforeDevCommand !==
     "npm run build:native-assistant:dev && npm run dev"
 ) {
-  failures.push("tauri.conf.json: le helper natif doit être préparé avant Tauri build et dev");
+  failures.push(
+    "tauri.conf.json: le helper natif et le lot serveur doivent être préparés avant Tauri build",
+  );
 }
 if (
   packageDocument.scripts?.["build:native-assistant"] !==
@@ -526,6 +529,99 @@ if (
     "node tools/prepare-native-bootstrap-assistant.mjs debug"
 ) {
   failures.push("package.json: scripts de préparation bornée du helper absents");
+}
+if (
+  packageDocument.scripts?.["build:server-bundle"] !== "node tools/prepare-server-bundle.mjs"
+) {
+  failures.push("package.json: script de préparation vérifiée du lot serveur absent");
+}
+// L'embarquement du lot serveur : la déclaration Debian exacte, et rien
+// d'autre. Le chemin de destination est celui que `installation::embedded`
+// dérive de la position attestée de l'Assistant — les deux ne peuvent diverger
+// sans que l'un des deux contrats rougisse.
+if (
+  JSON.stringify(tauriConfig.bundle?.linux?.deb?.files) !==
+  JSON.stringify({ "/usr/lib/your-cloud-console/server-bundle": "server-bundle" })
+) {
+  failures.push(
+    "tauri.conf.json: le paquet Debian doit livrer exactement le lot serveur préparé sous /usr/lib/your-cloud-console/server-bundle",
+  );
+}
+// Le manifeste signé du lot, tel que committé. Le contrat vérifie ici ce que
+// l'Assistant re-vérifiera contre son ancre scellée : échouer à la porte des
+// sources épargne un rouge de matrice une heure plus tard, mais ne remplace
+// jamais la porte du produit.
+{
+  const signedManifestDirectory = join(
+    consoleRoot,
+    "..",
+    "packaging",
+    "server-bundle",
+    "manifest",
+  );
+  let manifestBytes = null;
+  let signatureBytes = null;
+  try {
+    manifestBytes = await readFile(join(signedManifestDirectory, "bundle-manifest.json"));
+    signatureBytes = await readFile(join(signedManifestDirectory, "bundle-manifest.sig"));
+  } catch {
+    failures.push(
+      "packaging/server-bundle/manifest: le manifeste signé du lot serveur et sa signature doivent être committés",
+    );
+  }
+  if (manifestBytes !== null && signatureBytes !== null) {
+    if (signatureBytes.length !== 64) {
+      failures.push(
+        "packaging/server-bundle/manifest: une signature Ed25519 détachée fait 64 octets",
+      );
+    }
+    const anchorBytes = await readFile(
+      join(
+        consoleRoot,
+        "src-tauri",
+        "crates",
+        "native-bootstrap-assistant",
+        "anchor",
+        "release-anchor.pub",
+      ),
+    );
+    if (anchorBytes.length !== 32) {
+      failures.push("anchor/release-anchor.pub: l'ancre scellée fait 32 octets bruts");
+    } else if (signatureBytes.length === 64) {
+      const anchorKey = createPublicKey({
+        key: Buffer.concat([
+          Buffer.from("302a300506032b6570032100", "hex"),
+          anchorBytes,
+        ]),
+        format: "der",
+        type: "spki",
+      });
+      if (!cryptoVerify(null, manifestBytes, anchorKey, signatureBytes)) {
+        failures.push(
+          "packaging/server-bundle/manifest: la signature committée n'est pas celle de l'ancre scellée sur ces octets exacts",
+        );
+      }
+    }
+    let signedManifest = null;
+    try {
+      signedManifest = JSON.parse(manifestBytes.toString("utf8"));
+    } catch {
+      failures.push("packaging/server-bundle/manifest: manifeste illisible");
+    }
+    if (signedManifest !== null) {
+      if (signedManifest.kind !== "your-cloud-server-bundle") {
+        failures.push("packaging/server-bundle/manifest: kind inattendu");
+      }
+      if (signedManifest.target !== "debian-13-amd64") {
+        failures.push("packaging/server-bundle/manifest: target inattendue");
+      }
+      if (signedManifest.version !== packageDocument.version) {
+        failures.push(
+          "packaging/server-bundle/manifest: la version signée n'est pas celle de la release",
+        );
+      }
+    }
+  }
 }
 for (const forbiddenShippingFeature of [
   "native-prompt-contract-test",

@@ -86,6 +86,31 @@ stat -c %s bundle-manifest.sig
 
 `64`, et rien d'autre.
 
+## Où le couple signé vit, et ce qui le re-vérifie
+
+Le manifeste et sa signature sont committés dans
+[`packaging/server-bundle/manifest/`](../../packaging/server-bundle/manifest/).
+Le `.deb` du lot, lui, n'entre jamais au dépôt : chaque build de la Console le
+**reconstruit** depuis les sources avec l'outillage épinglé, confronte le
+manifeste produit octet pour octet au manifeste signé, et refuse toute dérive
+par son nom (`console/tools/prepare-server-bundle.mjs`). La porte hébergée fait
+la même reconstruction dans un conteneur `debian:13` épinglé par digest — le
+seul environnement CI dont l'outillage est celui du verrou.
+
+Le paquet Debian de la Console livre alors les trois fichiers sous
+`/usr/lib/your-cloud-console/server-bundle/`, et l'Assistant installé les
+retrouve **depuis sa propre position attestée** (`/proc/self/exe`), jamais
+depuis un argument ni un environnement. Son verdict se relit à tout moment sur
+une machine où la Console est installée :
+
+```bash
+/usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle
+```
+
+`VERIFIED version=… target=debian-13-amd64 size=… sha256=…`, ou un refus nommé.
+C'est la porte du produit — `bundle::verify` contre l'ancre scellée — pas un
+outil de diagnostic séparé.
+
 ## Rotation, et perte
 
 Il n'y a pas de révocation : l'ancre est scellée dans un binaire déjà installé,

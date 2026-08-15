@@ -9,6 +9,7 @@
     "build:reflow-fixture": "vite build --config tests/reflow/vite.config.ts",
     "build:native-assistant": "node tools/prepare-native-bootstrap-assistant.mjs release",
     "build:native-assistant:dev": "node tools/prepare-native-bootstrap-assistant.mjs debug",
+    "build:server-bundle": "node tools/prepare-server-bundle.mjs",
     "check:source": "node tests/check-source-contract.mjs",
     "check:visual": "node tests/check-visual-contract.mjs",
     "dev": "vite",

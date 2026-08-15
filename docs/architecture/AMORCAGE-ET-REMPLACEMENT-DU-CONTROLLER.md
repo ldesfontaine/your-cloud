@@ -712,7 +712,17 @@ paliers, pas les chemins du paquet de `v0.1.0`.
 Le manifeste signé du lot Console relie la version, la cible, la taille et le
 SHA-256 exact du `.deb`. L'Assistant vérifie cette signature et ces valeurs avant
 toute opération privilégiée : un paquet `.deb` isolé n'est pas traité comme une
-preuve d'authenticité. Ses dépendances forment un ensemble hors ligne fermé :
+preuve d'authenticité.
+
+L'Assistant **trouve** le lot comme il atteste son parent : par sa propre
+position. Le chemin des trois fichiers embarqués est dérivé de
+`/proc/self/exe` — le binaire installé sous `/usr/bin` remonte à son préfixe et
+descend vers l'arborescence que le paquet de la Console livre — jamais d'un
+argument, d'une variable d'environnement ni d'un chemin qu'un parent aurait
+choisi. Un binaire recopié hors de sa position installée ne résout rien et
+refuse par son nom ; c'est le refus d'être enrobé, prolongé au lot. La
+dérivation ne crée aucune confiance : quel que soit le chemin résolu, l'ancre
+scellée reste l'autorité finale sur ce qui est trouvé. Ses dépendances forment un ensemble hors ligne fermé :
 elles appartiennent au socle Debian 13 exigé ou sont embarquées et authentifiées
 dans le lot, sans résolution réseau pendant l'amorçage. `dpkg` inventorie les
 fichiers immuables, leurs propriétaires et leurs permissions ; chaque fichier

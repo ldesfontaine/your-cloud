@@ -11,6 +11,9 @@ build/
 /console/src-tauri/gen/
 /console/src-tauri/target/
 /console/src-tauri/binaries/
+# Le lot serveur préparé pour l'embarquement : reconstruit ou re-vérifié à
+# chaque build contre le manifeste signé committé, jamais versionné lui-même.
+/console/src-tauri/server-bundle/
 
 # Sorties de preuve locales ; seule leur convention est versionnée.
 /tests/artifacts/*
