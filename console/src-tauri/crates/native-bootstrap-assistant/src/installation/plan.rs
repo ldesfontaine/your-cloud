@@ -95,6 +95,12 @@ pub const CONTROLLER_BUDGETS: Budgets = Budgets {
 /// at step *n* has an unambiguous list of what steps 1..n created.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
+    /// Le lot judged voyage vers la cible, sous le seul accès personnel, et son
+    /// empreinte y est relue. Un fichier de six mégaoctets qui apparaît sur une
+    /// machine est un effet : il naît donc d'un plan approuvé et visible, comme
+    /// tous les autres. C'est la seule étape qui ne dépense aucun privilège —
+    /// voir [`FIRST_ELEVATED_STEP`].
+    TransferBundle,
     /// `dpkg` installs the judged artefact. It is the first privileged act of
     /// the whole palier, and it happens after [`VerifiedBundle`] exists.
     InstallPackage,
@@ -120,7 +126,8 @@ pub enum Step {
 /// The fixed sequence. It is a constant rather than a builder because an
 /// installation whose order could be chosen is an installation whose ordering
 /// guarantees are the caller's problem.
-pub const STEPS: [Step; 7] = [
+pub const STEPS: [Step; 8] = [
+    Step::TransferBundle,
     Step::InstallPackage,
     Step::WriteMachineConfiguration,
     Step::CreateState,
@@ -129,6 +136,15 @@ pub const STEPS: [Step; 7] = [
     Step::AssociateConsole,
     Step::Preflight,
 ];
+
+/// La première étape qui dépense l'élévation prouvée.
+///
+/// Tout ce qui la précède dans [`STEPS`] agit sous le seul accès personnel. Ce
+/// n'est pas une annotation de confort : c'est la frontière que le contrat
+/// d'architecture nomme — `dpkg` est le premier acte privilégié du palier — et
+/// un test la tient, pour qu'une étape glissée avant elle ne puisse pas
+/// prétendre au privilège sans que la porte le dise.
+pub const FIRST_ELEVATED_STEP: Step = Step::InstallPackage;
 
 /// La tranche contiguë de [`STEPS`] que chaque action du protocole approuve.
 ///
@@ -148,6 +164,7 @@ pub const fn authorized_steps(action: BootstrapAction) -> &'static [Step] {
     match action {
         BootstrapAction::AuditTargetReadOnly => &[],
         BootstrapAction::InstallServerBundle => &[
+            Step::TransferBundle,
             Step::InstallPackage,
             Step::WriteMachineConfiguration,
             Step::CreateState,
@@ -366,7 +383,11 @@ mod tests {
     #[test]
     fn the_sequence_ends_at_the_preflight_and_touches_no_target() {
         assert_eq!(STEPS.last(), Some(&Step::Preflight));
-        assert_eq!(STEPS[0], Step::InstallPackage);
+        // La séquence commence au transfert, pas à `dpkg` : le lot est un effet
+        // que le plan nomme. Que le premier acte *privilégié* reste `dpkg` est
+        // la propriété voisine, tenue par `FIRST_ELEVATED_STEP` et son propre
+        // test plutôt que répétée ici.
+        assert_eq!(STEPS[0], Step::TransferBundle);
         // Exactly one unit is ever activated by this palier, and it is the
         // Controller's; the Daemon and the Relay travel in the same package
         // and are left inactive.
@@ -479,5 +500,23 @@ mod tests {
         // activer commence à elle.
         assert_eq!(install.last(), Some(&Step::InstallCredentialSources));
         assert_eq!(activate.first(), Some(&Step::ActivateController));
+    }
+
+    /// Le lot arrive sur la cible avant qu'aucun privilège ne soit dépensé, et
+    /// c'est la seule étape dans ce cas.
+    ///
+    /// La propriété se lit sur la forme de la séquence : tout ce qui précède
+    /// [`FIRST_ELEVATED_STEP`] est le transfert, et rien d'autre. Une étape
+    /// glissée avant `dpkg` fait rougir ce test plutôt que d'hériter
+    /// silencieusement de l'élévation que le plan tient.
+    #[test]
+    fn the_bundle_reaches_the_target_before_any_privilege_is_spent() {
+        let elevated_at = STEPS
+            .iter()
+            .position(|step| *step == FIRST_ELEVATED_STEP)
+            .expect("la première étape élevée appartient à la séquence");
+
+        assert_eq!(&STEPS[..elevated_at], &[Step::TransferBundle]);
+        assert_eq!(STEPS[elevated_at], Step::InstallPackage);
     }
 }

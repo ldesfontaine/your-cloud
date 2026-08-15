@@ -71,7 +71,7 @@ l'Assistant s'y prend. Deux variantes s'ajoutent à `AuditTargetReadOnly` :
 
 | Variante | Ce que l'humain approuve | Étapes du plan couvertes |
 |---|---|---|
-| `InstallServerBundle` | poser le lot vérifié sur la machine choisie : le paquet par `dpkg`, la configuration de cette machine, l'état privé, les sources de credentials. **Rien n'écoute encore** : les trois unités restent livrées inactives | `InstallPackage` → `InstallCredentialSources` |
+| `InstallServerBundle` | porter le lot vérifié jusqu'à la machine choisie puis l'y poser : le transfert et sa relecture d'empreinte, le paquet par `dpkg`, la configuration de cette machine, l'état privé, les sources de credentials. **Rien n'écoute encore** : les trois unités restent livrées inactives | `TransferBundle` → `InstallCredentialSources` |
 | `ActivateApprovedController` | activer la seule unité approuvée, associer cette Console, jouer le prévol depuis le Controller | `ActivateController` → `Preflight` |
 
 ### Décision tranchée : deux variantes, pas une et pas sept
@@ -87,6 +87,35 @@ et chacune couvre une tranche contiguë du plan constant. La fenêtre native
 montre l'une puis l'autre par des phrases, comme le parcours utilisateur de
 `#122` l'exige.
 
+### Décision tranchée : le transfert est une étape du plan, non privilégiée
+
+Le lot vit dans le paquet de la Console ; `dpkg` court sur la cible. Entre les
+deux, six mégaoctets traversent — et **un fichier de six mégaoctets qui
+apparaît sur une machine est un effet**. Tout effet de ce produit naît d'un plan
+approuvé et visible : le transfert est donc `TransferBundle`, première étape de
+`plan::STEPS`, et non une commodité du prévol. Le faire précéder le plan
+créerait le premier effet qu'aucun plan ne nomme, et ce précédent-là ne se
+rattrape pas.
+
+Trois conséquences, toutes acquises plutôt que construites :
+
+- **le rollback est celui qui existe.** Le registre sait déjà retirer un fichier
+  et un répertoire que l'exécution a créés (`ItemKind::File`, `Directory`,
+  provenance `Created`) ; l'étape n'ajoute aucune règle de démontage ;
+- **la relecture d'empreinte sur la cible devient une étape nommée dont le refus
+  porte un nom.** `StagedDigestMismatch` sépare « le lot a été envoyé » de « le
+  lot est sur la cible » : un transport qui tronque ou un fichier qu'un tiers a
+  remplacé s'arrête là, avant que le moindre privilège soit dépensé ;
+- **une phrase de plus dans la fenêtre ne coûte rien.** La plus large que le
+  produit écrit en porte seize, et la borne de consentement est de 300 s contre
+  20,8 s de délibération réelle mesurée : la marge d'attention absorbe cette
+  ligne sans entamer celle que `#141` protège.
+
+L'étape ne dépense aucun privilège : le lot voyage sous le seul accès personnel,
+vers le foyer du compte qui l'a prêté. `plan::FIRST_ELEVATED_STEP` nomme la
+frontière et un test tient que rien d'autre que le transfert ne la précède —
+`dpkg` reste le premier acte privilégié du palier.
+
 ## L'exécution privilégiée réelle
 
 L'Assistant exécute, et il exécute comme il s'élève déjà : par des commandes
@@ -97,6 +126,14 @@ chemin du lot que `embedded` a résolu et que `bundle::verify` a jugé,
 `systemctl daemon-reload`, `systemctl enable --now` sur la seule unité que le
 plan nomme. Aucun shell, aucun chemin venu du protocole, aucune option venue
 d'un champ.
+
+**La locale vit dans les octets de la commande, jamais à côté d'eux.** Chaque
+commande porte son `LC_ALL=C` dans ses propres octets — ce sont ceux-là que
+l'humain approuve et que la preuve compare, et une locale posée par un
+environnement d'appelant ne serait ni approuvée ni comparée. Sans cela, tout
+lecteur de constat serait un lecteur de traductions : la même famille de défaut
+que le « Locale not supported » qui a fait rougir une suite le 15 août 2026, ici
+placée là où elle ferait juger un état plutôt que rougir un test.
 
 **Rien de privilégié ne court sans le plan.** La fonction qui exécute prend
 `InstallPlan` — le témoin que seul `plan::authorize` rend, contre les quatre
