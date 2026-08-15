@@ -48,6 +48,9 @@ pub mod bundle;
 /// La résolution du lot embarqué depuis la position attestée, et depuis rien
 /// d'autre.
 pub mod embedded;
+/// Ce que la machine dit des nœuds que l'Assistant possède, hors inventaire
+/// `dpkg`.
+pub mod nodes;
 /// Ce que la machine dit du paquet, avant l'acte et après lui.
 pub mod package;
 /// The ordered sequence, and the four witnesses it may not be built without.
