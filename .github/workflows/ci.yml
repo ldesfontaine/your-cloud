@@ -72,8 +72,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Installer xz depuis le dépôt trixie
-        run: apt-get update && apt-get install --yes xz-utils
+      # `ca-certificates` n'est pas pour apt (les miroirs Debian passent en
+      # clair signé) : c'est `go` qui en a besoin pour joindre le proxy de
+      # modules en TLS — sans lui, le premier `go build` échoue sur un
+      # certificat inconnu, mesuré au premier passage de ce job.
+      - name: Installer xz et les certificats depuis le dépôt trixie
+        run: apt-get update && apt-get install --yes xz-utils ca-certificates
 
       - name: Installer Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -454,7 +458,7 @@ jobs:
           --expected-source-identity "$PLUMBER_EXPECTED_SOURCE"
           --expected-project "$PLUMBER_EXPECTED_PROJECT"
           --expected-policy-hash
-          "sha256:5364790bc238d1363e44d839ffec3a2f62918a99e40e52cd9b4408f521b30cdd"
+          "sha256:0f0bb61d3804cd311f580d05a209b8327b8b508623994d02f2d0073161edda3d"
 
       - name: Archiver le rapport Plumber validé
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

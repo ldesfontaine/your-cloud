@@ -23,7 +23,7 @@ github:
     # des actions par commit SHA, appliquée à l'image.
     containerImageMustNotUseForbiddenTags:
       enabled: true
-      mustBePinnedByDigest: true
+      containerImagesMustBePinnedByDigest: true
 
     pipelineMustNotEnableDebugTrace:
       enabled: true

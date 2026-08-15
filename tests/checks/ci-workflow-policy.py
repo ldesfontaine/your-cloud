@@ -124,16 +124,30 @@ def validate() -> None:
 
     jobs = mapping_block(lines, "jobs", 0)
     require(
-        direct_keys(jobs, 2) == ["source", "console_platforms", "plumber_policy"],
-        "CI must retain the three independently diagnosable job families",
+        direct_keys(jobs, 2)
+        == ["source", "server_bundle", "console_platforms", "plumber_policy"],
+        "CI must retain the four independently diagnosable job families",
     )
 
     source_lines = mapping_block(jobs, "source", 2)
     source = direct_values(source_lines, 4)
+    bundle_lines = mapping_block(jobs, "server_bundle", 2)
+    bundle = direct_values(bundle_lines, 4)
     plumber = direct_values(mapping_block(jobs, "plumber_policy", 2), 4)
     console = direct_values(mapping_block(jobs, "console_platforms", 2), 4)
     require("if" not in source, "source checks must remain automatic")
     require("if" not in plumber, "Plumber policy must remain automatic")
+    # Le lot est une porte de reproductibilité : automatique comme les deux
+    # autres gates rapides, et construit uniquement dans le conteneur épinglé
+    # par digest — l'épinglage lui-même est arbitré par la politique Plumber.
+    require("if" not in bundle, "the server bundle gate must remain automatic")
+    require(
+        any(
+            line.strip().startswith("image: debian:13@sha256:")
+            for line in bundle_lines
+        ),
+        "the server bundle must build inside the digest-pinned debian:13 container",
+    )
     require(
         "      - name: Vérifier le contrat PowerShell Windows" in source_lines
         and "        shell: pwsh" in source_lines
@@ -142,8 +156,8 @@ def validate() -> None:
         "the fast gate must parse the Windows proof and exercise its cleanup contract",
     )
     require(
-        console.get("needs") == "[source, plumber_policy]",
-        "native Console jobs must wait for both fast gates",
+        console.get("needs") == "[source, plumber_policy, server_bundle]",
+        "native Console jobs must wait for the three fast gates",
     )
     require(
         console.get("if") == "github.event_name == 'workflow_dispatch'",
