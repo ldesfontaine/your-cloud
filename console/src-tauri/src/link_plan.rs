@@ -71,10 +71,19 @@ pub enum LinkPlanError {
 
 impl LinkPlanError {
     pub fn public_code(&self) -> &'static str {
+        // Trois refus, trois codes — le même geste que `publication_plan`, et
+        // pour la même raison, sur du code que personne n'appelle encore.
+        //
+        // Ce repli était identique mot pour mot à celui que `#136` a mesuré :
+        // trois refus de sécurité rendus à l'humain comme une saisie mal formée.
+        // Un repli identique à un défaut mesuré est une graine du même défaut,
+        // et le rendre distinct **aujourd'hui** arme la garde inter-sources pour
+        // le jour du câblage. Différé, il aurait fallu s'en souvenir au moment
+        // exact où personne n'y pense.
         match self {
-            Self::UnverifiedPlan | Self::ForeignInfrastructure | Self::UnconfirmedPlan => {
-                "invalid_input"
-            }
+            Self::UnverifiedPlan => "unverified_plan",
+            Self::ForeignInfrastructure => "foreign_infrastructure",
+            Self::UnconfirmedPlan => "unconfirmed_plan",
             Self::Approval(error) => error.public_code(),
         }
     }
@@ -1175,5 +1184,42 @@ mod tests {
             assert!(!displayed.contains(&signed.signature));
             assert!(!format!("{:?}", presented.confirmed()).contains(&record.human_private_seed));
         }
+    }
+
+    /// Chaque refus de cette table porte son propre code, et aucun ne se
+    /// présente comme une saisie mal formée.
+    ///
+    /// Le contrôle est direct sur la table plutôt que sur un refus produit par
+    /// un chemin : ces variantes ne sont encore atteintes par aucun appelant, et
+    /// c'est exactement pourquoi le contrôle existe. La garde inter-sources de
+    /// `check-source-contract.mjs` confronte les codes que le cœur émet aux
+    /// phrases que la vue porte ; elle ne peut rien dire d'une table qu'aucun
+    /// chemin n'emprunte. Ce test est ce qui tient cette table-là jusqu'au jour
+    /// du câblage (`#136`).
+    #[test]
+    fn each_refusal_of_this_table_carries_its_own_code() {
+        let codes = [
+            LinkPlanError::UnverifiedPlan.public_code(),
+            LinkPlanError::ForeignInfrastructure.public_code(),
+            LinkPlanError::UnconfirmedPlan.public_code(),
+        ];
+        assert_eq!(
+            codes,
+            [
+                "unverified_plan",
+                "foreign_infrastructure",
+                "unconfirmed_plan"
+            ]
+        );
+        let distinct: std::collections::BTreeSet<&&str> = codes.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            codes.len(),
+            "deux refus partagent un code : {codes:?}"
+        );
+        assert!(
+            !codes.contains(&"invalid_input"),
+            "un refus de sécurité se présente encore comme une saisie mal formée : {codes:?}"
+        );
     }
 }
