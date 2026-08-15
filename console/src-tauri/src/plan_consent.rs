@@ -28,11 +28,20 @@ use your_cloud_bootstrap_protocol::{ApprovalConsentV1, MAX_ASSISTANT_REMAINING_M
 /// un plus long serait un bail que la montre couperait sans que la Console
 /// sache pourquoi.
 ///
-/// **Ce chiffre est provisoire** : `#133` demande qu'il soit fixé par un essai
-/// humain chronométré sur la fenêtre réelle — 12 phrases, 942 caractères, deux
-/// empreintes de 64 caractères à comparer — et non par un avis. Il est laissé
-/// tel quel en attendant cette mesure, parce qu'une durée de vie d'autorité se
-/// change avec une justification, jamais pour arrondir un angle.
+/// **Ce chiffre est mesuré, et il est conservé.** L'essai humain chronométré
+/// qu'exigeait `#133` a été exécuté sur `private_service` — la fenêtre la plus
+/// large que le produit écrit, 16 phrases, 993 caractères, deux empreintes de
+/// 64 caractères hexadécimaux. Une seule des trois lectures constitue une
+/// vérification réelle : **20,8 s**. Les deux autres, à 2,6 s et 2,9 s, n'ont
+/// pas comparé — on ne compare pas 993 caractères et 128 caractères
+/// hexadécimaux en moins de trois secondes, on suppose.
+///
+/// La borne se pose donc sur la lecture qui a vérifié, jamais sur la médiane :
+/// une borne calée sur la médiane borne l'inattention. Ce plafond vaut
+/// **≈ 14 fois** la délibération réellement mesurée, et c'est ce que la mesure
+/// établit — que le plafond est généreux plutôt que supposé. Elle ne sert pas à
+/// resserrer : la justification en huit points et la limite de l'échantillon
+/// sont au dossier du harnais `consent-window-timing`.
 const DELIBERATION_LIFETIME: Duration = Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS);
 
 /// Le temps qu'une **autorité confirmée** reste inutilisée avant de s'éteindre.
@@ -54,14 +63,17 @@ const DELIBERATION_LIFETIME: Duration = Duration::from_millis(MAX_ASSISTANT_REMA
 /// l'échelle d'un enchaînement de messages : une borne calée sur le pipeline
 /// rendrait tout humain réel expiré à son propre clic.
 ///
-/// **Ce chiffre est provisoire lui aussi, et délibérément pas un nombre
-/// inventé** : il reprend le plafond du protocole faute de mesure. Ce que ce
-/// palier livre est la *forme* — deux échéances distinctes, et une borne qui
-/// mord réellement sur la signature. Avant ce changement, rien ne balayait la
-/// session après une confirmation et l'autorité confirmée ne s'éteignait
-/// **jamais** ; toute valeur finie resserre donc, aucune n'élargit. `#133`
-/// reste ouverte jusqu'à ce que la mesure fixe les deux, et l'essai humain
-/// chronomètre les **deux** intervalles.
+/// **Ce chiffre est mesuré lui aussi, et conservé.** Le même essai a chronométré
+/// cet intervalle-ci dans les mêmes lectures : **8,7 s** sur la seule lecture
+/// qui avait réellement vérifié. Ce plafond vaut donc **≈ 34 fois** ce chiffre,
+/// et il l'absorbe avec la marge que l'essai ne mesure pas — la feuille ne fait
+/// pas *revenir* de la fenêtre native à la Console, si bien que 8,7 s est un
+/// plancher et non l'intervalle complet. C'est précisément l'ampleur de la marge
+/// qui permet de trancher sans avoir mesuré ce retour.
+///
+/// Ce que cette valeur coûte : une autorité confirmée et non employée vit au
+/// plus cinq minutes sur la machine de son propre humain, après quoi elle refuse
+/// de signer et le dit. Avant ce palier, elle ne s'éteignait **jamais**.
 const CONFIRMED_AUTHORITY_LIFETIME: Duration =
     Duration::from_millis(MAX_ASSISTANT_REMAINING_MILLIS);
 

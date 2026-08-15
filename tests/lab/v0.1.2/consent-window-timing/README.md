@@ -107,6 +107,61 @@ de son propre humain ; le coût d'une borne trop courte est qu'un humain qui a
 lu, compris et accepté voit son geste refusé — et recommence, ce qui use
 précisément l'attention que la fenêtre existe pour obtenir.
 
-Reportez, pour chaque lecture, les **deux** durées, leurs médianes, leurs maxima
-et le sort de la lecture altérée dans `#133`. C'est sur eux que les deux
-constantes se fixent, et c'est à ce moment-là seulement que l'issue se ferme.
+## L'essai du 15 août 2026, et ce qu'il a décidé
+
+Exécuté par le mainteneur sur `private_service`, trois lectures.
+
+| Lecture | Délibérer | Signer | Plan | Verdict sur les empreintes |
+| ---: | ---: | ---: | --- | --- |
+| 1 | **20,8 s** | **8,7 s** | intact | juste |
+| 2 | 2,6 s | 0,9 s | **altéré** | **manquée** |
+| 3 | 2,9 s | 0,8 s | intact | juste |
+| médianes | 2,9 s | 0,9 s | | |
+| maxima | 20,8 s | 8,7 s | | |
+
+**Une seule lecture sur trois constitue une vérification.** En 2,7 s on ne
+compare pas 993 caractères et deux empreintes de 64 caractères hexadécimaux : on
+suppose. La lecture 3 porte un verdict juste **par chance** — le plan était
+intact —, pas par vérification ; un verdict juste sur un plan intact, rendu sans
+comparer, est indiscernable d'une vérification. Deux lectures sur trois n'ont pas
+vérifié, et c'est l'une d'elles qui portait l'altération.
+
+### La justification, en huit points
+
+1. **La mesure porte sur la fenêtre la plus large que le produit écrit** :
+   `private_service`, 16 phrases, 993 caractères, deux empreintes de
+   64 caractères hexadécimaux. Une borne calée sur une fenêtre plus courte
+   couperait celle-ci.
+2. **Une seule lecture est une vérification réelle** : la lecture 1, 20,8 s de
+   délibération et 8,7 s jusqu'au clic. Les deux autres sont des suppositions.
+3. **La médiane est écartée**, et pas par prudence rhétorique : 2,9 s est la
+   médiane de deux non-vérifications et d'une vérification. Une borne calée là
+   **bornerait l'inattention**, c'est-à-dire garantirait au lecteur attentif
+   qu'il n'a pas le temps de vérifier.
+4. **Les bornes se posent donc sur la lecture 1** — 20,8 s et 8,7 s — et
+   au-dessus.
+5. **Décision : les deux constantes restent au plafond du protocole,
+   300 000 ms.** La mesure ne sert pas à resserrer ; elle sert à établir que ce
+   plafond est **généreux plutôt que supposé** : ≈ 14× la délibération réelle
+   mesurée, ≈ 34× le plancher de signature.
+6. **La marge du changement de fenêtre n'est pas mesurée.** Cette feuille ne fait
+   pas revenir de la fenêtre native à la Console, donc 8,7 s est un plancher et
+   non l'intervalle complet. C'est l'ampleur du rapport — 34× — qui autorise à
+   trancher sans avoir mesuré ce retour ; à un rapport de 2× ou 3×, il aurait
+   fallu le mesurer.
+7. **Ce que la valeur coûte est nommé** : une autorité confirmée et non employée
+   vit au plus cinq minutes sur la machine de son propre humain, puis refuse de
+   signer et le dit. Avant ce palier, elle ne s'éteignait jamais — c'est le
+   défaut que `#133` a corrigé, et le chiffre ne fait que le borner.
+8. **Limite de l'échantillon : n = 1 lecture valide.** C'est **suffisant à cette
+   échelle de marge** — un facteur 14 et un facteur 34 ne se retournent pas sur
+   une seconde observation — et **insuffisant pour resserrer** : resserrer
+   exigerait un échantillon de lectures ayant réellement vérifié, que cet essai
+   n'a pas produit.
+
+### Ce que l'essai a trouvé en plus, et qui n'est pas une durée
+
+La lecture 2 portait une empreinte altérée d'un caractère, et **l'altération n'a
+pas été vue**. Ce constat ne concerne pas les bornes : il concerne la valeur du
+contrôle que la fenêtre existe pour rendre possible. Il est porté par une issue
+de palier distincte plutôt que par ce dossier.
