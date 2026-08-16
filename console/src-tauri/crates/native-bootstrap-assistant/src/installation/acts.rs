@@ -154,6 +154,59 @@ pub const ACTS: [(Step, ActCommands); 5] = [
     (Step::ActivateController, ACTIVATE_CONTROLLER),
 ];
 
+/// Combien de canaux une étape ouvre sur la cible.
+///
+/// Ce n'est pas une estimation : chaque nombre est la somme de ce que les
+/// tables de ce palier déclarent — les actes de [`ACTS`] pour cette étape, plus
+/// les constats que son verdict exige. Un test tient l'égalité avec `ACTS`,
+/// pour qu'un acte ajouté sans son canal fasse rougir au lieu de faire heurter
+/// un budget en cours de séquence.
+pub const fn channels_for(step: Step) -> usize {
+    match step {
+        // Créer le répertoire d'attente, déposer les octets, relire la taille,
+        // relire l'empreinte. Aucun n'est privilégié.
+        Step::TransferBundle => 4,
+        // `dpkg --install`, `daemon-reload`, puis le constat du paquet.
+        Step::InstallPackage => 3,
+        // Sa forme n'est pas décidée : le contenu dépend de la machine, donc ce
+        // n'est pas une commande fixe. Zéro tant qu'elle n'existe pas, et ce
+        // zéro est une déclaration plutôt qu'un oubli.
+        Step::WriteMachineConfiguration => 0,
+        // Un `install -d` chacune. Le constat des nœuds les mesure toutes les
+        // trois d'un seul `stat`, compté à la dernière d'entre elles.
+        Step::CreateState => 1,
+        Step::InstallCredentialSources => 2,
+        // `systemctl enable --now`, puis le constat de l'unité.
+        Step::ActivateController => 2,
+        // L'association ne parle pas à la cible par ce canal, et le prévol est
+        // collecté par le Controller lui-même.
+        Step::AssociateConsole | Step::Preflight => 0,
+    }
+}
+
+/// Le budget de canaux d'une action, **dérivé et jamais choisi**.
+///
+/// La propriété que `#54` a conquise est conservée mot pour mot — le budget est
+/// compté avant l'ouverture du premier canal, jamais réapprovisionné, et une
+/// demande au-delà est refusée plutôt que négociée. Ce qui change est qu'il
+/// cesse d'être la **même constante** pour deux conversations différentes :
+/// l'élévation seule garde les trois canaux qui sont toute sa conversation,
+/// et une installation déclare exactement ce que ses étapes ouvrent.
+///
+/// Le canal de fermeture est compté une fois : toute séquence qui a dépensé du
+/// privilège se termine par [`DROP_CREDENTIAL`], quelle que soit son issue.
+pub fn channel_budget(action: your_cloud_bootstrap_protocol::BootstrapAction) -> usize {
+    let opened: usize = super::plan::authorized_steps(action)
+        .iter()
+        .map(|step| channels_for(*step))
+        .sum();
+    if opened == 0 {
+        0
+    } else {
+        opened + 1
+    }
+}
+
 /// Un acte privilégié qu'un plan autorise, et la seule forme sous laquelle un
 /// exécutant en reçoit un.
 ///
@@ -356,6 +409,59 @@ mod tests {
             assert!(
                 super::super::plan::STEPS.contains(&step),
                 "acte rattaché à une étape hors du plan : {step:?}"
+            );
+        }
+    }
+
+    /// Le budget est la somme de ce que les étapes déclarent, jamais un nombre
+    /// rond posé à la main.
+    ///
+    /// L'audit n'ouvre aucun canal d'installation : son budget est nul, et la
+    /// conversation de l'élévation garde la sienne, intacte, ailleurs.
+    #[test]
+    fn the_budget_is_derived_from_the_steps_and_never_chosen() {
+        use your_cloud_bootstrap_protocol::BootstrapAction;
+
+        assert_eq!(channel_budget(BootstrapAction::AuditTargetReadOnly), 0);
+
+        let install: usize =
+            super::super::plan::authorized_steps(BootstrapAction::InstallServerBundle)
+                .iter()
+                .map(|step| channels_for(*step))
+                .sum();
+        assert_eq!(
+            channel_budget(BootstrapAction::InstallServerBundle),
+            install + 1,
+            "le canal de fermeture est compté une fois, et une seule"
+        );
+
+        let activate: usize =
+            super::super::plan::authorized_steps(BootstrapAction::ActivateApprovedController)
+                .iter()
+                .map(|step| channels_for(*step))
+                .sum();
+        assert_eq!(
+            channel_budget(BootstrapAction::ActivateApprovedController),
+            activate + 1
+        );
+    }
+
+    /// Chaque acte déclaré tient dans le budget de son étape.
+    ///
+    /// C'est l'égalité qui empêche un acte ajouté sans son canal de heurter le
+    /// budget au milieu d'une séquence : il fait rougir ici, avant d'exister
+    /// sur une machine.
+    #[test]
+    fn every_step_budgets_at_least_the_acts_it_declares() {
+        for step in super::super::plan::STEPS {
+            let declared = ACTS
+                .iter()
+                .filter(|(candidate, _)| *candidate == step)
+                .count();
+            assert!(
+                channels_for(step) >= declared,
+                "l'étape {step:?} déclare {declared} actes pour {} canaux",
+                channels_for(step)
             );
         }
     }

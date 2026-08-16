@@ -199,6 +199,41 @@ refus d'un consentement re-signé. Il n'y a ni règle sudo nouvelle, ni démon
 root, ni binaire setuid, ni élévation persistante : quand la session se ferme,
 l'Assistant ne peut plus rien, et c'est la propriété recherchée.
 
+### La chaîne de confiance du lot, en trois maillons et aucun implicite
+
+**Vérifié localement contre l'ancre scellée, transféré, revérifié sur la cible
+avant le premier privilège.** C'est toute la chaîne, et chacun de ses maillons
+est un refus nommé si l'on tire dessus : `bundle::verify` refuse un lot que
+l'ancre n'a pas signé ; le transfert refuse un dépôt dont la taille ou
+l'empreinte relues **sur la machine** divergent ; `dpkg` ne pointe que le chemin
+qui vient d'être revérifié, sans fenêtre entre la relecture et l'acte.
+
+Le dépôt lui-même passe par `dd of=<chemin>` sur l'entrée standard du canal :
+ni shell, ni redirection, ni sous-système de transfert dont la surface
+dépasserait de loin le dépôt d'un fichier. Sa destination est un répertoire
+propre à l'opération, créé en `0700` dans le foyer du compte prêté et dont la
+création **refuse l'existant** — c'est ce qui ferme par construction la seule
+vraie faille du mécanisme : dans un répertoire partagé et inscriptible, un
+utilisateur local gagnerait la course entre le dépôt et la vérification, et
+ferait installer d'autres octets que ceux qui ont été relus.
+
+Le fichier déposé est un **résidu** : le registre de démontage le nomme et le
+retire sur toute sortie, y compris un échec en cours de séquence. Il ne demande
+aucun privilège pour cela, ce qui est la conséquence directe d'avoir fait du
+transfert une étape non privilégiée.
+
+### Le budget de canaux est dérivé, jamais choisi
+
+La session d'accès personnel compte ses canaux, les dépense avant de les ouvrir
+et ne les réapprovisionne jamais ; une demande au-delà est refusée plutôt que
+négociée. Cette propriété est conservée **mot pour mot**. Ce qui change est
+qu'elle cesse d'être la même constante pour deux conversations différentes :
+l'élévation seule garde les trois canaux qui sont toute la sienne, et une
+installation adopte, **avant son premier canal**, un budget que ses étapes ont
+produit — la somme de ce que chacune déclare ouvrir, plus le canal de fermeture.
+Une séquence qui a déjà parlé ne peut plus s'accorder de quoi parler davantage,
+ce qui serait exactement la négociation que le budget refuse.
+
 ### Décision tranchée : installer exige une entrée sudoers qui autorise tout
 
 **Une liste exacte contenant `dpkg --install` n'est pas du moindre privilège,

@@ -35,7 +35,7 @@ use crate::personal_access::elevation::FixedCommand;
 /// répertoire partagé où un tiers aurait pu poser un lien avant elle. C'est
 /// aussi pourquoi la création refuse un répertoire déjà présent au lieu de le
 /// réutiliser — la même discipline que le `O_EXCL` des clés de lien.
-pub const STAGING_DIRECTORY: &str = "~/.your-cloud-bootstrap";
+pub const STAGING_DIRECTORY: &str = "$HOME/.your-cloud-bootstrap";
 /// Le suffixe que le chemin mesuré doit porter, foyer non compris.
 pub const STAGED_ARTIFACT_SUFFIX: &str = "/.your-cloud-bootstrap/your-cloud-server.deb";
 
@@ -50,12 +50,49 @@ pub const STAGED_ARTIFACT_SUFFIX: &str = "/.your-cloud-bootstrap/your-cloud-serv
 /// approuve et que la preuve compare, et une locale posée à côté d'eux ne
 /// serait ni approuvée ni comparée. Sans elle, un message de diagnostic traduit
 /// ferait de tout lecteur de constat un lecteur de traductions.
-pub const CREATE_STAGING: FixedCommand =
-    FixedCommand::fixed("/usr/bin/env LC_ALL=C /usr/bin/mkdir -m 0700 -- ~/.your-cloud-bootstrap");
+pub const CREATE_STAGING: FixedCommand = FixedCommand::fixed(
+    "/usr/bin/env LC_ALL=C /usr/bin/mkdir -m 0700 -- $HOME/.your-cloud-bootstrap",
+);
+
+/// Dépose les octets du lot sur la cible, par l'entrée standard du canal.
+///
+/// `dd of=<chemin>` écrit ce qu'on lui donne à l'endroit nommé, **sans shell,
+/// sans redirection et sans sous-système de transfert** : il n'y a ni `>` que
+/// le shell interpréterait, ni SFTP dont la surface dépasse de loin le dépôt
+/// d'un fichier. Les octets de la commande restent fixes ; ce qui varie est ce
+/// qui passe par l'entrée, et c'est précisément ce que le manifeste signé a
+/// déjà borné.
+///
+/// **La borne d'écriture est dérivée, jamais choisie.** Ce qui est envoyé est
+/// l'artefact que [`super::bundle::verify`] a jugé : sa longueur a été
+/// confrontée à celle que le manifeste lie, et le manifeste lui-même a été
+/// refusé au-delà de [`super::bundle::MAX_ARTIFACT_BYTES`] **avant** toute
+/// signature. Un manifeste hostile ou malformé ne peut donc pas faire écrire un
+/// fichier sans limite : il ne franchit pas la porte locale.
+///
+/// `conv=fsync` fait rendre la main à `dd` une fois les octets sur le disque,
+/// pour que la mesure qui suit porte sur un fichier écrit et non sur une
+/// promesse. `status=none` tait le compte-rendu que `dd` écrit sur sa sortie
+/// d'erreur : ce n'est pas lui qui décide, ce sont les deux mesures suivantes.
+pub const DEPOSIT_BUNDLE: FixedCommand = FixedCommand::fixed(
+    "/usr/bin/env LC_ALL=C /usr/bin/dd of=$HOME/.your-cloud-bootstrap/your-cloud-server.deb \
+     bs=65536 conv=fsync status=none",
+);
+
+/// Relit la **taille** du lot déposé, avant d'en relire l'empreinte.
+///
+/// L'ordre n'est pas une commodité : `dd` peut tronquer sans crier — un disque
+/// plein, une entrée coupée — et la taille est la mesure la moins chère qui
+/// l'attrape. La confronter d'abord évite de hacher six mégaoctets pour
+/// apprendre ce qu'un entier disait déjà.
+pub const MEASURE_STAGED_SIZE: FixedCommand = FixedCommand::fixed(
+    "/usr/bin/env LC_ALL=C /usr/bin/stat -c %s -- \
+     $HOME/.your-cloud-bootstrap/your-cloud-server.deb",
+);
 
 /// Relit l'empreinte du lot **sur la cible**, après la traversée.
 pub const MEASURE_STAGED: FixedCommand = FixedCommand::fixed(
-    "/usr/bin/env LC_ALL=C /usr/bin/sha256sum -- ~/.your-cloud-bootstrap/your-cloud-server.deb",
+    "/usr/bin/env LC_ALL=C /usr/bin/sha256sum -- $HOME/.your-cloud-bootstrap/your-cloud-server.deb",
 );
 
 /// Une ligne de `sha256sum` est courte et fixe. Tout ce qui dépasse est refusé
@@ -78,7 +115,21 @@ const MEASUREMENT_SEPARATOR: &str = "  ";
 pub enum TransferRefusal {
     /// Le répertoire d'attente n'a pas pu être créé — il existait déjà, ou le
     /// foyer refuse l'écriture. Rien n'a été transféré.
+    ///
+    /// C'est aussi la porte qui ferme la seule vraie faille de ce mécanisme :
+    /// un répertoire partagé et inscriptible laisserait un utilisateur local
+    /// gagner la course entre le dépôt et la vérification, donc faire installer
+    /// d'autres octets que ceux qui ont été relus. Le répertoire est propre à
+    /// l'opération, en `0700`, et sa création **refuse** l'existant au lieu de
+    /// le réutiliser : la course n'a pas de fenêtre où se glisser.
     StagingNotFresh,
+    /// `dd` n'a pas rendu zéro : les octets ne sont pas tous arrivés.
+    DepositFailed,
+    /// La taille relue n'est pas lisible comme un entier décimal.
+    SizeUnreadable,
+    /// La taille sur la cible n'est pas celle que le manifeste signé lie.
+    /// `dd` tronque sans crier ; c'est ici que la troncature se voit.
+    StagedSizeMismatch,
     /// La mesure a répondu autre chose que zéro. Le lot n'est pas relu.
     MeasurementFailed,
     /// La sortie de la mesure est plus longue qu'une ligne d'empreinte.
@@ -114,6 +165,51 @@ impl StagedBundle {
     }
 }
 
+/// Ce que la machine a répondu à chacune des quatre commandes du transfert.
+///
+/// Chaque champ est un statut ou des octets bruts : rien n'y est une conclusion
+/// tirée par l'appelant. C'est la forme de `elevation::elevated`, appliquée à
+/// une étape qui parle quatre fois au lieu d'une.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransferReadings<'a> {
+    /// Statut de [`CREATE_STAGING`].
+    pub staging_status: u32,
+    /// Statut de [`DEPOSIT_BUNDLE`].
+    pub deposit_status: u32,
+    /// Statut et sortie de [`MEASURE_STAGED_SIZE`].
+    pub size_status: u32,
+    pub size_stdout: &'a [u8],
+    /// Statut et sortie de [`MEASURE_STAGED`].
+    pub digest_status: u32,
+    pub digest_stdout: &'a [u8],
+}
+
+/// La taille relue sur la cible, confrontée à celle que le manifeste lie.
+fn read_size(
+    bundle: &VerifiedBundle,
+    readings: &TransferReadings<'_>,
+) -> Result<(), TransferRefusal> {
+    if readings.size_stdout.len() > MAX_MEASUREMENT_BYTES {
+        return Err(TransferRefusal::MeasurementTooLarge);
+    }
+    if readings.size_status != 0 {
+        return Err(TransferRefusal::MeasurementFailed);
+    }
+    let observed: u64 = std::str::from_utf8(readings.size_stdout)
+        .map_err(|_| TransferRefusal::SizeUnreadable)?
+        .strip_suffix('\n')
+        .ok_or(TransferRefusal::SizeUnreadable)?
+        .parse()
+        .map_err(|_| TransferRefusal::SizeUnreadable)?;
+    // La taille attendue est celle que le manifeste signé lie, portée par le
+    // lot déjà jugé localement — jamais un nombre que l'appelant aurait choisi.
+    if observed == bundle.size() {
+        Ok(())
+    } else {
+        Err(TransferRefusal::StagedSizeMismatch)
+    }
+}
+
 /// La porte du transfert. Rien d'autre dans ce crate ne construit un
 /// [`StagedBundle`].
 ///
@@ -131,17 +227,23 @@ impl StagedBundle {
 /// ferait dépendre une porte de sécurité du bavardage d'un système.
 pub fn staged(
     bundle: &VerifiedBundle,
-    staging_status: u32,
-    measurement_status: u32,
-    stdout: &[u8],
+    readings: &TransferReadings<'_>,
 ) -> Result<StagedBundle, TransferRefusal> {
-    if staging_status != 0 {
+    if readings.staging_status != 0 {
         return Err(TransferRefusal::StagingNotFresh);
     }
+    // L'ordre va du moins cher au plus cher, et chaque marche a son nom : le
+    // statut du dépôt, puis la taille — que `dd` peut tronquer sans crier —,
+    // puis seulement l'empreinte, qui coûte de hacher tout le lot.
+    if readings.deposit_status != 0 {
+        return Err(TransferRefusal::DepositFailed);
+    }
+    read_size(bundle, readings)?;
+    let stdout = readings.digest_stdout;
     if stdout.len() > MAX_MEASUREMENT_BYTES {
         return Err(TransferRefusal::MeasurementTooLarge);
     }
-    if measurement_status != 0 {
+    if readings.digest_status != 0 {
         return Err(TransferRefusal::MeasurementFailed);
     }
 
@@ -220,6 +322,25 @@ mod tests {
         .expect("le contrôle positif du lot doit être jugé")
     }
 
+    fn readings<'a>(size: &'a [u8], digest: &'a [u8]) -> TransferReadings<'a> {
+        TransferReadings {
+            staging_status: 0,
+            deposit_status: 0,
+            size_status: 0,
+            size_stdout: size,
+            digest_status: 0,
+            digest_stdout: digest,
+        }
+    }
+
+    fn size_line(bytes: usize) -> Vec<u8> {
+        format!("{bytes}\n").into_bytes()
+    }
+
+    fn nominal_size() -> Vec<u8> {
+        size_line(ARTIFACT.len())
+    }
+
     fn measurement(digest: &str, path: &str) -> Vec<u8> {
         format!("{digest}  {path}\n").into_bytes()
     }
@@ -230,9 +351,10 @@ mod tests {
         let bundle = verified();
         let staged = staged(
             &bundle,
-            0,
-            0,
-            &measurement(&hex_digest(ARTIFACT), HOME_PATH),
+            &readings(
+                &nominal_size(),
+                &measurement(&hex_digest(ARTIFACT), HOME_PATH),
+            ),
         )
         .expect("le contrôle positif doit être jugé posé");
 
@@ -251,9 +373,10 @@ mod tests {
         assert_eq!(
             staged(
                 &bundle,
-                0,
-                0,
-                &measurement(&hex_digest(&altered), HOME_PATH)
+                &readings(
+                    &nominal_size(),
+                    &measurement(&hex_digest(&altered), HOME_PATH)
+                )
             ),
             Err(TransferRefusal::StagedDigestMismatch)
         );
@@ -269,9 +392,13 @@ mod tests {
         assert_eq!(
             staged(
                 &bundle,
-                1,
-                0,
-                &measurement(&hex_digest(ARTIFACT), HOME_PATH)
+                &TransferReadings {
+                    staging_status: 1,
+                    ..readings(
+                        &nominal_size(),
+                        &measurement(&hex_digest(ARTIFACT), HOME_PATH)
+                    )
+                }
             ),
             Err(TransferRefusal::StagingNotFresh)
         );
@@ -317,7 +444,10 @@ mod tests {
         ];
 
         for (stdout, expected) in cases {
-            assert_eq!(staged(&bundle, 0, 0, &stdout), Err(expected));
+            assert_eq!(
+                staged(&bundle, &readings(&nominal_size(), &stdout)),
+                Err(expected)
+            );
         }
     }
 
@@ -330,12 +460,82 @@ mod tests {
         assert_eq!(
             staged(
                 &bundle,
-                0,
-                1,
-                &measurement(&hex_digest(ARTIFACT), HOME_PATH)
+                &TransferReadings {
+                    digest_status: 1,
+                    ..readings(
+                        &nominal_size(),
+                        &measurement(&hex_digest(ARTIFACT), HOME_PATH)
+                    )
+                }
             ),
             Err(TransferRefusal::MeasurementFailed)
         );
+    }
+
+    /// L'ordre des marches, et chacune par son nom.
+    ///
+    /// Du moins cher au plus cher : le statut du dépôt, puis la taille — que
+    /// `dd` peut tronquer sans crier —, puis l'empreinte. Un lot tronqué
+    /// s'arrête donc à la taille sans qu'on ait haché six mégaoctets pour
+    /// apprendre ce qu'un entier disait déjà.
+    #[test]
+    fn the_transfer_is_judged_from_the_cheapest_reading_to_the_costliest() {
+        let bundle = verified();
+        let intact = measurement(&hex_digest(ARTIFACT), HOME_PATH);
+
+        // `dd` a échoué : rien d'autre n'est même regardé.
+        assert_eq!(
+            staged(
+                &bundle,
+                &TransferReadings {
+                    deposit_status: 1,
+                    ..readings(&nominal_size(), &intact)
+                }
+            ),
+            Err(TransferRefusal::DepositFailed)
+        );
+
+        // Tronqué d'un octet : la taille l'attrape, et le nom le dit.
+        assert_eq!(
+            staged(&bundle, &readings(&size_line(ARTIFACT.len() - 1), &intact)),
+            Err(TransferRefusal::StagedSizeMismatch)
+        );
+
+        // Une taille illisible n'est pas une taille.
+        for unreadable in [&b"pas un nombre\n"[..], &b"12"[..], &b"-1\n"[..]] {
+            assert_eq!(
+                staged(&bundle, &readings(unreadable, &intact)),
+                Err(TransferRefusal::SizeUnreadable)
+            );
+        }
+
+        // La mesure de taille qui échoue se nomme comme telle.
+        assert_eq!(
+            staged(
+                &bundle,
+                &TransferReadings {
+                    size_status: 1,
+                    ..readings(&nominal_size(), &intact)
+                }
+            ),
+            Err(TransferRefusal::MeasurementFailed)
+        );
+    }
+
+    /// Le dépôt ne passe ni par un shell, ni par une redirection, ni par un
+    /// sous-système : `dd` écrit là où on le lui dit, et rien d'autre ne
+    /// traverse.
+    #[test]
+    fn the_deposit_uses_no_shell_no_redirection_and_no_subsystem() {
+        let bytes = DEPOSIT_BUNDLE.as_str();
+        assert!(bytes.contains("/usr/bin/dd of=$HOME/.your-cloud-bootstrap/your-cloud-server.deb"));
+        assert!(bytes.contains("conv=fsync"));
+        for forbidden in [">", "<", "|", "&&", ";", "sftp", "scp", "sh -c", "~"] {
+            assert!(
+                !bytes.contains(forbidden),
+                "dépôt composé ({forbidden}) : {bytes}"
+            );
+        }
     }
 
     /// Les octets des deux commandes portent leur locale eux-mêmes, et
@@ -345,7 +545,11 @@ mod tests {
     fn the_fixed_commands_carry_their_own_locale_and_stay_in_the_account_home() {
         for command in [CREATE_STAGING, MEASURE_STAGED] {
             assert!(command.as_str().starts_with("/usr/bin/env LC_ALL=C "));
-            assert!(command.as_str().contains("~/.your-cloud-bootstrap"));
+            assert!(command.as_str().contains("$HOME/.your-cloud-bootstrap"));
+            // Jamais `~` : l'expansion du tilde après un `=` n'est pas POSIX,
+            // et `dash` ne la fait pas. Un chemin de sécurité ne dépend pas
+            // du shell que la cible se trouve avoir.
+            assert!(!command.as_str().contains('~'));
             assert!(!command.as_str().contains("/tmp"));
         }
         // La création refuse un répertoire présent : pas de `-p`, et les droits

@@ -297,6 +297,21 @@ pub struct EstablishedSession {
 /// would be a second authentication, a second host key attestation and a second
 /// signature, and nothing about the first would carry over to it.
 ///
+/// Une session peut-elle encore adopter un budget dérivé ?
+///
+/// La décision est ici, pure, parce qu'une [`LiveSession`] exige un transport
+/// réel et qu'une propriété de sécurité qu'aucune suite ne peut exercer n'est
+/// pas une propriété tenue. Elle dit deux choses, et les deux comptent :
+///
+/// - **avant le premier canal seulement** — une session qui a déjà parlé ne
+///   peut pas s'accorder de quoi parler davantage, ce qui serait exactement la
+///   négociation que le budget de #54 refuse ;
+/// - **une seule fois** — un budget déjà substitué ne se re-substitue pas, sans
+///   quoi la borne serait un plancher plutôt qu'un plafond.
+pub(crate) fn may_adopt_budget(channels_spent: usize, current_budget: usize) -> bool {
+    channels_spent == 0 && current_budget == MAX_EXEC_CHANNELS
+}
+
 /// Every channel goes through [`Self::run_channel`], which is the very function
 /// the probe of #52 goes through. There is no second way to open one.
 pub struct LiveSession {
@@ -305,6 +320,11 @@ pub struct LiveSession {
     host_key_type: HostKeyType,
     signatures_spent: usize,
     channels_spent: usize,
+    /// Le budget de cette session. Il vaut [`MAX_EXEC_CHANNELS`] — toute la
+    /// conversation de #54 — jusqu'à ce qu'une séquence d'installation lui
+    /// substitue le sien, **dérivé de ses étapes** et adopté avant le premier
+    /// canal.
+    channel_budget: usize,
 }
 
 impl LiveSession {
@@ -312,6 +332,30 @@ impl LiveSession {
     /// re-derived: there is no second handshake to ask.
     pub fn host_key_type(&self) -> HostKeyType {
         self.host_key_type
+    }
+
+    /// Substitue à ce budget celui qu'une séquence a **dérivé** de ses étapes.
+    ///
+    /// La propriété de #54 est conservée mot pour mot : le budget est compté
+    /// avant l'ouverture d'un canal, jamais réapprovisionné, et une demande
+    /// au-delà est refusée plutôt que négociée. Ce qui change est qu'il cesse
+    /// d'être la même constante pour deux conversations différentes.
+    ///
+    /// Il ne s'adopte qu'**avant le premier canal** : une session qui a déjà
+    /// parlé ne peut pas s'accorder de quoi parler davantage, ce qui serait
+    /// exactement la négociation que le budget refuse. Un budget adopté deux
+    /// fois est refusé pour la même raison.
+    pub fn adopt_derived_budget(&mut self, budget: usize) -> Result<(), TransportRefusal> {
+        if !may_adopt_budget(self.channels_spent, self.channel_budget) {
+            return Err(TransportRefusal::ChannelBudgetSpent);
+        }
+        self.channel_budget = budget;
+        Ok(())
+    }
+
+    /// Le budget de cette session, tel qu'il vaut maintenant.
+    pub fn channel_budget(&self) -> usize {
+        self.channel_budget
     }
 
     /// How many of the [`MAX_EXEC_CHANNELS`] have been spent.
@@ -334,7 +378,7 @@ impl LiveSession {
         deadline: Instant,
         guard: &(dyn Fn() -> GuardVerdict + Sync),
     ) -> Result<ChannelReport, TransportRefusal> {
-        if self.channels_spent >= MAX_EXEC_CHANNELS {
+        if self.channels_spent >= self.channel_budget {
             return Err(TransportRefusal::ChannelBudgetSpent);
         }
         self.channels_spent += 1;
@@ -669,6 +713,7 @@ fn establish_with<S: PersonalSigner>(
         signatures_spent: MAX_AUTHENTICATION_SIGNATURES
             .saturating_sub(signer.remaining_signatures()),
         channels_spent: 0,
+        channel_budget: MAX_EXEC_CHANNELS,
     })
 }
 
@@ -1071,6 +1116,33 @@ async fn close_transport(handle: &Handle<PersonalAccessHandler>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le budget dérivé ne s'adopte qu'avant le premier canal, et une seule
+    /// fois.
+    ///
+    /// C'est la garde qui conserve mot pour mot la propriété de #54 en cessant
+    /// d'être la même constante pour deux conversations. Sans ce cas, elle
+    /// n'était tenue par rien : une mutation qui la supprimait laissait la
+    /// suite entière au vert.
+    #[test]
+    fn a_derived_budget_is_adopted_before_the_first_channel_and_only_once() {
+        // Le seul état où l'adoption est licite.
+        assert!(may_adopt_budget(0, MAX_EXEC_CHANNELS));
+
+        // Une session qui a déjà parlé ne s'accorde pas de quoi parler plus.
+        for spent in 1..=MAX_EXEC_CHANNELS {
+            assert!(
+                !may_adopt_budget(spent, MAX_EXEC_CHANNELS),
+                "un budget adopté après {spent} canaux serait une négociation"
+            );
+        }
+
+        // Un budget déjà substitué ne se re-substitue pas : sans quoi la borne
+        // serait un plancher plutôt qu'un plafond.
+        for already in [0, 1, MAX_EXEC_CHANNELS + 1, 64] {
+            assert!(!may_adopt_budget(0, already));
+        }
+    }
 
     /// The probe is a constant. Nothing assembles it, nothing extends it.
     #[test]
