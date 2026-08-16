@@ -12,7 +12,7 @@ hostile_key=/etc/ssh/${prefix}_hostile_ecdsa_key
 accounts=(
   ${prefix}nom ${prefix}out ${prefix}err ${prefix}fit ${prefix}hold
   ${prefix}sudp ${prefix}sudn ${prefix}sudx ${prefix}sudl
-  ${prefix}sudt ${prefix}sudd ${prefix}suda ${prefix}sudb
+  ${prefix}sudt ${prefix}sudd ${prefix}suda ${prefix}sudb ${prefix}sude
   ${prefix}audn ${prefix}audd ${prefix}auda ${prefix}audr
   ${prefix}audf ${prefix}audi ${prefix}auds
 )

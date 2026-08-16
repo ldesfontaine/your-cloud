@@ -60,9 +60,19 @@ sudo_requiretty=${prefix}sudt
 sudo_divergent=${prefix}sudd
 sudo_ambiguous=${prefix}suda
 sudo_oversized=${prefix}sudb
+# Le compte qu'une installation exige, et le seul.
+#
+# Les comptes ci-dessus n'autorisent que la sonde d'identité : c'est assez pour
+# prouver l'élévation et pour l'audit en lecture seule, et ce n'est pas assez
+# pour installer — le contrat de l'Assistant qui installe le refuse avant toute
+# fenêtre, en nommant ce que l'entrée permet. Celui-ci est donc ajouté **à côté**
+# d'eux et ne les remplace pas : l'asymétrie est ce que la preuve doit
+# constater, donc les deux formes doivent exister en même temps sur la machine.
+sudo_every_command=${prefix}sude
 sudo_accounts=(
   "$sudo_password" "$sudo_nopasswd" "$sudo_unlistable" "$sudo_log_input"
   "$sudo_requiretty" "$sudo_divergent" "$sudo_ambiguous" "$sudo_oversized"
+  "$sudo_every_command"
 )
 
 # The audit perimeter of #36. One account per synthetic machine profile, plus
@@ -295,6 +305,12 @@ $sudo_password ALL=(root) /usr/bin/id"
 # The nominal passwordless route.
 write_policy "$sudo_nopasswd" "$sudo_nopasswd ALL=(root) NOPASSWD: /usr/bin/id"
 
+# La portée qu'une installation exige : toute commande. Elle n'est pas une
+# version « plus permissive » des précédentes, c'est la seule forme sous
+# laquelle un `dpkg` peut courir — et le contrat écrit pourquoi une liste
+# nommant `dpkg` n'aurait pas été plus étroite en pouvoir réel.
+write_policy "$sudo_every_command" "$sudo_every_command ALL=(root) NOPASSWD: ALL"
+
 # A policy that cannot be described without first authenticating. It is
 # deliberately the Debian default shape, and it is refused before any password
 # exists.
@@ -420,6 +436,7 @@ printf 'KEX_PORT=%s\n' "$kex_port"
 printf 'CIPHER_PORT=%s\n' "$cipher_port"
 printf 'SUDO_PASSWORD_USERNAME=%s\n' "$sudo_password"
 printf 'SUDO_NOPASSWD_USERNAME=%s\n' "$sudo_nopasswd"
+printf 'SUDO_EVERY_COMMAND_USERNAME=%s\n' "$sudo_every_command"
 printf 'SUDO_UNLISTABLE_USERNAME=%s\n' "$sudo_unlistable"
 printf 'SUDO_LOG_INPUT_USERNAME=%s\n' "$sudo_log_input"
 printf 'SUDO_REQUIRETTY_USERNAME=%s\n' "$sudo_requiretty"
