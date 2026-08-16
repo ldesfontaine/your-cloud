@@ -199,6 +199,42 @@ refus d'un consentement re-signé. Il n'y a ni règle sudo nouvelle, ni démon
 root, ni binaire setuid, ni élévation persistante : quand la session se ferme,
 l'Assistant ne peut plus rien, et c'est la propriété recherchée.
 
+### Décision tranchée : installer exige une entrée sudoers qui autorise tout
+
+**Une liste exacte contenant `dpkg --install` n'est pas du moindre privilège,
+c'en est l'apparence.** Un `.deb` exécute ses scripts de mainteneur en `root` :
+autoriser `dpkg`, c'est autoriser l'exécution arbitraire en `root`. `systemctl`
+y ajoute le démarrage de n'importe quelle unité. Une liste étroite serait donc
+**équivalente à `ALL` en pouvoir réel**, tout en coûtant à l'humain un sudoers
+multi-lignes écrit à la main avant son premier lancement, et en devenant une
+surface publique du contrat qui dériverait à chaque étape ajoutée au plan.
+
+Cette raison est écrite ici parce qu'elle se laisse mal deviner : sans elle, un
+lecteur futur « améliorera » la porte en liste et croira renforcer.
+
+Ce qui borne réellement cette élévation existe déjà, et n'est pas une liste :
+
+- le **temps** — elle meurt avec la session, et rien n'y survit ;
+- le **consentement** — chaque acte est approuvé, séparément, dans la fenêtre ;
+- la **nature** de cet accès — celui du mainteneur, prêté et conservé, jamais
+  détenu par le produit.
+
+**Le refus tombe avant la fenêtre, jamais pendant.** Une entrée trop étroite est
+refusée à l'attestation de politique, donc avant qu'aucun consentement soit
+demandé et avant que la machine soit touchée. Sans cela, l'Assistant prouverait
+l'élévation, ouvrirait la fenêtre, obtiendrait le consentement — puis heurterait
+un mur au premier `dpkg`, machine intacte et parcours mort.
+
+**Le refus est actionnable.** Il nomme ce que l'entrée permet aujourd'hui, ce
+que l'action exige, et les **deux** issues : élargir l'entrée à `ALL`, ou prêter
+un accès `root` direct — la seconde route que le contrat d'amorçage accepte
+déjà. Personne n'est contraint d'élargir son sudoers : c'est un choix nommé.
+
+**L'asymétrie est voulue.** Ce durcissement ne touche que les actions
+d'installation. `AuditTargetReadOnly` garde sa porte étroite : une entrée qui ne
+nomme que la sonde d'identité reste suffisante pour auditer, parce qu'auditer ne
+doit pas coûter plus de privilège qu'auditer n'en demande.
+
 ## L'IHM qui conduit : « Créer une infrastructure » aboutit
 
 Le parcours existe de bout en bout ou il n'existe pas. Ce palier livre
@@ -258,7 +294,12 @@ c'est hors trajet et nommée.
    unités restent inactives et le rapport le constate ;
 9. le prévol final est collecté depuis le Controller, pas depuis le poste de
    pilotage ;
-10. le rapport nomme le mécanisme de pilotage employé et ce qu'il n'atteste
+10. **un compte dont l'entrée sudoers ne nomme que la sonde est refusé avant la
+    fenêtre** : aucun consentement n'est demandé, la machine reste intacte, et
+    le refus nomme ce que l'entrée permet. Le même compte reste suffisant pour
+    l'audit en lecture seule, dans la même passe — c'est l'asymétrie qui est
+    constatée, pas seulement le refus ;
+11. le rapport nomme le mécanisme de pilotage employé et ce qu'il n'atteste
     pas, et chaque limite restante de ce palier par son nom.
 
 ## Justification de sécurité

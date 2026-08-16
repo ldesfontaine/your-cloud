@@ -31,6 +31,7 @@
 //! and none of them is retried.
 
 use super::sudo_policy::{self, SudoRefusal, MAX_PREFLIGHT_OUTPUT_BYTES};
+use your_cloud_bootstrap_protocol::BootstrapAction;
 
 /// One of the fixed commands a personal session may run, and nothing else.
 ///
@@ -120,10 +121,67 @@ pub enum AccessRoute {
     Root,
 }
 
+/// Ce que l'entrée sudoers doit autoriser pour l'action que l'humain approuve.
+///
+/// Les deux valeurs ne sont pas deux niveaux d'une même échelle, ce sont deux
+/// questions différentes. L'audit exécute **une** sonde nommée, donc une entrée
+/// qui ne nomme qu'elle suffit — et c'est la bonne asymétrie : auditer ne doit
+/// pas coûter plus de privilège qu'auditer n'en demande.
+///
+/// Installer exige [`RequiredScope::EveryCommand`], et la raison est écrite au
+/// contrat d'architecture parce qu'elle se laisse mal deviner : **une liste
+/// exacte contenant `dpkg --install` n'est pas du moindre privilège, c'en est
+/// l'apparence.** Un `.deb` exécute ses scripts de mainteneur en `root` —
+/// autoriser `dpkg`, c'est autoriser l'exécution arbitraire en `root` — et
+/// `systemctl` y ajoute le démarrage de n'importe quelle unité. Une liste
+/// étroite serait donc équivalente à `ALL` en pouvoir réel, tout en coûtant à
+/// l'humain un sudoers écrit à la main avant son premier lancement et en
+/// devenant une surface publique du contrat qui dériverait à chaque étape
+/// ajoutée au plan.
+///
+/// Ce qui borne réellement cette élévation existe déjà et n'est pas une liste :
+/// le **temps** — elle meurt avec la session —, le **consentement** — chaque
+/// acte est approuvé —, et la **nature** de cet accès, celui du mainteneur,
+/// prêté et conservé, jamais détenu par le produit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequiredScope {
+    /// L'entrée doit nommer la sonde d'identité, ou tout autoriser.
+    IdentityProbe,
+    /// L'entrée doit tout autoriser.
+    EveryCommand,
+}
+
+impl RequiredScope {
+    /// Ce que l'action approuvée exige de la politique distante.
+    ///
+    /// La correspondance vit ici plutôt que dans le module d'installation pour
+    /// une raison de compilation et non de sens : ce module est bâti sur toutes
+    /// les cibles, `installation` seulement sur les deux que le palier vise, et
+    /// l'appelant qui dérive ce champ est bâti partout.
+    pub const fn for_action(action: BootstrapAction) -> Self {
+        match action {
+            BootstrapAction::AuditTargetReadOnly => Self::IdentityProbe,
+            BootstrapAction::InstallServerBundle | BootstrapAction::ActivateApprovedController => {
+                Self::EveryCommand
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ElevationRefusal {
     /// The listing itself could not be attested. It carries #51's own reason.
     Policy(SudoRefusal),
+    /// L'entrée n'autorise que des programmes nommés là où l'action approuvée
+    /// exige toute commande.
+    ///
+    /// Elle porte **ce que l'entrée permet aujourd'hui**, parce qu'un refus qui
+    /// ne dirait que « non » laisserait l'humain deviner : il y a deux issues,
+    /// autoriser `ALL` ou prêter un accès `root` direct — que le contrat
+    /// d'amorçage accepte déjà comme sa seconde route — et nommer l'existant
+    /// est ce qui rend le choix possible. Personne n'est contraint d'élargir
+    /// son sudoers ; c'est une décision nommée, prise avant toute fenêtre.
+    NarrowerThanTheActionRequires { permits: String },
     /// No sudoers entry, or more than one: which of them applies to the action
     /// cannot be told, and guessing is not a bound.
     AmbiguousPolicy,
@@ -242,6 +300,7 @@ pub fn attest_policy(
     succeeded: bool,
     output: &[u8],
     truncated: bool,
+    scope: RequiredScope,
 ) -> Result<AttestedPolicy, ElevationRefusal> {
     let decision = sudo_policy::evaluate(succeeded, output, truncated)?;
     debug_assert!(decision.password_may_be_sent);
@@ -257,6 +316,16 @@ pub fn attest_policy(
     }
     if !authorises_the_action(&entry) {
         return Err(ElevationRefusal::DivergentCommand);
+    }
+    // Le durcissement de portée vient **après** la divergence et non à sa
+    // place : une entrée qui nomme un autre programme reste `DivergentCommand`,
+    // et seule une entrée par ailleurs valable mais trop étroite pour l'action
+    // reçoit le refus qui nomme ce qu'elle permet. Les deux ne demandent pas le
+    // même geste à l'humain.
+    if scope == RequiredScope::EveryCommand && !authorises_every_command(&entry) {
+        return Err(ElevationRefusal::NarrowerThanTheActionRequires {
+            permits: entry.commands.join(", "),
+        });
     }
 
     let password_required = !entry.authentication_waived;
@@ -385,6 +454,27 @@ fn authorises_the_action(entry: &Entry) -> bool {
         let mut words = command.split_whitespace();
         matches!(words.next(), Some(AUTHORISED_PROGRAM) | Some(ANY_COMMAND))
     })
+}
+
+/// L'entrée autorise-t-elle **toute** commande ?
+///
+/// Rien d'autre que `ALL` ne répond oui. Une liste de programmes, si longue
+/// soit-elle, ne vaut pas `ALL` ici — non parce qu'elle serait moins puissante,
+/// mais parce que le contrat refuse de faire croire à un moindre privilège que
+/// `dpkg` et `systemctl` démentiraient. La négation reste éliminatoire, comme
+/// pour [`authorises_the_action`].
+fn authorises_every_command(entry: &Entry) -> bool {
+    if entry
+        .commands
+        .iter()
+        .any(|command| command.starts_with('!'))
+    {
+        return false;
+    }
+    entry
+        .commands
+        .iter()
+        .any(|command| command.split_whitespace().next() == Some(ANY_COMMAND))
 }
 
 /// Refuses a stream past the bound its reader holds, and anything that is not
@@ -618,8 +708,13 @@ mod tests {
 
     #[test]
     fn an_attestable_policy_chooses_exactly_one_elevation_command() {
-        let with_password = attest_policy(true, listing("", "/usr/bin/id").as_bytes(), false)
-            .expect("an attestable policy");
+        let with_password = attest_policy(
+            true,
+            listing("", "/usr/bin/id").as_bytes(),
+            false,
+            RequiredScope::IdentityProbe,
+        )
+        .expect("an attestable policy");
         assert!(with_password.password_required);
         assert_eq!(with_password.command, ELEVATE_WITH_PASSWORD);
 
@@ -627,14 +722,104 @@ mod tests {
             true,
             listing("!authenticate", "/usr/bin/id").as_bytes(),
             false,
+            RequiredScope::IdentityProbe,
         )
         .expect("an attestable policy");
         assert!(!waived.password_required);
         assert_eq!(waived.command, ELEVATE_WITHOUT_PASSWORD);
 
-        let wide = attest_policy(true, listing("", "ALL").as_bytes(), false)
-            .expect("ALL names the action among others");
+        let wide = attest_policy(
+            true,
+            listing("", "ALL").as_bytes(),
+            false,
+            RequiredScope::IdentityProbe,
+        )
+        .expect("ALL names the action among others");
         assert_eq!(wide.command, ELEVATE_WITH_PASSWORD);
+    }
+
+    /// Le point d'autorité de l'installation : une entrée qui ne nomme que la
+    /// sonde suffit pour auditer et **ne suffit pas** pour installer.
+    ///
+    /// C'est le cas exact que ce durcissement existe pour empêcher. Sans lui,
+    /// l'Assistant prouverait l'élévation, ouvrirait la fenêtre, obtiendrait le
+    /// consentement — puis heurterait un mur au premier `dpkg`, machine intacte
+    /// et parcours mort. Ici le refus tombe **avant** la fenêtre, et il nomme ce
+    /// que l'entrée permet aujourd'hui pour que l'humain puisse choisir entre
+    /// ses deux issues plutôt que deviner.
+    #[test]
+    fn an_entry_that_only_names_the_probe_audits_but_never_installs() {
+        let narrow = listing("", "/usr/bin/id");
+
+        // L'asymétrie voulue : auditer ne coûte pas plus de privilège
+        // qu'auditer n'en demande.
+        attest_policy(true, narrow.as_bytes(), false, RequiredScope::IdentityProbe)
+            .expect("la sonde nommée suffit à l'audit");
+
+        for scope_action in [
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ] {
+            assert_eq!(
+                attest_policy(
+                    true,
+                    narrow.as_bytes(),
+                    false,
+                    RequiredScope::for_action(scope_action),
+                ),
+                Err(ElevationRefusal::NarrowerThanTheActionRequires {
+                    permits: "/usr/bin/id".into()
+                }),
+                "l'action était : {scope_action:?}"
+            );
+        }
+
+        // La même entrée élargie passe : c'est la première des deux issues que
+        // le refus nomme. La seconde — prêter un accès root direct — est l'autre
+        // route du contrat d'amorçage et ne passe pas par cette porte.
+        attest_policy(
+            true,
+            listing("", "ALL").as_bytes(),
+            false,
+            RequiredScope::EveryCommand,
+        )
+        .expect("une entrée qui autorise tout satisfait une installation");
+    }
+
+    /// Une liste de programmes, si longue soit-elle, ne vaut pas `ALL` pour une
+    /// installation — et le refus la nomme entière.
+    ///
+    /// La liste nomme ici la sonde **et** les programmes de l'installation :
+    /// c'est le cas de l'opérateur soigneux, le seul qui atteigne cette porte.
+    /// Une liste qui omettrait la sonde serait refusée bien avant, par
+    /// `DivergentCommand`, puisque l'élévation ne pourrait pas même se prouver.
+    ///
+    /// Le contrat le dit et ce test le tient : autoriser `dpkg` revient à
+    /// autoriser l'exécution arbitraire en `root`, donc une liste qui le
+    /// contient n'est pas un moindre privilège mais son apparence. La porte
+    /// refuse l'apparence.
+    #[test]
+    fn a_list_of_programs_however_long_is_not_every_command() {
+        let listed = listing("", "/usr/bin/id\n\t/usr/bin/dpkg\n\t/usr/bin/systemctl");
+
+        assert_eq!(
+            attest_policy(true, listed.as_bytes(), false, RequiredScope::EveryCommand,),
+            Err(ElevationRefusal::NarrowerThanTheActionRequires {
+                permits: "/usr/bin/id, /usr/bin/dpkg, /usr/bin/systemctl".into()
+            })
+        );
+    }
+
+    /// Une entrée qui autorise tout **mais nie** une commande n'autorise pas
+    /// tout : la négation reste éliminatoire, comme pour l'audit.
+    #[test]
+    fn a_negated_command_defeats_every_command_too() {
+        let negated = listing("", "ALL\n\t!/usr/bin/dpkg");
+
+        assert!(matches!(
+            attest_policy(true, negated.as_bytes(), false, RequiredScope::EveryCommand,),
+            Err(ElevationRefusal::DivergentCommand)
+        ));
     }
 
     #[test]
@@ -646,7 +831,12 @@ mod tests {
             listing("", "/usr/bin/idle"),
         ] {
             assert_eq!(
-                attest_policy(true, divergent.as_bytes(), false),
+                attest_policy(
+                    true,
+                    divergent.as_bytes(),
+                    false,
+                    RequiredScope::IdentityProbe
+                ),
                 Err(ElevationRefusal::DivergentCommand),
                 "a divergent command must fail closed: {divergent}"
             );
@@ -655,7 +845,12 @@ mod tests {
         let other_user =
             listing("", "/usr/bin/id").replace("RunAsUsers: root", "RunAsUsers: nobody");
         assert_eq!(
-            attest_policy(true, other_user.as_bytes(), false),
+            attest_policy(
+                true,
+                other_user.as_bytes(),
+                false,
+                RequiredScope::IdentityProbe
+            ),
             Err(ElevationRefusal::DivergentCommand)
         );
     }
@@ -665,7 +860,7 @@ mod tests {
         let none = "Matching Defaults entries for operator on target:\n    env_reset\n\n\
                     User operator may run the following commands on target:\n\n";
         assert_eq!(
-            attest_policy(true, none.as_bytes(), false),
+            attest_policy(true, none.as_bytes(), false, RequiredScope::IdentityProbe),
             Err(ElevationRefusal::AmbiguousPolicy)
         );
 
@@ -674,7 +869,7 @@ mod tests {
             listing("", "/usr/bin/id")
         );
         assert_eq!(
-            attest_policy(true, two.as_bytes(), false),
+            attest_policy(true, two.as_bytes(), false, RequiredScope::IdentityProbe),
             Err(ElevationRefusal::AmbiguousPolicy),
             "two entries mean sudo's own ordering decides, and this module does not read it"
         );
@@ -684,7 +879,12 @@ mod tests {
     #[test]
     fn an_unattestable_listing_carries_the_policy_refusal_it_earned() {
         assert_eq!(
-            attest_policy(false, b"sudo: a password is required\n", false),
+            attest_policy(
+                false,
+                b"sudo: a password is required\n",
+                false,
+                RequiredScope::IdentityProbe
+            ),
             Err(ElevationRefusal::Policy(
                 SudoRefusal::AuthenticationRequired
             ))
@@ -695,12 +895,18 @@ mod tests {
                 listing("", "/usr/bin/id")
                     .replace("env_reset,", "env_reset, log_input,")
                     .as_bytes(),
-                false
+                false,
+                RequiredScope::IdentityProbe
             ),
             Err(ElevationRefusal::Policy(SudoRefusal::InputLoggingActive))
         );
         assert_eq!(
-            attest_policy(true, listing("", "/usr/bin/id").as_bytes(), true),
+            attest_policy(
+                true,
+                listing("", "/usr/bin/id").as_bytes(),
+                true,
+                RequiredScope::IdentityProbe
+            ),
             Err(ElevationRefusal::Policy(SudoRefusal::OutputTooLarge))
         );
     }
@@ -763,13 +969,19 @@ mod tests {
     fn a_real_debian_13_listing_is_read_as_written() {
         const REAL: &str = "Matching Defaults entries for ycoperator on lab-console:\n    env_reset, mail_badpass,\n    secure_path=/usr/local/sbin\\:/usr/local/bin\\:/usr/sbin\\:/usr/bin\\:/sbin\\:/bin,\n    use_pty\n\nUser ycoperator may run the following commands on lab-console:\n\nSudoers entry: /etc/sudoers.d/90-lab-ycoperator\n    RunAsUsers: root\n    Options: !authenticate\n    Commands:\n\t/usr/bin/id\n";
 
-        let attested = attest_policy(true, REAL.as_bytes(), false).expect("a real listing");
+        let attested = attest_policy(true, REAL.as_bytes(), false, RequiredScope::IdentityProbe)
+            .expect("a real listing");
         assert!(!attested.password_required);
         assert_eq!(attested.command, ELEVATE_WITHOUT_PASSWORD);
 
         let authenticating = REAL.replace("    Options: !authenticate\n", "");
-        let attested =
-            attest_policy(true, authenticating.as_bytes(), false).expect("a real listing");
+        let attested = attest_policy(
+            true,
+            authenticating.as_bytes(),
+            false,
+            RequiredScope::IdentityProbe,
+        )
+        .expect("a real listing");
         assert!(attested.password_required);
         assert_eq!(attested.command, ELEVATE_WITH_PASSWORD);
     }

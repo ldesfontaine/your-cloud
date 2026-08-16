@@ -1061,8 +1061,16 @@ fn prove_administrator_elevation(
     } else {
         &preflight.stderr
     };
-    let attested = elevation::attest_policy(succeeded, capture, false)
-        .map_err(|_| PromptOutcome::Unavailable)?;
+    // La portée exigée suit l'action que l'humain a approuvée : auditer ne
+    // demande que la sonde, installer exige toute commande. Le refus tombe donc
+    // ici, avant que la moindre fenêtre s'ouvre.
+    let attested = elevation::attest_policy(
+        succeeded,
+        capture,
+        false,
+        elevation::RequiredScope::for_action(resolved.actions[0]),
+    )
+    .map_err(|_| PromptOutcome::Unavailable)?;
 
     let elevated = if attested.password_required {
         let password = ask_sudo_password(resolved, deadline, expired, lease)?;
