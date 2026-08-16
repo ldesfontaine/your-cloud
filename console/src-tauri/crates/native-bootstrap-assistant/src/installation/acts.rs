@@ -43,10 +43,16 @@ use crate::personal_access::elevation::FixedCommand;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActCommands {
     /// La forme empruntée quand la politique attestée n'exige aucun secret.
-    pub without_password: FixedCommand,
+    ///
+    /// Les deux champs sont privés, et les constantes qui les portent aussi :
+    /// un acte privilégié n'est joignable que par [`ElevatedAct`], donc en
+    /// présentant un [`InstallPlan`]. Sans cela, « aucun acte privilégié n'est
+    /// joignable sans plan » resterait une intention — il aurait suffi de lire
+    /// la constante et de la passer à un canal.
+    without_password: FixedCommand,
     /// La forme empruntée quand elle en exige un. Le secret est présenté à
     /// chaque acte, jamais supposé encore valide.
-    pub with_password: FixedCommand,
+    with_password: FixedCommand,
 }
 
 /// `dpkg` installe le lot que la cible détient déjà, à l'emplacement que le
@@ -55,7 +61,7 @@ pub struct ActCommands {
 /// `--install` et rien d'autre : ni `--force-*`, qui passerait outre les refus
 /// de `dpkg` lui-même, ni `--unpack`, qui laisserait précisément l'état à demi
 /// configuré que le constat du paquet existe pour nommer.
-pub const INSTALL_PACKAGE: ActCommands = ActCommands {
+const INSTALL_PACKAGE: ActCommands = ActCommands {
     without_password: FixedCommand::fixed(
         "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/dpkg --install -- \
          $HOME/.your-cloud-bootstrap/your-cloud-server.deb",
@@ -71,7 +77,7 @@ pub const INSTALL_PACKAGE: ActCommands = ActCommands {
 /// C'est un acte et non un constat : il ne dit rien de l'état, il demande à
 /// systemd de relire ce que `dpkg` a écrit. Sans lui, l'activation porterait sur
 /// la version en mémoire de systemd plutôt que sur les fichiers installés.
-pub const RELOAD_UNITS: ActCommands = ActCommands {
+const RELOAD_UNITS: ActCommands = ActCommands {
     without_password: FixedCommand::fixed(
         "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/systemctl daemon-reload",
     ),
@@ -86,7 +92,7 @@ pub const RELOAD_UNITS: ActCommands = ActCommands {
 /// `--now` fait les deux d'un geste parce que les séparer laisserait une fenêtre
 /// où l'unité est activée sans tourner — un état que rien n'approuverait et que
 /// le registre devrait pourtant porter.
-pub const ACTIVATE_CONTROLLER: ActCommands = ActCommands {
+const ACTIVATE_CONTROLLER: ActCommands = ActCommands {
     without_password: FixedCommand::fixed(
         "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/systemctl enable --now -- \
          your-cloud-controller.service",
@@ -102,7 +108,7 @@ pub const ACTIVATE_CONTROLLER: ActCommands = ActCommands {
 /// `install -d` fixe le mode à la création même, là où un `mkdir` suivi d'un
 /// `chmod` laisserait un intervalle pendant lequel le répertoire existerait plus
 /// ouvert qu'il ne doit l'être.
-pub const CREATE_STATE: ActCommands = ActCommands {
+const CREATE_STATE: ActCommands = ActCommands {
     without_password: FixedCommand::fixed(
         "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/install -d -o root -g root \
          -m 0700 -- /var/lib/private/your-cloud-controller",
@@ -114,7 +120,7 @@ pub const CREATE_STATE: ActCommands = ActCommands {
 };
 
 /// Crée le répertoire des sources de credentials, mêmes droits, même raison.
-pub const CREATE_CREDENTIAL_SOURCES: ActCommands = ActCommands {
+const CREATE_CREDENTIAL_SOURCES: ActCommands = ActCommands {
     without_password: FixedCommand::fixed(
         "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/install -d -o root -g root \
          -m 0700 -- /etc/your-cloud/controller-credentials",
@@ -146,7 +152,7 @@ pub const DROP_CREDENTIAL: FixedCommand = FixedCommand::fixed("/usr/bin/sudo -k"
 /// octets choisis ailleurs entreraient dans un acte privilégié. Cette étape aura
 /// sa propre forme — un dépôt de contenu borné, jugé comme le lot l'a été — et
 /// la déclarer ici l'aurait dissimulée.
-pub const ACTS: [(Step, ActCommands); 5] = [
+const ACTS: [(Step, ActCommands); 5] = [
     (Step::InstallPackage, INSTALL_PACKAGE),
     (Step::InstallPackage, RELOAD_UNITS),
     (Step::CreateState, CREATE_STATE),
@@ -204,6 +210,55 @@ pub fn channel_budget(action: your_cloud_bootstrap_protocol::BootstrapAction) ->
         0
     } else {
         opened + 1
+    }
+}
+
+/// Le constat qu'une étape doit obtenir **après** ses actes, et le juge qui le
+/// prononce.
+///
+/// C'est ce qui sépare « la commande a rendu zéro » de « la machine est dans
+/// l'état annoncé ». Un code de sortie dit qu'un programme s'est terminé sans
+/// se plaindre ; seul le constat dit ce que la machine est devenue, et c'est
+/// lui qui donne sa provenance au registre.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Constat {
+    /// `dpkg-query` : le paquet est-il installé, à la version du lot ?
+    Package,
+    /// `systemctl show` : l'unité tourne-t-elle, et confinée ?
+    Unit,
+    /// `stat` : les nœuds de l'Assistant sont-ils posés comme le contrat veut ?
+    Nodes,
+}
+
+impl Constat {
+    /// La commande qui l'obtient. Elle n'est pas privilégiée : lire l'état
+    /// d'une machine ne demande pas de l'être, et une lecture élevée serait du
+    /// privilège dépensé pour rien.
+    pub fn command(self) -> FixedCommand {
+        match self {
+            Self::Package => super::package::QUERY_PACKAGE,
+            Self::Unit => super::unit::SHOW_CONTROLLER,
+            Self::Nodes => super::nodes::STAT_OWNED,
+        }
+    }
+}
+
+/// Ce que chaque étape doit constater une fois ses actes passés.
+///
+/// Une étape sans constat rend `None`, et c'est une déclaration : le transfert
+/// a le sien dans son propre module, l'association et le prévol ne touchent pas
+/// cette machine. Le constat des nœuds est rattaché à la dernière étape qui en
+/// pose un, puisqu'un seul `stat` les mesure tous les trois.
+pub const fn constat_for(step: Step) -> Option<Constat> {
+    match step {
+        Step::InstallPackage => Some(Constat::Package),
+        Step::InstallCredentialSources => Some(Constat::Nodes),
+        Step::ActivateController => Some(Constat::Unit),
+        Step::TransferBundle
+        | Step::WriteMachineConfiguration
+        | Step::CreateState
+        | Step::AssociateConsole
+        | Step::Preflight => None,
     }
 }
 

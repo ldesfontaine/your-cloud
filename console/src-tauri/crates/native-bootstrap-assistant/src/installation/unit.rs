@@ -44,7 +44,20 @@ pub const MAX_READING_BYTES: usize = 8192;
 /// `MemoryMax` est en octets là où le plan borne en mébioctets : la conversion
 /// est faite ici, à partir de la constante du plan, plutôt qu'écrite en dur —
 /// un budget changé au plan reste tenu par ce constat.
+#[cfg(not(test))]
 fn expected_isolation() -> [(&'static str, String); 7] {
+    isolation()
+}
+
+/// Exposée aux suites du crate pour qu'un canal écrit puisse répondre comme une
+/// machine réellement confinée, sans recopier ces valeurs ailleurs — deux
+/// copies donneraient deux définitions du confinement attendu.
+#[cfg(test)]
+pub(crate) fn expected_isolation() -> [(&'static str, String); 7] {
+    isolation()
+}
+
+fn isolation() -> [(&'static str, String); 7] {
     [
         ("DynamicUser", "yes".to_owned()),
         ("User", CONTROLLER_ACCOUNT.to_owned()),

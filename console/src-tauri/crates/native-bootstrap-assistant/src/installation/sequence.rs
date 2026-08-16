@@ -77,7 +77,11 @@ pub enum SequenceStop {
     /// La machine n'a pas répondu à cette étape. On ne sait donc rien de ce
     /// qu'elle a fait, et le registre le porte comme tel.
     Unanswered { step: Step },
-    /// Un juge a refusé. Le refus est le sien, rendu par son propre nom.
+    /// Un acte n'a pas rendu zéro. Ce n'est pas encore un constat : c'est la
+    /// commande qui s'est plainte, et la séquence s'arrête avant de constater.
+    ActFailed { step: Step, exit_status: u32 },
+    /// Un juge a refusé ce que la machine a répondu. Le refus est le sien,
+    /// rendu par son propre nom — cette séquence n'en invente aucun.
     Refused { step: Step, reason: String },
 }
 
@@ -143,6 +147,9 @@ pub struct Sequence<'a, C: Channel> {
     channel: &'a mut C,
     action: BootstrapAction,
     password_required: bool,
+    /// Le refus qu'un juge vient de prononcer, conservé le temps de le porter
+    /// à l'appelant sous son propre nom.
+    last_refusal: String,
 }
 
 impl<'a, C: Channel> Sequence<'a, C> {
@@ -155,6 +162,7 @@ impl<'a, C: Channel> Sequence<'a, C> {
             channel,
             action,
             password_required,
+            last_refusal: String::new(),
         }
     }
 
@@ -209,32 +217,86 @@ impl<'a, C: Channel> Sequence<'a, C> {
                 // Ce que l'acte a touché entre au registre avec la provenance
                 // que la machine a rendue : `Created` sur un zéro constaté,
                 // `Unknown` sinon — jamais `Created` sur une supposition.
-                record_act(ledger, *step, answer.exit_status);
                 if answer.exit_status != 0 {
-                    return Err(SequenceStop::Refused {
+                    // L'acte s'est plaint : rien n'est constaté, donc la
+                    // provenance reste `Unknown` et le déroulé se dégradera.
+                    record_step(ledger, *step, Provenance::Unknown);
+                    return Err(SequenceStop::ActFailed {
                         step: *step,
-                        reason: format!("{command:?} a rendu {}", answer.exit_status),
+                        exit_status: answer.exit_status,
                     });
                 }
             }
+
+            // Le constat, et lui seul, donne sa provenance au registre. Un code
+            // de sortie dit qu'un programme s'est terminé sans se plaindre ;
+            // seul le constat dit ce que la machine est devenue.
+            match self.constate(*step, plan)? {
+                Some(true) => record_step(ledger, *step, Provenance::Created),
+                Some(false) => {
+                    record_step(ledger, *step, Provenance::Unknown);
+                    return Err(SequenceStop::Refused {
+                        step: *step,
+                        reason: self.last_refusal.clone(),
+                    });
+                }
+                // Une étape sans constat n'a rien à inscrire par elle-même :
+                // ses effets sont ceux qu'une autre étape constate.
+                None => {}
+            }
         }
         Ok(())
+    }
+
+    /// Interroge la machine et fait juger sa réponse par le module qui décide.
+    ///
+    /// Rien n'est jugé ici : la réponse est portée telle quelle au juge, et
+    /// c'est son verdict qui revient. Un refus est donc toujours celui d'un
+    /// module éprouvé, jamais une conclusion de l'ordonnanceur.
+    fn constate(&mut self, step: Step, plan: &InstallPlan) -> Result<Option<bool>, SequenceStop> {
+        let Some(constat) = acts::constat_for(step) else {
+            return Ok(None);
+        };
+        let answer = self
+            .channel
+            .run(constat.command(), None)
+            .map_err(|_| SequenceStop::Unanswered { step })?;
+
+        let verdict = match constat {
+            acts::Constat::Package => super::package::read(answer.exit_status, &answer.stdout)
+                .map_err(|refusal| format!("{refusal:?}"))
+                .and_then(|state| {
+                    super::package::posed(&state, plan.version())
+                        .map(|_| ())
+                        .map_err(|refusal| format!("{refusal:?}"))
+                }),
+            acts::Constat::Unit => super::unit::running(answer.exit_status, &answer.stdout)
+                .map(|_| ())
+                .map_err(|refusal| format!("{refusal:?}")),
+            acts::Constat::Nodes => super::nodes::owned(&answer.stdout)
+                .map(|_| ())
+                .map_err(|refusal| format!("{refusal:?}")),
+        };
+
+        match verdict {
+            Ok(()) => Ok(Some(true)),
+            Err(reason) => {
+                self.last_refusal = reason;
+                Ok(Some(false))
+            }
+        }
     }
 }
 
 /// Ce qu'une étape inscrit au registre, et sous quelle provenance.
 ///
-/// Un statut nul dit que l'acte a fait ce qu'il annonçait, donc que cette
-/// exécution a créé la chose : elle pourra la retirer. Tout autre statut la
-/// laisse `Unknown` — le déroulé refusera de la retirer et dégradera l'ensemble
-/// en `Incomplete`, ce qui est exactement le comportement que le contrat exige
-/// d'un état que personne n'a pu établir.
-fn record_act(ledger: &mut Ledger, step: Step, exit_status: u32) {
-    let provenance = if exit_status == 0 {
-        Provenance::Created
-    } else {
-        Provenance::Unknown
-    };
+/// La provenance ne vient **jamais** d'un code de sortie : elle vient du
+/// constat que l'étape a obtenu. `Created` dit que la machine a été vue dans
+/// l'état annoncé, donc que cette exécution peut le défaire ; `Unknown` dit
+/// qu'on n'a pas pu l'établir — le déroulé refusera alors de retirer et
+/// dégradera l'ensemble en `Incomplete`, ce que le contrat exige d'un état que
+/// personne n'a constaté.
+fn record_step(ledger: &mut Ledger, step: Step, provenance: Provenance) {
     match step {
         Step::TransferBundle => ledger.record(
             ItemKind::File,
@@ -273,41 +335,82 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
-    /// Un canal écrit : il rend ce qu'on lui a dit de rendre, et retient ce
-    /// qu'on lui a demandé. Il ne remplace aucun composant du produit — ce qui
-    /// décide est ailleurs — il tient la place d'une machine.
+    /// Un canal écrit qui répond **comme une machine dans un état**, plutôt
+    /// que comme une file de statuts.
+    ///
+    /// C'est ce que le câblage des juges impose : une séquence ne peut plus
+    /// « réussir » sans que la machine rende des constats qu'un juge accepte.
+    /// Un canal qui ne rendrait que des codes de sortie ferait passer des
+    /// séquences que le produit refuse — et c'est précisément le défaut que ce
+    /// câblage a corrigé.
     struct ScriptedChannel {
-        answers: RefCell<Vec<Result<Answer, ChannelError>>>,
+        /// Le statut que rendent les actes. Un seul suffit : la séquence
+        /// s'arrête au premier qui se plaint.
+        act_status: u32,
+        /// L'état que la machine dit d'elle-même, par constat.
+        package: Vec<u8>,
+        unit: Vec<u8>,
+        nodes: Vec<u8>,
+        mute: bool,
         seen: RefCell<Vec<(String, bool)>>,
         adopted: RefCell<Option<usize>>,
     }
 
     impl ScriptedChannel {
-        fn answering(statuses: &[u32]) -> Self {
+        /// Une machine qui répond exactement ce que les juges attendent.
+        fn in_the_announced_state() -> Self {
             Self {
-                answers: RefCell::new(
-                    statuses
-                        .iter()
-                        .map(|status| {
-                            Ok(Answer {
-                                exit_status: *status,
-                                stdout: Vec::new(),
-                            })
-                        })
-                        .collect(),
-                ),
+                act_status: 0,
+                package: format!(
+                    "{} install ok installed 0.0.3\n",
+                    super::super::package::PACKAGE_NAME
+                )
+                .into_bytes(),
+                unit: unit_reading(),
+                nodes: nodes_reading(),
+                mute: false,
                 seen: RefCell::new(Vec::new()),
                 adopted: RefCell::new(None),
             }
         }
 
-        fn mute() -> Self {
+        fn failing_acts() -> Self {
             Self {
-                answers: RefCell::new(vec![Err(ChannelError)]),
-                seen: RefCell::new(Vec::new()),
-                adopted: RefCell::new(None),
+                act_status: 1,
+                ..Self::in_the_announced_state()
             }
         }
+
+        fn mute() -> Self {
+            Self {
+                mute: true,
+                ..Self::in_the_announced_state()
+            }
+        }
+    }
+
+    /// Ce qu'une unité réellement confinée répond, dérivé des mêmes valeurs que
+    /// le juge attend — jamais recopié, sans quoi deux définitions du
+    /// confinement coexisteraient.
+    fn unit_reading() -> Vec<u8> {
+        let mut lines = vec![
+            "ActiveState=active".to_owned(),
+            "SubState=running".to_owned(),
+        ];
+        for (name, value) in super::super::unit::expected_isolation() {
+            lines.push(format!("{name}={value}"));
+        }
+        format!("{}\n", lines.join("\n")).into_bytes()
+    }
+
+    /// Ce qu'une machine dont les nœuds sont posés répond, dérivé de la table
+    /// que le juge tient.
+    fn nodes_reading() -> Vec<u8> {
+        let lines: Vec<String> = super::super::nodes::EXPECTED_NODES
+            .iter()
+            .map(|node| format!("{} 0 0 {} {}", node.path, node.mode, node.kind))
+            .collect();
+        format!("{}\n", lines.join("\n")).into_bytes()
     }
 
     impl Channel for ScriptedChannel {
@@ -319,14 +422,27 @@ mod tests {
             self.seen
                 .borrow_mut()
                 .push((command.as_str().to_owned(), input.is_some()));
-            let mut answers = self.answers.borrow_mut();
-            if answers.is_empty() {
+            if self.mute {
+                return Err(ChannelError);
+            }
+            let bytes = command.as_str();
+            // Les constats répondent l'état ; tout le reste est un acte.
+            let stdout = if bytes == super::super::package::QUERY_PACKAGE.as_str() {
+                self.package.clone()
+            } else if bytes == super::super::unit::SHOW_CONTROLLER.as_str() {
+                self.unit.clone()
+            } else if bytes == super::super::nodes::STAT_OWNED.as_str() {
+                self.nodes.clone()
+            } else {
                 return Ok(Answer {
-                    exit_status: 0,
+                    exit_status: self.act_status,
                     stdout: Vec::new(),
                 });
-            }
-            answers.remove(0)
+            };
+            Ok(Answer {
+                exit_status: 0,
+                stdout,
+            })
         }
 
         fn adopt_budget(&mut self, budget: usize) -> Result<(), ChannelError> {
@@ -342,7 +458,7 @@ mod tests {
     /// Le secret meurt sur une séquence **réussie**.
     #[test]
     fn the_secret_dies_after_a_sequence_that_succeeded() {
-        let mut channel = ScriptedChannel::answering(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut channel = ScriptedChannel::in_the_announced_state();
         let mut secret = SpentSecret::holding(b"phrase".to_vec());
 
         let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
@@ -358,7 +474,7 @@ mod tests {
     /// Le secret meurt sur une séquence **échouée**.
     #[test]
     fn the_secret_dies_after_a_sequence_that_failed() {
-        let mut channel = ScriptedChannel::answering(&[1]);
+        let mut channel = ScriptedChannel::failing_acts();
         let mut secret = SpentSecret::holding(b"phrase".to_vec());
 
         let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
@@ -408,7 +524,7 @@ mod tests {
         use crate::secret::ProtectedSecret;
         use std::sync::{Arc, Mutex};
 
-        for statuses in [vec![0, 0, 0, 0, 0, 0, 0, 0], vec![1]] {
+        for failing in [false, true] {
             let seen: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
             let recorder = Arc::clone(&seen);
 
@@ -421,7 +537,11 @@ mod tests {
                     Some(wiped.iter().all(|byte| *byte == 0));
             });
 
-            let mut channel = ScriptedChannel::answering(&statuses);
+            let mut channel = if failing {
+                ScriptedChannel::failing_acts()
+            } else {
+                ScriptedChannel::in_the_announced_state()
+            };
             let mut secret = SpentSecret::holding(protected);
             Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
                 &plan(),
@@ -432,7 +552,7 @@ mod tests {
             assert_eq!(
                 *seen.lock().expect("le canari a rendu la main"),
                 Some(true),
-                "l'allocation n'a pas été rendue effacée (statuts : {statuses:?})"
+                "l'allocation n'a pas été rendue effacée (actes en échec : {failing})"
             );
         }
     }
@@ -441,7 +561,7 @@ mod tests {
     /// étapes ont produit.
     #[test]
     fn the_derived_budget_is_adopted_before_anything_is_run() {
-        let mut channel = ScriptedChannel::answering(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut channel = ScriptedChannel::in_the_announced_state();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
         Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
@@ -460,8 +580,12 @@ mod tests {
     /// que soit son issue.
     #[test]
     fn every_sequence_closes_by_dropping_the_credential() {
-        for statuses in [vec![0, 0, 0, 0, 0, 0, 0, 0], vec![1]] {
-            let mut channel = ScriptedChannel::answering(&statuses);
+        for failing in [false, true] {
+            let mut channel = if failing {
+                ScriptedChannel::failing_acts()
+            } else {
+                ScriptedChannel::in_the_announced_state()
+            };
             let mut secret = SpentSecret::<Vec<u8>>::none();
 
             Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
@@ -479,29 +603,50 @@ mod tests {
         }
     }
 
-    /// Le secret n'est présenté que si la politique l'exige — et à chaque acte
-    /// quand elle l'exige, jamais une fois pour toutes.
+    /// Le secret voyage avec chaque **acte** quand la politique l'exige — et
+    /// avec aucun **constat**, jamais.
+    ///
+    /// La distinction n'est pas cosmétique : lire l'état d'une machine ne
+    /// demande aucun privilège, donc un constat qui présenterait le secret le
+    /// dépenserait pour rien et l'exposerait une fois de plus par séquence.
+    /// C'est ce test qui a attrapé la confusion quand les juges ont été
+    /// câblés : il exigeait que *toute* commande porte le secret, ce qui
+    /// n'était vrai que tant que la séquence ne constatait rien.
     #[test]
-    fn the_secret_travels_with_every_act_or_with_none() {
-        let mut with = ScriptedChannel::answering(&[0, 0, 0, 0, 0, 0, 0, 0]);
+    fn the_secret_travels_with_every_act_and_with_no_constat() {
+        let constats: Vec<&str> = vec![
+            super::super::package::QUERY_PACKAGE.as_str(),
+            super::super::unit::SHOW_CONTROLLER.as_str(),
+            super::super::nodes::STAT_OWNED.as_str(),
+        ];
+
+        let mut with = ScriptedChannel::in_the_announced_state();
         let mut held = SpentSecret::holding(b"phrase".to_vec());
         Sequence::new(&mut with, BootstrapAction::InstallServerBundle, true).run(
             &plan(),
             &mut held,
             |held| held.as_slice(),
         );
+
         let seen = with.seen.borrow();
-        let acts_seen: Vec<bool> = seen
+        let (constats_seen, acts_seen): (Vec<_>, Vec<_>) = seen
             .iter()
             .filter(|(command, _)| command != acts::DROP_CREDENTIAL.as_str())
-            .map(|(_, carried)| *carried)
-            .collect();
+            .partition(|(command, _)| constats.contains(&command.as_str()));
+
+        assert!(!acts_seen.is_empty(), "aucun acte n'a couru");
         assert!(
-            !acts_seen.is_empty() && acts_seen.iter().all(|carried| *carried),
+            acts_seen.iter().all(|(_, carried)| *carried),
             "un acte a couru sans présenter le secret que la politique exige"
         );
+        assert!(!constats_seen.is_empty(), "aucun constat n'a été demandé");
+        assert!(
+            constats_seen.iter().all(|(_, carried)| !*carried),
+            "un constat a dépensé le secret pour lire un état qui ne l'exige pas"
+        );
 
-        let mut without = ScriptedChannel::answering(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        // Et sans politique de mot de passe, rien ne porte jamais rien.
+        let mut without = ScriptedChannel::in_the_announced_state();
         let mut none = SpentSecret::<Vec<u8>>::none();
         Sequence::new(&mut without, BootstrapAction::InstallServerBundle, false).run(
             &plan(),
@@ -511,6 +656,40 @@ mod tests {
         assert!(without.seen.borrow().iter().all(|(_, carried)| !*carried));
     }
 
+    /// Le constat, et lui seul, donne sa provenance au registre.
+    ///
+    /// C'est la propriété que le câblage des juges existe pour tenir : une
+    /// machine dont les actes rendent zéro mais dont l'état dément l'annonce
+    /// **refuse**, là où un ordonnanceur qui lirait des codes de sortie aurait
+    /// inscrit `Created` et se serait déclaré satisfait.
+    #[test]
+    fn a_machine_whose_state_denies_the_announcement_is_refused_though_every_act_returned_zero() {
+        let mut channel = ScriptedChannel::in_the_announced_state();
+        // Le paquet répond « à demi configuré » : chaque acte a rendu zéro, et
+        // l'état dit autre chose.
+        channel.package = format!(
+            "{} install ok half-configured 0.0.3\n",
+            super::super::package::PACKAGE_NAME
+        )
+        .into_bytes();
+        let mut secret = SpentSecret::<Vec<u8>>::none();
+
+        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
+            &plan(),
+            &mut secret,
+            |held: &Vec<u8>| held.as_slice(),
+        );
+
+        let Some(SequenceStop::Refused { step, reason }) = outcome.stopped else {
+            panic!("un état qui dément l'annonce doit refuser : {outcome:?}");
+        };
+        assert_eq!(step, Step::InstallPackage);
+        assert!(
+            reason.contains("HalfConfigured"),
+            "le refus doit porter le nom du juge : {reason}"
+        );
+    }
+
     /// Un acte qui échoue laisse sa trace en `Unknown` : le déroulé refusera de
     /// la retirer et dégradera l'ensemble, ce qui est le comportement que le
     /// contrat exige d'un état que personne n'a pu établir.
@@ -518,7 +697,7 @@ mod tests {
     fn a_failed_act_is_recorded_unknown_and_degrades_the_unwind() {
         use super::super::rollback::Unwind;
 
-        let mut channel = ScriptedChannel::answering(&[1]);
+        let mut channel = ScriptedChannel::failing_acts();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
         let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
