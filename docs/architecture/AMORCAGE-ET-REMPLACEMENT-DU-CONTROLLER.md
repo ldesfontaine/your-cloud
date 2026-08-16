@@ -270,6 +270,38 @@ couvre tout cliché produit par un débogueur ou par le noyau ; elle ne couvre
 pas un lecteur privilégié qui va directement à la mémoire d'un processus
 vivant, exposition dont la borne est la durée de l'opération elle-même.
 
+**Amendement du 16 août 2026 — ce que « la durée de l'opération » veut dire
+depuis l'installation.** Jusqu'ici cette durée était celle d'une commande : le
+mot de passe `sudo` était dépensé une fois puis effacé, et `-k` détruisait même
+l'horodatage. Une installation enchaîne plusieurs actes privilégiés, et les deux
+propriétés ne tiennent plus ensemble. La règle est donc **relative à la posture
+de la machine**, et le meilleur cas reste le cas strict :
+
+| Posture du compte prêté | Ce qui est retenu |
+|---|---|
+| `root` direct, ou `sudo` sans mot de passe | **rien** — aucun secret n'existe à retenir |
+| `sudo` avec mot de passe | le secret vit dans son allocation protégée le temps de la **séquence approuvée**, et pas au-delà |
+
+Le choix inverse — exiger `NOPASSWD` pour installer — a été écarté pour une
+raison qui vaut d'être écrite : il ferait **affaiblir durablement** la machine
+de l'humain (une entrée `NOPASSWD: ALL` est une configuration permanente, et un
+shell obtenu sous ce compte par n'importe quel vecteur donnerait `root` sans
+mot de passe) afin de préserver une propriété **transitoire** de notre
+processus. L'issue réaliste est connue : ajoutée pour l'amorçage, jamais
+retirée — le produit aurait causé l'affaiblissement. Le produit s'adapte donc à
+la posture de la machine au lieu d'en exiger une.
+
+La borne du secret retenu est nommée et tenue : il meurt à la fin de la
+séquence sur **toute** sortie — succès, échec, annulation, expiration — ou à
+l'échéance de session, le premier des deux, jamais « quand le processus se
+termine ». Les protections de l'allocation (`mlock`, exclusion des clichés, et
+leur équivalent Windows) sont des propriétés de la cartographie et non du
+temps : elles couvrent la durée étendue par construction, ce qui a été vérifié
+plutôt que supposé. Chaque acte porte son secret explicitement ; rien ne
+s'appuie sur l'horodatage de `sudo`, dont le réglage est invisible et dont
+l'expiration au milieu d'une séquence serait précisément le mur que ce palier
+élimine.
+
 Le format, le chiffrement, le KDF et le nombre de rounds sont lus **avant**
 toute dérivation. Une enveloppe hors contrat est donc refusée sans demander de
 passphrase et sans dépenser de temps. Le nombre de rounds accepté est borné à

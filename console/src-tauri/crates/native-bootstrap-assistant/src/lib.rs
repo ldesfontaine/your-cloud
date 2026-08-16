@@ -1075,8 +1075,24 @@ fn prove_administrator_elevation(
     let elevated = if attested.password_required {
         let password = ask_sudo_password(resolved, deadline, expired, lease)?;
         let report = live.run_channel(attested.command, Some(password.bytes()), deadline, guard);
-        // Wiped here, whatever the channel answered. There is no retry, so
-        // there is nothing that could ever need it a second time.
+        // Effacé ici, quoi qu'ait répondu le canal. Il n'y a pas de reprise.
+        //
+        // Amendement du 16 août 2026 : cette ligne disait « rien ne pourrait en
+        // avoir besoin une seconde fois », et ce n'est plus vrai d'une
+        // installation, qui enchaîne plusieurs actes privilégiés. La propriété
+        // exacte qui la remplace est celle-ci — et elle est plus faible, donc
+        // elle est écrite plutôt que devinée :
+        //
+        //   sur cette route-ci, celle de l'élévation seule, le secret meurt à
+        //   la commande qui l'a dépensé ; sur la route d'installation, il vit
+        //   dans la même allocation protégée le temps de la séquence que
+        //   l'humain vient d'approuver, et meurt sur *toute* sortie de cette
+        //   séquence — succès, échec, annulation, expiration — ou à l'échéance
+        //   de session, le premier des deux.
+        //
+        // Un compte `root` direct ou une politique sans mot de passe ne retient
+        // rien du tout : le cas strict reste le meilleur cas, il cesse
+        // simplement d'être le seul. Le contrat d'amorçage porte la raison.
         drop(password);
         report
     } else {
