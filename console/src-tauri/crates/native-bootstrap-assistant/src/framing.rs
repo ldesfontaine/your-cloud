@@ -126,6 +126,7 @@ mod tests {
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt: NativePromptKind::ConfirmPersonalAccess,
             target_addresses: Vec::new(),
+            machine_configuration: None,
             issued_at_monotonic_nanos: 1,
             remaining_millis: 1_000,
         }

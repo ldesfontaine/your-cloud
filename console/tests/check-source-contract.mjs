@@ -3638,6 +3638,33 @@ for (const expected of [
     failures.push(`native_prompt_windows.rs: garde Win32 secrète absente (${expected})`);
   }
 }
+// Les deux fenêtres ne partagent aucun type — une boîte GTK et une boîte Win32
+// n'ont rien en commun — mais elles doivent montrer les mêmes phrases. Une
+// suite ne peut pas tenir cette égalité : chaque surface ne compile que sur sa
+// plateforme, donc aucun test ne voit les deux à la fois. La garde est donc
+// ici, sur les sources, et elle regarde dans les DEUX sens : une phrase ajoutée
+// d'un seul côté ferait d'un consentement l'autre plus faible sans que rien ne
+// le dise.
+for (const sentence of [
+  'format!("Route d’accès : {access}")',
+  'format!("Empreinte hôte : {}", scope.target.host_key_sha256)',
+  'format!("Étape : {step}")',
+  'format!("Action : {action}")',
+  "lines.extend(configuration_lines(scope));",
+  '"Configuration : écoute {}, source autorisée {}, relais {}"',
+  '"Empreinte de la configuration : {}", composed.sha256()',
+]) {
+  for (const [label, source] of [
+    ["native_prompt.rs", nativeAssistantPrompt],
+    ["native_prompt_windows.rs", nativeAssistantWindowsPrompt],
+  ]) {
+    if (!source.includes(sentence)) {
+      failures.push(
+        `${label}: phrase de consentement absente d’une des deux fenêtres (${sentence})`,
+      );
+    }
+  }
+}
 for (const expected of [
   "mmap",
   "mlock",

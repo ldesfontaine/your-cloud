@@ -188,6 +188,7 @@ fn scope(remaining_millis: u64) -> AssistantScopeV1 {
         actions: [BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::SudoPassword,
         target_addresses: Vec::new(),
+        machine_configuration: None,
         issued_at_monotonic_nanos: monotonic_nanos().expect("shared monotonic clock"),
         remaining_millis,
     }

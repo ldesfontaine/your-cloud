@@ -1356,7 +1356,40 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
         format!("Étape : {step}"),
         format!("Action : {action}"),
     ]);
+    // La même ligne que la fenêtre GTK, pour la même raison : ce que l'humain
+    // approuve doit porter l'empreinte des octets qui seront déposés. Les deux
+    // surfaces ne partagent aucun type, mais elles doivent dire la même chose —
+    // une empreinte montrée d'un seul côté ferait d'un consentement Windows un
+    // consentement plus faible, sans que rien ne le dise.
+    lines.extend(configuration_lines(scope));
     lines
+}
+
+/// Les deux lignes que la configuration machine ajoute, quand l'action l'écrit.
+///
+/// Jumelle de celle de `native_prompt` : même composition, mêmes phrases, même
+/// silence quand la composition refuse. Une garde de sources tient l'égalité
+/// des deux rendus — aucune suite ne le peut, chaque surface ne compilant que
+/// sur sa plateforme — pour qu'une divergence se voie ici plutôt que sur une
+/// machine.
+fn configuration_lines(scope: &AssistantScopeV1) -> Vec<String> {
+    let Some(values) = scope.machine_configuration.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(composed) = crate::installation::configuration::compose(
+        &values.listen,
+        &values.allowed_source,
+        &values.relay_endpoint,
+    ) else {
+        return Vec::new();
+    };
+    vec![
+        format!(
+            "Configuration : écoute {}, source autorisée {}, relais {}",
+            values.listen, values.allowed_source, values.relay_endpoint
+        ),
+        format!("Empreinte de la configuration : {}", composed.sha256()),
+    ]
 }
 
 fn wrap_public_line(line: &str) -> Vec<String> {
@@ -1427,6 +1460,7 @@ mod tests {
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt,
             target_addresses: Vec::new(),
+            machine_configuration: None,
             issued_at_monotonic_nanos: 1,
             remaining_millis: 5_000,
         }

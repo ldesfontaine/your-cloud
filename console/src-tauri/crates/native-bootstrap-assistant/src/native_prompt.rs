@@ -621,7 +621,51 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
         format!("Étape : {step}"),
         format!("Action : {action}"),
     ]);
+    // Le seul contenu du palier dont les octets ne sont pas une constante :
+    // ils dépendent de la machine approuvée. Ce qui transforme « des octets
+    // choisis ailleurs » en « des octets dont l'humain a vu l'empreinte avant
+    // de consentir » est précisément que cette empreinte lui soit montrée —
+    // sinon la propriété est calculée et jamais offerte.
+    //
+    // Elle est **composée ici**, à partir des trois valeurs que le scope porte,
+    // et non recopiée d'un champ : montrer une empreinte transmise reviendrait
+    // à faire approuver ce qu'un autre a calculé. La ligne porte donc
+    // l'empreinte des octets exacts que l'Assistant déposera.
+    lines.extend(configuration_lines(scope));
     lines
+}
+
+/// Les deux lignes que la configuration machine ajoute, quand l'action l'écrit.
+///
+/// Une phrase qui porte l'empreinte, jamais un digest nu — c'est le vocabulaire
+/// de `#122`, où la fenêtre d'approbation montre des phrases **et** deux
+/// empreintes. Ici il y en a une de plus, et elle est du même genre que
+/// l'empreinte d'hôte au-dessus : quelque chose que l'humain peut confronter.
+///
+/// Une composition qui échoue ne rend **aucune** ligne. C'est délibéré et ce
+/// n'est pas un silence : une valeur que le fichier d'environnement ne peut pas
+/// transporter est refusée par la composition, donc la séquence s'arrêtera de
+/// toute façon avant d'écrire quoi que ce soit. Afficher une empreinte de
+/// remplacement, ou le mot « indisponible », donnerait à approuver quelque
+/// chose qui n'existe pas.
+fn configuration_lines(scope: &AssistantScopeV1) -> Vec<String> {
+    let Some(values) = scope.machine_configuration.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(composed) = crate::installation::configuration::compose(
+        &values.listen,
+        &values.allowed_source,
+        &values.relay_endpoint,
+    ) else {
+        return Vec::new();
+    };
+    vec![
+        format!(
+            "Configuration : écoute {}, source autorisée {}, relais {}",
+            values.listen, values.allowed_source, values.relay_endpoint
+        ),
+        format!("Empreinte de la configuration : {}", composed.sha256()),
+    ]
 }
 
 fn wrap_public_line(line: &str) -> Vec<String> {
@@ -750,6 +794,7 @@ mod tests {
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt,
             target_addresses: Vec::new(),
+            machine_configuration: None,
             issued_at_monotonic_nanos: 1,
             remaining_millis: 5_000,
         }
@@ -868,6 +913,92 @@ mod tests {
             with_action.actions = [action];
             let lines = logical_scope_lines(&with_action);
             assert_eq!(lines.last().map(String::as_str), Some(sentence));
+        }
+    }
+
+    /// **L'empreinte de la configuration est dans ce que l'humain approuve**,
+    /// et c'est celle des octets qui seront réellement déposés.
+    ///
+    /// Sans cette ligne, « des octets dont l'humain a vu l'empreinte avant de
+    /// consentir » resterait une intention : la propriété était calculée par le
+    /// module de configuration et jamais offerte. Le test tient les deux
+    /// moitiés — la phrase existe, et son empreinte est **celle que `compose`
+    /// rend sur ces trois valeurs-là**, pas une chaîne quelconque de soixante-
+    /// quatre caractères.
+    #[test]
+    fn the_configuration_digest_is_in_what_the_human_approves() {
+        use your_cloud_bootstrap_protocol::MachineConfigurationValues;
+
+        let mut posing = scope(NativePromptKind::ConfirmPersonalAccess);
+        posing.actions = [BootstrapAction::InstallServerBundle];
+        posing.machine_configuration = Some(MachineConfigurationValues {
+            listen: "192.168.240.115:9443".into(),
+            allowed_source: "192.168.240.0/24".into(),
+            relay_endpoint: "192.168.240.9:9444".into(),
+        });
+        let posing = posing.validate().expect("une pose licite");
+
+        let expected = crate::installation::configuration::compose(
+            "192.168.240.115:9443",
+            "192.168.240.0/24",
+            "192.168.240.9:9444",
+        )
+        .expect("le contrôle positif se compose");
+
+        let lines = logical_scope_lines(&posing);
+        assert!(
+            lines.contains(&format!(
+                "Empreinte de la configuration : {}",
+                expected.sha256()
+            )),
+            "l'empreinte des octets déposés n'est pas montrée : {lines:?}"
+        );
+        // Une phrase la porte, jamais un digest nu : les valeurs elles-mêmes
+        // sont lisibles à côté, comme l'adresse l'est à côté du nom.
+        assert!(lines.iter().any(|line| line.starts_with("Configuration : ")
+            && line.contains("192.168.240.115:9443")
+            && line.contains("192.168.240.0/24")
+            && line.contains("192.168.240.9:9444")));
+
+        // Et l'empreinte SUIT le contenu : deux configurations qui diffèrent
+        // d'un caractère ne peuvent pas être approuvées sous la même ligne.
+        let mut other = posing.clone();
+        other.machine_configuration = Some(MachineConfigurationValues {
+            listen: "192.168.240.116:9443".into(),
+            allowed_source: "192.168.240.0/24".into(),
+            relay_endpoint: "192.168.240.9:9444".into(),
+        });
+        let other_lines = logical_scope_lines(&other.validate().expect("une seconde pose licite"));
+        assert_ne!(
+            lines
+                .iter()
+                .find(|line| line.starts_with("Empreinte de la configuration")),
+            other_lines
+                .iter()
+                .find(|line| line.starts_with("Empreinte de la configuration"))
+        );
+    }
+
+    /// Une action qui n'écrit pas de configuration n'en montre aucune.
+    ///
+    /// La fenêtre ne doit pas annoncer une écriture qui n'aura pas lieu : le
+    /// protocole refuse déjà qu'une telle session existe, et cette moitié-ci le
+    /// tient du côté de l'affichage — deux gardes pour une propriété que le
+    /// consentement porte.
+    #[test]
+    fn an_action_that_writes_no_configuration_shows_none() {
+        for action in [
+            BootstrapAction::AuditTargetReadOnly,
+            BootstrapAction::ActivateApprovedController,
+        ] {
+            let mut without = scope(NativePromptKind::ConfirmPersonalAccess);
+            without.actions = [action];
+            let lines = logical_scope_lines(&without);
+            assert!(
+                !lines.iter().any(|line| line.starts_with("Configuration : ")
+                    || line.starts_with("Empreinte de la configuration")),
+                "{action:?} annonce une configuration : {lines:?}"
+            );
         }
     }
 

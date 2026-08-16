@@ -39,6 +39,7 @@ fn scope() -> AssistantScopeV1 {
         actions: [BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::ConfirmPersonalAccess,
         target_addresses: Vec::new(),
+        machine_configuration: None,
         issued_at_monotonic_nanos: 0,
         remaining_millis: 5_000,
     }

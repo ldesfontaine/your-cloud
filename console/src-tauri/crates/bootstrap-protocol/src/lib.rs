@@ -196,6 +196,56 @@ pub enum NativePromptKind {
     ConfirmRootAccess,
 }
 
+/// Les trois adresses que l'unité du Controller lit, et les seules.
+///
+/// Elles voyagent **comme valeurs, jamais comme fichier** : l'Assistant compose
+/// lui-même les octets de `controller.env` et en calcule l'empreinte, de sorte
+/// que le contenu que le privilège déplacera n'a qu'une seule définition, du
+/// côté qui le produit. Envoyer le fichier tout fait ferait entrer ici des
+/// octets choisis ailleurs — précisément ce que le module de configuration de
+/// l'Assistant existe pour refuser.
+///
+/// Ce que ce protocole en dit s'arrête à leur forme : trois chaînes bornées,
+/// non vides, sans caractère de contrôle. Leur **sens** — une adresse d'écoute,
+/// une source autorisée, un point de rendez-vous — appartient au Controller et
+/// à personne d'autre ici ; ce qui les refuserait mal formées est la porte de
+/// composition de l'Assistant, qui refuse plutôt qu'elle n'échappe.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineConfigurationValues {
+    pub listen: String,
+    pub allowed_source: String,
+    pub relay_endpoint: String,
+}
+
+/// Longueur maximale d'une des trois valeurs de configuration.
+///
+/// Une adresse, un CIDR ou un point de rendez-vous s'écrivent court. La borne
+/// est là pour que la trame de scope reste très en deçà de
+/// [`MAX_ASSISTANT_SCOPE_FRAME_BYTES`], et non pour juger d'un format : trois
+/// valeurs de cette taille laissent la trame à moins du quart de sa borne.
+pub const MAX_CONFIGURATION_VALUE_BYTES: usize = 253;
+
+impl MachineConfigurationValues {
+    /// La forme, et rien que la forme.
+    ///
+    /// Chaque valeur est non vide, bornée, et exempte de caractère de contrôle.
+    /// Le `=` n'est **pas** refusé ici bien qu'un fichier d'environnement ne
+    /// puisse pas le porter : ce refus-là appartient à la composition, qui est
+    /// le seul endroit sachant dans quel format ces valeurs vont s'écrire. Le
+    /// dupliquer donnerait deux règles pour une propriété, et un jour deux
+    /// réponses.
+    fn valid(&self) -> bool {
+        [&self.listen, &self.allowed_source, &self.relay_endpoint]
+            .into_iter()
+            .all(|value| {
+                !value.is_empty()
+                    && value.len() <= MAX_CONFIGURATION_VALUE_BYTES
+                    && !value.chars().any(char::is_control)
+            })
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AssistantScopeV1 {
@@ -211,6 +261,16 @@ pub struct AssistantScopeV1 {
     /// only the assistant's own resolution fills it, and only before the
     /// consent window renders it beside the name.
     pub target_addresses: Vec<String>,
+    /// Les trois adresses dont l'Assistant composera `controller.env`, présentes
+    /// **exactement** quand l'action est de poser le lot.
+    ///
+    /// C'est le patron d'`origin_host` de `#118` : approuver une conséquence,
+    /// pas une intention. Une session d'audit ou d'activation qui les porterait
+    /// annoncerait une écriture qu'elle ne fera pas ; une session qui pose et
+    /// ne les porte pas n'aurait rien à composer, donc rien à montrer à
+    /// l'humain — et l'empreinte qu'il approuve serait celle de rien.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_configuration: Option<MachineConfigurationValues>,
     pub issued_at_monotonic_nanos: u64,
     pub remaining_millis: u64,
 }
@@ -222,6 +282,7 @@ impl AssistantScopeV1 {
             || !(1..=MAX_ASSISTANT_REMAINING_MILLIS).contains(&self.remaining_millis)
             || !prompt_matches_scope(self.prompt, self.step, self.target.access_kind)
             || !valid_target_addresses(&self.target_addresses)
+            || !configuration_matches_action(self.machine_configuration.as_ref(), self.actions[0])
         {
             return Err(ProtocolError::InvalidInput);
         }
@@ -329,6 +390,26 @@ pub fn canonical_request_id(request_id: &str) -> bool {
         && request_id
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// La configuration voyage **exactement** avec l'action qui l'écrit.
+///
+/// Les deux sens comptent, et c'est ce qui fait de cette règle autre chose
+/// qu'une commodité de sérialisation. Absente d'une pose, l'Assistant n'aurait
+/// rien à composer et l'humain approuverait l'empreinte de rien. Présente à
+/// côté d'un audit ou d'une activation, elle annoncerait une écriture que la
+/// tranche du plan ne contient pas — un document qui promet plus que ce que
+/// l'action fera.
+fn configuration_matches_action(
+    configuration: Option<&MachineConfigurationValues>,
+    action: BootstrapAction,
+) -> bool {
+    match (configuration, action) {
+        (Some(values), BootstrapAction::InstallServerBundle) => values.valid(),
+        (None, BootstrapAction::AuditTargetReadOnly)
+        | (None, BootstrapAction::ActivateApprovedController) => true,
+        _ => false,
+    }
 }
 
 fn prompt_matches_scope(
@@ -495,9 +576,169 @@ mod tests {
             actions: [BootstrapAction::AuditTargetReadOnly],
             prompt,
             target_addresses: Vec::new(),
+            machine_configuration: None,
             issued_at_monotonic_nanos: 1,
             remaining_millis: MAX_ASSISTANT_REMAINING_MILLIS,
         }
+    }
+
+    /// Les trois valeurs telles qu'une pose licite les porte.
+    fn configuration_values() -> MachineConfigurationValues {
+        MachineConfigurationValues {
+            listen: "192.168.240.115:9443".into(),
+            allowed_source: "192.168.240.0/24".into(),
+            relay_endpoint: "192.168.240.9:9444".into(),
+        }
+    }
+
+    /// Un scope de pose, complet et licite.
+    fn install_scope() -> AssistantScopeV1 {
+        AssistantScopeV1 {
+            actions: [BootstrapAction::InstallServerBundle],
+            machine_configuration: Some(configuration_values()),
+            ..scope(
+                NativePromptKind::ConfirmPersonalAccess,
+                BootstrapAccessKind::Administrator,
+            )
+        }
+    }
+
+    /// **La configuration voyage exactement avec l'action qui l'écrit**, dans
+    /// les deux sens.
+    ///
+    /// Le contrôle positif d'abord : une pose la porte et passe. Puis les deux
+    /// manières de mentir — une pose sans elle, qui n'aurait rien à composer et
+    /// ferait approuver l'empreinte de rien ; une action qui n'écrit pas et la
+    /// porte quand même, ce qui annoncerait une écriture que sa tranche du plan
+    /// ne contient pas.
+    #[test]
+    fn the_machine_configuration_travels_exactly_with_the_action_that_writes_it() {
+        install_scope()
+            .validate()
+            .expect("une pose qui porte ses trois valeurs doit passer");
+
+        // Poser sans savoir quoi écrire.
+        let orphan = AssistantScopeV1 {
+            machine_configuration: None,
+            ..install_scope()
+        };
+        assert_eq!(orphan.validate().unwrap_err(), ProtocolError::InvalidInput);
+
+        // Annoncer une écriture que l'action ne fera pas.
+        for action in [
+            BootstrapAction::AuditTargetReadOnly,
+            BootstrapAction::ActivateApprovedController,
+        ] {
+            let overreaching = AssistantScopeV1 {
+                actions: [action],
+                machine_configuration: Some(configuration_values()),
+                ..scope(
+                    NativePromptKind::ConfirmPersonalAccess,
+                    BootstrapAccessKind::Administrator,
+                )
+            };
+            assert_eq!(
+                overreaching.validate().unwrap_err(),
+                ProtocolError::InvalidInput,
+                "{action:?} porte une configuration qu'elle n'écrira jamais"
+            );
+        }
+    }
+
+    /// Chaque valeur mal formée est refusée **avant toute fenêtre**.
+    ///
+    /// Ce que ce protocole juge est la forme, et rien qu'elle : non vide,
+    /// bornée, sans caractère de contrôle. Le saut de ligne compte double — il
+    /// est un caractère de contrôle ici, et il serait une seconde variable dans
+    /// un fichier d'environnement — mais c'est la composition qui porte cette
+    /// seconde raison, et elle refuse aussi le `=` que cette porte-ci laisse
+    /// passer.
+    #[test]
+    fn a_malformed_configuration_value_is_refused_before_any_window() {
+        let hostile = [
+            "",
+            "192.168.1.1\nCONTROLLER_ALLOWED_SOURCE=0.0.0.0/0",
+            "192.168.1.1\r",
+            "192.168.1.1\u{0}",
+            &"a".repeat(MAX_CONFIGURATION_VALUE_BYTES + 1),
+        ];
+
+        for value in hostile {
+            for position in 0..3 {
+                let mut values = configuration_values();
+                match position {
+                    0 => values.listen = value.into(),
+                    1 => values.allowed_source = value.into(),
+                    _ => values.relay_endpoint = value.into(),
+                }
+                let scope = AssistantScopeV1 {
+                    machine_configuration: Some(values),
+                    ..install_scope()
+                };
+                assert_eq!(
+                    scope.validate().unwrap_err(),
+                    ProtocolError::InvalidInput,
+                    "valeur acceptée en position {position} : {value:?}"
+                );
+            }
+        }
+
+        // La borne est un plafond, pas un piège : la plus longue valeur licite
+        // passe.
+        let mut values = configuration_values();
+        values.listen = "a".repeat(MAX_CONFIGURATION_VALUE_BYTES);
+        AssistantScopeV1 {
+            machine_configuration: Some(values),
+            ..install_scope()
+        }
+        .validate()
+        .expect("la valeur la plus longue admissible doit passer");
+    }
+
+    /// Les trois valeurs tiennent très en deçà de la trame de scope.
+    ///
+    /// La borne par valeur n'a pas été choisie pour juger d'un format mais pour
+    /// que ce champ ne puisse jamais rapprocher une trame de sa limite. Le test
+    /// le mesure sur le pire cas plutôt que de le supposer.
+    #[test]
+    fn the_widest_configuration_stays_far_below_the_scope_frame() {
+        let mut values = configuration_values();
+        values.listen = "a".repeat(MAX_CONFIGURATION_VALUE_BYTES);
+        values.allowed_source = "b".repeat(MAX_CONFIGURATION_VALUE_BYTES);
+        values.relay_endpoint = "c".repeat(MAX_CONFIGURATION_VALUE_BYTES);
+        let widest = AssistantScopeV1 {
+            machine_configuration: Some(values),
+            ..install_scope()
+        };
+
+        let encoded = serde_json::to_vec(&widest).expect("un scope se sérialise");
+        assert!(
+            encoded.len() < MAX_ASSISTANT_SCOPE_FRAME_BYTES / 2,
+            "la trame la plus large fait {} octets sur {MAX_ASSISTANT_SCOPE_FRAME_BYTES}",
+            encoded.len()
+        );
+    }
+
+    /// Un scope qui n'a jamais entendu parler de configuration reste lisible.
+    ///
+    /// Le champ est absent des documents que l'audit produit, et son absence
+    /// n'est pas une erreur de désérialisation : `deny_unknown_fields` refuse ce
+    /// qui est en trop, jamais ce qui manque légitimement.
+    #[test]
+    fn a_scope_without_the_field_is_still_read() {
+        let audit = scope(
+            NativePromptKind::ConfirmPersonalAccess,
+            BootstrapAccessKind::Administrator,
+        );
+        let encoded = serde_json::to_string(&audit).expect("un scope se sérialise");
+        assert!(
+            !encoded.contains("machine_configuration"),
+            "l'absence doit rester absente du document : {encoded}"
+        );
+        let decoded: AssistantScopeV1 =
+            serde_json::from_str(&encoded).expect("un scope sans le champ se relit");
+        assert_eq!(decoded.machine_configuration, None);
+        decoded.validate().expect("et reste licite");
     }
 
     #[test]

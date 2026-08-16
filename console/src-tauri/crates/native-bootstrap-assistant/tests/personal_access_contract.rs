@@ -1275,6 +1275,7 @@ fn supervised_personal_access_scope() -> AssistantScopeV1 {
         actions: [BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::ConfirmPersonalAccess,
         target_addresses: Vec::new(),
+        machine_configuration: None,
         // Both stamps are the launcher's to fill: it re-samples the shared
         // clock and recomputes what is left of the lease before transmitting.
         issued_at_monotonic_nanos: 0,

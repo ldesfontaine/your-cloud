@@ -187,6 +187,12 @@ impl BootstrapState {
                 // address. Only the assistant's single resolution fills this, and only
                 // before its own consent window renders it.
                 target_addresses: Vec::new(),
+                // Le lanceur n'ouvre encore que l'audit, qui n'écrit aucune
+                // configuration. Le protocole refuse d'ailleurs qu'une session
+                // d'audit en porte une : la valeur est absente parce que
+                // l'action ne l'écrit pas, et non parce qu'elle serait
+                // indisponible.
+                machine_configuration: None,
                 // The launcher replaces this safe placeholder immediately before transport.
                 issued_at_monotonic_nanos: 0,
                 remaining_millis,
