@@ -47,6 +47,8 @@ pub mod anchor;
 pub mod association;
 /// Judging the embedded `.deb` and its signed manifest before any privilege.
 pub mod bundle;
+/// La configuration propre à la machine, produite ici et jugée comme le lot.
+pub mod configuration;
 /// La résolution du lot embarqué depuis la position attestée, et depuis rien
 /// d'autre.
 pub mod embedded;

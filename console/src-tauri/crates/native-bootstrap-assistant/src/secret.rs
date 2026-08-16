@@ -82,8 +82,17 @@ impl ProtectedSecret {
         self.len == 0
     }
 
+    /// Le canari mémoire de `#45`, exposé au crate.
+    ///
+    /// Il était privé à ce module tant que seul lui avait à prouver un
+    /// effacement. Depuis que l'ordonnanceur détient un secret le temps d'une
+    /// séquence, la destruction qu'il promet doit se prouver **en mémoire** et
+    /// non seulement en logique — et la prouver ailleurs demanderait d'inventer
+    /// un second canari, donc une seconde définition de ce que « effacé » veut
+    /// dire. Il reste `#[cfg(test)]` : rien de tout cela n'entre dans un
+    /// binaire livré.
     #[cfg(test)]
-    fn observe_wipe_for_test(&mut self, observer: impl FnOnce(&[u8]) + Send + 'static) {
+    pub(crate) fn observe_wipe_for_test(&mut self, observer: impl FnOnce(&[u8]) + Send + 'static) {
         self.allocation.wipe_observer = Some(Box::new(observer));
     }
 }

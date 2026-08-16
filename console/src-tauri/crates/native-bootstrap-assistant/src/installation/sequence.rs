@@ -393,6 +393,50 @@ mod tests {
         assert!(secret.is_destroyed(), "le secret survit à un canal muet");
     }
 
+    /// La destruction est prouvée **en mémoire**, pas seulement en logique.
+    ///
+    /// Le canari de `#45` observe l'allocation protégée au moment où elle est
+    /// rendue : il voit ce que le processus laisse derrière lui. Les cas
+    /// précédents disent « la séquence ne tient plus le secret » ; celui-ci dit
+    /// « les octets ne sont plus là ». Ce sont deux affirmations différentes,
+    /// et seule la seconde est celle que le contrat promet.
+    ///
+    /// Le canari est réutilisé plutôt qu'inventé : un second observateur
+    /// donnerait une seconde définition de ce que « effacé » veut dire.
+    #[test]
+    fn the_secret_is_wiped_in_memory_and_not_merely_dropped() {
+        use crate::secret::ProtectedSecret;
+        use std::sync::{Arc, Mutex};
+
+        for statuses in [vec![0, 0, 0, 0, 0, 0, 0, 0], vec![1]] {
+            let seen: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
+            let recorder = Arc::clone(&seen);
+
+            let mut protected = ProtectedSecret::new().expect("une allocation protégée");
+            protected
+                .copy_from(b"phrase-de-passe")
+                .expect("le secret tient dans l'allocation");
+            protected.observe_wipe_for_test(move |wiped| {
+                *recorder.lock().expect("le canari est seul") =
+                    Some(wiped.iter().all(|byte| *byte == 0));
+            });
+
+            let mut channel = ScriptedChannel::answering(&statuses);
+            let mut secret = SpentSecret::holding(protected);
+            Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
+                &plan(),
+                &mut secret,
+                |held: &ProtectedSecret| held.bytes(),
+            );
+
+            assert_eq!(
+                *seen.lock().expect("le canari a rendu la main"),
+                Some(true),
+                "l'allocation n'a pas été rendue effacée (statuts : {statuses:?})"
+            );
+        }
+    }
+
     /// Le budget est adopté avant le premier canal, et c'est celui que les
     /// étapes ont produit.
     #[test]
