@@ -253,7 +253,7 @@ pub fn authorize(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::installation::bundle;
     use crate::installation::preflight::{self, EndpointAttempt, Observation};
@@ -296,6 +296,23 @@ mod tests {
             ARTIFACT,
         )
         .expect("the bundle fixture must verify")
+    }
+
+    /// Un plan réel, obtenu par la seule porte qui en rend un.
+    ///
+    /// Il est exposé au crate pour que les suites de l'ordonnanceur exercent
+    /// une séquence sans reconstruire les quatre témoins : ce que ce plan
+    /// prouve est déjà prouvé ici, et le dupliquer ailleurs donnerait deux
+    /// endroits où la même obligation pourrait diverger.
+    pub(crate) fn plan_for_tests() -> InstallPlan {
+        let endpoint = private_endpoint();
+        authorize(
+            &verified_bundle(),
+            &approved_placement(&endpoint),
+            &elevation(),
+            &cleared(&["machine-1"]),
+        )
+        .expect("le plan de référence doit être autorisé")
     }
 
     /// A real [`Elevation`], obtained the only way one can be obtained.

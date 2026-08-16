@@ -62,6 +62,8 @@ pub mod plan;
 pub mod preflight;
 /// What a failure may take back, and what it must leave visible.
 pub mod rollback;
+/// L'ordonnanceur : il enchaîne, il n'invente rien.
+pub mod sequence;
 /// Le lot posé sur la cible, sous le seul accès personnel, et son empreinte
 /// relue là-bas.
 pub mod transfer;
