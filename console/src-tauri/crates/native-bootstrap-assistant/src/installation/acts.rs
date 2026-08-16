@@ -218,26 +218,47 @@ pub const fn channels_for(step: Step) -> usize {
     }
 }
 
-/// Le budget de canaux d'une action, **dérivé et jamais choisi**.
+/// Le budget de canaux d'une **session**, dérivé et jamais choisi.
 ///
 /// La propriété que `#54` a conquise est conservée mot pour mot — le budget est
 /// compté avant l'ouverture du premier canal, jamais réapprovisionné, et une
 /// demande au-delà est refusée plutôt que négociée. Ce qui change est qu'il
 /// cesse d'être la **même constante** pour deux conversations différentes :
-/// l'élévation seule garde les trois canaux qui sont toute sa conversation,
-/// et une installation déclare exactement ce que ses étapes ouvrent.
+/// une installation déclare exactement ce que ses étapes ouvrent.
 ///
 /// Le canal de fermeture est compté une fois : toute séquence qui a dépensé du
 /// privilège se termine par [`DROP_CREDENTIAL`], quelle que soit son issue.
+///
+/// **Amendement du 16 août 2026 — le budget est celui de la session, pas celui
+/// du plan seul.** Ce texte disait que « l'élévation seule garde les trois
+/// canaux qui sont toute sa conversation, et une installation déclare ce que
+/// ses étapes ouvrent », comme s'il s'agissait de deux conversations. C'est
+/// inexact, et le câblage l'a mesuré : **la même session porte les deux**. Elle
+/// dépense d'abord la sonde d'identité, le listing de politique et l'unique
+/// élévation — les trois canaux exacts que [`MAX_EXEC_CHANNELS`] borne — puis
+/// les étapes du plan. Un budget qui ne compterait que les secondes serait
+/// épuisé avant la première : la garde d'adoption exige `channels_spent == 0`,
+/// et une séquence branchée sur la session réelle se voyait donc refuser son
+/// budget **à tous les coups**.
+///
+/// Le terme ajouté n'est pas un nombre choisi : c'est la constante que la
+/// session elle-même publie, lue ici plutôt que recopiée — deux définitions de
+/// « ce que l'accès personnel dépense » finiraient par diverger. Rien n'est
+/// allégé : l'adoption reste unique, antérieure au premier canal, et une
+/// demande au-delà reste refusée.
 pub fn channel_budget(action: your_cloud_bootstrap_protocol::BootstrapAction) -> usize {
     let opened: usize = super::plan::authorized_steps(action)
         .iter()
         .map(|step| channels_for(*step))
         .sum();
     if opened == 0 {
+        // L'audit n'installe rien : sa conversation est exactement celle de
+        // l'accès personnel, que la session porte déjà. Zéro dit « rien à
+        // substituer », et non « aucun canal » — la nuance est ce qui empêche
+        // une session d'audit de se retrouver sans budget du tout.
         0
     } else {
-        opened + 1
+        crate::personal_access::session::MAX_EXEC_CHANNELS + opened + 1
     }
 }
 
@@ -543,13 +564,22 @@ mod tests {
         }
     }
 
-    /// Le budget est la somme de ce que les étapes déclarent, jamais un nombre
+    /// Le budget est une somme de ce que les tables déclarent, jamais un nombre
     /// rond posé à la main.
     ///
-    /// L'audit n'ouvre aucun canal d'installation : son budget est nul, et la
-    /// conversation de l'élévation garde la sienne, intacte, ailleurs.
+    /// L'audit n'ouvre aucun canal d'installation : son budget est nul, ce qui
+    /// dit « rien à substituer » et laisse la session porter la conversation de
+    /// l'accès personnel telle quelle.
+    ///
+    /// **Amendement du 16 août 2026.** Ce test asserte désormais `MAX + étapes
+    /// + 1` là où il assertait `étapes + 1`, parce que le terme manquant était
+    /// un défaut et non une convention : la même session dépense la
+    /// conversation de l'accès personnel avant les étapes du plan. Ce qu'il
+    /// tient en propre reste ce qu'il tenait — **le canal de fermeture est
+    /// compté une fois, et une seule** — et cette part-là n'a pas bougé.
     #[test]
     fn the_budget_is_derived_from_the_steps_and_never_chosen() {
+        use crate::personal_access::session::MAX_EXEC_CHANNELS;
         use your_cloud_bootstrap_protocol::BootstrapAction;
 
         assert_eq!(channel_budget(BootstrapAction::AuditTargetReadOnly), 0);
@@ -561,7 +591,7 @@ mod tests {
                 .sum();
         assert_eq!(
             channel_budget(BootstrapAction::InstallServerBundle),
-            install + 1,
+            MAX_EXEC_CHANNELS + install + 1,
             "le canal de fermeture est compté une fois, et une seule"
         );
 
@@ -572,8 +602,53 @@ mod tests {
                 .sum();
         assert_eq!(
             channel_budget(BootstrapAction::ActivateApprovedController),
-            activate + 1
+            MAX_EXEC_CHANNELS + activate + 1
         );
+    }
+
+    /// **Le budget d'une action qui installe couvre la session entière**, et
+    /// non ses seules étapes.
+    ///
+    /// C'est la propriété que le câblage du canal réel a imposée, et le test
+    /// qui manquait : la même session dépense d'abord la conversation de
+    /// l'accès personnel — sonde, listing, élévation — puis les étapes du plan.
+    /// La garde d'adoption n'accepte un budget qu'avant le **premier** canal de
+    /// la session ; un budget qui ne compterait que les étapes serait donc
+    /// adopté avant la sonde, puis épuisé au milieu de l'installation.
+    ///
+    /// Mesuré avant correction : `channel_budget(InstallServerBundle)` rendait
+    /// 15, la session en dépensait 3 pour s'élever, et la séquence branchée sur
+    /// elle s'arrêtait sur `BudgetRefused` à tous les coups.
+    #[test]
+    fn an_installing_action_budgets_the_whole_session_and_not_only_its_steps() {
+        use crate::personal_access::session::MAX_EXEC_CHANNELS;
+        use your_cloud_bootstrap_protocol::BootstrapAction;
+
+        for action in [
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ] {
+            let opened: usize = super::super::plan::authorized_steps(action)
+                .iter()
+                .map(|step| channels_for(*step))
+                .sum();
+            assert_eq!(
+                channel_budget(action),
+                MAX_EXEC_CHANNELS + opened + 1,
+                "le budget de {action:?} n'ouvre pas la conversation de l'accès personnel"
+            );
+            // La forme faible que ce test existe pour interdire : un budget qui
+            // ne dépasserait pas ce que l'accès personnel a déjà dépensé
+            // laisserait la séquence sans un seul canal.
+            assert!(
+                channel_budget(action) > MAX_EXEC_CHANNELS,
+                "{action:?} n'a aucun canal une fois l'élévation prouvée"
+            );
+        }
+
+        // L'audit ne substitue rien : sa conversation est déjà celle que la
+        // session porte, et lui donner un budget serait lui en donner un second.
+        assert_eq!(channel_budget(BootstrapAction::AuditTargetReadOnly), 0);
     }
 
     /// Chaque acte déclaré tient dans le budget de son étape.

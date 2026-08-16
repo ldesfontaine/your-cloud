@@ -69,6 +69,8 @@ pub mod sequence;
 /// Le lot posé sur la cible, sous le seul accès personnel, et son empreinte
 /// relue là-bas.
 pub mod transfer;
+/// La couture entre la séquence et la session qui parle réellement à la cible.
+pub mod transport;
 /// Ce que la machine dit de l'unité activée : elle tourne, et elle est
 /// confinée.
 pub mod unit;

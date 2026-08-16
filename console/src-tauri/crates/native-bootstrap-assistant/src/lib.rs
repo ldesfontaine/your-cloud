@@ -997,6 +997,21 @@ fn serve_personal_access(
     let Ok(mut live) = established.outcome else {
         return PromptOutcome::Unavailable;
     };
+    // Le budget de la session est dérivé de l'action que l'humain a approuvée,
+    // et adopté **ici** : avant la sonde d'identité, donc avant le premier
+    // canal, ce qui est le seul instant où la garde de #54 l'accepte. Plus tard
+    // — après l'élévation, par exemple — elle refuserait, et une séquence
+    // d'installation branchée sur cette session n'aurait pas un canal à
+    // dépenser.
+    //
+    // Une action qui n'installe rien rend zéro, et zéro veut dire « rien à
+    // substituer » : la session garde alors la conversation que #54 lui donne,
+    // intacte. C'est le cas de l'audit, qui n'ouvre aucune étape.
+    let session_budget = installation::acts::channel_budget(resolved.actions[0]);
+    if session_budget != 0 && live.adopt_derived_budget(session_budget).is_err() {
+        live.close();
+        return PromptOutcome::Unavailable;
+    }
     let proven =
         prove_administrator_elevation(&mut live, &resolved, deadline, &expired, &lease, &guard);
     // The transport is closed before anything is announced, on every path —

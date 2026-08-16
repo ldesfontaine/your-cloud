@@ -59,8 +59,22 @@ pub trait Channel {
     /// redirection : elle est donnée à `dd`, et à lui seul.
     fn run(&mut self, command: FixedCommand, input: Option<&[u8]>) -> Result<Answer, ChannelError>;
 
-    /// Adopte le budget que la séquence a dérivé de ses étapes, avant tout
-    /// canal. Une implémentation qui n'en tient pas rend `Ok(())`.
+    /// Adopte le budget que la séquence a dérivé, **ou confirme qu'il est déjà
+    /// celui-là**. Une implémentation qui n'en tient pas rend `Ok(())`.
+    ///
+    /// Les deux formes sont la même exigence, et la seconde n'est pas un
+    /// assouplissement de la première. Sur la session réelle, le budget est
+    /// adopté avant la sonde d'identité — c'est le seul instant où la garde de
+    /// `#54` l'accepte, puisqu'elle exige qu'aucun canal n'ait encore été
+    /// ouvert — donc bien avant que cette séquence existe. Ce qu'elle fait ici
+    /// est alors de **confronter** : le canal porte-t-il le budget que le plan
+    /// dérive ? Un canal qui en porterait un autre est refusé, exactement comme
+    /// un canal qui refuserait d'adopter.
+    ///
+    /// La séquence ne fait donc jamais confiance à son appelant sur ce point.
+    /// Elle dérive son chiffre et le confronte, et c'est une propriété plus
+    /// forte que de l'imposer à un canal neuf : un appelant qui aurait dérivé
+    /// le budget d'une autre action se voit refuser ici.
     fn adopt_budget(&mut self, budget: usize) -> Result<(), ChannelError>;
 }
 
@@ -623,6 +637,9 @@ mod tests {
         failing: Vec<String>,
         /// Chaque commande vue, et l'entrée exacte qu'elle a reçue.
         seen: RefCell<Vec<(String, Option<Vec<u8>>)>>,
+        /// Le budget que ce canal porte déjà, quand il en porte un. `None` :
+        /// il accepte celui qu'on lui présente, comme un canal neuf.
+        budget_carried: Option<usize>,
         adopted: RefCell<Option<usize>>,
     }
 
@@ -644,6 +661,7 @@ mod tests {
                 mute: false,
                 failing: Vec::new(),
                 seen: RefCell::new(Vec::new()),
+                budget_carried: None,
                 adopted: RefCell::new(None),
             }
         }
@@ -836,6 +854,14 @@ mod tests {
 
         fn adopt_budget(&mut self, budget: usize) -> Result<(), ChannelError> {
             *self.adopted.borrow_mut() = Some(budget);
+            // Un canal qui porte déjà un budget confronte celui qu'on lui
+            // présente, comme la session réelle le fait : c'est ce qui permet
+            // d'exercer le refus sans transport.
+            if let Some(carried) = self.budget_carried {
+                if carried != budget {
+                    return Err(ChannelError);
+                }
+            }
             Ok(())
         }
     }
@@ -1005,6 +1031,63 @@ mod tests {
         assert_eq!(
             *channel.adopted.borrow(),
             Some(acts::channel_budget(BootstrapAction::InstallServerBundle))
+        );
+    }
+
+    /// **Un canal qui porte le budget d'une autre action est refusé avant le
+    /// premier acte.**
+    ///
+    /// C'est ce que « confronter plutôt que faire confiance » veut dire en
+    /// pratique. Sur la session réelle, le budget est adopté avant la sonde
+    /// d'identité — donc bien avant que cette séquence existe — et le seul
+    /// geste qui lui reste est de vérifier que le chiffre porté est celui que
+    /// **son** plan dérive. Un appelant qui aurait préparé la session pour
+    /// activer, puis lancé la séquence qui pose, est arrêté ici plutôt que de
+    /// heurter le budget au milieu de l'installation, une machine à moitié
+    /// touchée.
+    #[test]
+    fn a_channel_carrying_another_action_budget_is_refused_before_the_first_act() {
+        let carried = Held::new();
+        let mut channel = ScriptedChannel::in_the_announced_state();
+        // La session a été préparée pour l'autre action du protocole.
+        channel.budget_carried = Some(acts::channel_budget(
+            BootstrapAction::ActivateApprovedController,
+        ));
+        let mut secret = SpentSecret::<Vec<u8>>::none();
+
+        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
+            &plan(),
+            &carried.payload(),
+            &mut secret,
+            |held: &Vec<u8>| held.as_slice(),
+        );
+
+        assert_eq!(outcome.stopped, Some(SequenceStop::BudgetRefused));
+        // Rien n'a couru : ni acte, ni dépôt, ni constat. Le refus tombe avant
+        // que la machine soit touchée.
+        assert!(
+            channel.received.borrow().is_empty(),
+            "des octets sont partis sous un budget qui n'est pas celui du plan"
+        );
+        assert!(
+            outcome.ledger.items().is_empty(),
+            "un effet est entré au registre sous un budget refusé"
+        );
+
+        // Et le contrôle positif : le même canal, portant le bon budget, passe.
+        let mut agreeing = ScriptedChannel::in_the_announced_state();
+        agreeing.budget_carried = Some(acts::channel_budget(BootstrapAction::InstallServerBundle));
+        let mut secret = SpentSecret::<Vec<u8>>::none();
+        let outcome = Sequence::new(&mut agreeing, BootstrapAction::InstallServerBundle, false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
+        assert!(
+            outcome.succeeded(),
+            "le contrôle positif a été arrêté : {outcome:?}"
         );
     }
 

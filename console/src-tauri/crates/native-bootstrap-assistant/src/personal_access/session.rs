@@ -308,8 +308,29 @@ pub struct EstablishedSession {
 ///   négociation que le budget de #54 refuse ;
 /// - **une seule fois** — un budget déjà substitué ne se re-substitue pas, sans
 ///   quoi la borne serait un plancher plutôt qu'un plafond.
-pub(crate) fn may_adopt_budget(channels_spent: usize, current_budget: usize) -> bool {
-    channels_spent == 0 && current_budget == MAX_EXEC_CHANNELS
+///
+/// **Amendement du 16 août 2026 — redemander le chiffre déjà porté est
+/// licite.** Une séquence d'installation dérive son budget de son propre plan
+/// et le présente à la session ; celle-ci l'a déjà adopté avant sa sonde, seul
+/// instant où la première règle l'accepte. La séquence ne fait donc pas
+/// confiance à son appelant, elle **confronte** — et une confrontation qui
+/// réussit ne doit pas être refusée comme une seconde substitution.
+///
+/// Ce n'est pas un assouplissement : le chiffre ne change pas, donc la borne
+/// reste un plafond. Ce qu'un budget **différent** demanderait reste refusé
+/// après le premier canal, et c'est ce refus qui arrête une session préparée
+/// pour une autre action.
+///
+/// La règle vit ici, et non dans la couture qui la consomme, pour la raison que
+/// `#151` a nommée et que cette tranche a vue se reproduire : logée dans un type
+/// exigeant un transport réel, elle n'était exerçable par aucune suite — la
+/// mutation qui la supprimait laissait 475 cas au vert.
+pub(crate) fn may_adopt_budget(
+    channels_spent: usize,
+    current_budget: usize,
+    requested: usize,
+) -> bool {
+    current_budget == requested || (channels_spent == 0 && current_budget == MAX_EXEC_CHANNELS)
 }
 
 /// Every channel goes through [`Self::run_channel`], which is the very function
@@ -346,7 +367,7 @@ impl LiveSession {
     /// exactement la négociation que le budget refuse. Un budget adopté deux
     /// fois est refusé pour la même raison.
     pub fn adopt_derived_budget(&mut self, budget: usize) -> Result<(), TransportRefusal> {
-        if !may_adopt_budget(self.channels_spent, self.channel_budget) {
+        if !may_adopt_budget(self.channels_spent, self.channel_budget, budget) {
             return Err(TransportRefusal::ChannelBudgetSpent);
         }
         self.channel_budget = budget;
@@ -1126,21 +1147,55 @@ mod tests {
     /// suite entière au vert.
     #[test]
     fn a_derived_budget_is_adopted_before_the_first_channel_and_only_once() {
-        // Le seul état où l'adoption est licite.
-        assert!(may_adopt_budget(0, MAX_EXEC_CHANNELS));
+        const DERIVED: usize = 18;
+
+        // Le seul état où une substitution est licite.
+        assert!(may_adopt_budget(0, MAX_EXEC_CHANNELS, DERIVED));
 
         // Une session qui a déjà parlé ne s'accorde pas de quoi parler plus.
         for spent in 1..=MAX_EXEC_CHANNELS {
             assert!(
-                !may_adopt_budget(spent, MAX_EXEC_CHANNELS),
+                !may_adopt_budget(spent, MAX_EXEC_CHANNELS, DERIVED),
                 "un budget adopté après {spent} canaux serait une négociation"
             );
         }
 
-        // Un budget déjà substitué ne se re-substitue pas : sans quoi la borne
-        // serait un plancher plutôt qu'un plafond.
+        // Un budget déjà substitué ne se re-substitue pas par un **autre** :
+        // sans quoi la borne serait un plancher plutôt qu'un plafond.
         for already in [0, 1, MAX_EXEC_CHANNELS + 1, 64] {
-            assert!(!may_adopt_budget(0, already));
+            assert!(!may_adopt_budget(0, already, DERIVED));
+        }
+    }
+
+    /// Redemander le chiffre **déjà porté** est licite, à tout moment.
+    ///
+    /// C'est ce qui permet à une séquence de confronter le budget d'une session
+    /// plutôt que de faire confiance à celui qui la lui a passée : elle dérive
+    /// son chiffre de son propre plan et le présente ; la session dit oui si
+    /// c'est bien le sien. Sans ce cas, la confrontation serait indistinguable
+    /// d'une seconde substitution et une installation licite se verrait refuser
+    /// son budget après l'élévation.
+    ///
+    /// La borne ne bouge pas : le chiffre est le même, donc rien n'est
+    /// réapprovisionné.
+    #[test]
+    fn asking_again_for_the_budget_already_carried_is_not_a_second_substitution() {
+        const DERIVED: usize = 18;
+
+        for spent in 0..=DERIVED {
+            assert!(
+                may_adopt_budget(spent, DERIVED, DERIVED),
+                "confronter le budget porté après {spent} canaux doit rester licite"
+            );
+        }
+
+        // Et un **autre** chiffre reste refusé une fois la session engagée :
+        // c'est ce refus qui arrête une session préparée pour une autre action.
+        for spent in 1..=DERIVED {
+            assert!(
+                !may_adopt_budget(spent, DERIVED, DERIVED + 1),
+                "un budget différent a été accordé après {spent} canaux"
+            );
         }
     }
 
