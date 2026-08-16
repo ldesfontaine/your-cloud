@@ -17,18 +17,23 @@
 //!    même bascule que l'ancre scellée opère pour le lot.
 //! 3. **Le dépôt est celui du lot** : `dd` sans privilège, dans le même
 //!    répertoire propre à l'opération, jugé statut → taille → empreinte, et le
-//!    fichier déposé est un résidu que le registre nomme et retire.
+//!    fichier déposé est un résidu que le registre nomme et retire. Le juge
+//!    n'est pas seulement *le même en esprit*, c'est **le même corps** :
+//!    [`staged`] délègue à [`super::transfer::deposited`] et n'ajoute qu'une
+//!    chose — nommer les trois attentes de ce fichier-ci.
 //! 4. **Un acte fixe l'installe en place.** Le privilège ne voit donc toujours
 //!    que des octets fixes : `install` copie d'un chemin constant vers un
 //!    chemin constant, et ce qui varie a déjà été relu et confronté à
-//!    l'empreinte que le plan portait.
+//!    l'empreinte que le plan portait. Cet acte vit dans la table close de
+//!    [`super::acts`], avec tous les autres actes privilégiés du palier : il
+//!    n'est donc joignable qu'en présentant un plan, et la réponse à « que
+//!    lance cet Assistant en root » se lit toujours en une page.
 //!
 //! Ce que la configuration contient a été **mesuré** avant d'être figé :
 //! l'unité du Controller ne consomme d'elle que trois variables, toutes des
 //! adresses non secrètes. Elle se réduit donc à un fichier déposé, et rien
 //! n'exige de la composer sur la machine.
 
-use super::plan::MACHINE_CONFIGURATION;
 use crate::personal_access::elevation::FixedCommand;
 use sha2::{Digest, Sha256};
 
@@ -65,35 +70,6 @@ pub const MEASURE_CONFIGURATION_SIZE: FixedCommand = FixedCommand::fixed(
 pub const MEASURE_CONFIGURATION: FixedCommand = FixedCommand::fixed(
     "/usr/bin/env LC_ALL=C /usr/bin/sha256sum -- $HOME/.your-cloud-bootstrap/controller.env",
 );
-
-/// L'acte privilégié qui met le fichier en place, **d'un chemin constant vers
-/// un chemin constant**.
-///
-/// C'est ce qui garde le privilège aveugle au contenu : `install` ne compose
-/// rien, ne lit aucun champ et ne connaît aucune adresse. Les octets qu'il
-/// déplace ont été relus et confrontés à l'empreinte que le plan nommait, avant
-/// que le moindre privilège soit dépensé sur eux. Le mode et le propriétaire
-/// sont posés par l'appel qui installe, jamais par un `chmod` qui suivrait.
-pub const INSTALL_CONFIGURATION: ActPair = ActPair {
-    without_password: FixedCommand::fixed(
-        "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/install -o root -g root -m 0600 \
-         -- $HOME/.your-cloud-bootstrap/controller.env /etc/your-cloud/controller.env",
-    ),
-    with_password: FixedCommand::fixed(
-        "/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- /usr/bin/env LC_ALL=C \
-         /usr/bin/install -o root -g root -m 0600 -- \
-         $HOME/.your-cloud-bootstrap/controller.env /etc/your-cloud/controller.env",
-    ),
-};
-
-/// Les deux orthographes d'un acte, comme [`super::acts::ActCommands`] les
-/// déclare. Elle est répétée ici plutôt qu'importée pour que ce module reste
-/// lisible seul ; les suites tiennent l'égalité de forme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ActPair {
-    pub without_password: FixedCommand,
-    pub with_password: FixedCommand,
-}
 
 /// La configuration produite localement, avec l'empreinte que le plan nommera.
 ///
@@ -169,6 +145,26 @@ pub fn compose(
         .collect();
 
     Ok(MachineConfiguration { bytes, sha256 })
+}
+
+/// La configuration relue **sur la cible**, jugée par la chaîne que le lot a
+/// déjà prouvée.
+///
+/// Elle ne juge rien elle-même : elle nomme les trois attentes de ce fichier —
+/// la taille et l'empreinte des octets composés ici, le suffixe du chemin où le
+/// dépôt les a écrits — et laisse [`super::transfer::deposited`] rendre le
+/// verdict. C'est ce qui fait qu'« être arrivé intact » a une seule définition
+/// dans ce palier, et que le refus porte le même nom pour le lot et pour elle.
+pub fn staged(
+    configuration: &MachineConfiguration,
+    readings: &super::transfer::TransferReadings<'_>,
+) -> Result<super::transfer::StagedFile, super::transfer::TransferRefusal> {
+    super::transfer::deposited(
+        configuration.size(),
+        configuration.sha256(),
+        STAGED_CONFIGURATION_SUFFIX,
+        readings,
+    )
 }
 
 #[cfg(test)]
@@ -269,27 +265,80 @@ mod tests {
         assert_ne!(composed.bytes(), other.bytes());
     }
 
-    /// Le privilège ne voit que des octets fixes : l'acte d'installation ne
-    /// porte aucune adresse, aucun champ, rien qui vienne du contenu.
+    /// La configuration est jugée arrivée par **le même corps** que le lot, et
+    /// contre les octets composés ici.
+    ///
+    /// Le contrôle positif d'abord, puis la propriété que ce jugement existe
+    /// pour obtenir : des octets arrivés différents sont refusés, et le refus
+    /// porte le nom que le lot lui donnerait — il n'y a pas deux vocabulaires
+    /// pour « ce n'est pas ce que j'ai envoyé ».
     #[test]
-    fn the_privileged_act_carries_no_byte_of_the_content() {
-        for command in [
-            INSTALL_CONFIGURATION.without_password,
-            INSTALL_CONFIGURATION.with_password,
-        ] {
-            let bytes = command.as_str();
-            assert!(bytes.contains("/usr/bin/install -o root -g root -m 0600"));
-            assert!(bytes.ends_with(MACHINE_CONFIGURATION));
-            assert!(bytes.starts_with("/usr/bin/sudo -k "));
-            // Aucune des clés, donc aucune valeur, n'entre dans l'acte.
-            for key in CONFIGURATION_KEYS {
-                assert!(!bytes.contains(key));
-            }
-            assert!(!bytes.contains("chmod"));
-            for forbidden in ["$(", "`", "&&", "||", ";", "|", ">", "~"] {
-                assert!(!bytes.contains(forbidden), "acte composé : {bytes}");
-            }
-        }
+    fn the_configuration_is_judged_arrived_by_the_chain_the_bundle_proved() {
+        use super::super::transfer::{TransferReadings, TransferRefusal};
+
+        let composed = nominal();
+        let path = format!("/home/ycoperator{STAGED_CONFIGURATION_SUFFIX}");
+        let readings = |digest: &str, size: u64| {
+            (
+                format!("{size}\n").into_bytes(),
+                format!("{digest}  {path}\n").into_bytes(),
+            )
+        };
+
+        let (size, digest) = readings(composed.sha256(), composed.size());
+        let arrived = staged(
+            &composed,
+            &TransferReadings {
+                deposit_status: 0,
+                size_status: 0,
+                size_stdout: &size,
+                digest_status: 0,
+                digest_stdout: &digest,
+            },
+        )
+        .expect("le contrôle positif doit être jugé posé");
+        assert_eq!(arrived.sha256(), composed.sha256());
+
+        // Un octet de différence, et le fichier n'est plus celui qui est parti.
+        let other = compose("192.168.240.116:9443", "192.168.240.0/24", "1.2.3.4:9444")
+            .expect("une seconde configuration valable");
+        let (size, digest) = readings(other.sha256(), composed.size());
+        assert_eq!(
+            staged(
+                &composed,
+                &TransferReadings {
+                    deposit_status: 0,
+                    size_status: 0,
+                    size_stdout: &size,
+                    digest_status: 0,
+                    digest_stdout: &digest,
+                }
+            ),
+            Err(TransferRefusal::StagedDigestMismatch)
+        );
+
+        // Et une ligne qui mesure le lot ne répond pas pour la configuration :
+        // le suffixe attendu est celui de ce fichier-ci.
+        let (size, _) = readings(composed.sha256(), composed.size());
+        let foreign = format!(
+            "{}  /home/ycoperator{}\n",
+            composed.sha256(),
+            super::super::transfer::STAGED_ARTIFACT_SUFFIX
+        )
+        .into_bytes();
+        assert_eq!(
+            staged(
+                &composed,
+                &TransferReadings {
+                    deposit_status: 0,
+                    size_status: 0,
+                    size_stdout: &size,
+                    digest_status: 0,
+                    digest_stdout: &foreign,
+                }
+            ),
+            Err(TransferRefusal::ForeignPathMeasured)
+        );
     }
 
     /// Le dépôt emprunte la chaîne du lot, sans en inventer une seconde.

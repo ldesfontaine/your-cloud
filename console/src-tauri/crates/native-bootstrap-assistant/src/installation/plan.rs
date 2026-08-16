@@ -267,11 +267,15 @@ pub(crate) mod tests {
     };
     use ed25519_dalek::{Signer, SigningKey};
 
-    const ARTIFACT: &[u8] = b"the exact bytes of the embedded server bundle";
+    /// Exposés au crate pour la même raison que [`plan_for_tests`] : les suites
+    /// de l'ordonnanceur font réellement traverser ces octets, et une seconde
+    /// définition du lot de référence donnerait deux lots là où la propriété
+    /// tient précisément à ce qu'il n'y en ait qu'un.
+    pub(crate) const ARTIFACT: &[u8] = b"the exact bytes of the embedded server bundle";
     const KEY: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     /// A real [`VerifiedBundle`], obtained the only way one can be obtained.
-    fn verified_bundle() -> bundle::VerifiedBundle {
+    pub(crate) fn verified_bundle() -> bundle::VerifiedBundle {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let digest: String = <sha2::Sha256 as sha2::Digest>::digest(ARTIFACT)
             .iter()

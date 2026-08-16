@@ -16,13 +16,30 @@
 //!
 //! **Son verdict est l'empreinte relue sur la cible.** Ce module est la moitié
 //! qui décide : ses entrées sont ce que la machine a répondu, et sa sortie est
-//! un [`StagedBundle`] ou un refus nommé. Il n'ouvre aucun fichier, n'ouvre
+//! un [`StagedFile`] ou un refus nommé. Il n'ouvre aucun fichier, n'ouvre
 //! aucun transport et ne copie rien — la moitié qui agit lui apporte les octets
 //! observés. Confronter l'empreinte **après** la traversée est ce qui distingue
 //! « le lot a été envoyé » de « le lot est sur la cible » : un transport qui
 //! tronque, une écriture qui échoue à mi-course ou un fichier qu'un tiers a
 //! remplacé donnent chacun leur refus plutôt qu'un `dpkg` sur des octets que
 //! personne n'a relus.
+//!
+//! **Il prononce deux verdicts, et leur séparation est l'ordre lui-même.**
+//! [`staging_created`] répond du répertoire d'attente, [`deposited`] du fichier
+//! qui y est déposé. Les réunir en un seul appel obligerait l'exécutant à avoir
+//! déjà déposé pour apprendre que le répertoire n'était pas le sien — c'est-à-
+//! dire à écrire six mégaoctets dans un répertoire dont un tiers tient la
+//! porte, quitte à le refuser après coup. Le refus doit tomber **avant** que le
+//! premier octet parte, donc la porte est une fonction distincte, appelée en
+//! premier.
+//!
+//! **La chaîne sert aussi ce qui n'est pas le lot.** [`deposited`] reçoit la
+//! taille, l'empreinte et le suffixe attendus plutôt que de les lire d'un
+//! [`VerifiedBundle`] : la configuration machine de [`super::configuration`]
+//! est déposée par le même `dd`, mesurée par les mêmes deux commandes et jugée
+//! par ce même corps. Un second juge écrit à côté aurait donné deux définitions
+//! de « le fichier est celui qu'on a envoyé », et c'est exactement ce qu'un
+//! duplicata finit par produire.
 
 use super::bundle::VerifiedBundle;
 use crate::personal_access::elevation::FixedCommand;
@@ -142,19 +159,20 @@ pub enum TransferRefusal {
     StagedDigestMismatch,
 }
 
-/// La preuve qu'un lot exactement jugé est sur la cible, à l'emplacement connu.
+/// La preuve qu'un fichier exactement jugé est sur la cible, à l'emplacement
+/// connu — le lot, ou la configuration que le plan nomme.
 ///
 /// Comme les autres témoins de ce crate, il ne peut pas être construit en
-/// nommant ses champs et [`staged`] est la seule fonction qui en rend un. Il
-/// n'autorise rien par lui-même : il dit seulement que les octets que
-/// [`super::bundle::verify`] avait jugés sont ceux que la cible détient.
+/// nommant ses champs et [`deposited`] est la seule fonction qui en rend un. Il
+/// n'autorise rien par lui-même : il dit seulement que les octets qu'un juge
+/// local avait déjà arrêtés sont ceux que la cible détient.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StagedBundle {
+pub struct StagedFile {
     path: String,
     sha256: String,
 }
 
-impl StagedBundle {
+impl StagedFile {
     /// Le chemin absolu du lot sur la cible, tel que la machine l'a nommé.
     pub fn path(&self) -> &str {
         &self.path
@@ -165,16 +183,16 @@ impl StagedBundle {
     }
 }
 
-/// Ce que la machine a répondu à chacune des quatre commandes du transfert.
+/// Ce que la machine a répondu aux trois commandes d'un dépôt.
 ///
 /// Chaque champ est un statut ou des octets bruts : rien n'y est une conclusion
 /// tirée par l'appelant. C'est la forme de `elevation::elevated`, appliquée à
-/// une étape qui parle quatre fois au lieu d'une.
+/// une étape qui parle trois fois au lieu d'une. Le statut du répertoire
+/// d'attente n'y est pas : il a son propre verdict, prononcé avant que ces
+/// trois commandes existent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransferReadings<'a> {
-    /// Statut de [`CREATE_STAGING`].
-    pub staging_status: u32,
-    /// Statut de [`DEPOSIT_BUNDLE`].
+    /// Statut de [`DEPOSIT_BUNDLE`] ou de son équivalent.
     pub deposit_status: u32,
     /// Statut et sortie de [`MEASURE_STAGED_SIZE`].
     pub size_status: u32,
@@ -184,11 +202,24 @@ pub struct TransferReadings<'a> {
     pub digest_stdout: &'a [u8],
 }
 
-/// La taille relue sur la cible, confrontée à celle que le manifeste lie.
-fn read_size(
-    bundle: &VerifiedBundle,
-    readings: &TransferReadings<'_>,
-) -> Result<(), TransferRefusal> {
+/// La porte du répertoire d'attente, prononcée **avant** que le moindre octet
+/// parte.
+///
+/// `mkdir` sans `-p` échoue sur un répertoire présent, donc ce statut n'est pas
+/// un code de sortie parmi d'autres : c'est le constat lui-même. Zéro dit que
+/// le répertoire n'existait pas et que cette exécution l'a créé — donc qu'elle
+/// pourra le retirer ; non nul dit qu'elle n'en est pas propriétaire, et rien
+/// n'y sera écrit.
+pub fn staging_created(status: u32) -> Result<(), TransferRefusal> {
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(TransferRefusal::StagingNotFresh)
+    }
+}
+
+/// La taille relue sur la cible, confrontée à celle que l'expéditeur tenait.
+fn read_size(expected: u64, readings: &TransferReadings<'_>) -> Result<(), TransferRefusal> {
     if readings.size_stdout.len() > MAX_MEASUREMENT_BYTES {
         return Err(TransferRefusal::MeasurementTooLarge);
     }
@@ -201,44 +232,47 @@ fn read_size(
         .ok_or(TransferRefusal::SizeUnreadable)?
         .parse()
         .map_err(|_| TransferRefusal::SizeUnreadable)?;
-    // La taille attendue est celle que le manifeste signé lie, portée par le
-    // lot déjà jugé localement — jamais un nombre que l'appelant aurait choisi.
-    if observed == bundle.size() {
+    // La taille attendue vient d'un témoin que l'appelant détenait déjà — le
+    // manifeste signé pour le lot, les octets composés pour la configuration —
+    // jamais d'un nombre choisi au moment de la comparaison.
+    if observed == expected {
         Ok(())
     } else {
         Err(TransferRefusal::StagedSizeMismatch)
     }
 }
 
-/// La porte du transfert. Rien d'autre dans ce crate ne construit un
-/// [`StagedBundle`].
+/// La porte d'un dépôt. Rien d'autre dans ce crate ne construit un
+/// [`StagedFile`].
 ///
-/// Les deux entrées sont ce que la **machine a répondu**, jamais ce qu'un
-/// appelant en a conclu : `staging_status` est le statut de [`CREATE_STAGING`]
-/// tel quel — un booléen aurait laissé la conclusion à celui qui la rapporte,
-/// et c'est précisément ce que la forme de `elevation::elevated` refuse de
-/// faire. Un répertoire que cette exécution n'a pas créé arrête l'étape avant
-/// toute mesure.
+/// Les entrées sont ce que la **machine a répondu**, jamais ce qu'un appelant
+/// en a conclu : chaque statut est rendu tel quel — un booléen aurait laissé la
+/// conclusion à celui qui la rapporte, et c'est précisément ce que la forme de
+/// `elevation::elevated` refuse de faire.
+///
+/// Les trois attentes ne sont pas des réglages : elles viennent d'un témoin que
+/// l'appelant tenait **avant** le départ — le manifeste signé pour le lot, les
+/// octets composés pour la configuration. Un appelant qui les choisirait ne
+/// pourrait rien prouver de plus qu'en n'appelant pas cette fonction.
 ///
 /// La sortie d'erreur n'entre pas dans le verdict, et c'est délibéré : ce qui
 /// est jugé est l'empreinte que la cible a calculée sur son propre fichier. Une
 /// commande qui aurait écrit un avertissement sur `stderr` tout en rendant zéro
 /// et la ligne exacte a mesuré le fichier quand même, et refuser là-dessus
 /// ferait dépendre une porte de sécurité du bavardage d'un système.
-pub fn staged(
-    bundle: &VerifiedBundle,
+pub fn deposited(
+    expected_size: u64,
+    expected_sha256: &str,
+    expected_suffix: &str,
     readings: &TransferReadings<'_>,
-) -> Result<StagedBundle, TransferRefusal> {
-    if readings.staging_status != 0 {
-        return Err(TransferRefusal::StagingNotFresh);
-    }
+) -> Result<StagedFile, TransferRefusal> {
     // L'ordre va du moins cher au plus cher, et chaque marche a son nom : le
     // statut du dépôt, puis la taille — que `dd` peut tronquer sans crier —,
-    // puis seulement l'empreinte, qui coûte de hacher tout le lot.
+    // puis seulement l'empreinte, qui coûte de hacher tout le fichier.
     if readings.deposit_status != 0 {
         return Err(TransferRefusal::DepositFailed);
     }
-    read_size(bundle, readings)?;
+    read_size(expected_size, readings)?;
     let stdout = readings.digest_stdout;
     if stdout.len() > MAX_MEASUREMENT_BYTES {
         return Err(TransferRefusal::MeasurementTooLarge);
@@ -264,21 +298,37 @@ pub fn staged(
     // Le chemin imprimé est l'écho de l'argument fixe. Il est confronté à ce
     // que cet argument désigne : une ligne qui nommerait un autre fichier ne
     // répond pas à la commande qui a été approuvée.
-    if !path.ends_with(STAGED_ARTIFACT_SUFFIX) || path.starts_with(' ') {
+    if !path.ends_with(expected_suffix) || path.starts_with(' ') {
         return Err(TransferRefusal::ForeignPathMeasured);
     }
-    // L'empreinte du manifeste signé, relue sur la machine qui détient
-    // désormais le fichier. La taille n'est pas confrontée ici : elle l'a été
-    // par `bundle::verify` avant le départ, et une troncature en chemin change
-    // l'empreinte.
-    if digest != bundle.sha256() {
+    // L'empreinte que l'expéditeur tenait, relue sur la machine qui détient
+    // désormais le fichier. La taille n'est pas reconfrontée ici : elle l'a été
+    // à la marche précédente, et une troncature en chemin change l'empreinte.
+    if digest != expected_sha256 {
         return Err(TransferRefusal::StagedDigestMismatch);
     }
 
-    Ok(StagedBundle {
+    Ok(StagedFile {
         path: path.to_owned(),
         sha256: digest.to_owned(),
     })
+}
+
+/// Le dépôt du **lot**, jugé contre ce que le manifeste signé lie.
+///
+/// Elle ne fait que nommer les trois attentes du lot, une fois, pour qu'aucun
+/// exécutant n'ait à les porter lui-même : la taille et l'empreinte sortent du
+/// [`VerifiedBundle`], le suffixe est la constante de ce module.
+pub fn staged(
+    bundle: &VerifiedBundle,
+    readings: &TransferReadings<'_>,
+) -> Result<StagedFile, TransferRefusal> {
+    deposited(
+        bundle.size(),
+        bundle.sha256(),
+        STAGED_ARTIFACT_SUFFIX,
+        readings,
+    )
 }
 
 #[cfg(test)]
@@ -324,7 +374,6 @@ mod tests {
 
     fn readings<'a>(size: &'a [u8], digest: &'a [u8]) -> TransferReadings<'a> {
         TransferReadings {
-            staging_status: 0,
             deposit_status: 0,
             size_status: 0,
             size_stdout: size,
@@ -382,26 +431,23 @@ mod tests {
         );
     }
 
-    /// Un répertoire d'attente qui existait déjà arrête l'étape avant toute
-    /// mesure : cette exécution n'a pas créé ce qu'elle s'apprêtait à remplir,
+    /// Un répertoire d'attente qui existait déjà arrête l'étape **avant tout
+    /// dépôt** : cette exécution n'a pas créé ce qu'elle s'apprêtait à remplir,
     /// donc elle ne le remplit pas et ne pourra pas le retirer.
+    ///
+    /// Le verdict est séparé de celui du dépôt pour cette raison exacte. S'il
+    /// vivait dans [`deposited`], l'exécutant devrait avoir déjà écrit six
+    /// mégaoctets dans un répertoire dont un tiers tient la porte pour
+    /// apprendre qu'il n'avait pas le droit de l'écrire.
     #[test]
     fn a_staging_directory_this_run_did_not_create_stops_the_step() {
-        let bundle = verified();
-
-        assert_eq!(
-            staged(
-                &bundle,
-                &TransferReadings {
-                    staging_status: 1,
-                    ..readings(
-                        &nominal_size(),
-                        &measurement(&hex_digest(ARTIFACT), HOME_PATH)
-                    )
-                }
-            ),
-            Err(TransferRefusal::StagingNotFresh)
-        );
+        assert_eq!(staging_created(0), Ok(()));
+        for refused in [1u32, 2, 127] {
+            assert_eq!(
+                staging_created(refused),
+                Err(TransferRefusal::StagingNotFresh)
+            );
+        }
     }
 
     /// Chaque forme de sortie que la mesure ne doit pas accepter, refusée par

@@ -119,6 +119,27 @@ const CREATE_STATE: ActCommands = ActCommands {
     ),
 };
 
+/// Met la configuration machine en place, **d'un chemin constant vers un chemin
+/// constant**.
+///
+/// C'est ce qui garde le privilège aveugle au contenu : `install` ne compose
+/// rien, ne lit aucun champ et ne connaît aucune adresse. Les octets qu'il
+/// déplace ont voyagé sans privilège, ont été relus sur la cible et confrontés
+/// à l'empreinte que le plan nommait, **avant** que le moindre privilège soit
+/// dépensé sur eux. Le mode et le propriétaire sont posés par l'appel qui
+/// installe, jamais par un `chmod` qui suivrait.
+const INSTALL_CONFIGURATION: ActCommands = ActCommands {
+    without_password: FixedCommand::fixed(
+        "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/install -o root -g root -m 0600 \
+         -- $HOME/.your-cloud-bootstrap/controller.env /etc/your-cloud/controller.env",
+    ),
+    with_password: FixedCommand::fixed(
+        "/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- /usr/bin/env LC_ALL=C \
+         /usr/bin/install -o root -g root -m 0600 -- \
+         $HOME/.your-cloud-bootstrap/controller.env /etc/your-cloud/controller.env",
+    ),
+};
+
 /// Crée le répertoire des sources de credentials, mêmes droits, même raison.
 const CREATE_CREDENTIAL_SOURCES: ActCommands = ActCommands {
     without_password: FixedCommand::fixed(
@@ -146,15 +167,20 @@ pub const DROP_CREDENTIAL: FixedCommand = FixedCommand::fixed("/usr/bin/sudo -k"
 /// n'est pas la sienne. Elle se lit comme la réponse complète à « que lance cet
 /// Assistant en root ».
 ///
-/// `WriteMachineConfiguration` n'y est pas, et c'est une absence délibérée :
-/// écrire un fichier dont le contenu dépend de la machine n'est pas une commande
-/// fixe, et le faire passer pour telle serait le seul endroit du palier où des
-/// octets choisis ailleurs entreraient dans un acte privilégié. Cette étape aura
-/// sa propre forme — un dépôt de contenu borné, jugé comme le lot l'a été — et
-/// la déclarer ici l'aurait dissimulée.
-const ACTS: [(Step, ActCommands); 5] = [
+/// **Amendement.** `WriteMachineConfiguration` en a longtemps été absente, et
+/// cette absence disait alors la vérité : sa forme n'était pas décidée, et
+/// écrire un fichier dont le contenu dépend de la machine n'est pas une
+/// commande fixe. Sa forme existe désormais — [`super::configuration`] compose
+/// les octets localement, les fait voyager **sans privilège** et les fait relire
+/// sur la cible — et ce qui reste à faire en `root` est un `install` d'un chemin
+/// constant vers un chemin constant, qui ne porte aucun octet du contenu. C'est
+/// donc un acte fixe comme les quatre autres, et le tenir hors de cette table
+/// décrirait moins bien la réalité qu'elle : il serait le seul acte privilégié
+/// du palier joignable sans présenter de plan.
+const ACTS: [(Step, ActCommands); 6] = [
     (Step::InstallPackage, INSTALL_PACKAGE),
     (Step::InstallPackage, RELOAD_UNITS),
+    (Step::WriteMachineConfiguration, INSTALL_CONFIGURATION),
     (Step::CreateState, CREATE_STATE),
     (Step::InstallCredentialSources, CREATE_CREDENTIAL_SOURCES),
     (Step::ActivateController, ACTIVATE_CONTROLLER),
@@ -174,10 +200,12 @@ pub const fn channels_for(step: Step) -> usize {
         Step::TransferBundle => 4,
         // `dpkg --install`, `daemon-reload`, puis le constat du paquet.
         Step::InstallPackage => 3,
-        // Sa forme n'est pas décidée : le contenu dépend de la machine, donc ce
-        // n'est pas une commande fixe. Zéro tant qu'elle n'existe pas, et ce
-        // zéro est une déclaration plutôt qu'un oubli.
-        Step::WriteMachineConfiguration => 0,
+        // La même chaîne que le lot, moins le répertoire d'attente que le
+        // transfert a déjà créé : déposer les octets, relire la taille, relire
+        // l'empreinte — puis l'`install` qui met le fichier en place. Le constat
+        // n'en ouvre pas un cinquième : le `stat` des nœuds le mesure avec les
+        // deux répertoires, et il est compté à la dernière étape qu'il couvre.
+        Step::WriteMachineConfiguration => 4,
         // Un `install -d` chacune. Le constat des nœuds les mesure toutes les
         // trois d'un seul `stat`, compté à la dernière d'entre elles.
         Step::CreateState => 1,
@@ -461,12 +489,39 @@ mod tests {
         }
     }
 
+    /// Le privilège ne voit que des octets fixes : l'acte qui met la
+    /// configuration en place ne porte aucune adresse, aucun champ, rien qui
+    /// vienne du contenu.
+    ///
+    /// C'est la condition qui permet à cette étape d'être un acte comme les
+    /// autres. Si l'acte portait la moindre valeur composée, il n'aurait pas sa
+    /// place dans cette table et le contenu variable entrerait dans le
+    /// privilège — ce qui n'arrive nulle part dans ce palier.
+    #[test]
+    fn the_configuration_act_carries_no_byte_of_the_content() {
+        for command in [
+            INSTALL_CONFIGURATION.without_password,
+            INSTALL_CONFIGURATION.with_password,
+        ] {
+            let bytes = command.as_str();
+            assert!(bytes.contains("/usr/bin/install -o root -g root -m 0600"));
+            assert!(bytes.ends_with(super::super::plan::MACHINE_CONFIGURATION));
+            // Aucune des clés, donc aucune valeur, n'entre dans l'acte.
+            for key in super::super::configuration::CONFIGURATION_KEYS {
+                assert!(!bytes.contains(key));
+            }
+            assert!(!bytes.contains("chmod"));
+            for forbidden in [">", "~"] {
+                assert!(!bytes.contains(forbidden), "acte composé : {bytes}");
+            }
+        }
+    }
+
     /// Les étapes sans acte rendent une liste vide, et c'est une réponse.
     #[test]
     fn the_steps_without_an_act_answer_with_an_empty_list() {
         for step in [
             Step::TransferBundle,
-            Step::WriteMachineConfiguration,
             Step::AssociateConsole,
             Step::Preflight,
         ] {
