@@ -4312,7 +4312,16 @@ fn drive_elevation(
     } else {
         &preflight.stderr
     };
-    let attested = elevation::attest_policy(succeeded, capture, false).map_err(Stop::Policy)?;
+    // Cette suite exerce l'accès personnel et son élévation, jamais une
+    // installation : la portée qu'elle exige est donc celle de l'audit, et
+    // le durcissement des actions d'installation a sa preuve ailleurs.
+    let attested = elevation::attest_policy(
+        succeeded,
+        capture,
+        false,
+        elevation::RequiredScope::IdentityProbe,
+    )
+    .map_err(Stop::Policy)?;
     *command = Some(attested.command);
     *password_required = Some(attested.password_required);
 
