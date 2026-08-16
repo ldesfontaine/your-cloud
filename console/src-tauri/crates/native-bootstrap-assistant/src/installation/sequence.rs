@@ -178,7 +178,16 @@ impl<'a, C: Channel> Sequence<'a, C> {
         borrow: impl Fn(&S) -> &[u8] + Copy,
     ) -> SequenceOutcome {
         let mut ledger = Ledger::new();
-        let outcome = self.drive(_plan, secret, borrow, &mut ledger);
+        // Les étapes dont l'effet est posé mais qu'aucun constat n'a encore
+        // établi. Elles vivent ici, et non dans la boucle, précisément pour que
+        // **tout** arrêt les inscrive : un effet posé que personne n'a établi
+        // doit être visible au déroulé, sans quoi il resterait sur la machine
+        // sans que rien ne le connaisse.
+        let mut pending: Vec<Step> = Vec::new();
+        let outcome = self.drive(_plan, secret, borrow, &mut ledger, &mut pending);
+        for step in pending {
+            record_step(&mut ledger, step, Provenance::Unknown);
+        }
         // Sur **tout** chemin : réussite, refus d'un juge, canal muet.
         secret.destroy();
         // Ce que `sudo` garde de nous ne survit pas non plus, et ce geste ne
@@ -196,6 +205,7 @@ impl<'a, C: Channel> Sequence<'a, C> {
         secret: &SpentSecret<S>,
         borrow: impl Fn(&S) -> &[u8] + Copy,
         ledger: &mut Ledger,
+        pending: &mut Vec<Step>,
     ) -> Result<(), SequenceStop> {
         let budget = acts::channel_budget(self.action);
         self.channel
@@ -203,7 +213,9 @@ impl<'a, C: Channel> Sequence<'a, C> {
             .map_err(|_| SequenceStop::BudgetRefused)?;
 
         for step in super::plan::authorized_steps(self.action) {
+            let mut ran_an_act = false;
             for act in ElevatedAct::authorised_for(plan, *step) {
+                ran_an_act = true;
                 let command = act.command(self.password_required);
                 let input = if self.password_required {
                     secret.bytes(borrow)
@@ -218,9 +230,11 @@ impl<'a, C: Channel> Sequence<'a, C> {
                 // que la machine a rendue : `Created` sur un zéro constaté,
                 // `Unknown` sinon — jamais `Created` sur une supposition.
                 if answer.exit_status != 0 {
-                    // L'acte s'est plaint : rien n'est constaté, donc la
-                    // provenance reste `Unknown` et le déroulé se dégradera.
-                    record_step(ledger, *step, Provenance::Unknown);
+                    // L'acte s'est plaint : rien n'est constaté, donc cette
+                    // étape et toutes celles qui attendaient encore entrent en
+                    // `Unknown` — leurs effets sont peut-être sur la machine et
+                    // personne ne les a établis, ce que le déroulé doit voir.
+                    pending.push(*step);
                     return Err(SequenceStop::ActFailed {
                         step: *step,
                         exit_status: answer.exit_status,
@@ -228,20 +242,46 @@ impl<'a, C: Channel> Sequence<'a, C> {
                 }
             }
 
+            // Une étape n'attend un constat que si elle a **réellement** couru
+            // quelque chose. Le transfert, dont la chaîne n'est pas encore
+            // jouée par cet ordonnanceur, ne pose aucun effet ici : l'inscrire
+            // en attente ferait porter au registre un inconnu qui n'existe pas,
+            // et un déroulé qui nomme un inconnu imaginaire est aussi faux
+            // qu'un déroulé qui en oublie un.
+            if ran_an_act {
+                // Un `stat` mesurant les trois nœuds d'un coup, plusieurs
+                // étapes peuvent attendre le même constat.
+                pending.push(*step);
+            }
+
             // Le constat, et lui seul, donne sa provenance au registre. Un code
             // de sortie dit qu'un programme s'est terminé sans se plaindre ;
             // seul le constat dit ce que la machine est devenue.
             match self.constate(*step, plan)? {
-                Some(true) => record_step(ledger, *step, Provenance::Created),
+                Some(true) => {
+                    // Le constat établit toutes les étapes qu'il couvre, et
+                    // celles-là seulement.
+                    let covered = acts::covered_by(
+                        acts::constat_for(*step).expect("un constat a répondu pour cette étape"),
+                    );
+                    pending.retain(|waiting| {
+                        if covered.contains(waiting) {
+                            record_step(ledger, *waiting, Provenance::Created);
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
                 Some(false) => {
-                    record_step(ledger, *step, Provenance::Unknown);
                     return Err(SequenceStop::Refused {
                         step: *step,
                         reason: self.last_refusal.clone(),
                     });
                 }
-                // Une étape sans constat n'a rien à inscrire par elle-même :
-                // ses effets sont ceux qu'une autre étape constate.
+                // Aucun constat ici : l'étape reste en attente de celui qui la
+                // couvrira, et sera portée `Unknown` si la séquence s'arrête
+                // avant lui.
                 None => {}
             }
         }
@@ -352,6 +392,10 @@ mod tests {
         unit: Vec<u8>,
         nodes: Vec<u8>,
         mute: bool,
+        /// Les octets exacts que la machine refusera. Vide : tout réussit.
+        /// Le canal ne connaît pas les étapes, seulement des commandes — c'est
+        /// à l'appelant de dériver du plan celles qu'il veut voir échouer.
+        failing: Vec<String>,
         seen: RefCell<Vec<(String, bool)>>,
         adopted: RefCell<Option<usize>>,
     }
@@ -369,6 +413,7 @@ mod tests {
                 unit: unit_reading(),
                 nodes: nodes_reading(),
                 mute: false,
+                failing: Vec::new(),
                 seen: RefCell::new(Vec::new()),
                 adopted: RefCell::new(None),
             }
@@ -434,8 +479,9 @@ mod tests {
             } else if bytes == super::super::nodes::STAT_OWNED.as_str() {
                 self.nodes.clone()
             } else {
+                let refused = self.failing.iter().any(|command| command == bytes);
                 return Ok(Answer {
-                    exit_status: self.act_status,
+                    exit_status: if refused { 1 } else { self.act_status },
                     stdout: Vec::new(),
                 });
             };
@@ -688,6 +734,74 @@ mod tests {
             reason.contains("HalfConfigured"),
             "le refus doit porter le nom du juge : {reason}"
         );
+    }
+
+    /// L'arrêt **à chaque étape nommée** rend un déroulé exact.
+    ///
+    /// La séquence est arrêtée successivement à chacune des étapes qui portent
+    /// un acte, et le registre rendu est confronté à chaque fois : les étapes
+    /// franchies avant l'arrêt sont `Created` — elles ont été constatées, donc
+    /// cette exécution peut les défaire — et l'étape interrompue est `Unknown`,
+    /// ce qui dégrade l'ensemble en `Incomplete`.
+    ///
+    /// Un registre qui, arrêté à l'étape *n*, ne rendrait pas exactement les
+    /// *n* premières entrées est un registre sur lequel un rollback ne peut pas
+    /// s'appuyer : il retirerait trop, ou pas assez.
+    #[test]
+    fn stopping_at_each_named_step_yields_an_exact_unwind() {
+        use super::super::rollback::Unwind;
+
+        let stepped: Vec<Step> =
+            super::super::plan::authorized_steps(BootstrapAction::InstallServerBundle)
+                .iter()
+                .filter(|step| acts::ElevatedAct::authorised_for(&plan(), **step).len() > 0)
+                .copied()
+                .collect();
+        assert!(!stepped.is_empty(), "aucune étape ne porte d'acte");
+
+        for (index, stop_at) in stepped.iter().enumerate() {
+            let mut channel = ScriptedChannel::in_the_announced_state();
+            channel.failing = acts::ElevatedAct::authorised_for(&plan(), *stop_at)
+                .iter()
+                .map(|act| act.command(false).as_str().to_owned())
+                .collect();
+            let mut secret = SpentSecret::<Vec<u8>>::none();
+
+            let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false)
+                .run(&plan(), &mut secret, |held: &Vec<u8>| held.as_slice());
+
+            assert!(
+                !outcome.succeeded(),
+                "l'arrêt à {stop_at:?} devait interrompre la séquence"
+            );
+            // Les étapes franchies sont retirables ; l'interrompue ne l'est pas.
+            let Unwind::Incomplete { removals, unknown } = outcome.ledger.unwind() else {
+                panic!("un arrêt doit dégrader le déroulé : {:?}", outcome.ledger);
+            };
+            // L'exactitude n'est pas un compte fixe : elle est que **tout ce
+            // qui a couru est rendu, et rien d'autre**. Une étape constatée est
+            // retirable ; une étape posée dont le constat était différé à
+            // l'étape qui vient d'échouer reste inconnue — c'est le cas de
+            // `CreateState`, dont le `stat` est porté par
+            // `InstallCredentialSources`. Compter par l'index supposerait qu'un
+            // constat suit chaque étape, ce que la table de couverture dément.
+            assert_eq!(
+                removals.len() + unknown.len(),
+                index + 1,
+                "arrêt à {stop_at:?} : {} étapes ont couru, le registre en rend {}",
+                index + 1,
+                removals.len() + unknown.len()
+            );
+            assert!(
+                !unknown.is_empty(),
+                "arrêt à {stop_at:?} : l'étape interrompue doit rester inconnue"
+            );
+            // Rien de retirable ne peut venir d'une étape non encore atteinte.
+            assert!(
+                removals.len() <= index,
+                "arrêt à {stop_at:?} : une étape non atteinte est déclarée retirable"
+            );
+        }
     }
 
     /// Un acte qui échoue laisse sa trace en `Unknown` : le déroulé refusera de

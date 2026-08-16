@@ -243,6 +243,26 @@ impl Constat {
     }
 }
 
+/// Les étapes qu'un constat couvre.
+///
+/// Un `stat` mesure les trois nœuds d'un coup : le constat des nœuds répond
+/// donc pour trois étapes, pas une. Déclarer cette couverture est ce qui
+/// permet au registre de savoir **quelles** étapes un constat vient
+/// d'établir — sans quoi une étape dont le constat est différé n'entrerait
+/// jamais au registre, et son effet resterait sur la machine sans que le
+/// déroulé le connaisse.
+pub const fn covered_by(constat: Constat) -> &'static [Step] {
+    match constat {
+        Constat::Package => &[Step::InstallPackage],
+        Constat::Nodes => &[
+            Step::WriteMachineConfiguration,
+            Step::CreateState,
+            Step::InstallCredentialSources,
+        ],
+        Constat::Unit => &[Step::ActivateController],
+    }
+}
+
 /// Ce que chaque étape doit constater une fois ses actes passés.
 ///
 /// Une étape sans constat rend `None`, et c'est une déclaration : le transfert
