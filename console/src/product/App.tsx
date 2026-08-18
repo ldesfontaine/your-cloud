@@ -13,6 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Banner, Button, LoadingBlock } from "../design/primitives";
 import { AssociationView, InfrastructuresView, LocalAccessView } from "./access-views";
+import { CreateInfrastructureView } from "./create-infrastructure-view";
 import { operationErrorMessage } from "./errors";
 import { ExternalView, FleetView, ObservationsView, SummaryView } from "./infrastructure-views";
 import { PlansView } from "./plans-view";
@@ -337,7 +338,11 @@ export function App() {
           <NavButton
             label="Infrastructures"
             icon={Cloud}
-            current={view === "infrastructures" || view === "association"}
+            current={
+              view === "infrastructures" ||
+              view === "association" ||
+              view === "create-infrastructure"
+            }
             onClick={() => setView("infrastructures")}
           />
           {selectedAssociation
@@ -383,6 +388,16 @@ export function App() {
               associations={status.associations}
               onSelect={(association) => void selectInfrastructure(association)}
               onPair={() => {
+                setAssociationMode("enrollment");
+                setView("association");
+              }}
+              onCreate={() => setView("create-infrastructure")}
+            />
+          ) : null}
+          {view === "create-infrastructure" ? (
+            <CreateInfrastructureView
+              onCancel={() => setView("infrastructures")}
+              onAssociate={() => {
                 setAssociationMode("enrollment");
                 setView("association");
               }}

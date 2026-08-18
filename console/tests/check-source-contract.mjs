@@ -2024,6 +2024,26 @@ for (const command of ["start_bootstrap", "bootstrap_status", "cancel_bootstrap"
     failures.push(`IPC amorçage: commande nommée absente (${command})`);
   }
 }
+// Le défaut récurrent du palier est le module juste que personne n'appelle —
+// six occurrences avant celle-ci. Cette garde tient l'appelant : le parcours
+// de création appelle les trois commandes d'amorçage, et une vue qui cesserait
+// de les appeler rougit ici, pas dans une preuve LAB trois issues plus tard.
+{
+  const createView = await readSourceText(
+    new URL("../src/product/create-infrastructure-view.tsx", import.meta.url),
+  );
+  for (const caller of [
+    "nativeConsole.startBootstrap(",
+    "nativeConsole.bootstrapStatus(",
+    "nativeConsole.cancelBootstrap(",
+  ]) {
+    if (!createView.includes(caller)) {
+      failures.push(
+        `create-infrastructure-view.tsx: la chaîne d'amorçage a perdu un appelant (${caller})`,
+      );
+    }
+  }
+}
 
 const invokeHandler = consoleRuntime.match(
   /tauri::generate_handler!\[(?<body>[\s\S]*?)\n\s*\]/u,

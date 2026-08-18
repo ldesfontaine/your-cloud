@@ -23,6 +23,7 @@ export type ViewName =
   | "local-access"
   | "infrastructures"
   | "association"
+  | "create-infrastructure"
   | "summary"
   | "fleet"
   | "observations"

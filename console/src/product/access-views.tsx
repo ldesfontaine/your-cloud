@@ -193,10 +193,12 @@ export function InfrastructuresView({
   associations,
   onSelect,
   onPair,
+  onCreate,
 }: {
   associations: AssociationSummary[];
   onSelect: (association: AssociationSummary) => void;
   onPair: () => void;
+  onCreate: () => void;
 }) {
   return (
     <div className="yc-stack">
@@ -205,9 +207,14 @@ export function InfrastructuresView({
           <h1>Infrastructures</h1>
           <p className="yc-muted">Chaque association conserve ses propres identité, origine et session.</p>
         </div>
-        <Button intent="primary" icon={Link2} onClick={onPair}>
-          Associer
-        </Button>
+        <div className="yc-cluster">
+          <Button intent="primary" icon={Link2} onClick={onCreate}>
+            Créer une infrastructure
+          </Button>
+          <Button icon={Link2} onClick={onPair}>
+            Associer
+          </Button>
+        </div>
       </header>
       {associations.length === 0 ? (
         <Card>
