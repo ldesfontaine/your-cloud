@@ -1098,13 +1098,23 @@ def capture_windows_native_prompt(output: pathlib.Path) -> dict[str, object]:
         f"$bitmap.Save('{escaped_capture}',[System.Drawing.Imaging.ImageFormat]::Png);"
         "$graphics.Dispose();$bitmap.Dispose()"
     )
+    # Le travail nominal de cette capture tient sous la seconde — mesuré le
+    # 18 août 2026 sur windows-eval : Add-Type 611 ms à froid, la capture
+    # entière sous 1 s. Le délai borne donc l'ENVIRONNEMENT (un hôte de runner
+    # partagé à l'heure de pointe), pas le travail, et 10 s l'ont fait rougir
+    # deux fois de suite alors que le rendu de la fenêtre était sain — le même
+    # run capturait la fenêtre GTK sans peine. La durée observée est écrite au
+    # rapport pour que la prochaine dérive se lise en secondes, pas en rouges.
+    capture_started = time.monotonic()
     rendered = subprocess.run(
         ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        timeout=10,
+        timeout=60,
     )
+    capture_seconds = round(time.monotonic() - capture_started, 3)
+    print(f"CI Windows: native consent capture took {capture_seconds}s", flush=True)
     if rendered.returncode != 0 or not capture.is_file():
         raise AssertionError("native Win32 consent capture failed")
     if not capture.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
@@ -1122,6 +1132,7 @@ def capture_windows_native_prompt(output: pathlib.Path) -> dict[str, object]:
         ),
         "secret_control_machine_inspected": True,
         "secret_control_present": False,
+        "capture_seconds": capture_seconds,
     }
 
 
