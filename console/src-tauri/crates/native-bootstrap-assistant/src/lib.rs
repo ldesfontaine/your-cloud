@@ -1014,16 +1014,247 @@ fn serve_personal_access(
     }
     let proven =
         prove_administrator_elevation(&mut live, &resolved, deadline, &expired, &lease, &guard);
+    let outcome = match proven {
+        Ok(proof) => match resolved.actions[0] {
+            // L'audit s'arrête à l'accès prouvé : c'est toute sa conversation.
+            your_cloud_bootstrap_protocol::BootstrapAction::AuditTargetReadOnly => {
+                let ProvenElevation {
+                    witness, secret, ..
+                } = proof;
+                let mut secret = secret;
+                secret.destroy();
+                PromptOutcome::Verified(witness)
+            }
+            // Les deux actions d'installation continuent dans la même session :
+            // c'est elle qui a prouvé l'élévation, et une seconde connexion
+            // serait une seconde authentification, une seconde attestation de
+            // clé d'hôte, une seconde signature.
+            your_cloud_bootstrap_protocol::BootstrapAction::InstallServerBundle
+            | your_cloud_bootstrap_protocol::BootstrapAction::ActivateApprovedController => {
+                run_installation(&mut live, &resolved, proof, deadline, &guard)
+            }
+        },
+        // Every refusal of the elevation is already expurgated into an outcome
+        // by the function above; a cancelled or expired window keeps its own.
+        Err(outcome) => outcome,
+    };
     // The transport is closed before anything is announced, on every path —
     // including the one that is about to announce a verified access. Nothing of
     // this session is still open when its terminal is written.
     live.close();
-    match proven {
-        Ok(witness) => PromptOutcome::Verified(witness),
-        // Every refusal of the elevation is already expurgated into an outcome
-        // by the function above; a cancelled or expired window keeps its own.
-        Err(outcome) => outcome,
+    outcome
+}
+
+/// Ce que l'élévation prouvée laisse à la suite de la session.
+///
+/// Le témoin d'abord ; puis le secret **retenu** plutôt que détruit — c'est la
+/// décision du contrat d'amorçage : sur la route d'installation, il vit dans la
+/// même allocation protégée le temps de la séquence que l'humain vient
+/// d'approuver, et meurt sur toute sortie de cette séquence. La route d'audit
+/// le détruit sans délai ; aucune route ne le rend à un appelant.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+struct ProvenElevation {
+    witness: personal_access::elevation::Elevation,
+    secret: installation::sequence::SpentSecret<secret::ProtectedSecret>,
+    /// Vient de l'attestation de politique, et d'elle seule : c'est elle qui a
+    /// lu le listing distant, et chaque acte de la séquence choisira sa forme
+    /// — `-n` ou `-S` — d'après elle.
+    password_required: bool,
+}
+
+/// La route d'installation : ce que la session fait, une fois l'élévation
+/// prouvée, quand l'action approuvée installe.
+///
+/// **Chaque témoin naît ici, dans cette session, ou d'une constante scellée.**
+/// Les faits de la machine sont observés par les canaux de cette session ; la
+/// déclaration et l'approbation dérivent du scope que l'humain vient de
+/// consentir à l'écran ; le lot vient de la position attestée et de l'ancre de
+/// release ; la configuration est composée des valeurs que le scope porte et
+/// dont la fenêtre a montré l'empreinte. Rien n'est affirmé par la Console,
+/// rien ne traverse d'une autre session.
+///
+/// **La provenance est la création.** Le remplacement d'un Controller existant
+/// a sa propre route (`machine_identity`, `replacement`) et ses propres
+/// témoins ; un scope de remplacement qui arriverait ici est refusé plutôt que
+/// traité comme une création qui n'ose pas dire son nom.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+fn run_installation(
+    live: &mut personal_access::session::LiveSession,
+    resolved: &AssistantScopeV1,
+    proof: ProvenElevation,
+    deadline: Instant,
+    guard: &(dyn Fn() -> personal_access::session::GuardVerdict + Sync),
+) -> PromptOutcome {
+    use installation::{anchor, bundle, configuration, embedded, plan, sequence, transport};
+    use personal_access::{audit, placement};
+
+    let ProvenElevation {
+        witness,
+        mut secret,
+        password_required,
+    } = proof;
+
+    if resolved.mode == your_cloud_bootstrap_protocol::BootstrapMode::Replace {
+        secret.destroy();
+        return PromptOutcome::Unavailable;
     }
+
+    // Les faits, observés par cette session et par personne d'autre. Un canal
+    // qui refuse rend des faits inconnus avec leur raison, et c'est la porte
+    // du placement qui en tirera le refus nommé.
+    let machine = audit::observe(live, deadline, guard);
+
+    // La déclaration et l'approbation, dérivées du scope consenti. La fenêtre
+    // vient de montrer la cible, l'action et les empreintes : ce consentement
+    // est l'approbation du placement que ce scope déclare.
+    let Some((endpoint, approval)) = declared_placement_claim(resolved) else {
+        secret.destroy();
+        return PromptOutcome::Unavailable;
+    };
+    let placement = match placement::propose(
+        personal_access::audit::Role::Controller,
+        &endpoint,
+        &machine,
+    )
+    .and_then(|proposal| placement::approve(&proposal, &approval))
+    {
+        Ok(placement) => placement,
+        Err(_) => {
+            secret.destroy();
+            return PromptOutcome::Refused;
+        }
+    };
+
+    // Le lot, depuis la position attestée et l'ancre scellée — la même chaîne
+    // que le mode `--verify-embedded-server-bundle`, jusqu'aux mêmes refus.
+    let carried =
+        match embedded::from_attested_position().and_then(|location| embedded::read(&location)) {
+            Ok(carried) => carried,
+            Err(_) => {
+                secret.destroy();
+                return PromptOutcome::Unavailable;
+            }
+        };
+    let verified = match bundle::verify(
+        anchor::RELEASE_ANCHOR,
+        &carried.manifest,
+        &carried.signature,
+        EMBEDDED_EXPECTED_VERSION,
+        &carried.artifact,
+    ) {
+        Ok(verified) => verified,
+        Err(_) => {
+            secret.destroy();
+            return PromptOutcome::Refused;
+        }
+    };
+
+    // La configuration : composée des valeurs que le scope porte, exactement
+    // celles dont la fenêtre a montré l'empreinte. La pose la porte toujours —
+    // le protocole le tient — et l'activation jamais.
+    let composed = match resolved.machine_configuration.as_ref() {
+        Some(values) => {
+            match configuration::compose(
+                &values.listen,
+                &values.allowed_source,
+                &values.relay_endpoint,
+            ) {
+                Ok(composed) => Some(composed),
+                Err(_) => {
+                    secret.destroy();
+                    return PromptOutcome::Refused;
+                }
+            }
+        }
+        None => None,
+    };
+
+    let authorised = match plan::authorize(&verified, &placement, &witness, plan::Origin::Creation)
+    {
+        Ok(authorised) => authorised,
+        Err(_) => {
+            secret.destroy();
+            return PromptOutcome::Refused;
+        }
+    };
+
+    let payload = sequence::InstallPayload {
+        bundle: &verified,
+        artifact: &carried.artifact,
+        configuration: composed.as_ref(),
+    };
+    let mut channel = transport::SessionChannel::new(live, deadline, guard);
+    let outcome = sequence::Sequence::new(&mut channel, resolved.actions[0], password_required)
+        .run(
+            &authorised,
+            &payload,
+            &mut secret,
+            |held: &secret::ProtectedSecret| held.bytes(),
+        );
+
+    // Le registre est rendu dans les deux cas ; sa consommation — nommer à
+    // l'humain ce qui a été posé et ce qui reste — appartient à la clôture
+    // d'affaires de `bootstrap_status`, pas à cette session. Ce qu'elle doit
+    // dire ici tient en un terminal : prouvé et joué, ou arrêté.
+    match outcome.stopped {
+        None => PromptOutcome::Verified(witness),
+        // Un juge a refusé, ou un acte s'est plaint : le produit refuse, et la
+        // machine reste dans l'état que le registre nomme.
+        Some(sequence::SequenceStop::Refused { .. })
+        | Some(sequence::SequenceStop::ActFailed { .. }) => PromptOutcome::Refused,
+        // Pas de verdict : budget refusé ou canal muet. Rien n'affirme quoi que
+        // ce soit de la machine.
+        Some(sequence::SequenceStop::BudgetRefused)
+        | Some(sequence::SequenceStop::Unanswered { .. }) => PromptOutcome::Unavailable,
+    }
+}
+
+/// La déclaration d'endpoint et l'approbation que le scope consenti porte.
+///
+/// Pure, et déclarée hors de la route pour la raison de `#151` : la règle
+/// « l'approbation dérive du scope que l'humain a vu, et de rien d'autre »
+/// doit être exerçable par une suite sans session ni fenêtre. Le nom déclaré
+/// est l'hôte que la fenêtre a montré ; l'exposition et la disponibilité sont
+/// les dires que le scope transporte ; rien ici n'est un fait de machine.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn declared_placement_claim(
+    scope: &AssistantScopeV1,
+) -> Option<(
+    personal_access::placement::DeclaredEndpoint,
+    personal_access::placement::Approval,
+)> {
+    use personal_access::audit::Role;
+    use personal_access::placement::{Approval, Availability, DeclaredEndpoint, Exposure};
+
+    let declared = scope.declared_target.as_ref()?;
+    let endpoint = DeclaredEndpoint {
+        name: scope.target.host.clone(),
+        port: scope.target.port,
+        exposure: if declared.private {
+            Exposure::Private
+        } else {
+            Exposure::Exposed
+        },
+        availability: if declared.normally_on {
+            Availability::NormallyOn
+        } else {
+            Availability::Intermittent
+        },
+        // Poser un Controller n'a jamais déclaré de candidat Relay : le champ
+        // dit « non déclaré », ce qui est exactement l'état.
+        relay_candidate: false,
+    };
+    let approval = Approval {
+        role: Role::Controller,
+        endpoint: scope.target.host.clone(),
+    };
+    Some((endpoint, approval))
 }
 
 /// The administrator route, in the three channels it is allowed and no more.
@@ -1049,7 +1280,7 @@ fn prove_administrator_elevation(
     expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: &LeaseState,
     guard: &(dyn Fn() -> personal_access::session::GuardVerdict + Sync),
-) -> Result<personal_access::elevation::Elevation, PromptOutcome> {
+) -> Result<ProvenElevation, PromptOutcome> {
     use personal_access::elevation::{self, AccessRoute};
 
     let probe = live
@@ -1087,36 +1318,48 @@ fn prove_administrator_elevation(
     )
     .map_err(|_| PromptOutcome::Unavailable)?;
 
+    // Le secret est RETENU plutôt qu'effacé à la commande, et c'est la
+    // décision que le contrat d'amorçage porte (amendement du 16 août 2026) :
+    // sur la route de l'élévation seule, il meurt sans délai — l'appelant de
+    // l'audit le détruit sitôt le témoin rendu ; sur la route d'installation,
+    // il vit dans la même allocation protégée le temps de la séquence que
+    // l'humain vient d'approuver, et meurt sur *toute* sortie de cette
+    // séquence — succès, refus, annulation, expiration — ou à l'échéance de
+    // session, le premier des deux. Chaque chemin d'erreur ci-dessous le
+    // détruit par la même sortie : `SpentSecret` ne quitte cette fonction que
+    // détruit ou remis à l'appelant, jamais oublié.
+    //
+    // Un compte `root` direct ou une politique sans mot de passe ne retient
+    // rien du tout : le cas strict reste le meilleur cas, il cesse simplement
+    // d'être le seul.
+    let mut retained = installation::sequence::SpentSecret::none();
     let elevated = if attested.password_required {
         let password = ask_sudo_password(resolved, deadline, expired, lease)?;
         let report = live.run_channel(attested.command, Some(password.bytes()), deadline, guard);
-        // Effacé ici, quoi qu'ait répondu le canal. Il n'y a pas de reprise.
-        //
-        // Amendement du 16 août 2026 : cette ligne disait « rien ne pourrait en
-        // avoir besoin une seconde fois », et ce n'est plus vrai d'une
-        // installation, qui enchaîne plusieurs actes privilégiés. La propriété
-        // exacte qui la remplace est celle-ci — et elle est plus faible, donc
-        // elle est écrite plutôt que devinée :
-        //
-        //   sur cette route-ci, celle de l'élévation seule, le secret meurt à
-        //   la commande qui l'a dépensé ; sur la route d'installation, il vit
-        //   dans la même allocation protégée le temps de la séquence que
-        //   l'humain vient d'approuver, et meurt sur *toute* sortie de cette
-        //   séquence — succès, échec, annulation, expiration — ou à l'échéance
-        //   de session, le premier des deux.
-        //
-        // Un compte `root` direct ou une politique sans mot de passe ne retient
-        // rien du tout : le cas strict reste le meilleur cas, il cesse
-        // simplement d'être le seul. Le contrat d'amorçage porte la raison.
-        drop(password);
+        retained = installation::sequence::SpentSecret::holding(password);
         report
     } else {
         live.run_channel(attested.command, None, deadline, guard)
-    }
-    .map_err(|_| PromptOutcome::Unavailable)?;
+    };
+    let elevated = match elevated {
+        Ok(elevated) => elevated,
+        Err(_) => {
+            retained.destroy();
+            return Err(PromptOutcome::Unavailable);
+        }
+    };
 
-    elevation::elevated(elevated.exit_status, &elevated.stdout, &elevated.stderr)
-        .map_err(|_| PromptOutcome::Unavailable)
+    match elevation::elevated(elevated.exit_status, &elevated.stdout, &elevated.stderr) {
+        Ok(witness) => Ok(ProvenElevation {
+            witness,
+            secret: retained,
+            password_required: attested.password_required,
+        }),
+        Err(_) => {
+            retained.destroy();
+            Err(PromptOutcome::Unavailable)
+        }
+    }
 }
 
 /// Opens the escalation window of #45 for the step it belongs to.
@@ -1355,6 +1598,78 @@ fn map_read_error(error: ReadFrameError) -> SessionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **L'approbation du placement dérive du scope que l'humain a vu, et de
+    /// rien d'autre.**
+    ///
+    /// La règle est pure et exerçable sans session ni fenêtre — la raison de
+    /// `#151`. Trois choses sont tenues : le nom approuvé est l'hôte montré à
+    /// l'écran, les dires du scope passent tels quels sans être promus en
+    /// faits, et un scope sans déclaration ne produit aucune revendication —
+    /// jamais une revendication par défaut.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn the_placement_claim_derives_from_the_consented_scope_and_nothing_else() {
+        use personal_access::audit::Role;
+        use personal_access::placement::{Availability, Exposure};
+        use your_cloud_bootstrap_protocol::{
+            AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
+            BootstrapTarget, DeclaredTarget, NativePromptKind,
+        };
+
+        let scope = |declared: Option<DeclaredTarget>| AssistantScopeV1 {
+            schema_version: 1,
+            request_id: "00112233445566778899aabbccddeeff".into(),
+            mode: BootstrapMode::Create,
+            target: BootstrapTarget {
+                host: "controller.example.test".into(),
+                port: 22,
+                username: "infra_admin".into(),
+                host_key_sha256: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+                access_kind: BootstrapAccessKind::Administrator,
+            },
+            step: BootstrapStep::PersonalAccess,
+            actions: [BootstrapAction::InstallServerBundle],
+            prompt: NativePromptKind::ConfirmPersonalAccess,
+            target_addresses: Vec::new(),
+            machine_configuration: None,
+            declared_target: declared,
+            issued_at_monotonic_nanos: 1,
+            remaining_millis: 5_000,
+        };
+
+        // Le contrôle positif : la déclaration passe telle quelle, le nom et
+        // le rôle approuvés sont ceux de l'écran.
+        let (endpoint, approval) = declared_placement_claim(&scope(Some(DeclaredTarget {
+            private: true,
+            normally_on: true,
+        })))
+        .expect("un scope déclaré produit une revendication");
+        assert_eq!(endpoint.name, "controller.example.test");
+        assert_eq!(endpoint.port, 22);
+        assert_eq!(endpoint.exposure, Exposure::Private);
+        assert_eq!(endpoint.availability, Availability::NormallyOn);
+        assert!(
+            !endpoint.relay_candidate,
+            "poser n'a rien déclaré d'un Relay"
+        );
+        assert_eq!(approval.role, Role::Controller);
+        assert_eq!(approval.endpoint, "controller.example.test");
+
+        // Les dires hostiles passent AUSSI tels quels : c'est la porte du
+        // placement qui refusera un Controller sur un endpoint exposé ou
+        // intermittent, et adoucir la déclaration ici la lui cacherait.
+        let (endpoint, _) = declared_placement_claim(&scope(Some(DeclaredTarget {
+            private: false,
+            normally_on: false,
+        })))
+        .expect("une déclaration hostile est transportée, pas corrigée");
+        assert_eq!(endpoint.exposure, Exposure::Exposed);
+        assert_eq!(endpoint.availability, Availability::Intermittent);
+
+        // Aucune déclaration, aucune revendication — jamais un défaut.
+        assert!(declared_placement_claim(&scope(None)).is_none());
+    }
 
     #[test]
     fn invocation_requires_exactly_one_fixed_argument() {

@@ -258,7 +258,16 @@ pub fn channel_budget(action: your_cloud_bootstrap_protocol::BootstrapAction) ->
         // une session d'audit de se retrouver sans budget du tout.
         0
     } else {
-        crate::personal_access::session::MAX_EXEC_CHANNELS + opened + 1
+        // Une action qui installe juge un placement, et un placement se juge
+        // sur des faits que l'Assistant observe LUI-MÊME dans cette session —
+        // jamais depuis un champ qu'une Console affirmerait. Les canaux de
+        // cette observation sont donc dans la conversation, et leur nombre
+        // vient de la constante que l'audit publie à côté de ses commandes,
+        // jamais recopié.
+        crate::personal_access::session::MAX_EXEC_CHANNELS
+            + crate::personal_access::audit::OBSERVATION_CHANNELS
+            + opened
+            + 1
     }
 }
 
@@ -579,6 +588,7 @@ mod tests {
     /// compté une fois, et une seule** — et cette part-là n'a pas bougé.
     #[test]
     fn the_budget_is_derived_from_the_steps_and_never_chosen() {
+        use crate::personal_access::audit::OBSERVATION_CHANNELS;
         use crate::personal_access::session::MAX_EXEC_CHANNELS;
         use your_cloud_bootstrap_protocol::BootstrapAction;
 
@@ -591,7 +601,7 @@ mod tests {
                 .sum();
         assert_eq!(
             channel_budget(BootstrapAction::InstallServerBundle),
-            MAX_EXEC_CHANNELS + install + 1,
+            MAX_EXEC_CHANNELS + OBSERVATION_CHANNELS + install + 1,
             "le canal de fermeture est compté une fois, et une seule"
         );
 
@@ -602,7 +612,7 @@ mod tests {
                 .sum();
         assert_eq!(
             channel_budget(BootstrapAction::ActivateApprovedController),
-            MAX_EXEC_CHANNELS + activate + 1
+            MAX_EXEC_CHANNELS + OBSERVATION_CHANNELS + activate + 1
         );
     }
 
@@ -621,6 +631,7 @@ mod tests {
     /// elle s'arrêtait sur `BudgetRefused` à tous les coups.
     #[test]
     fn an_installing_action_budgets_the_whole_session_and_not_only_its_steps() {
+        use crate::personal_access::audit::OBSERVATION_CHANNELS;
         use crate::personal_access::session::MAX_EXEC_CHANNELS;
         use your_cloud_bootstrap_protocol::BootstrapAction;
 
@@ -634,8 +645,8 @@ mod tests {
                 .sum();
             assert_eq!(
                 channel_budget(action),
-                MAX_EXEC_CHANNELS + opened + 1,
-                "le budget de {action:?} n'ouvre pas la conversation de l'accès personnel"
+                MAX_EXEC_CHANNELS + OBSERVATION_CHANNELS + opened + 1,
+                "le budget de {action:?} n'ouvre pas la conversation de la session entière"
             );
             // La forme faible que ce test existe pour interdire : un budget qui
             // ne dépasserait pas ce que l'accès personnel a déjà dépensé

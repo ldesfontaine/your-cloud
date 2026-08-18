@@ -127,6 +127,7 @@ mod tests {
             prompt: NativePromptKind::ConfirmPersonalAccess,
             target_addresses: Vec::new(),
             machine_configuration: None,
+            declared_target: None,
             issued_at_monotonic_nanos: 1,
             remaining_millis: 1_000,
         }

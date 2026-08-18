@@ -196,6 +196,26 @@ pub enum NativePromptKind {
     ConfirmRootAccess,
 }
 
+/// Ce que l'utilisateur a déclaré de la cible, et que l'Assistant rejugera.
+///
+/// Deux natures se séparent ici, et la séparation est celle de la porte du
+/// placement : une **déclaration** est un dire de l'utilisateur — cette machine
+/// est privée, elle est normalement allumée — et peut donc voyager ; un **fait**
+/// est ce que la machine répond, et l'Assistant l'observe lui-même dans sa
+/// propre session, jamais depuis un champ. Un scope qui porterait les faits
+/// ferait fonder le jugement du placement sur ce qu'une Console affirme d'une
+/// machine qu'elle ne voit pas.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredTarget {
+    /// L'exposition déclarée. Un Controller sur un endpoint exposé est refusé
+    /// par la porte du placement, quoi que la machine ait répondu.
+    pub private: bool,
+    /// La disponibilité déclarée. Un Controller sur une machine intermittente
+    /// est refusé pour la même raison : la continuité du plan de contrôle.
+    pub normally_on: bool,
+}
+
 /// Les trois adresses que l'unité du Controller lit, et les seules.
 ///
 /// Elles voyagent **comme valeurs, jamais comme fichier** : l'Assistant compose
@@ -271,6 +291,11 @@ pub struct AssistantScopeV1 {
     /// l'humain — et l'empreinte qu'il approuve serait celle de rien.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine_configuration: Option<MachineConfigurationValues>,
+    /// La déclaration de la cible, présente **exactement** quand l'action
+    /// installe — poser ou activer, les deux jugent un placement. L'audit n'en
+    /// juge aucun et n'en porte pas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_target: Option<DeclaredTarget>,
     pub issued_at_monotonic_nanos: u64,
     pub remaining_millis: u64,
 }
@@ -283,6 +308,7 @@ impl AssistantScopeV1 {
             || !prompt_matches_scope(self.prompt, self.step, self.target.access_kind)
             || !valid_target_addresses(&self.target_addresses)
             || !configuration_matches_action(self.machine_configuration.as_ref(), self.actions[0])
+            || !declaration_matches_action(self.declared_target, self.actions[0])
         {
             return Err(ProtocolError::InvalidInput);
         }
@@ -400,6 +426,23 @@ pub fn canonical_request_id(request_id: &str) -> bool {
 /// côté d'un audit ou d'une activation, elle annoncerait une écriture que la
 /// tranche du plan ne contient pas — un document qui promet plus que ce que
 /// l'action fera.
+/// La déclaration voyage **exactement** avec les actions qui jugent un
+/// placement — les deux actions d'installation. Même règle à deux sens que la
+/// configuration : absente, l'Assistant n'aurait rien à rejuger et le
+/// consentement couvrirait une déclaration que personne n'a faite ; présente à
+/// côté d'un audit, elle annoncerait un jugement que l'action ne rend pas.
+fn declaration_matches_action(
+    declaration: Option<DeclaredTarget>,
+    action: BootstrapAction,
+) -> bool {
+    match (declaration, action) {
+        (Some(_), BootstrapAction::InstallServerBundle)
+        | (Some(_), BootstrapAction::ActivateApprovedController)
+        | (None, BootstrapAction::AuditTargetReadOnly) => true,
+        _ => false,
+    }
+}
+
 fn configuration_matches_action(
     configuration: Option<&MachineConfigurationValues>,
     action: BootstrapAction,
@@ -577,6 +620,7 @@ mod tests {
             prompt,
             target_addresses: Vec::new(),
             machine_configuration: None,
+            declared_target: None,
             issued_at_monotonic_nanos: 1,
             remaining_millis: MAX_ASSISTANT_REMAINING_MILLIS,
         }
@@ -596,6 +640,10 @@ mod tests {
         AssistantScopeV1 {
             actions: [BootstrapAction::InstallServerBundle],
             machine_configuration: Some(configuration_values()),
+            declared_target: Some(DeclaredTarget {
+                private: true,
+                normally_on: true,
+            }),
             ..scope(
                 NativePromptKind::ConfirmPersonalAccess,
                 BootstrapAccessKind::Administrator,
@@ -643,6 +691,90 @@ mod tests {
                 "{action:?} porte une configuration qu'elle n'écrira jamais"
             );
         }
+    }
+
+    /// **La déclaration voyage exactement avec les actions qui jugent un
+    /// placement**, dans les deux sens.
+    ///
+    /// Les deux actions d'installation la portent — poser et activer jugent
+    /// chacune un placement — et l'audit n'en porte pas : il n'en juge aucun.
+    /// Une déclaration absente d'une installation laisserait l'Assistant sans
+    /// rien à rejuger, et le consentement couvrirait une déclaration que
+    /// personne n'a faite.
+    #[test]
+    fn the_declaration_travels_exactly_with_the_actions_that_judge_a_placement() {
+        // Les deux contrôles positifs : la pose (déjà couverte par
+        // `install_scope`) et l'activation, qui porte la déclaration sans la
+        // configuration.
+        AssistantScopeV1 {
+            actions: [BootstrapAction::ActivateApprovedController],
+            machine_configuration: None,
+            declared_target: Some(DeclaredTarget {
+                private: true,
+                normally_on: true,
+            }),
+            ..scope(
+                NativePromptKind::ConfirmPersonalAccess,
+                BootstrapAccessKind::Administrator,
+            )
+        }
+        .validate()
+        .expect("une activation qui porte sa déclaration doit passer");
+
+        // Installer sans déclaration : rien à rejuger.
+        for action in [
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ] {
+            let undeclared = AssistantScopeV1 {
+                actions: [action],
+                machine_configuration: match action {
+                    BootstrapAction::InstallServerBundle => Some(configuration_values()),
+                    _ => None,
+                },
+                declared_target: None,
+                ..scope(
+                    NativePromptKind::ConfirmPersonalAccess,
+                    BootstrapAccessKind::Administrator,
+                )
+            };
+            assert_eq!(
+                undeclared.validate().unwrap_err(),
+                ProtocolError::InvalidInput,
+                "{action:?} passe sans déclaration"
+            );
+        }
+
+        // Auditer avec une déclaration : un jugement annoncé que l'action ne
+        // rend pas.
+        let overreaching = AssistantScopeV1 {
+            declared_target: Some(DeclaredTarget {
+                private: true,
+                normally_on: true,
+            }),
+            ..scope(
+                NativePromptKind::ConfirmPersonalAccess,
+                BootstrapAccessKind::Administrator,
+            )
+        };
+        assert_eq!(
+            overreaching.validate().unwrap_err(),
+            ProtocolError::InvalidInput
+        );
+
+        // Et la déclaration est un dire, pas un jugement : un scope déclarant
+        // une cible exposée ou intermittente RESTE licite ici — c'est la porte
+        // du placement, dans l'Assistant, qui le refusera. La refuser dans le
+        // protocole donnerait à la règle deux maisons.
+        AssistantScopeV1 {
+            declared_target: Some(DeclaredTarget {
+                private: false,
+                normally_on: false,
+            }),
+            ..install_scope()
+        }
+        .validate()
+        .expect("le protocole transporte la déclaration, il ne la juge pas");
     }
 
     /// Chaque valeur mal formée est refusée **avant toute fenêtre**.

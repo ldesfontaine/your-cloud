@@ -70,6 +70,12 @@ pub const AUDIT_FILES: [&str; 8] = [
 ];
 
 /// The architecture channel.
+/// Combien de canaux une observation complète ouvre : les trois commandes
+/// ci-dessous, jouées une fois chacune par [`observe`]. La constante est
+/// déclarée à côté d'elles pour qu'une commande ajoutée sans son canal fasse
+/// rougir un test ici, avant de heurter un budget en cours de session.
+pub const OBSERVATION_CHANNELS: usize = 3;
+
 pub const ARCHITECTURE: FixedCommand = FixedCommand::fixed("/usr/bin/uname -m");
 
 /// The filesystem channel. `-k` fixes the unit at one kibibyte whatever the
@@ -753,6 +759,24 @@ fn answer_of(report: &super::session::ChannelReport) -> ChannelAnswer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le nombre de canaux déclaré est celui des commandes d'observation, et
+    /// une commande ajoutée sans son canal rougit ici plutôt que de heurter un
+    /// budget au milieu d'une session. Le compte ne peut pas être dérivé du
+    /// corps d'`observe` par une suite — il est donc tenu par l'énumération
+    /// exhaustive des commandes que ce module expose pour l'observation.
+    #[test]
+    fn the_observation_channel_count_matches_the_commands_it_plays() {
+        let commands = [ARCHITECTURE, FILESYSTEM, FACT_FILES];
+        assert_eq!(OBSERVATION_CHANNELS, commands.len());
+        // Trois commandes distinctes : un doublon dirait que le compte couvre
+        // deux fois la même question.
+        for (index, left) in commands.iter().enumerate() {
+            for right in commands.iter().skip(index + 1) {
+                assert_ne!(left.as_str(), right.as_str());
+            }
+        }
+    }
 
     fn answer<'a>(exit_status: u32, stdout: &'a str) -> ChannelAnswer<'a> {
         ChannelAnswer {

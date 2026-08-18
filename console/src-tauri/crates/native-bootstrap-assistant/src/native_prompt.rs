@@ -795,6 +795,7 @@ mod tests {
             prompt,
             target_addresses: Vec::new(),
             machine_configuration: None,
+            declared_target: None,
             issued_at_monotonic_nanos: 1,
             remaining_millis: 5_000,
         }
@@ -931,6 +932,12 @@ mod tests {
 
         let mut posing = scope(NativePromptKind::ConfirmPersonalAccess);
         posing.actions = [BootstrapAction::InstallServerBundle];
+        // Une pose licite porte aussi sa déclaration : le protocole refuse
+        // désormais l'une sans l'autre, et ce test valide le scope entier.
+        posing.declared_target = Some(your_cloud_bootstrap_protocol::DeclaredTarget {
+            private: true,
+            normally_on: true,
+        });
         posing.machine_configuration = Some(MachineConfigurationValues {
             listen: "192.168.240.115:9443".into(),
             allowed_source: "192.168.240.0/24".into(),

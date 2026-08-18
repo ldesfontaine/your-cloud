@@ -181,7 +181,13 @@ pub struct InstallPayload<'a> {
     pub artifact: &'a [u8],
     /// La configuration composée localement, avec l'empreinte que le plan
     /// nomme et que l'humain a vue avant de consentir.
-    pub configuration: &'a MachineConfiguration,
+    ///
+    /// `Some` exactement quand l'action pose : l'activation ne dépose rien et
+    /// n'en compose donc pas — le protocole refuse d'ailleurs qu'une session
+    /// d'activation en porte une. La séquence n'en fait pas une confiance :
+    /// une pose dont la charge n'en porterait pas est **refusée à l'étape**
+    /// qui devait la déposer, plutôt que de paniquer ou de déposer du vide.
+    pub configuration: Option<&'a MachineConfiguration>,
 }
 
 /// Une séquence d'installation, du budget adopté au secret détruit.
@@ -395,17 +401,28 @@ impl<'a, C: Channel> Sequence<'a, C> {
                 self.record_deposit(ledger, step, transfer::STAGED_ARTIFACT_SUFFIX, verdict)
             }
             Step::WriteMachineConfiguration => {
+                // La charge doit porter la configuration : ce refus est une
+                // défense en profondeur — le protocole tient déjà « présente
+                // exactement quand l'action pose » — et il vaut mieux qu'un
+                // `expect`, parce qu'un appelant défaillant mérite un déroulé
+                // exact, pas un processus mort.
+                let Some(configuration) = payload.configuration else {
+                    return Err(SequenceStop::Refused {
+                        step,
+                        reason: "ConfigurationMissingFromPayload".to_owned(),
+                    });
+                };
                 // Aucun répertoire à créer : c'est celui que le transfert a
                 // posé, et une seconde création le refuserait à juste titre.
                 let (deposited, size, digest) = self.deposit_and_measure(
                     step,
                     super::configuration::DEPOSIT_CONFIGURATION,
-                    payload.configuration.bytes(),
+                    configuration.bytes(),
                     super::configuration::MEASURE_CONFIGURATION_SIZE,
                     super::configuration::MEASURE_CONFIGURATION,
                 )?;
                 let verdict = super::configuration::staged(
-                    payload.configuration,
+                    configuration,
                     &readings_of(&deposited, &size, &digest),
                 );
                 self.record_deposit(
@@ -898,7 +915,7 @@ mod tests {
             InstallPayload {
                 bundle: &self.bundle,
                 artifact: super::super::plan::tests::ARTIFACT,
-                configuration: &self.configuration,
+                configuration: Some(&self.configuration),
             }
         }
     }
@@ -1384,6 +1401,37 @@ mod tests {
         );
 
         assert!(matches!(outcome.ledger.unwind(), Unwind::Incomplete { .. }));
+    }
+
+    /// Une pose dont la charge ne porte pas la configuration est refusée à
+    /// l'étape qui devait la déposer — jamais un panic, jamais un dépôt vide.
+    ///
+    /// Le protocole tient déjà « présente exactement quand l'action pose » ;
+    /// ce refus est la défense en profondeur pour l'appelant qui construirait
+    /// sa charge à la main. Le registre reste exact : tout ce qui a couru
+    /// avant l'étape est rendu.
+    #[test]
+    fn a_pose_whose_payload_lacks_the_configuration_is_refused_at_the_step() {
+        let carried = Held::new();
+        let mut channel = ScriptedChannel::in_the_announced_state();
+        let mut secret = SpentSecret::<Vec<u8>>::none();
+
+        let bare = InstallPayload {
+            configuration: None,
+            ..carried.payload()
+        };
+        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
+            &plan(),
+            &bare,
+            &mut secret,
+            |held: &Vec<u8>| held.as_slice(),
+        );
+
+        let Some(SequenceStop::Refused { step, reason }) = &outcome.stopped else {
+            panic!("une pose sans configuration doit refuser : {outcome:?}");
+        };
+        assert_eq!(*step, Step::WriteMachineConfiguration);
+        assert!(reason.contains("ConfigurationMissingFromPayload"));
     }
 
     /// **Le lot arrive réellement sur la machine, et `dpkg` vient après lui.**

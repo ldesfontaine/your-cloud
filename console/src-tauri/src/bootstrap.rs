@@ -193,6 +193,7 @@ impl BootstrapState {
                 // l'action ne l'écrit pas, et non parce qu'elle serait
                 // indisponible.
                 machine_configuration: None,
+                declared_target: None,
                 // The launcher replaces this safe placeholder immediately before transport.
                 issued_at_monotonic_nanos: 0,
                 remaining_millis,

@@ -1,14 +1,20 @@
-//! The ordered installation, and the four witnesses it may not be built
-//! without.
+//! The ordered installation, and the witnesses it may not be built without.
 //!
 //! This module decides nothing that another module already decided. That the
 //! placement is private, approved and normally powered on is
 //! [`ApprovedPlacement`]'s statement, made by `placement::propose` on facts
 //! `audit` read; that root was really reached is [`Elevation`]'s; that the
 //! bundle is the bundle is [`VerifiedBundle`]'s; that every endpoint answered
-//! the Controller is [`PreflightCleared`]'s. [`authorize`] asks for all four by
-//! type and re-derives none of them. Re-checking "is this endpoint private"
-//! here would give the property two homes and, eventually, two answers.
+//! the Controller is [`PreflightCleared`]'s. [`authorize`] asks for them by type
+//! and re-derives none of them. Re-checking "is this endpoint private" here
+//! would give the property two homes and, eventually, two answers.
+//!
+//! **Combien de témoins dépend de la provenance, et c'est un fait sur le monde
+//! plutôt qu'un réglage.** Remplacer un Controller peut s'appuyer sur le prévol
+//! d'un Controller qui vit déjà ; en créer un ne le peut pas, puisque la
+//! machine qui devrait jouer ce prévol est celle qu'on installe. [`Origin`]
+//! porte cette différence par type, et le prévol reste dans tous les cas la
+//! dernière étape de [`STEPS`] — ce que ce module a toujours dit de lui.
 //!
 //! **What this palier installs, it installs on one machine.** The scope of #38
 //! stops before the other machines are touched, and that is visible in
@@ -219,17 +225,49 @@ impl InstallPlan {
     }
 }
 
+/// D'où vient cette installation, et ce que cette provenance peut prouver.
+///
+/// **Amendement du 16 août 2026.** Ce module exigeait un [`PreflightCleared`]
+/// de toute installation, sans distinguer les deux provenances. C'était juste
+/// pour celle que `#38` avait sous les yeux — remplacer un Controller — et
+/// **inapplicable** à celle que ce palier installe : en création, le prévol ne
+/// peut avoir été joué par personne, puisque la machine qui doit le jouer est
+/// celle qu'on installe. La contradiction n'était pas visible parce que
+/// `authorize` n'était appelé par aucun code de production ; elle est apparue
+/// à la ligne où il allait enfin l'être.
+///
+/// Le prévol ne disparaît pas : il **redevient ce que `STEPS` dit déjà qu'il
+/// est**, la dernière étape de la séquence, constatée à la fin plutôt
+/// qu'exigée au début. Ce qui change est qu'on cesse de demander comme
+/// précondition une observation que seule la conséquence peut produire.
+pub enum Origin<'a> {
+    /// Une infrastructure qui n'existe pas encore. Rien n'a pu joindre les
+    /// endpoints depuis un Controller, et ce qui répond de la machine est
+    /// l'audit : sa clé d'hôte confirmée, son placement approuvé — ce que
+    /// [`ApprovedPlacement`] porte déjà.
+    Creation,
+    /// Un Controller vit déjà et a joint chaque endpoint déclaré **avant**
+    /// qu'on touche à quoi que ce soit. C'est la provenance de `#38`, et elle
+    /// garde son quatrième témoin entier.
+    Replacement(&'a PreflightCleared),
+}
+
 /// The one gate. Nothing else in this crate builds an [`InstallPlan`].
 ///
 /// The `Elevation` parameter is taken by value-like reference and never read:
 /// it is a proof obligation, not an input. Asking for it by type is what makes
 /// "could this run without root having been really reached" answerable by
 /// looking at one signature.
+///
+/// La provenance est un **témoin de plus, pas un réglage de moins** : elle est
+/// exigée par type comme les trois autres, et la variante qui remplace porte le
+/// prévol qu'elle prouve. Un appelant ne peut donc pas se dispenser du prévol
+/// en mode remplacement — il n'a pas de variante pour le dire.
 pub fn authorize(
     bundle: &VerifiedBundle,
     placement: &ApprovedPlacement,
     _elevation: &Elevation,
-    cleared: &PreflightCleared,
+    origin: Origin<'_>,
 ) -> Result<InstallPlan, PlanRefusal> {
     if placement.role() != Role::Controller {
         return Err(PlanRefusal::NotAControllerPlacement {
@@ -241,10 +279,16 @@ pub fn authorize(
             target: bundle.target().to_owned(),
         });
     }
-    if !cleared.covers(placement.endpoint()) {
-        return Err(PlanRefusal::PlacementNotCleared {
-            endpoint: placement.endpoint().to_owned(),
-        });
+    // Le prévol répond de la machine **quand quelqu'un a pu le jouer**. En
+    // création, personne ne l'a pu, et exiger ici une observation que seule
+    // l'installation rendra possible ferait de cette porte une porte
+    // infranchissable — ce qu'elle a été jusqu'ici sans que rien ne le dise.
+    if let Origin::Replacement(cleared) = origin {
+        if !cleared.covers(placement.endpoint()) {
+            return Err(PlanRefusal::PlacementNotCleared {
+                endpoint: placement.endpoint().to_owned(),
+            });
+        }
     }
     Ok(InstallPlan {
         endpoint: placement.endpoint().to_owned(),
@@ -314,7 +358,10 @@ pub(crate) mod tests {
             &verified_bundle(),
             &approved_placement(&endpoint),
             &elevation(),
-            &cleared(&["machine-1"]),
+            // Le palier de ce plan de référence est une création : aucun
+            // Controller n'a pu jouer de prévol, puisque c'est lui qu'il
+            // installe.
+            Origin::Creation,
         )
         .expect("le plan de référence doit être autorisé")
     }
@@ -388,13 +435,39 @@ pub(crate) mod tests {
             &verified_bundle(),
             &approved_placement(&private_endpoint()),
             &elevation(),
-            &cleared(&["machine-1"]),
+            Origin::Replacement(&cleared(&["machine-1"])),
         )
         .expect("the positive control must authorise");
 
         assert_eq!(plan.endpoint(), "machine-1");
         assert_eq!(plan.version(), "0.0.3");
         assert_eq!(plan.steps(), STEPS);
+    }
+
+    /// **Une création autorise sans prévol, et c'est une décision plutôt qu'un
+    /// oubli.**
+    ///
+    /// La machine qui devrait jouer le prévol est celle qu'on installe. Exiger
+    /// ici son observation faisait de cette porte une porte que rien ne pouvait
+    /// franchir en création — ce qui ne se voyait pas tant qu'aucun code de
+    /// production ne l'appelait, et se voit à la ligne où il l'appelle enfin.
+    ///
+    /// Ce que la création rend n'est pas un plan au rabais : c'est le **même**
+    /// plan, les mêmes étapes dans le même ordre, prévol compris — il y est
+    /// comme dernière étape, à constater à la fin.
+    #[test]
+    fn a_creation_authorises_without_a_preflight_nobody_could_have_played() {
+        let plan = authorize(
+            &verified_bundle(),
+            &approved_placement(&private_endpoint()),
+            &elevation(),
+            Origin::Creation,
+        )
+        .expect("une création doit être autorisable");
+
+        assert_eq!(plan.endpoint(), "machine-1");
+        assert_eq!(plan.steps(), STEPS);
+        assert_eq!(plan.steps().last(), Some(&Step::Preflight));
     }
 
     /// The scope of #38 is visible in the sequence itself: the preflight is the
@@ -446,7 +519,7 @@ pub(crate) mod tests {
                 &verified_bundle(),
                 &approved_placement(&private_endpoint()),
                 &elevation(),
-                &cleared(&["machine-2", "machine-3"]),
+                Origin::Replacement(&cleared(&["machine-2", "machine-3"])),
             ),
             Err(PlanRefusal::PlacementNotCleared {
                 endpoint: "machine-1".into()
@@ -472,17 +545,19 @@ pub(crate) mod tests {
         )
         .expect("the relay approval must be approvable");
 
-        assert_eq!(
-            authorize(
-                &verified_bundle(),
-                &relay,
-                &elevation(),
-                &cleared(&["machine-1"]),
-            ),
-            Err(PlanRefusal::NotAControllerPlacement {
-                role: Role::Relay.as_str()
-            })
-        );
+        // Quelle que soit la provenance. Retirer le prévol des préconditions
+        // d'une création ne retire rien d'autre : ce qu'un Relay ne peut pas
+        // autoriser, il ne le peut pas davantage parce que personne n'a joué
+        // de prévol.
+        let cleared = cleared(&["machine-1"]);
+        for origin in [Origin::Creation, Origin::Replacement(&cleared)] {
+            assert_eq!(
+                authorize(&verified_bundle(), &relay, &elevation(), origin),
+                Err(PlanRefusal::NotAControllerPlacement {
+                    role: Role::Relay.as_str()
+                })
+            );
+        }
     }
 
     /// The isolation constants are the ones the architecture fixes, and the

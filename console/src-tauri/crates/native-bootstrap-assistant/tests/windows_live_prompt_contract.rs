@@ -189,6 +189,7 @@ fn scope(remaining_millis: u64) -> AssistantScopeV1 {
         prompt: NativePromptKind::SudoPassword,
         target_addresses: Vec::new(),
         machine_configuration: None,
+        declared_target: None,
         issued_at_monotonic_nanos: monotonic_nanos().expect("shared monotonic clock"),
         remaining_millis,
     }

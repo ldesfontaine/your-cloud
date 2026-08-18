@@ -3638,6 +3638,30 @@ for (const expected of [
     failures.push(`native_prompt_windows.rs: garde Win32 secrète absente (${expected})`);
   }
 }
+// La route d'installation n'est exerçable par aucune suite : elle exige une
+// session SSH réelle, et la preuve LAB (#147) est ce qui la joue. Ce qu'une
+// garde de sources peut tenir, et qu'aucun test ne peut, est le CÂBLAGE — le
+// défaut six fois rencontré de ce palier est le module juste, prouvé, que
+// personne n'appelle. Ces ancres tiennent que les deux actions d'installation
+// routent vers la route, que la route joue la séquence, et que la séquence
+// reçoit le canal de la session réelle.
+// Chaque ancre tient sur une seule ligne source : rustfmt recoupe les appels
+// longs, et une ancre multiligne rougirait au premier reformatage plutôt
+// qu'au premier décâblage.
+for (const expected of [
+  "run_installation(&mut live, &resolved, proof, deadline, &guard)",
+  "audit::observe(live, deadline, guard)",
+  "plan::authorize(&verified, &placement, &witness, plan::Origin::Creation)",
+  "transport::SessionChannel::new(live, deadline, guard)",
+  "sequence::Sequence::new(&mut channel, resolved.actions[0], password_required)",
+]) {
+  if (!nativeAssistantHelperRuntime.includes(expected)) {
+    failures.push(
+      `lib.rs: la route d'installation n'est plus câblée (${expected.slice(0, 60)}…)`,
+    );
+  }
+}
+
 // Les deux fenêtres ne partagent aucun type — une boîte GTK et une boîte Win32
 // n'ont rien en commun — mais elles doivent montrer les mêmes phrases. Une
 // suite ne peut pas tenir cette égalité : chaque surface ne compile que sur sa
