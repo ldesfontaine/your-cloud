@@ -1340,6 +1340,9 @@ mod bootstrap_lifecycle_tests {
                 host_key_sha256: HOST_KEY.into(),
                 access_kind: BootstrapAccessKind::Administrator,
             },
+            action: None,
+            declared_target: None,
+            machine_configuration: None,
         }
     }
 

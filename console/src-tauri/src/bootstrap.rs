@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 pub use your_cloud_bootstrap_protocol::{
     canonical_request_id, validate_target, AssistantScopeV1, BootstrapAction, BootstrapLifecycle,
     BootstrapMode, BootstrapSessionView, BootstrapStartInput, BootstrapStep, BootstrapTarget,
-    NativePromptKind, HOST_KEY_ENCODED_BYTES, MAX_HOST_BYTES, MAX_USERNAME_BYTES, REQUEST_ID_BYTES,
+    DeclaredTarget, MachineConfigurationValues, NativePromptKind, HOST_KEY_ENCODED_BYTES,
+    MAX_CONFIGURATION_VALUE_BYTES, MAX_HOST_BYTES, MAX_USERNAME_BYTES, REQUEST_ID_BYTES,
 };
 
 // The WebView can observe this native deadline but cannot choose or extend it.
@@ -50,12 +51,41 @@ pub fn parse_start_envelope(
 ) -> Result<BootstrapStartInput, BootstrapError> {
     // Bound every attacker-controlled string before serde creates owned copies.
     let envelope = exact_object(value, &["input"]).ok_or(BootstrapError::InvalidInput)?;
-    let input = exact_object(
+    let input = object_with(
         envelope.get("input").ok_or(BootstrapError::InvalidInput)?,
         &["mode", "target"],
+        &["action", "declared_target", "machine_configuration"],
     )
     .ok_or(BootstrapError::InvalidInput)?;
     bounded_string(input.get("mode"), 7).ok_or(BootstrapError::InvalidInput)?;
+    // Les champs conditionnels sont bornés AVANT que serde possède quoi que ce
+    // soit, comme le reste : l'action est un mot du vocabulaire clos, la
+    // déclaration deux booléens, et chaque valeur de configuration tient sous
+    // la borne que le protocole publie. La COHÉRENCE (quelle action exige
+    // quoi) n'est pas jugée ici : elle a une seule maison, la validation du
+    // scope, que le lancement du helper impose.
+    if let Some(action) = input.get("action") {
+        bounded_string(Some(action), "activate_approved_controller".len())
+            .ok_or(BootstrapError::InvalidInput)?;
+    }
+    if let Some(declared) = input.get("declared_target") {
+        let declared = exact_object(declared, &["private", "normally_on"])
+            .ok_or(BootstrapError::InvalidInput)?;
+        if !declared.values().all(serde_json::Value::is_boolean) {
+            return Err(BootstrapError::InvalidInput);
+        }
+    }
+    if let Some(configuration) = input.get("machine_configuration") {
+        let configuration = exact_object(
+            configuration,
+            &["listen", "allowed_source", "relay_endpoint"],
+        )
+        .ok_or(BootstrapError::InvalidInput)?;
+        for field in ["listen", "allowed_source", "relay_endpoint"] {
+            bounded_string(configuration.get(field), MAX_CONFIGURATION_VALUE_BYTES)
+                .ok_or(BootstrapError::InvalidInput)?;
+        }
+    }
     let target = exact_object(
         input.get("target").ok_or(BootstrapError::InvalidInput)?,
         &["host", "port", "username", "host_key_sha256", "access_kind"],
@@ -89,6 +119,28 @@ pub fn parse_request_envelope(value: &serde_json::Value) -> Result<String, Boots
         .map_err(|_| BootstrapError::RequestRefused)
 }
 
+/// Un objet dont les clés requises sont toutes là, et dont chaque clé restante
+/// appartient à la liste optionnelle. La forme d'`exact_object`, ouverte aux
+/// champs conditionnels.
+///
+/// Le refus des clés inconnues est ici une défense en profondeur, et c'est
+/// mesuré : la mutation qui l'y retire laisse la suite verte, parce que
+/// `deny_unknown_fields` les refuse une couche plus bas. Ce que cette couche
+/// tient en PROPRE — et que sa mutation fait rougir — ce sont les tailles :
+/// chaque chaîne est bornée avant que serde en possède une copie.
+fn object_with<'a>(
+    value: &'a serde_json::Value,
+    required: &[&str],
+    optional: &[&str],
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    let object = value.as_object()?;
+    (required.iter().all(|field| object.contains_key(*field))
+        && object
+            .keys()
+            .all(|key| required.contains(&key.as_str()) || optional.contains(&key.as_str())))
+    .then_some(object)
+}
+
 fn exact_object<'a>(
     value: &'a serde_json::Value,
     expected: &[&str],
@@ -107,6 +159,11 @@ struct BootstrapSession {
     mode: BootstrapMode,
     target: BootstrapTarget,
     expires_at: Instant,
+    /// L'action que l'humain a demandée — l'audit quand la demande n'en nomme
+    /// aucune, la forme d'hier restant la forme par défaut.
+    action: BootstrapAction,
+    declared_target: Option<DeclaredTarget>,
+    machine_configuration: Option<MachineConfigurationValues>,
     /// L'issue terminale, une fois l'Assistant parti. `None` tant qu'il court.
     ///
     /// Elle est RETENUE plutôt qu'effacée — c'est la clôture d'affaires que
@@ -115,6 +172,15 @@ struct BootstrapSession {
     /// silence. La session conclue reste lisible jusqu'à son échéance ou
     /// jusqu'au démarrage suivant, qui la remplace.
     concluded: Option<BootstrapLifecycle>,
+}
+
+/// Une demande de démarrage validée en forme, prête à devenir une session.
+struct PreparedStart {
+    mode: BootstrapMode,
+    target: BootstrapTarget,
+    action: BootstrapAction,
+    declared_target: Option<DeclaredTarget>,
+    machine_configuration: Option<MachineConfigurationValues>,
 }
 
 pub(crate) struct NativeAssistantLaunch {
@@ -134,8 +200,8 @@ impl BootstrapState {
         input: BootstrapStartInput,
     ) -> Result<BootstrapSessionView, BootstrapError> {
         let now = Instant::now();
-        let (mode, target) = self.prepare_start(input, now)?;
-        self.activate(mode, target, now, random_request_id()?)
+        let prepared = self.prepare_start(input, now)?;
+        self.activate(prepared, now, random_request_id()?)
     }
 
     pub fn status(&mut self, request_id: &str) -> Result<BootstrapSessionView, BootstrapError> {
@@ -177,6 +243,7 @@ impl BootstrapState {
                 remaining_millis,
             )
         };
+        let active = self.active.as_ref().ok_or(BootstrapError::RequestRefused)?;
         if remaining_millis == 0 {
             self.clear();
             return Err(BootstrapError::Expired);
@@ -189,19 +256,18 @@ impl BootstrapState {
                 mode,
                 target,
                 step,
-                actions: [BootstrapAction::AuditTargetReadOnly],
+                // L'action que l'humain a demandée, et ce qu'elle exige. La
+                // cohérence a une seule maison — la validation du scope, que le
+                // lancement impose — et ce lanceur ne fait que porter ce que la
+                // session a retenu.
+                actions: [active.action],
                 prompt,
                 // The launcher never resolves a name and therefore never freezes an
                 // address. Only the assistant's single resolution fills this, and only
                 // before its own consent window renders it.
                 target_addresses: Vec::new(),
-                // Le lanceur n'ouvre encore que l'audit, qui n'écrit aucune
-                // configuration. Le protocole refuse d'ailleurs qu'une session
-                // d'audit en porte une : la valeur est absente parce que
-                // l'action ne l'écrit pas, et non parce qu'elle serait
-                // indisponible.
-                machine_configuration: None,
-                declared_target: None,
+                machine_configuration: active.machine_configuration.clone(),
+                declared_target: active.declared_target.clone(),
                 // The launcher replaces this safe placeholder immediately before transport.
                 issued_at_monotonic_nanos: 0,
                 remaining_millis,
@@ -229,15 +295,15 @@ impl BootstrapState {
         if !canonical_request_id(&request_id) {
             return Err(BootstrapError::RequestRefused);
         }
-        let (mode, target) = self.prepare_start(input, now)?;
-        self.activate(mode, target, now, request_id)
+        let prepared = self.prepare_start(input, now)?;
+        self.activate(prepared, now, request_id)
     }
 
     fn prepare_start(
         &mut self,
         input: BootstrapStartInput,
         now: Instant,
-    ) -> Result<(BootstrapMode, BootstrapTarget), BootstrapError> {
+    ) -> Result<PreparedStart, BootstrapError> {
         if self.closed {
             return Err(BootstrapError::RequestRefused);
         }
@@ -254,13 +320,18 @@ impl BootstrapState {
             return Err(BootstrapError::Busy);
         }
         let target = validate_target(input.target).map_err(|_| BootstrapError::InvalidInput)?;
-        Ok((input.mode, target))
+        Ok(PreparedStart {
+            mode: input.mode,
+            target,
+            action: input.action.unwrap_or(BootstrapAction::AuditTargetReadOnly),
+            declared_target: input.declared_target,
+            machine_configuration: input.machine_configuration,
+        })
     }
 
     fn activate(
         &mut self,
-        mode: BootstrapMode,
-        target: BootstrapTarget,
+        prepared: PreparedStart,
         now: Instant,
         request_id: String,
     ) -> Result<BootstrapSessionView, BootstrapError> {
@@ -269,9 +340,12 @@ impl BootstrapState {
             .ok_or(BootstrapError::RequestRefused)?;
         self.active = Some(BootstrapSession {
             request_id,
-            mode,
-            target,
+            mode: prepared.mode,
+            target: prepared.target,
             expires_at,
+            action: prepared.action,
+            declared_target: prepared.declared_target,
+            machine_configuration: prepared.machine_configuration,
             concluded: None,
         });
         self.active_view(now)
@@ -326,7 +400,7 @@ impl BootstrapState {
             mode: active.mode,
             target: active.target.clone(),
             step: initial_native_step(active.target.access_kind).0,
-            actions: [BootstrapAction::AuditTargetReadOnly],
+            actions: [active.action],
             lifecycle: active
                 .concluded
                 .unwrap_or(BootstrapLifecycle::AwaitingNativeAssistant),
@@ -418,6 +492,9 @@ mod tests {
         BootstrapStartInput {
             mode,
             target: target(),
+            action: None,
+            declared_target: None,
+            machine_configuration: None,
         }
     }
 
@@ -434,7 +511,7 @@ mod tests {
         let now = Instant::now();
         let view = state
             .prepare_start(input(BootstrapMode::Create), now)
-            .and_then(|(mode, target)| state.activate(mode, target, now, REQUEST_ONE.into()))
+            .and_then(|prepared| state.activate(prepared, now, REQUEST_ONE.into()))
             .expect("la session démarre");
         assert_eq!(view.lifecycle, BootstrapLifecycle::AwaitingNativeAssistant);
 
@@ -462,7 +539,7 @@ mod tests {
         let mut fresh = BootstrapState::default();
         fresh
             .prepare_start(input(BootstrapMode::Create), now)
-            .and_then(|(mode, target)| fresh.activate(mode, target, now, REQUEST_TWO.into()))
+            .and_then(|prepared| fresh.activate(prepared, now, REQUEST_TWO.into()))
             .expect("la session démarre");
         assert!(matches!(
             fresh.conclude(REQUEST_TWO, BootstrapLifecycle::AwaitingNativeAssistant),
@@ -478,7 +555,7 @@ mod tests {
         let now = Instant::now();
         state
             .prepare_start(input(BootstrapMode::Create), now)
-            .and_then(|(mode, target)| state.activate(mode, target, now, REQUEST_ONE.into()))
+            .and_then(|prepared| state.activate(prepared, now, REQUEST_ONE.into()))
             .expect("la première session démarre");
 
         // En attente : le démarrage suivant est occupé — l'invariant existant.
@@ -493,7 +570,7 @@ mod tests {
         // Conclue : elle cède la place.
         state
             .prepare_start(input(BootstrapMode::Create), now)
-            .and_then(|(mode, target)| state.activate(mode, target, now, REQUEST_TWO.into()))
+            .and_then(|prepared| state.activate(prepared, now, REQUEST_TWO.into()))
             .expect("le parcours suivant démarre");
 
         // Une issue tardive du helper de la PREMIÈRE session ne se pose pas
@@ -506,6 +583,132 @@ mod tests {
         assert_eq!(read.lifecycle, BootstrapLifecycle::AwaitingNativeAssistant);
     }
 
+    /// **La demande nomme son action, et le lanceur la porte jusqu'au scope**
+    /// — avec la déclaration et la configuration qu'elle exige.
+    ///
+    /// C'est le fil que cette tranche câble : ce que le frontend demande est ce
+    /// que la session retient, ce que la vue rend, et ce que le helper recevra.
+    /// Un lanceur qui figerait l'audit — ce qu'il a fait jusqu'ici — ouvrirait
+    /// une fenêtre d'audit pour une demande de pose, et l'humain approuverait
+    /// autre chose que ce qu'il a demandé.
+    #[test]
+    fn the_requested_action_travels_from_the_start_input_to_the_scope() {
+        let mut state = BootstrapState::default();
+        let now = Instant::now();
+        let request = BootstrapStartInput {
+            action: Some(BootstrapAction::InstallServerBundle),
+            declared_target: Some(DeclaredTarget {
+                private: true,
+                normally_on: true,
+            }),
+            machine_configuration: Some(MachineConfigurationValues {
+                listen: "192.168.240.115:9443".into(),
+                allowed_source: "192.168.240.0/24".into(),
+                relay_endpoint: "192.168.240.9:9444".into(),
+            }),
+            ..input(BootstrapMode::Create)
+        };
+
+        let view = state
+            .start_at(request, now, REQUEST_ONE.into())
+            .expect("une demande de pose démarre");
+        assert_eq!(view.actions, [BootstrapAction::InstallServerBundle]);
+
+        let launch = state
+            .assistant_scope_at(REQUEST_ONE, now + Duration::from_secs(1))
+            .expect("le scope se construit");
+        assert_eq!(launch.scope.actions, [BootstrapAction::InstallServerBundle]);
+        assert_eq!(
+            launch.scope.declared_target,
+            Some(DeclaredTarget {
+                private: true,
+                normally_on: true,
+            })
+        );
+        let configuration = launch
+            .scope
+            .machine_configuration
+            .as_ref()
+            .expect("la pose porte sa configuration");
+        assert_eq!(configuration.listen, "192.168.240.115:9443");
+        // Et le scope entier reste licite aux yeux du protocole : la cohérence
+        // action/déclaration/configuration a une seule maison, sa validation.
+        let mut stamped = launch.scope.clone();
+        stamped.issued_at_monotonic_nanos = 1;
+        stamped.validate().expect("le scope de pose est licite");
+    }
+
+    /// La demande d'hier — sans action — reste exactement l'audit d'hier.
+    #[test]
+    fn a_request_naming_no_action_stays_the_audit_it_always_was() {
+        let mut state = BootstrapState::default();
+        let now = Instant::now();
+        let view = state
+            .start_at(input(BootstrapMode::Create), now, REQUEST_ONE.into())
+            .expect("la demande d'hier démarre");
+        assert_eq!(view.actions, [BootstrapAction::AuditTargetReadOnly]);
+
+        let launch = state
+            .assistant_scope_at(REQUEST_ONE, now + Duration::from_secs(1))
+            .expect("le scope se construit");
+        assert_eq!(launch.scope.actions, [BootstrapAction::AuditTargetReadOnly]);
+        assert_eq!(launch.scope.declared_target, None);
+        assert_eq!(launch.scope.machine_configuration, None);
+    }
+
+    /// Le parseur borné accepte la demande complète et refuse ce qui déborde,
+    /// AVANT que serde possède la moindre copie.
+    #[test]
+    fn the_bounded_parser_accepts_the_full_request_and_refuses_what_overflows() {
+        let full = serde_json::json!({
+            "input": {
+                "mode": "create",
+                "target": {
+                    "host": "controller.example.test",
+                    "port": 22,
+                    "username": "infra_admin",
+                    "host_key_sha256": HOST_KEY,
+                    "access_kind": "administrator",
+                },
+                "action": "install_server_bundle",
+                "declared_target": { "private": true, "normally_on": true },
+                "machine_configuration": {
+                    "listen": "192.168.240.115:9443",
+                    "allowed_source": "192.168.240.0/24",
+                    "relay_endpoint": "192.168.240.9:9444",
+                },
+            }
+        });
+        let parsed = parse_start_envelope(&full).expect("la demande complète se lit");
+        assert_eq!(parsed.action, Some(BootstrapAction::InstallServerBundle));
+
+        // Une valeur de configuration au-delà de la borne du protocole est
+        // refusée ici, avant serde.
+        let mut oversized = full.clone();
+        oversized["input"]["machine_configuration"]["listen"] =
+            serde_json::Value::String("a".repeat(MAX_CONFIGURATION_VALUE_BYTES + 1));
+        assert!(matches!(
+            parse_start_envelope(&oversized),
+            Err(BootstrapError::InvalidInput)
+        ));
+
+        // Une clé inconnue dans la demande est refusée — la liste est close.
+        let mut foreign = full.clone();
+        foreign["input"]["forwarding"] = serde_json::Value::Bool(true);
+        assert!(matches!(
+            parse_start_envelope(&foreign),
+            Err(BootstrapError::InvalidInput)
+        ));
+
+        // Une déclaration qui n'est pas deux booléens est refusée.
+        let mut stringly = full;
+        stringly["input"]["declared_target"]["private"] = serde_json::Value::String("oui".into());
+        assert!(matches!(
+            parse_start_envelope(&stringly),
+            Err(BootstrapError::InvalidInput)
+        ));
+    }
+
     fn root_input(mode: BootstrapMode) -> BootstrapStartInput {
         BootstrapStartInput {
             mode,
@@ -514,6 +717,9 @@ mod tests {
                 access_kind: BootstrapAccessKind::Root,
                 ..target()
             },
+            action: None,
+            declared_target: None,
+            machine_configuration: None,
         }
     }
 
@@ -859,6 +1065,9 @@ mod tests {
                     BootstrapStartInput {
                         mode: BootstrapMode::Create,
                         target: invalid,
+                        action: None,
+                        declared_target: None,
+                        machine_configuration: None,
                     },
                     now,
                     REQUEST_ONE.into(),
@@ -877,6 +1086,9 @@ mod tests {
                         access_kind: BootstrapAccessKind::Root,
                         ..target()
                     },
+                    action: None,
+                    declared_target: None,
+                    machine_configuration: None,
                 },
                 now,
                 REQUEST_ONE.into(),

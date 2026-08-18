@@ -1896,9 +1896,20 @@ const bootstrapStartInput = productModels.match(
 if (!bootstrapStartInput) {
   failures.push("models.ts: contrat public BootstrapStartInput absent");
 } else {
-  const inputFields = [...bootstrapStartInput.matchAll(/^\s+(\w+):/gmu)].map((match) => match[1]);
-  if (inputFields.join(",") !== "mode,target") {
-    failures.push("models.ts: BootstrapStartInput doit seulement exposer mode et target");
+  const inputFields = [...bootstrapStartInput.matchAll(/^\s{2}(\w+)\??:/gmu)].map(
+    (match) => match[1],
+  );
+  // La demande nomme son action depuis #146 ; ce que la garde tient reste ce
+  // qu'elle a toujours tenu — la liste est CLOSE, et rien de sensible n'y
+  // entre. Les champs imbriqués (déclaration, configuration) sont couverts par
+  // le balayage « champ sensible » commun, quelques lignes plus bas.
+  if (
+    inputFields.join(",") !==
+    "mode,target,action,declared_target,machine_configuration"
+  ) {
+    failures.push(
+      "models.ts: BootstrapStartInput expose un champ hors du contrat du lanceur",
+    );
   }
 }
 
@@ -1977,7 +1988,7 @@ for (const [source, body] of [
 for (const expected of [
   'export type BootstrapMode = "create" | "replace";',
   'step: "personal_access" | "root_access";',
-  'actions: readonly ["audit_target_read_only"];',
+  "actions: readonly [BootstrapActionName];",
   // Le cycle de vie nomme désormais les issues terminales — la clôture
   // d'affaires de #146 — et cette garde tient l'ALIGNEMENT : chaque variante
   // que le protocole Rust sérialise doit être lisible du TS, sans quoi une

@@ -362,7 +362,22 @@ export type BootstrapTarget = {
 export type BootstrapStartInput = {
   mode: BootstrapMode;
   target: BootstrapTarget;
+  // L'action que l'humain veut approuver, et ce qu'elle exige. Absents : la
+  // demande d'audit d'hier, inchangée. La cohérence — quelle action exige
+  // quoi — est jugée par la validation du scope côté natif, jamais ici.
+  action?: BootstrapActionName;
+  declared_target?: { private: boolean; normally_on: boolean };
+  machine_configuration?: {
+    listen: string;
+    allowed_source: string;
+    relay_endpoint: string;
+  };
 };
+
+export type BootstrapActionName =
+  | "audit_target_read_only"
+  | "install_server_bundle"
+  | "activate_approved_controller";
 
 export type BootstrapSessionView = {
   schema_version: 1;
@@ -370,7 +385,7 @@ export type BootstrapSessionView = {
   mode: BootstrapMode;
   target: BootstrapTarget;
   step: "personal_access" | "root_access";
-  actions: readonly ["audit_target_read_only"];
+  actions: readonly [BootstrapActionName];
   lifecycle:
     | "awaiting_native_assistant"
     // Les issues terminales que la clôture d'affaires nomme : la vue en fait

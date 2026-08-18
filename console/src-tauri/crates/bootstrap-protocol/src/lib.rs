@@ -131,11 +131,30 @@ pub struct BootstrapTarget {
     pub access_kind: BootstrapAccessKind,
 }
 
+/// Ce que le frontend demande au lanceur, et rien de plus.
+///
+/// **Amendement du 18 août 2026 — la demande nomme son action.** Le lanceur
+/// n'ouvrait que l'audit ; le parcours de création demande aussi les deux
+/// actions d'installation, chacune avec ce qu'elle exige : la déclaration de
+/// la cible pour les deux, les trois valeurs de configuration pour la pose
+/// seule. Les règles de cohérence sont celles du scope — c'est lui qui les
+/// tient, à la validation, et les dupliquer ici donnerait à chaque règle deux
+/// maisons. Ce que ce type garde en propre est la forme : des champs
+/// conditionnels absents par défaut, pour que la demande d'audit d'hier reste
+/// lisible telle quelle.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BootstrapStartInput {
     pub mode: BootstrapMode,
     pub target: BootstrapTarget,
+    /// L'action que l'humain veut approuver. Absente : l'audit — la demande
+    /// d'hier, inchangée.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<BootstrapAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_target: Option<DeclaredTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_configuration: Option<MachineConfigurationValues>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
