@@ -364,21 +364,44 @@ fn bootstrap_status(
         }
         Err(error) => return Err(error.into()),
     };
+    // Une session déjà conclue n'a plus de helper à interroger : son issue est
+    // retenue, la vue la relit autant de fois qu'elle veut, et c'est tout le
+    // point de la clôture — un frontend qui ne peut relire une issue ne peut
+    // pas la nommer.
+    if view.lifecycle != your_cloud_bootstrap_protocol::BootstrapLifecycle::AwaitingNativeAssistant
+    {
+        return Ok(view);
+    }
+    // La conclusion est RETENUE plutôt qu'effacée, puis la vue est relue pour
+    // que ce que le frontend reçoit soit ce que l'état a réellement retenu —
+    // jamais une vue d'avant la conclusion.
+    let mut conclude = |local: &mut ConsoleLocalState,
+                        outcome: your_cloud_bootstrap_protocol::BootstrapLifecycle|
+     -> Result<BootstrapSessionView, CommandError> {
+        local.bootstrap.conclude(&request_id, outcome)?;
+        local.bootstrap.status(&request_id).map_err(Into::into)
+    };
     match local.native_helper.poll(&request_id) {
         Ok(NativeHelperPoll::Running) => Ok(view),
-        // The helper proved its access and is gone. The session is cleared here
-        // because it is over; naming that outcome to the frontend belongs to
-        // the business closure of the palier, not to this one. The frontend
-        // therefore cannot read `access_verified`, and — having no way to write
-        // an event either — cannot produce one.
-        Ok(NativeHelperPoll::AccessVerified) => {
-            local.bootstrap.clear();
-            Ok(view)
-        }
-        Ok(NativeHelperPoll::Unavailable) => {
-            local.bootstrap.clear();
-            Err(native_helper::NativeHelperError::Unavailable.into())
-        }
+        // Le helper a prouvé son accès — et, pour une action d'installation,
+        // joué sa séquence — puis s'en est allé. L'issue est nommée au
+        // frontend : c'est la clôture d'affaires que ce palier devait.
+        Ok(NativeHelperPoll::AccessVerified) => conclude(
+            &mut *local,
+            your_cloud_bootstrap_protocol::BootstrapLifecycle::AccessVerified,
+        ),
+        Ok(NativeHelperPoll::Refused) => conclude(
+            &mut *local,
+            your_cloud_bootstrap_protocol::BootstrapLifecycle::Refused,
+        ),
+        Ok(NativeHelperPoll::Cancelled) => conclude(
+            &mut *local,
+            your_cloud_bootstrap_protocol::BootstrapLifecycle::Cancelled,
+        ),
+        Ok(NativeHelperPoll::Unavailable) => conclude(
+            &mut *local,
+            your_cloud_bootstrap_protocol::BootstrapLifecycle::Unavailable,
+        ),
         // An approval outcome read on a bootstrap session is not a weaker
         // bootstrap verdict; it is an answer to something else. The session is
         // cleared and refused rather than interpreted — the supervisor already
@@ -408,15 +431,21 @@ fn cancel_bootstrap(
         code: "console_unavailable",
         detail: None,
     })?;
-    match local.bootstrap.status(&request_id) {
-        Ok(_) => {}
+    let view = match local.bootstrap.status(&request_id) {
+        Ok(view) => view,
         Err(error @ bootstrap::BootstrapError::Expired) => {
             local.native_helper.stop_active()?;
             return Err(error.into());
         }
         Err(error) => return Err(error.into()),
+    };
+    // Une session conclue n'a plus de helper : l'annuler retire seulement ce
+    // que l'état retient encore, et exiger un processus à tuer refuserait un
+    // geste parfaitement licite.
+    if view.lifecycle == your_cloud_bootstrap_protocol::BootstrapLifecycle::AwaitingNativeAssistant
+    {
+        local.native_helper.cancel(&request_id)?;
     }
-    local.native_helper.cancel(&request_id)?;
     local.bootstrap.cancel(&request_id).map_err(Into::into)
 }
 
@@ -765,7 +794,10 @@ fn plan_consent_status(
         // A bootstrap verdict on this session, or a helper that could not run,
         // ends it without producing an answer: this Console does not know what
         // a human decided, and it says so rather than deciding for him.
-        Ok(NativeHelperPoll::AccessVerified) | Ok(NativeHelperPoll::Unavailable) => {
+        Ok(NativeHelperPoll::AccessVerified)
+        | Ok(NativeHelperPoll::Refused)
+        | Ok(NativeHelperPoll::Cancelled)
+        | Ok(NativeHelperPoll::Unavailable) => {
             let _ = local.native_helper.stop_active();
             local.plan_consent.clear();
             Err(PlanConsentError::Unavailable.into())

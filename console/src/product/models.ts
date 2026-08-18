@@ -371,7 +371,16 @@ export type BootstrapSessionView = {
   target: BootstrapTarget;
   step: "personal_access" | "root_access";
   actions: readonly ["audit_target_read_only"];
-  lifecycle: "awaiting_native_assistant";
+  lifecycle:
+    | "awaiting_native_assistant"
+    // Les issues terminales que la clôture d'affaires nomme : la vue en fait
+    // des phrases, et l'état partiel n'est jamais annoncé comme succès — le
+    // terminal dit ce qui s'est conclu, l'action de la session dit ce que cela
+    // couvre.
+    | "access_verified"
+    | "refused"
+    | "cancelled"
+    | "unavailable";
   expires_in_seconds: number;
 };
 

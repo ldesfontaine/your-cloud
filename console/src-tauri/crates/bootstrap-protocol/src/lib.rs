@@ -169,10 +169,30 @@ pub enum BootstrapAction {
     ActivateApprovedController,
 }
 
+/// Où en est une session d'amorçage, dans le vocabulaire que la vue traduit
+/// en phrases.
+///
+/// **Amendement du 18 août 2026 — les issues terminales sont nommées.** Ce
+/// cycle de vie n'avait qu'un état : la Console effaçait le succès sitôt lu
+/// (« naming that outcome to the frontend belongs to the business closure of
+/// the palier »), et un refus du produit remontait indistinct d'une demande
+/// malformée. La clôture d'affaires est ce palier-ci : chaque issue terminale
+/// de l'Assistant a désormais son nom, la vue en fera une phrase, et l'état
+/// partiel n'est jamais annoncé comme succès — le terminal dit ce qui s'est
+/// conclu, l'action de la session dit ce que cela couvre.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BootstrapLifecycle {
     AwaitingNativeAssistant,
+    /// L'Assistant a prouvé l'accès sur la session consentie — et, pour une
+    /// action d'installation, joué sa séquence jusqu'au bout. Ce que cela
+    /// couvre exactement se lit à côté, dans l'action de la session.
+    AccessVerified,
+    /// Refusé — par l'humain à la fenêtre, ou par un juge du produit. La
+    /// machine reste dans l'état que le registre nomme.
+    Refused,
+    Cancelled,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

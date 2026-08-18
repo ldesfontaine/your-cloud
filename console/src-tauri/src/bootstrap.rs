@@ -107,6 +107,14 @@ struct BootstrapSession {
     mode: BootstrapMode,
     target: BootstrapTarget,
     expires_at: Instant,
+    /// L'issue terminale, une fois l'Assistant parti. `None` tant qu'il court.
+    ///
+    /// Elle est RETENUE plutôt qu'effacée — c'est la clôture d'affaires que
+    /// `bootstrap_status` différait : un frontend qui ne peut pas relire
+    /// l'issue ne peut pas la nommer, et un succès effacé se raconte comme un
+    /// silence. La session conclue reste lisible jusqu'à son échéance ou
+    /// jusqu'au démarrage suivant, qui la remplace.
+    concluded: Option<BootstrapLifecycle>,
 }
 
 pub(crate) struct NativeAssistantLaunch {
@@ -234,7 +242,15 @@ impl BootstrapState {
             return Err(BootstrapError::RequestRefused);
         }
         self.clear_if_expired(now);
-        if self.active.is_some() {
+        // Une session CONCLUE ne travaille plus : elle reste lisible pour que
+        // la vue nomme son issue, mais elle ne retient aucun helper et ne doit
+        // pas bloquer le parcours suivant. Seule une session encore en attente
+        // est occupée.
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.concluded.is_none())
+        {
             return Err(BootstrapError::Busy);
         }
         let target = validate_target(input.target).map_err(|_| BootstrapError::InvalidInput)?;
@@ -256,6 +272,7 @@ impl BootstrapState {
             mode,
             target,
             expires_at,
+            concluded: None,
         });
         self.active_view(now)
     }
@@ -310,9 +327,36 @@ impl BootstrapState {
             target: active.target.clone(),
             step: initial_native_step(active.target.access_kind).0,
             actions: [BootstrapAction::AuditTargetReadOnly],
-            lifecycle: BootstrapLifecycle::AwaitingNativeAssistant,
+            lifecycle: active
+                .concluded
+                .unwrap_or(BootstrapLifecycle::AwaitingNativeAssistant),
             expires_in_seconds,
         })
+    }
+
+    /// Retient l'issue terminale que le superviseur du helper vient de lire.
+    ///
+    /// Une conclusion ne s'écrit qu'une fois : la première issue est LA
+    /// conclusion de la session, et un helper dont le cadavre serait relu ne
+    /// peut pas la réécrire. Elle ne s'écrit que sur la session active — une
+    /// issue arrivée pour une session déjà remplacée est refusée plutôt que
+    /// posée sur la mauvaise.
+    pub fn conclude(
+        &mut self,
+        request_id: &str,
+        outcome: BootstrapLifecycle,
+    ) -> Result<(), BootstrapError> {
+        if outcome == BootstrapLifecycle::AwaitingNativeAssistant {
+            // « En attente » n'est pas une issue : conclure dessus rendrait la
+            // session éternellement re-concluable.
+            return Err(BootstrapError::RequestRefused);
+        }
+        let active = self.active.as_mut().ok_or(BootstrapError::RequestRefused)?;
+        if active.request_id != request_id || active.concluded.is_some() {
+            return Err(BootstrapError::RequestRefused);
+        }
+        active.concluded = Some(outcome);
+        Ok(())
     }
 
     fn clear_if_expired(&mut self, now: Instant) {
@@ -375,6 +419,91 @@ mod tests {
             mode,
             target: target(),
         }
+    }
+
+    /// **La conclusion est retenue, relisible, et ne s'écrit qu'une fois.**
+    ///
+    /// C'est la clôture d'affaires : un frontend qui ne peut pas relire
+    /// l'issue ne peut pas la nommer, et un succès effacé se raconte comme un
+    /// silence. Le test tient les trois moitiés — l'issue se relit autant de
+    /// fois qu'on veut, la première écriture est la seule, et « en attente »
+    /// n'est pas une issue.
+    #[test]
+    fn a_concluded_session_is_readable_and_concludes_only_once() {
+        let mut state = BootstrapState::default();
+        let now = Instant::now();
+        let view = state
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|(mode, target)| state.activate(mode, target, now, REQUEST_ONE.into()))
+            .expect("la session démarre");
+        assert_eq!(view.lifecycle, BootstrapLifecycle::AwaitingNativeAssistant);
+
+        state
+            .conclude(REQUEST_ONE, BootstrapLifecycle::AccessVerified)
+            .expect("la première conclusion s'écrit");
+        for _ in 0..3 {
+            let read = state.status_at(REQUEST_ONE, now).expect("l'issue se relit");
+            assert_eq!(read.lifecycle, BootstrapLifecycle::AccessVerified);
+        }
+
+        // La conclusion ne se réécrit pas — ni par une autre issue, ni par la
+        // même.
+        for outcome in [
+            BootstrapLifecycle::Refused,
+            BootstrapLifecycle::AccessVerified,
+        ] {
+            assert!(matches!(
+                state.conclude(REQUEST_ONE, outcome),
+                Err(BootstrapError::RequestRefused)
+            ));
+        }
+
+        // « En attente » n'est jamais une issue.
+        let mut fresh = BootstrapState::default();
+        fresh
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|(mode, target)| fresh.activate(mode, target, now, REQUEST_TWO.into()))
+            .expect("la session démarre");
+        assert!(matches!(
+            fresh.conclude(REQUEST_TWO, BootstrapLifecycle::AwaitingNativeAssistant),
+            Err(BootstrapError::RequestRefused)
+        ));
+    }
+
+    /// Une session conclue ne bloque pas le parcours suivant, et une issue ne
+    /// se pose jamais sur la session qui l'a remplacée.
+    #[test]
+    fn a_concluded_session_yields_to_the_next_start_and_never_receives_its_outcome() {
+        let mut state = BootstrapState::default();
+        let now = Instant::now();
+        state
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|(mode, target)| state.activate(mode, target, now, REQUEST_ONE.into()))
+            .expect("la première session démarre");
+
+        // En attente : le démarrage suivant est occupé — l'invariant existant.
+        assert!(matches!(
+            state.prepare_start(input(BootstrapMode::Create), now),
+            Err(BootstrapError::Busy)
+        ));
+
+        state
+            .conclude(REQUEST_ONE, BootstrapLifecycle::Refused)
+            .expect("la session se conclut");
+        // Conclue : elle cède la place.
+        state
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|(mode, target)| state.activate(mode, target, now, REQUEST_TWO.into()))
+            .expect("le parcours suivant démarre");
+
+        // Une issue tardive du helper de la PREMIÈRE session ne se pose pas
+        // sur la seconde.
+        assert!(matches!(
+            state.conclude(REQUEST_ONE, BootstrapLifecycle::AccessVerified),
+            Err(BootstrapError::RequestRefused)
+        ));
+        let read = state.status_at(REQUEST_TWO, now).expect("la seconde vit");
+        assert_eq!(read.lifecycle, BootstrapLifecycle::AwaitingNativeAssistant);
     }
 
     fn root_input(mode: BootstrapMode) -> BootstrapStartInput {

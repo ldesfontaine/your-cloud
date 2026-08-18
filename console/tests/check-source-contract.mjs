@@ -1978,10 +1978,33 @@ for (const expected of [
   'export type BootstrapMode = "create" | "replace";',
   'step: "personal_access" | "root_access";',
   'actions: readonly ["audit_target_read_only"];',
-  'lifecycle: "awaiting_native_assistant";',
+  // Le cycle de vie nomme désormais les issues terminales — la clôture
+  // d'affaires de #146 — et cette garde tient l'ALIGNEMENT : chaque variante
+  // que le protocole Rust sérialise doit être lisible du TS, sans quoi une
+  // issue conclue arriverait au frontend comme une forme inconnue.
 ]) {
   if (!productModels.includes(expected)) {
     failures.push(`models.ts: contrat d’amorçage manquant (${expected})`);
+  }
+}
+// Et dans l'autre sens : une variante ajoutée au protocole sans sa
+// contrepartie TS doit rougir ici, pas dans une vue qui reçoit un inconnu.
+{
+  const rustLifecycle = bootstrapProtocol.match(
+    /pub enum BootstrapLifecycle \{(?<body>[\s\S]*?)\n\}/u,
+  );
+  const variants = [...(rustLifecycle?.groups?.body ?? "").matchAll(/^\s{4}([A-Z][A-Za-z]*),/gmu)]
+    .map((entry) => entry[1].replaceAll(/(?<=[a-z])(?=[A-Z])/gu, "_").toLowerCase());
+  if (variants.length < 5) {
+    failures.push("bootstrap-protocol: BootstrapLifecycle illisible pour la garde d'alignement");
+  }
+  for (const variant of variants) {
+    // Dans le CORPS du type, pas dans le fichier : « unavailable » existe
+    // ailleurs dans models.ts, et une garde qui cherche trop large est une
+    // garde qu'une mutation traverse — mesuré en l'écrivant.
+    if (!(bootstrapSessionView ?? "").includes(`"${variant}"`)) {
+      failures.push(`models.ts: variante du cycle de vie absente (${variant})`);
+    }
   }
 }
 

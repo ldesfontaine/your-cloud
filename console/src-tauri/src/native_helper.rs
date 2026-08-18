@@ -226,6 +226,12 @@ pub(crate) enum NativeHelperPoll {
     /// the protocol's own table pairs it with, and nothing of the helper's
     /// process group was left behind.
     AccessVerified,
+    /// L'Assistant a écrit `refused` et s'est terminé sous le code que la
+    /// table du protocole apparie. C'est un verdict du produit ou de l'humain,
+    /// pas une demande malformée : le distinguer de `RequestRefused` est ce
+    /// qui permet à la vue d'en faire une phrase plutôt qu'un code générique.
+    Refused,
+    Cancelled,
     Unavailable,
     /// The approval window answered. The outcome is carried whole rather than
     /// summarised: what the human decided, and the two digests a confirmation
@@ -738,9 +744,15 @@ fn complete_bootstrap_session(
         }
         AssistantEventKind::Unavailable => Ok(NativeHelperPoll::Unavailable),
         AssistantEventKind::Expired => Err(NativeHelperError::Expired),
-        AssistantEventKind::PromptOpen
-        | AssistantEventKind::Refused
-        | AssistantEventKind::Cancelled => Err(NativeHelperError::RequestRefused),
+        // Un refus et une annulation sont des ISSUES, pas des anomalies : ils
+        // remontent nommés pour que la clôture d'affaires en fasse une phrase.
+        // Les confondre avec `RequestRefused` — ce que ce poll a fait jusqu'à
+        // la clôture — laissait la vue dire « demande refusée » d'un verdict
+        // que le produit avait rendu en bonne et due forme.
+        AssistantEventKind::Refused => Ok(NativeHelperPoll::Refused),
+        AssistantEventKind::Cancelled => Ok(NativeHelperPoll::Cancelled),
+        // Un événement qui ne termine rien n'a rien à faire sur ce canal.
+        AssistantEventKind::PromptOpen => Err(NativeHelperError::RequestRefused),
     }
 }
 
