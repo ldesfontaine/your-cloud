@@ -7,7 +7,7 @@ import type {
   BootstrapSessionView,
   BootstrapStartInput,
 } from "./models";
-import { operationErrorMessage } from "./errors";
+import { operationErrorDetail, operationErrorMessage } from "./errors";
 import { nativeConsole } from "./native";
 
 /// « Créer une infrastructure », du premier champ au Controller actif.
@@ -108,6 +108,11 @@ export function CreateInfrastructureView({
   const [done, setDone] = useState<StepOutcome[]>([]);
   const [awaiting, setAwaiting] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  // La seconde moitié d'un refus qui en a une : le contrôle qui a refusé l'a
+  // nommée — pour l'entrée trop étroite, c'est ce que l'entrée permet
+  // aujourd'hui, sans quoi l'humain devine au lieu de choisir entre ses deux
+  // issues (constat n°10 du contrat).
+  const [failureDetail, setFailureDetail] = useState<string | null>(null);
   const pollTimer = useRef<number | null>(null);
   const activeRequest = useRef<string | null>(null);
 
@@ -153,6 +158,7 @@ export function CreateInfrastructureView({
     }
     setStepIndex(index);
     setFailure(null);
+    setFailureDetail(null);
     setAwaiting(step.announce);
     let session: BootstrapSessionView;
     try {
@@ -160,6 +166,7 @@ export function CreateInfrastructureView({
     } catch (error: unknown) {
       setAwaiting(null);
       setFailure(operationErrorMessage(error));
+      setFailureDetail(operationErrorDetail(error));
       return;
     }
     const requestId = session.request_id;
@@ -173,6 +180,7 @@ export function CreateInfrastructureView({
           stopPolling();
           setAwaiting(null);
           setFailure(operationErrorMessage(error));
+          setFailureDetail(operationErrorDetail(error));
           return;
         }
         if (read.lifecycle === "awaiting_native_assistant") {
@@ -338,6 +346,11 @@ export function CreateInfrastructureView({
         {failure ? (
           <Banner tone="danger" icon={ServerCog} title="Cette étape n’a pas abouti">
             {failure}
+            {/* La seconde moitié du refus, quand le contrôle l'a nommée : la
+                phrase dit ce qu'un humain doit comprendre, celle-ci lui donne
+                l'existant à lire — pour l'entrée trop étroite, ce que
+                l'entrée sudoers permet aujourd'hui. */}
+            {failureDetail ? <p className="yc-mono yc-muted">{failureDetail}</p> : null}
           </Banner>
         ) : null}
       </Card>

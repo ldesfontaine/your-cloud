@@ -45,6 +45,7 @@ const nativeErrorCodes = [
   "bootstrap_busy",
   "bootstrap_expired",
   "bootstrap_request_refused",
+  "bootstrap_entry_too_narrow",
   "native_assistant_unavailable",
   "plan_absent",
   "definition_absent",
@@ -277,6 +278,16 @@ export function localErrorMessage(code: NativeErrorCode): string {
       return "Le parcours d’amorçage a expiré et doit être recommencé.";
     case "bootstrap_request_refused":
       return "Le parcours d’amorçage demandé n’est plus utilisable.";
+    case "bootstrap_entry_too_narrow":
+      // Le refus du constat n°10 : il tombe avant toute fenêtre, il nomme ce
+      // que l'action exige et les deux issues — et le détail à côté nomme ce
+      // que l'entrée permet aujourd'hui. Personne n'est contraint d'élargir :
+      // c'est un choix nommé.
+      return (
+        "L’entrée sudoers du compte prêté ne permet pas cette action : installer exige " +
+        "d’autoriser toute commande (ALL). Deux issues : élargir l’entrée à ALL, ou prêter " +
+        "un accès root direct. Ce que l’entrée permet aujourd’hui est nommé ci-dessous."
+      );
     case "native_assistant_unavailable":
       return "L’assistant natif d’amorçage est indisponible.";
     case "plan_absent":

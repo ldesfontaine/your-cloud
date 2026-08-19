@@ -21,6 +21,16 @@ pub enum BootstrapError {
     Expired,
     #[error("the bootstrap request was refused")]
     RequestRefused,
+    /// L'entrée sudoers du compte prêté, attestée par une session antérieure
+    /// sous un consentement antérieur, ne permet pas ce que l'action exige.
+    ///
+    /// Le refus tombe ICI — avant toute session, avant toute fenêtre, machine
+    /// intacte — et il PORTE ce que l'entrée permet aujourd'hui : c'est ce qui
+    /// rend le choix possible entre les deux issues du contrat, élargir
+    /// l'entrée à `ALL` ou prêter un accès `root` direct (constat n°10 de
+    /// #143, arbitrage du 19 août 2026).
+    #[error("the attested sudoers entry is narrower than the action requires")]
+    EntryTooNarrow { permits: String },
 }
 
 impl BootstrapError {
@@ -30,6 +40,17 @@ impl BootstrapError {
             Self::Busy => "bootstrap_busy",
             Self::Expired => "bootstrap_expired",
             Self::RequestRefused => "bootstrap_request_refused",
+            Self::EntryTooNarrow { .. } => "bootstrap_entry_too_narrow",
+        }
+    }
+
+    /// La seconde moitié du refus qui en a une : ce que l'entrée permet,
+    /// attesté et borné par le protocole, rendu à côté de la phrase pour que
+    /// l'humain lise l'existant au lieu de le deviner.
+    pub fn detail(&self) -> Option<String> {
+        match self {
+            Self::EntryTooNarrow { permits } => Some(permits.clone()),
+            _ => None,
         }
     }
 }
@@ -188,10 +209,30 @@ pub(crate) struct NativeAssistantLaunch {
     pub(crate) expires_at: Instant,
 }
 
+/// Ce qu'une session a attesté de l'entrée sudoers d'une cible, retenu pour
+/// que le refus d'une action d'installation tombe AVANT la session suivante.
+///
+/// La rétention est **consommée à l'usage** : le premier démarrage refusé la
+/// retire, et le suivant ouvre une session réelle qui jugera l'entrée telle
+/// qu'elle est devenue. C'est ce qui rend inutile toute politique d'expiration
+/// — une entrée élargie entre deux gestes n'est jamais bloquée par une portée
+/// périmée — tout en tenant le constat : aucun consentement n'est demandé
+/// pour un refus déjà jugé.
+struct AttestedNarrowEntry {
+    target: BootstrapTarget,
+    permits: String,
+}
+
 #[derive(Default)]
 pub struct BootstrapState {
     active: Option<BootstrapSession>,
     closed: bool,
+    /// La dernière portée étroite attestée, exportée par l'Assistant à la
+    /// clôture d'une session — l'audit d'abord, mais aussi le refus d'une
+    /// pose sans audit. `None` dès qu'une attestation dit que l'entrée
+    /// suffit : une portée qui ne suffit plus ne doit pas survivre à sa
+    /// propre correction.
+    attested_narrow: Option<AttestedNarrowEntry>,
 }
 
 impl BootstrapState {
@@ -320,13 +361,71 @@ impl BootstrapState {
             return Err(BootstrapError::Busy);
         }
         let target = validate_target(input.target).map_err(|_| BootstrapError::InvalidInput)?;
+        let action = input.action.unwrap_or(BootstrapAction::AuditTargetReadOnly);
+        // Le refus avant la fenêtre : une portée étroite déjà attestée sur
+        // CETTE cible refuse une action d'installation ici même — aucune
+        // session, aucun consentement, machine intacte — et se consomme en
+        // refusant. L'audit n'est jamais barré : c'est lui qui atteste, et lui
+        // qui lèvera ou reposera la rétention.
+        if matches!(
+            action,
+            BootstrapAction::InstallServerBundle | BootstrapAction::ActivateApprovedController
+        ) && self
+            .attested_narrow
+            .as_ref()
+            .is_some_and(|narrow| narrow.target == target)
+        {
+            let narrow = self
+                .attested_narrow
+                .take()
+                .expect("la rétention vient d'être vue");
+            return Err(BootstrapError::EntryTooNarrow {
+                permits: narrow.permits,
+            });
+        }
         Ok(PreparedStart {
             mode: input.mode,
             target,
-            action: input.action.unwrap_or(BootstrapAction::AuditTargetReadOnly),
+            action,
             declared_target: input.declared_target,
             machine_configuration: input.machine_configuration,
         })
+    }
+
+    /// Retient — ou lève — la portée d'installation que l'Assistant a exportée
+    /// à la clôture de la session `request_id`.
+    ///
+    /// Une portée qui ne suffit pas est retenue avec sa cible ; une portée qui
+    /// suffit LÈVE toute rétention sur cette cible — l'entrée a été corrigée,
+    /// et une portée périmée ne doit pas survivre à sa propre correction. Une
+    /// session sans portée ne dit rien et ne change rien.
+    pub fn retain_attested_scope(
+        &mut self,
+        request_id: &str,
+        scope: Option<your_cloud_bootstrap_protocol::AttestedInstallationScopeV1>,
+    ) {
+        let Some(scope) = scope else { return };
+        let Some(active) = self
+            .active
+            .as_ref()
+            .filter(|active| active.request_id == request_id)
+        else {
+            return;
+        };
+        if scope.suffices {
+            if self
+                .attested_narrow
+                .as_ref()
+                .is_some_and(|narrow| narrow.target == active.target)
+            {
+                self.attested_narrow = None;
+            }
+        } else {
+            self.attested_narrow = Some(AttestedNarrowEntry {
+                target: active.target.clone(),
+                permits: scope.permits,
+            });
+        }
     }
 
     fn activate(
@@ -496,6 +595,117 @@ mod tests {
             declared_target: None,
             machine_configuration: None,
         }
+    }
+
+    /// Une portée étroite attestée refuse la pose AVANT toute session — et se
+    /// consomme en refusant.
+    ///
+    /// C'est le constat n°10 côté cœur : l'audit a exporté « ce que l'entrée
+    /// permet », la pose suivante sur la MÊME cible est refusée ici, nommée,
+    /// sans qu'aucune session s'ouvre ni qu'aucun consentement soit demandé.
+    /// La rétention consommée, le geste suivant ouvre une session réelle qui
+    /// jugera l'entrée telle qu'elle est devenue — c'est ce qui dispense de
+    /// toute politique d'expiration. L'audit, lui, n'est jamais barré ; une
+    /// autre cible non plus ; et une portée qui SUFFIT lève la rétention.
+    #[test]
+    fn an_attested_narrow_entry_refuses_installation_before_any_session() {
+        let scope = |suffices: bool, permits: &str| {
+            Some(your_cloud_bootstrap_protocol::AttestedInstallationScopeV1 {
+                suffices,
+                permits: permits.into(),
+            })
+        };
+        let install = |mode| BootstrapStartInput {
+            mode,
+            target: target(),
+            action: Some(BootstrapAction::InstallServerBundle),
+            declared_target: Some(DeclaredTarget {
+                private: true,
+                normally_on: true,
+            }),
+            machine_configuration: Some(MachineConfigurationValues {
+                listen: "192.168.240.160:9443".into(),
+                allowed_source: "192.168.240.0/24".into(),
+                relay_endpoint: "192.168.240.9:9444".into(),
+            }),
+        };
+        let now = Instant::now();
+
+        // L'audit atteste et exporte : l'entrée ne nomme que la sonde.
+        let mut state = BootstrapState::default();
+        state
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|prepared| state.activate(prepared, now, REQUEST_ONE.into()))
+            .expect("l'audit démarre");
+        state.retain_attested_scope(REQUEST_ONE, scope(false, "/usr/bin/id"));
+        state
+            .conclude(REQUEST_ONE, BootstrapLifecycle::AccessVerified)
+            .expect("l'audit conclut");
+
+        // La pose est refusée AVANT toute session, et le refus NOMME.
+        let refused = state.prepare_start(install(BootstrapMode::Create), now);
+        let Err(BootstrapError::EntryTooNarrow { permits }) = refused else {
+            panic!("la pose devait être refusée avant toute session");
+        };
+        assert_eq!(permits, "/usr/bin/id");
+
+        // Consommée : le geste suivant ouvre une session réelle.
+        state
+            .prepare_start(install(BootstrapMode::Create), now)
+            .expect("la rétention consommée ne barre plus");
+
+        // L'audit n'est jamais barré par une rétention.
+        let mut audits = BootstrapState::default();
+        audits
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|prepared| audits.activate(prepared, now, REQUEST_ONE.into()))
+            .expect("l'audit démarre");
+        audits.retain_attested_scope(REQUEST_ONE, scope(false, "/usr/bin/id"));
+        audits
+            .conclude(REQUEST_ONE, BootstrapLifecycle::AccessVerified)
+            .expect("l'audit conclut");
+        audits
+            .prepare_start(input(BootstrapMode::Create), now)
+            .expect("auditer ne coûte jamais plus qu'auditer");
+
+        // Une AUTRE cible n'est pas barrée par cette rétention-là.
+        let mut other = BootstrapState::default();
+        other
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|prepared| other.activate(prepared, now, REQUEST_ONE.into()))
+            .expect("l'audit démarre");
+        other.retain_attested_scope(REQUEST_ONE, scope(false, "/usr/bin/id"));
+        other
+            .conclude(REQUEST_ONE, BootstrapLifecycle::AccessVerified)
+            .expect("l'audit conclut");
+        let mut foreign = install(BootstrapMode::Create);
+        foreign.target.host = "another.example.test".into();
+        other
+            .prepare_start(foreign, now)
+            .expect("une portée attestée ne parle que de sa cible");
+
+        // Une portée qui SUFFIT lève la rétention : l'entrée corrigée ne
+        // reste pas barrée par sa version d'avant.
+        let mut lifted = BootstrapState::default();
+        lifted
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|prepared| lifted.activate(prepared, now, REQUEST_ONE.into()))
+            .expect("l'audit démarre");
+        lifted.retain_attested_scope(REQUEST_ONE, scope(false, "/usr/bin/id"));
+        lifted
+            .conclude(REQUEST_ONE, BootstrapLifecycle::AccessVerified)
+            .expect("l'audit conclut");
+        lifted
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|prepared| lifted.activate(prepared, now, REQUEST_TWO.into()))
+            .expect("le second audit démarre");
+        lifted.retain_attested_scope(REQUEST_TWO, scope(true, ""));
+        lifted
+            .conclude(REQUEST_TWO, BootstrapLifecycle::AccessVerified)
+            .expect("le second audit conclut");
+        lifted
+            .prepare_start(install(BootstrapMode::Create), now)
+            .expect("une portée qui suffit a levé la rétention");
     }
 
     /// **La conclusion est retenue, relisible, et ne s'écrit qu'une fois.**

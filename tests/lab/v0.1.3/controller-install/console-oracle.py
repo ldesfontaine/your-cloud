@@ -646,23 +646,6 @@ def window_gone(title: str, seconds: int = 120) -> bool:
     return False
 
 
-def window_appeared(title: str, seconds: int) -> float | None:
-    """Depuis quand cette fenêtre est là, ou `None` si elle n'est jamais venue.
-
-    C'est l'inverse de `await_window` et il ne lève rien : une fenêtre ABSENTE
-    est ici un constat à mesurer, pas un échec. Le constat n°10 tient
-    entièrement à cette différence — « refusé AVANT la fenêtre » ne se prouve
-    qu'en attendant vraiment une fenêtre qui ne vient pas.
-    """
-    started = time.monotonic()
-    deadline = started + seconds
-    while time.monotonic() < deadline:
-        if window_titled(title) is not None:
-            return time.monotonic() - started
-        time.sleep(0.25)
-    return None
-
-
 def press(window: str, key: str) -> None:
     """Focus synchrone puis frappe XTEST — la séquence du contrat, en Python."""
     if xdotool("windowraise", window) is None:
@@ -903,11 +886,35 @@ def refused_step(
     et c'est le rapport qui en tire les conséquences — pas cet oracle.
     """
     click(driver, STEP_BUTTONS[step])
-    appeared = window_appeared(ACCESS_WINDOW_TITLE, seconds=window_grace)
+    # La fenêtre et le bandeau sont guettés ENSEMBLE, et le premier venu est
+    # le constat : un refus qui tombe avant la fenêtre — celui que le contrat
+    # exige — se mesure ici comme « bandeau sans fenêtre », et un refus qui
+    # attendrait la fenêtre se mesure comme « fenêtre d'abord ». Une attente
+    # qui ne guettait que la fenêtre brûlait sa grâce entière devant un refus
+    # déjà affiché.
+    started = time.monotonic()
+    deadline = started + window_grace
+    appeared: float | None = None
+    refusal_first: str | None = None
+    while time.monotonic() < deadline:
+        if window_titled(ACCESS_WINDOW_TITLE) is not None:
+            appeared = time.monotonic() - started
+            break
+        try:
+            shown = driver.execute(FAILURE_SENTENCE)
+        except (http.client.RemoteDisconnected, ConnectionResetError):
+            shown = None
+        if isinstance(shown, str) and shown:
+            refusal_first = shown
+            break
+        time.sleep(0.25)
     measured = {
         "step": step,
         "access_window_opened": appeared is not None,
         "seconds_before_window": None if appeared is None else round(appeared, 2),
+        "seconds_before_refusal": None
+        if refusal_first is None
+        else round(time.monotonic() - started, 2),
         "window_grace_seconds": window_grace,
     }
     if appeared is not None:
@@ -916,7 +923,11 @@ def refused_step(
         # APRÈS un consentement qui n'aurait pas dû être demandé.
         measured["acceptance_button_reached"] = "alt+a, mnémonique du produit"
         answer_access_window(key_file, passphrase, report)
-    measured["refusal"] = await_failure(driver, label=f"the {step} refusal")
+    measured["refusal"] = (
+        refusal_first
+        if refusal_first is not None
+        else await_failure(driver, label=f"the {step} refusal")
+    )
     report.setdefault("refusals", []).append(measured)
 
 

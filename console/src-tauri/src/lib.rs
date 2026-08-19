@@ -80,14 +80,20 @@ use zeroize::Zeroizing;
 /// not grow here. `detail` is the second half of a refusal that could not
 /// otherwise be acted on: it names **which** check refused, for the one code
 /// whose sentence — « la réponse reçue ne respecte pas le contrat de
-/// sécurité » — tells a reader nothing about what to do. It is a fixed string
-/// this product chose, never an echo of what was received, and it is omitted
-/// entirely when the code already names itself.
+/// sécurité » — tells a reader nothing about what to do.
+///
+/// Il est presque toujours une chaîne fixe choisie par ce produit, jamais un
+/// écho du reçu — avec UNE exception, écrite ici parce qu'elle contredit la
+/// règle d'hier : le refus « entrée trop étroite » porte ce que l'entrée
+/// sudoers permet aujourd'hui. C'est bien un écho de la machine, mais un écho
+/// **attesté** — parsé par le juge du produit, borné et ASCII par le
+/// protocole — et le contrat l'exige nommé : sans lui, l'humain devine au
+/// lieu de choisir entre ses deux issues.
 #[derive(Debug, Serialize)]
 struct CommandError {
     code: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    detail: Option<&'static str>,
+    detail: Option<String>,
 }
 
 impl From<vault::VaultError> for CommandError {
@@ -105,7 +111,7 @@ impl From<network::NetworkError> for CommandError {
     fn from(value: network::NetworkError) -> Self {
         Self {
             code: value.public_code(),
-            detail: value.detail(),
+            detail: value.detail().map(str::to_owned),
         }
     }
 }
@@ -114,9 +120,9 @@ impl From<bootstrap::BootstrapError> for CommandError {
     fn from(value: bootstrap::BootstrapError) -> Self {
         Self {
             code: value.public_code(),
-            // Ces refus se nomment déjà par leur code : rien à ajouter, et un
-            // champ vide vaut mieux qu'un détail qui ne dirait rien de plus.
-            detail: None,
+            // Un seul refus a une seconde moitié : l'entrée trop étroite porte
+            // ce qu'elle permet. Les autres se nomment déjà par leur code.
+            detail: value.detail(),
         }
     }
 }
@@ -385,15 +391,29 @@ fn bootstrap_status(
         Ok(NativeHelperPoll::Running) => Ok(view),
         // Le helper a prouvé son accès — et, pour une action d'installation,
         // joué sa séquence — puis s'en est allé. L'issue est nommée au
-        // frontend : c'est la clôture d'affaires que ce palier devait.
-        Ok(NativeHelperPoll::AccessVerified) => conclude(
-            &mut *local,
-            your_cloud_bootstrap_protocol::BootstrapLifecycle::AccessVerified,
-        ),
-        Ok(NativeHelperPoll::Refused) => conclude(
-            &mut *local,
-            your_cloud_bootstrap_protocol::BootstrapLifecycle::Refused,
-        ),
+        // frontend : c'est la clôture d'affaires que ce palier devait. La
+        // portée d'installation qu'il a exportée est retenue AVANT de
+        // conclure : c'est elle qui fera tomber le refus d'une pose suivante
+        // avant toute session, et elle qui lève la rétention quand l'entrée a
+        // été élargie.
+        Ok(NativeHelperPoll::AccessVerified { installation_scope }) => {
+            local
+                .bootstrap
+                .retain_attested_scope(&request_id, installation_scope);
+            conclude(
+                &mut *local,
+                your_cloud_bootstrap_protocol::BootstrapLifecycle::AccessVerified,
+            )
+        }
+        Ok(NativeHelperPoll::Refused { installation_scope }) => {
+            local
+                .bootstrap
+                .retain_attested_scope(&request_id, installation_scope);
+            conclude(
+                &mut *local,
+                your_cloud_bootstrap_protocol::BootstrapLifecycle::Refused,
+            )
+        }
         Ok(NativeHelperPoll::Cancelled) => conclude(
             &mut *local,
             your_cloud_bootstrap_protocol::BootstrapLifecycle::Cancelled,
@@ -794,8 +814,8 @@ fn plan_consent_status(
         // A bootstrap verdict on this session, or a helper that could not run,
         // ends it without producing an answer: this Console does not know what
         // a human decided, and it says so rather than deciding for him.
-        Ok(NativeHelperPoll::AccessVerified)
-        | Ok(NativeHelperPoll::Refused)
+        Ok(NativeHelperPoll::AccessVerified { .. })
+        | Ok(NativeHelperPoll::Refused { .. })
         | Ok(NativeHelperPoll::Cancelled)
         | Ok(NativeHelperPoll::Unavailable) => {
             let _ = local.native_helper.stop_active();

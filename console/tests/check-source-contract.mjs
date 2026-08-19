@@ -1752,8 +1752,11 @@ const serveScopeBody =
     ? nativeAssistantHelperRuntime.slice(serveScopeStart, serveScopeEnd)
     : "";
 const overriddenSecretDropIndex = serveScopeBody.indexOf("drop(outcome);");
+// Sans parenthèse fermante : l'appel porte désormais la portée d'installation
+// exportée en quatrième argument, et la propriété gardée ici — le secret
+// supplanté meurt AVANT la frame — ne dépend pas de ce que la frame porte.
 const overriddenTerminalWriteIndex = serveScopeBody.lastIndexOf(
-  "write_terminal(writer, &scope, terminal)",
+  "write_terminal(writer, &scope, terminal",
 );
 if (
   serveScopeBody.length === 0 ||
@@ -1771,8 +1774,10 @@ const helperTtlOrder = [
   "let observed_at_monotonic_nanos = monotonic_nanos()",
   "deadline_from_observation(",
   "watchdog\n        .tighten_to(deadline)",
-  "return write_terminal(writer, &scope, SessionTerminal::Expired);",
-  "let outcome = show_prompt(",
+  // Un helper expiré avant le prompt n'a rien attesté : la frame part sans
+  // portée, et le fragment le fige.
+  "return write_terminal(writer, &scope, SessionTerminal::Expired, None);",
+  "let (outcome, exported_scope) =\n        show_prompt(",
 ].map((fragment) => serveScopeBody.indexOf(fragment));
 if (
   helperTtlOrder.some((index) => index < 0) ||

@@ -28,9 +28,9 @@ use std::os::unix::{
 // naming the constants here again would be a second table to keep in step.
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, ApprovalConsentOutcomeV1, ApprovalConsentV1, AssistantEventKind,
-    AssistantEventV1, AssistantScopeV1, MAX_APPROVAL_CONSENT_FRAME_BYTES,
-    MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES, MAX_ASSISTANT_EVENT_FRAME_BYTES,
-    MAX_ASSISTANT_SCOPE_FRAME_BYTES,
+    AssistantEventV1, AssistantScopeV1, AttestedInstallationScopeV1,
+    MAX_APPROVAL_CONSENT_FRAME_BYTES, MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES,
+    MAX_ASSISTANT_EVENT_FRAME_BYTES, MAX_ASSISTANT_SCOPE_FRAME_BYTES,
 };
 
 // The launch-time environment allowlist is decided per prompt, so the kind of
@@ -225,12 +225,22 @@ pub(crate) enum NativeHelperPoll {
     /// once: the event was `access_verified`, the process exited with the code
     /// the protocol's own table pairs it with, and nothing of the helper's
     /// process group was left behind.
-    AccessVerified,
+    ///
+    /// La portée d'installation attestée voyage avec le verdict quand la
+    /// route l'a jugée — c'est l'export de l'audit, celui qui permet à un
+    /// refus de pose ultérieur de tomber avant toute session.
+    AccessVerified {
+        installation_scope: Option<AttestedInstallationScopeV1>,
+    },
     /// L'Assistant a écrit `refused` et s'est terminé sous le code que la
     /// table du protocole apparie. C'est un verdict du produit ou de l'humain,
     /// pas une demande malformée : le distinguer de `RequestRefused` est ce
     /// qui permet à la vue d'en faire une phrase plutôt qu'un code générique.
-    Refused,
+    /// Quand le refus est celui de l'entrée trop étroite, la portée attestée
+    /// voyage avec lui et NOMME ce que l'entrée permet.
+    Refused {
+        installation_scope: Option<AttestedInstallationScopeV1>,
+    },
     Cancelled,
     Unavailable,
     /// The approval window answered. The outcome is carried whole rather than
@@ -740,7 +750,12 @@ fn complete_bootstrap_session(
             if !descendants_are_gone(&session.child) {
                 return Err(NativeHelperError::RequestRefused);
             }
-            Ok(NativeHelperPoll::AccessVerified)
+            // La portée attestée que la route d'audit exporte remonte TELLE
+            // QUELLE : le protocole l'a déjà validée (porteur, paire, borne),
+            // et ce poll rapporte — il n'interprète jamais.
+            Ok(NativeHelperPoll::AccessVerified {
+                installation_scope: event.installation_scope,
+            })
         }
         AssistantEventKind::Unavailable => Ok(NativeHelperPoll::Unavailable),
         AssistantEventKind::Expired => Err(NativeHelperError::Expired),
@@ -749,7 +764,9 @@ fn complete_bootstrap_session(
         // Les confondre avec `RequestRefused` — ce que ce poll a fait jusqu'à
         // la clôture — laissait la vue dire « demande refusée » d'un verdict
         // que le produit avait rendu en bonne et due forme.
-        AssistantEventKind::Refused => Ok(NativeHelperPoll::Refused),
+        AssistantEventKind::Refused => Ok(NativeHelperPoll::Refused {
+            installation_scope: event.installation_scope,
+        }),
         AssistantEventKind::Cancelled => Ok(NativeHelperPoll::Cancelled),
         // Un événement qui ne termine rien n'a rien à faire sur ce canal.
         AssistantEventKind::PromptOpen => Err(NativeHelperError::RequestRefused),
