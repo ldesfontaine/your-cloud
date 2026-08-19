@@ -646,6 +646,23 @@ def window_gone(title: str, seconds: int = 120) -> bool:
     return False
 
 
+def window_appeared(title: str, seconds: int) -> float | None:
+    """Depuis quand cette fenêtre est là, ou `None` si elle n'est jamais venue.
+
+    C'est l'inverse de `await_window` et il ne lève rien : une fenêtre ABSENTE
+    est ici un constat à mesurer, pas un échec. Le constat n°10 tient
+    entièrement à cette différence — « refusé AVANT la fenêtre » ne se prouve
+    qu'en attendant vraiment une fenêtre qui ne vient pas.
+    """
+    started = time.monotonic()
+    deadline = started + seconds
+    while time.monotonic() < deadline:
+        if window_titled(title) is not None:
+            return time.monotonic() - started
+        time.sleep(0.25)
+    return None
+
+
 def press(window: str, key: str) -> None:
     """Focus synchrone puis frappe XTEST — la séquence du contrat, en Python."""
     if xdotool("windowraise", window) is None:
@@ -759,6 +776,60 @@ def sentence_shown(wanted: str) -> str:
     )
 
 
+# Le bandeau de refus, tel qu'un humain le lit. Le titre et la phrase sont deux
+# nœuds du même bandeau, et c'est la PHRASE qui porte ce que le produit dit —
+# le titre ne fait que la ranger. Rendre `null` plutôt que du vide quand il n'y
+# a pas de bandeau distingue « rien n'a refusé » de « quelque chose a refusé
+# sans rien dire », qui ne sont pas le même constat.
+FAILURE_SENTENCE = """
+const banner = [...document.querySelectorAll('[role=alert], .yc-alert, .yc-error')]
+  .map((element) => element.textContent.trim())
+  .find((text) => text.startsWith('Cette étape n’a pas abouti'));
+if (!banner) { return null; }
+return banner.slice('Cette étape n’a pas abouti'.length).trim();
+"""
+
+
+def await_failure(driver: Driver, seconds: int = 600, label: str = "") -> str:
+    """La phrase de refus que l'écran finit par montrer, ou l'échec de l'attente."""
+    deadline = time.monotonic() + seconds
+    last: object = None
+    while time.monotonic() < deadline:
+        try:
+            last = driver.execute(FAILURE_SENTENCE)
+        except (http.client.RemoteDisconnected, ConnectionResetError):
+            last = "<transport cut>"
+        if isinstance(last, str) and last:
+            return last
+        time.sleep(0.25)
+    raise RuntimeError(f"{label or 'a refusal'}: never shown; last value was {last!r}")
+
+
+def await_outcome(driver: Driver, step: str, seconds: int = 600) -> str:
+    """L'issue de l'étape, quelle qu'elle soit : sa phrase de réussite ou son refus.
+
+    Les deux sont attendues ENSEMBLE, et la première venue gagne. Une attente
+    qui ne guetterait que la réussite passerait ses dix minutes devant un écran
+    qui a déjà refusé, puis dirait « la phrase n'est jamais venue » — ce qui est
+    vrai et n'apprend rien. Mesuré le 19 août 2026 : le refus de la pose était à
+    l'écran en quelques secondes, et l'oracle a attendu 600 s pour l'ignorer.
+    """
+    wanted = STEP_SENTENCES[step]
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            shown = driver.execute(sentence_shown(wanted))
+            if shown == wanted:
+                return wanted
+            refusal = driver.execute(FAILURE_SENTENCE)
+            if isinstance(refusal, str) and refusal:
+                return refusal
+        except (http.client.RemoteDisconnected, ConnectionResetError):
+            pass
+        time.sleep(0.25)
+    raise RuntimeError(f"the {step} step ended on neither its phrase nor a refusal")
+
+
 def open_creation(driver: Driver, target: dict, report: dict) -> None:
     """De la vue Infrastructures au formulaire rempli, en phrases."""
     click_then_wait(
@@ -807,15 +878,77 @@ def run_step(
         press(sudo_window, "alt+c")
         if not window_gone(SUDO_TITLE, seconds=30):
             raise RuntimeError("the sudo password window never accepted")
-    wait_until(
-        driver,
-        sentence_shown(STEP_SENTENCES[step]),
-        STEP_SENTENCES[step],
-        seconds=600,
-        label=f"the {step} outcome sentence",
-    )
-    report.setdefault("steps", {})[step] = STEP_SENTENCES[step]
+    outcome = await_outcome(driver, step, seconds=600)
     report.setdefault("tape_by_step", {})[step] = read_recorder(driver)
+    if outcome != STEP_SENTENCES[step]:
+        raise RuntimeError(f"the {step} step was refused: {outcome}")
+    report.setdefault("steps", {})[step] = outcome
+
+
+def refused_step(
+    driver: Driver,
+    step: str,
+    key_file: str,
+    passphrase: str,
+    report: dict,
+    window_grace: int = 90,
+) -> None:
+    """Une étape dont on attend le REFUS, et dont on mesure quand il tombe.
+
+    Le constat n°10 du contrat dit « refusé avant la fenêtre : aucun
+    consentement n'est demandé ». Cette fonction ne le suppose pas : elle
+    attend la fenêtre d'accès pendant `window_grace`, écrit si elle est venue
+    et au bout de combien de temps, et ne la pilote QUE si elle est là. Une
+    fenêtre absente est le constat ; une fenêtre présente est un autre constat,
+    et c'est le rapport qui en tire les conséquences — pas cet oracle.
+    """
+    click(driver, STEP_BUTTONS[step])
+    appeared = window_appeared(ACCESS_WINDOW_TITLE, seconds=window_grace)
+    measured = {
+        "step": step,
+        "access_window_opened": appeared is not None,
+        "seconds_before_window": None if appeared is None else round(appeared, 2),
+        "window_grace_seconds": window_grace,
+    }
+    if appeared is not None:
+        # Elle est là : un humain la lirait et l'accepterait, donc l'oracle
+        # l'accepte — c'est le seul moyen de savoir ce que le refus devient
+        # APRÈS un consentement qui n'aurait pas dû être demandé.
+        measured["acceptance_button_reached"] = "alt+a, mnémonique du produit"
+        answer_access_window(key_file, passphrase, report)
+    measured["refusal"] = await_failure(driver, label=f"the {step} refusal")
+    report.setdefault("refusals", []).append(measured)
+
+
+def asymmetry(driver: Driver, arguments, target: dict, passphrase: str, report: dict) -> None:
+    """Le constat n°10, dans une seule passe : le même compte, deux issues.
+
+    Le compte porté par `--username` est ici l'étroit — son entrée sudoers ne
+    nomme que la sonde d'identité. L'audit doit lui suffire, la pose doit lui
+    être refusée, et c'est l'ASYMÉTRIE qui est le constat : deux mesures sur
+    la même session, jamais deux passes qu'on rapprocherait après coup.
+    """
+    reach_vault(driver, report)
+    open_creation(driver, target, report)
+    run_step(driver, "audit", arguments.key_file, passphrase, report)
+    report["audit_with_narrow_entry"] = (
+        "l'audit rend sa phrase avec une entrée sudoers qui ne nomme que la sonde"
+    )
+    refused_step(driver, "install", arguments.key_file, passphrase, report)
+
+
+def hostile(driver: Driver, arguments, target: dict, passphrase: str, report: dict) -> None:
+    """Le constat n°3 : un lot altéré est refusé, et la cible n'est pas touchée.
+
+    L'altération est posée hors de cet oracle — c'est le `prove` qui réécrit un
+    octet du lot embarqué de la Console installée, parce que c'est une mutation
+    de MACHINE et qu'elle doit être défaite même si cette passe meurt. Ce que
+    l'oracle fait ici est ce qu'un humain ferait : jouer la pose, et lire.
+    """
+    reach_vault(driver, report)
+    open_creation(driver, target, report)
+    run_step(driver, "audit", arguments.key_file, passphrase, report)
+    refused_step(driver, "install", arguments.key_file, passphrase, report)
 
 
 def main() -> int:
@@ -824,7 +957,9 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:4444")
     parser.add_argument("--output", required=True)
     parser.add_argument("--secrets", required=True)
-    parser.add_argument("--stage", required=True, choices=["journey"])
+    parser.add_argument(
+        "--stage", required=True, choices=["journey", "asymmetry", "hostile"]
+    )
     parser.add_argument("--target-host", required=True)
     parser.add_argument("--target-port", type=int, default=22)
     parser.add_argument("--username", required=True)
@@ -856,13 +991,18 @@ def main() -> int:
     driver = Driver(arguments.base_url, arguments.application)
     try:
         install_recorder(driver, report)
-        phrase, recovery = reach_vault(driver, report)
-        pathlib.Path(arguments.secrets).write_text(f"{phrase}\n{recovery}\n")
-        os.chmod(arguments.secrets, 0o600)
-        open_creation(driver, target, report)
-        for step in ["audit", "install", "activate"]:
-            run_step(driver, step, arguments.key_file, passphrase, report)
-        report["outcome"] = "journey_complete"
+        if arguments.stage == "journey":
+            phrase, recovery = reach_vault(driver, report)
+            pathlib.Path(arguments.secrets).write_text(f"{phrase}\n{recovery}\n")
+            os.chmod(arguments.secrets, 0o600)
+            open_creation(driver, target, report)
+            for step in ["audit", "install", "activate"]:
+                run_step(driver, step, arguments.key_file, passphrase, report)
+        elif arguments.stage == "asymmetry":
+            asymmetry(driver, arguments, target, passphrase, report)
+        else:
+            hostile(driver, arguments, target, passphrase, report)
+        report["outcome"] = f"{arguments.stage}_complete"
         return 0
     except Exception as error:  # noqa: BLE001 — l'échec entier appartient au rapport.
         report["failure"] = repr(error)

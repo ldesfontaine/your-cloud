@@ -34,12 +34,14 @@ usage: prove <phase>
               phrase (constats 1, 2, 7, 8, 9)
   asymmetry   le constat n°10 : ycpasudn suffit à l'audit et la pose est
               refusée AVANT la fenêtre, dans la même passe
-  hostile     lot altéré refusé avant tout dpkg (3) ; arrêt forcé à chaque
-              étape nommée, déroulé exact et retour prouvé (6)
+  hostile     le constat n°3 : un octet du lot embarqué inversé, la pose
+              refusée et la cible jamais touchée ; le lot est restauré et
+              rejugé bon, quoi qu'il arrive à la passe
   constats    relevés indépendants sur lab-machine-1 confrontés à ceux du
               produit (5) ; unités inactives (8) ; élévation sans
-              persistance (4) ; destruction du secret (les trois constats)
+              persistance (4)
   collect     rapatrie les artefacts vers tests/artifacts/proofs/
+  remove-target  rend la cible à son état initial, sans toucher au périmètre
   remove      démonte tout, comptes compris, et asserte l'absence
   all         tout, dans cet ordre, remove garanti rouge ou vert
 USAGE
@@ -138,26 +140,35 @@ mount_perimeter() {
 }
 
 journey() {
-  local machine_address host_key
   inventory "$console_vm" >/dev/null
-  machine_address=$(inventory "$machine_vm")
   announce "le parcours nominal à l'écran — compte ycpasude, cible ycpa-target.test"
-  # L'empreinte de la clé d'hôte : relevée du périmètre déjà attesté par le
-  # canal géré — jamais apprise d'une première réponse, jamais écrite en dur.
-  host_key=$("$labctl" ssh "$console_vm" -- \
-    "ssh-keygen -lf /root/your-cloud-lab-personal-access/server-host-key.pub" | awk '{print $2}')
-  [[ "$host_key" == SHA256:* ]] || fail "l'empreinte de la clé d'hôte est illisible : $host_key"
-
+  require_pristine_target
   # La cible de la passe, écrite là où `inside` la relit. Les trois adresses :
   # la machine écoute sur son adresse LAB, la source autorisée est le /24 du
   # LAB, et le rendez-vous du Relay est une ADRESSE — pas un service : le
   # lecteur du Controller est paresseux, et c'est le prévol qui dira ce qui
-  # répond, depuis le Controller lui-même.
+  # répond, depuis le Controller lui-même. L'empreinte de la clé d'hôte y est
+  # relevée du périmètre déjà attesté par le canal géré — jamais apprise d'une
+  # première réponse, jamais écrite en dur.
+  write_target ycpasude
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey"
+}
+
+# L'écran d'une passe qui n'est PAS le parcours nominal : même cible, même
+# empreinte de clé d'hôte, un compte qui change. Factorisé parce que trois
+# phases en ont besoin et qu'une cible écrite trois fois est une cible qui
+# divergera une fois.
+write_target() {
+  local username="$1" machine_address host_key
+  machine_address=$(inventory "$machine_vm")
+  host_key=$("$labctl" ssh "$console_vm" -- \
+    "ssh-keygen -lf /root/your-cloud-lab-personal-access/server-host-key.pub" | awk '{print $2}')
+  [[ "$host_key" == SHA256:* ]] || fail "l'empreinte de la clé d'hôte est illisible : $host_key"
   deploy "$console_vm" run inside console-oracle.py
   "$labctl" ssh "$console_vm" -- "cat > $remote_harness/target.env <<TARGET
 TARGET_HOST=ycpa-target.test
 TARGET_PORT=22
-TARGET_USERNAME=ycpasude
+TARGET_USERNAME=$username
 TARGET_HOST_KEY=$host_key
 TARGET_LISTEN=$machine_address:9443
 TARGET_ALLOWED_SOURCE=192.168.240.0/24
@@ -165,7 +176,199 @@ TARGET_RELAY_ENDPOINT=192.168.240.9:9444
 TARGET
 chmod 0600 $remote_harness/target.env"
   "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey"
+}
+
+# L'état initial de la cible, exigé par toute passe qui pose : cette preuve
+# CRÉE une infrastructure, depuis une Console froide ET une machine froide.
+#
+# Un répertoire d'attente résiduel est exactement ce que le juge de fraîcheur
+# du transfert refuse — `mkdir` sans `-p`, donc `StagingNotFresh`. Mesuré le
+# 19 août 2026 : la pose a été refusée sur le reste d'une passe que le harnais
+# avait interrompue, et **le produit avait raison**. Retirer ce reste appartient
+# donc au harnais qui l'a laissé, et se journalise. Un lot déjà INSTALLÉ, lui,
+# arrête la phase : son retrait est un démontage, et il appartient à `remove`
+# plutôt qu'à un nettoyage silencieux qui masquerait une passe précédente.
+require_pristine_target() {
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+if dpkg-query -W your-cloud-server >/dev/null 2>&1; then
+  echo 'FAILED: your-cloud-server est déjà installé sur la cible — la phase remove le retire' >&2
+  exit 1
+fi
+if [ -e /home/ycpasude/.your-cloud-bootstrap ] || [ -e /home/ycpasudn/.your-cloud-bootstrap ]; then
+  echo '  staging résiduel d'\''une passe interrompue, retiré'
+  rm -rf /home/ycpasude/.your-cloud-bootstrap /home/ycpasudn/.your-cloud-bootstrap
+fi
+echo '  la cible est dans son état initial'"
+}
+
+asymmetry() {
+  inventory "$console_vm" >/dev/null
+  announce "le constat n°10 — ycpasudn : l'audit suffit, la pose est refusée"
+  require_pristine_target
+  # Le compte étroit du périmètre : son entrée sudoers ne nomme QUE la sonde
+  # d'identité. C'est la définition de `install-server`, jamais recopiée ici.
+  write_target ycpasudn
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run asymmetry"
+  # Ce que la cible dit d'elle-même, indépendamment du produit : la pose
+  # refusée n'a rien laissé.
+  announce "la cible est-elle intacte après le refus ?"
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+dpkg-query -W your-cloud-server >/dev/null 2>&1 \
+  && { echo 'FAILED: un paquet a été posé malgré le refus' >&2; exit 1; }
+[ -e /home/ycpasudn/.your-cloud-bootstrap ] \
+  && { echo 'FAILED: un répertoire d'\''attente a survécu au refus' >&2; exit 1; }
+echo 'ASYMMETRY_TARGET_INTACT_OK'"
+  echo "ASYMMETRY_OK"
+}
+
+hostile() {
+  inventory "$console_vm" >/dev/null
+  announce "le constat n°3 — un lot altéré est refusé AVANT tout dpkg"
+  require_pristine_target
+  # L'altération est une mutation de MACHINE : elle est posée ici, avec sa
+  # sauvegarde, et défaite par le `trap` quoi qu'il arrive à la passe. Un octet
+  # de l'artefact inversé, longueur inchangée — la même altération que la
+  # preuve du lot embarqué, sur le lot que la Console installée porte.
+  local bundle=/usr/lib/your-cloud-console/server-bundle/your-cloud-server.deb
+  "$labctl" ssh "$console_vm" -- "
+set -e
+cp -a $bundle $bundle.pristine
+printf '\\xff' | dd of=$bundle bs=1 seek=4096 count=1 conv=notrunc status=none
+echo '  un octet du lot installé inversé (offset 4096)'"
+  restore_bundle() {
+    "$labctl" ssh "$console_vm" -- "
+set -e
+[ -e $bundle.pristine ] || exit 0
+mv $bundle.pristine $bundle
+echo '  le lot installé est restauré'" || true
+  }
+  trap 'restore_bundle; rm -rf "$workdir"' EXIT
+  write_target ycpasude
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run hostile"
+  announce "la cible a-t-elle été touchée par le lot altéré ?"
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+dpkg-query -W your-cloud-server >/dev/null 2>&1 \
+  && { echo 'FAILED: un paquet a été posé malgré le lot altéré' >&2; exit 1; }
+echo 'HOSTILE_TARGET_UNTOUCHED_OK'"
+  restore_bundle
+  trap 'rm -rf "$workdir"' EXIT
+  # Le lot restauré est-il de nouveau jugé bon ? Sans cela, un vert de la
+  # phase suivante ne dirait pas si l'altération refusait ou si la machine
+  # était cassée — c'est la garde que la preuve du lot embarqué a nommée.
+  "$labctl" ssh "$console_vm" -- \
+    "/usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle" \
+    | grep -q '^VERIFIED ' \
+    || fail "le lot restauré n'est plus jugé bon — la machine, pas l'altération"
+  echo "HOSTILE_OK"
+}
+
+constats() {
+  inventory "$machine_vm" >/dev/null
+  announce "les relevés indépendants sur $machine_vm"
+  # Ce que la machine dit d'elle-même, par des outils qui ne sont pas le
+  # produit : c'est la moitié du constat n°5 — l'autre moitié est ce que le
+  # produit a constaté, et le rapport les confronte.
+  "$labctl" ssh "$machine_vm" -- '
+set -e
+echo "--- inventaire dpkg (constat n°5) ---"
+dpkg-query -W -f="${Package} ${Version} ${Status}\n" your-cloud-server
+echo "--- ce que le paquet possède ---"
+dpkg -L your-cloud-server | sort
+echo "--- modes et propriétaires ---"
+dpkg -L your-cloud-server | while read -r path; do
+  [ -f "$path" ] && stat -c "%n %U %G %a" "$path"
+done
+echo "--- setuid/setgid sous les chemins du paquet (constat n°4) ---"
+find /usr/bin /usr/lib/your-cloud-server /etc/your-cloud-server -xdev \
+  \( -perm -4000 -o -perm -2000 \) -print 2>/dev/null | grep . \
+  && { echo "FAILED: un binaire setuid/setgid est apparu" >&2; exit 1; }
+echo "aucun"
+echo "--- capacités de fichier (constat n°4) ---"
+/usr/sbin/getcap -r /usr/bin /usr/lib/your-cloud-server 2>/dev/null | grep . \
+  && { echo "FAILED: une capacité de fichier est apparue" >&2; exit 1; }
+echo "aucune"
+echo "--- règles sudo du produit (constat n°4) ---"
+ls /etc/sudoers.d/ | grep -iv "^90-ycpa" | grep -i "your-cloud" \
+  && { echo "FAILED: le produit a laissé une règle sudo" >&2; exit 1; }
+echo "aucune"
+echo "--- compte dynamique du Controller ---"
+systemctl show your-cloud-controller -p User -p DynamicUser 2>/dev/null || true
+echo "--- unités du produit : une seule active (constat n°8) ---"
+systemctl list-unit-files "your-cloud-*" --no-legend --no-pager || true
+for unit in $(systemctl list-unit-files "your-cloud-*" --no-legend --no-pager | awk "{print \$1}"); do
+  printf "%s active=%s enabled=%s\n" "$unit" \
+    "$(systemctl is-active "$unit" 2>/dev/null || true)" \
+    "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+done
+echo "--- horodatage sudo du compte prete (constat 4, borne du secret) ---"
+# DROP_CREDENTIAL (/usr/bin/sudo -k) est le dernier geste de TOUTE sequence,
+# quelle que soit son issue. Il ne journalise rien — mais ce quil retire se
+# constate : lhorodatage qui permettrait a un acte ulterieur de selever sans
+# presenter de secret. Son absence est la trace observable, sur la machine, de
+# la borne que la destruction du secret tient dans le processus.
+# (Sans apostrophes : ce bloc voyage dans une chaine a quotes simples.)
+if [ -e "/run/sudo/ts/$(id -u ycpasude)" ]; then
+  echo "FAILED: un horodatage sudo survit a la sequence pour ycpasude" >&2
+  exit 1
+fi
+echo "aucun horodatage pour ycpasude (uid $(id -u ycpasude))"
+echo "--- processus privilégié survivant à la session (constat n°4) ---"
+pgrep -a -u root -f "your-cloud" | grep -v "your-cloud-controller" \
+  && { echo "FAILED: un processus privilégié du parcours survit" >&2; exit 1; }
+echo "aucun hors le Controller lui-même"
+echo "--- le staging est-il retiré ? ---"
+[ -e /home/ycpasude/.your-cloud-bootstrap ] \
+  && { echo "FAILED: le répertoire d'"'"'attente a survécu" >&2; exit 1; }
+echo "retiré"
+echo "CONSTATS_OK"'
+}
+
+collect() {
+  announce "rapatriement des artefacts vers $result_root"
+  install -d -m 0755 "$result_root"
+  local file
+  for file in controller-install-journey.json controller-install-asymmetry.json \
+              controller-install-hostile.json tauri-driver.log xvfb-errors.log; do
+    "$labctl" copy-from "$console_vm" "$remote_harness/output/$file" \
+      "$result_root/$file" >/dev/null 2>&1 || echo "  (absent : $file)"
+  done
+  ls -1 "$result_root"
+  echo "COLLECT_OK"
+}
+
+# La cible rendue à son état d'avant le parcours, et l'absence ASSERTÉE plutôt
+# que supposée. C'est un démontage à part entière, distinct du périmètre : les
+# passes de refus qui suivent le parcours nominal en ont besoin — chacune exige
+# une machine vierge — sans avoir à défaire les comptes qu'elles vont employer.
+remove_target() {
+  "$labctl" ssh "$machine_vm" -- '
+set -e
+if dpkg-query -W your-cloud-server >/dev/null 2>&1; then
+  systemctl stop your-cloud-controller 2>/dev/null || true
+  systemctl disable your-cloud-controller 2>/dev/null || true
+  dpkg --purge your-cloud-server
+fi
+rm -rf /home/ycpasude/.your-cloud-bootstrap /home/ycpasudn/.your-cloud-bootstrap
+dpkg-query -W your-cloud-server >/dev/null 2>&1 \
+  && { echo "FAILED: le paquet survit à son retrait" >&2; exit 1; }
+[ -e /usr/lib/your-cloud-server ] \
+  && { echo "FAILED: le répertoire du produit survit" >&2; exit 1; }
+[ -e /etc/your-cloud-server ] \
+  && { echo "FAILED: la configuration survit" >&2; exit 1; }
+systemctl list-unit-files "your-cloud-*" --no-legend --no-pager | grep . \
+  && { echo "FAILED: une unité du produit survit" >&2; exit 1; }
+echo "REMOVE_TARGET_OK"'
+}
+
+remove() {
+  announce "démontage — la cible, puis le périmètre, et l'absence assertée"
+  remove_target
+  # Le périmètre appartient à #52-#54, et son démontage assertif aussi.
+  "$personal_access/prove" remove
+  echo "REMOVE_OK"
 }
 
 case "${1:-}" in
@@ -173,7 +376,37 @@ case "${1:-}" in
   build) build_candidate ;;
   perimeter) mount_perimeter ;;
   journey) journey ;;
-  asymmetry|hostile|constats|collect|remove|all)
-    fail "$1: phase déclarée, pas encore écrite — ce harnais porte sync/build/perimeter/journey" ;;
+  asymmetry) asymmetry ;;
+  hostile) hostile ;;
+  constats) constats ;;
+  collect) collect ;;
+  remove-target) announce "la cible rendue à son état initial"; remove_target ;;
+  remove) remove ;;
+  all)
+    # `remove` court quoi qu'il arrive au reste : une preuve qui laisse la
+    # topologie sale est une preuve qui coûte à la suivante. Il est armé AVANT
+    # la première mutation, et non après la dernière — un `all` qui meurt au
+    # build doit démonter autant qu'un `all` qui va au bout.
+    trap 'remove' EXIT
+    sync_sources
+    build_candidate
+    mount_perimeter
+    # L'ordre est celui des états : le parcours nominal pose et active, les
+    # constats lisent CE QU'IL A LAISSÉ — ils ne peuvent donc pas le précéder.
+    # Les deux passes de refus viennent après, sur une cible que `remove` de la
+    # phase précédente n'a pas encore nettoyée : chacune exige son état initial
+    # et le dit.
+    journey
+    constats
+    # Les deux passes de refus exigent une machine vierge, et le parcours
+    # nominal vient d'y poser un Controller : la cible est rendue à son état
+    # d'avant, sans toucher au périmètre que ces passes vont employer.
+    announce "la cible est rendue à son état initial avant les passes de refus"
+    remove_target
+    asymmetry
+    remove_target
+    hostile
+    collect
+    ;;
   *) usage; exit 64 ;;
 esac

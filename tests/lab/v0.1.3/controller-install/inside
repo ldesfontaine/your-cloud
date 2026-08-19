@@ -38,13 +38,13 @@ wait_for_port() {
   return 1
 }
 
-# L'état de la Console : NEUF à chaque journey — cette preuve crée une
-# infrastructure depuis une Console froide, et un coffre survivant d'une passe
-# précédente serait une Console que cette passe n'a pas montée.
+# L'état de la Console : NEUF à chaque passe — chacune crée une infrastructure
+# depuis une Console froide, et un coffre survivant d'une passe précédente
+# serait une Console que cette passe n'a pas montée. Cela vaut pour l'asymétrie
+# et l'hostile autant que pour le parcours nominal : leur premier écran est le
+# même, celui de l'accès local d'une Console qui n'a jamais servi.
 state_root=/root/your-cloud-lab-controller-install/console-state
-if [[ "$stage" == journey ]]; then
-  rm -rf "$state_root"
-fi
+rm -rf "$state_root"
 export XDG_DATA_HOME="$state_root/data" XDG_CONFIG_HOME="$state_root/config" XDG_CACHE_HOME="$state_root/cache"
 install -d -m 0700 "$state_root" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
 
