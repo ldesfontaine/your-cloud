@@ -743,12 +743,20 @@ STEP_SENTENCES = {
     "install": "Le lot est posé et vérifié sur la machine. Rien n’écoute encore.",
     "activate": "Le Controller est actif sur la machine.",
 }
-SENTENCE_SHOWN = """
-const wanted = arguments[0];
-return [...document.querySelectorAll('p')].some(
-  (element) => element.textContent.trim() === wanted,
-);
-"""
+def sentence_shown(wanted: str) -> str:
+    """Le script qui répond LA PHRASE quand elle est à l'écran, sinon rien.
+
+    Il rend la phrase elle-même plutôt qu'un booléen : `wait_until` compare ce
+    qu'un script rend à ce qu'on attend, et un script qui répondait `true`
+    faisait comparer `True` à une phrase — jamais égaux, et l'attente
+    expirait sur un écran qui montrait pourtant la bonne chose. Mesuré le
+    19 août 2026 : l'audit avait réussi, l'oracle ne le voyait pas.
+    """
+    return (
+        "return [...document.querySelectorAll('p')]"
+        f".map((element) => element.textContent.trim()).find((text) => text === {wanted!r})"
+        " ?? null;"
+    )
 
 
 def open_creation(driver: Driver, target: dict, report: dict) -> None:
@@ -801,7 +809,7 @@ def run_step(
             raise RuntimeError("the sudo password window never accepted")
     wait_until(
         driver,
-        SENTENCE_SHOWN,
+        sentence_shown(STEP_SENTENCES[step]),
         STEP_SENTENCES[step],
         seconds=600,
         label=f"the {step} outcome sentence",
