@@ -37,7 +37,7 @@
 
 use super::sequence::{Answer, Channel, ChannelError};
 use crate::personal_access::elevation::FixedCommand;
-use crate::personal_access::session::{ChannelReport, GuardVerdict, LiveSession};
+use crate::personal_access::session::{ChannelInput, ChannelReport, GuardVerdict, LiveSession};
 use std::time::Instant;
 
 /// Ce qu'une séquence retient de ce qu'un canal a rapporté.
@@ -99,7 +99,14 @@ impl Channel for SessionChannel<'_> {
     /// dit ce que la machine est devenue, et les distinguer ici reviendrait à
     /// laisser la séquence conclure de la panne d'un transport quelque chose
     /// sur l'état d'une cible.
-    fn run(&mut self, command: FixedCommand, input: Option<&[u8]>) -> Result<Answer, ChannelError> {
+    fn run(
+        &mut self,
+        command: FixedCommand,
+        input: Option<ChannelInput<'_>>,
+    ) -> Result<Answer, ChannelError> {
+        // La nature de l'entrée traverse la couture TELLE QUELLE : ce module
+        // ne la relit pas, ne la traduit pas, et n'a aucun moyen d'en changer
+        // — c'est la session qui écrit, et c'est le type qui a décidé.
         self.live
             .run_channel(command, input, self.deadline, self.guard)
             .map(answer_from)

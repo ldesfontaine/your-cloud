@@ -89,8 +89,8 @@ use your_cloud_native_bootstrap_assistant::personal_access::{
     key_unlock::{self, UnlockRefusal},
     openssh_key::{MAX_BCRYPT_ROUNDS, MAX_KEY_FILE_BYTES},
     session::{
-        AuthenticationRequest, GuardVerdict, LiveSession, PersonalAccessRefusal, Prepared,
-        RunObservation, TransportRefusal, MAX_EXEC_CHANNELS, MAX_PROBE_STREAM_BYTES,
+        AuthenticationRequest, ChannelInput, GuardVerdict, LiveSession, PersonalAccessRefusal,
+        Prepared, RunObservation, TransportRefusal, MAX_EXEC_CHANNELS, MAX_PROBE_STREAM_BYTES,
     },
     signature_budget::{BudgetRefusal, MAX_AUTHENTICATION_SIGNATURES},
     sudo_policy::SudoRefusal,
@@ -4329,9 +4329,12 @@ fn drive_elevation(
 
     // A password travels exactly when the attested policy asked for one, and a
     // case that offered none where one was required is a broken case rather
-    // than a refusal to report.
+    // than a refusal to report. Its nature is a TERMINAL ANSWER: `sudo -S`
+    // reads it up to the line end the transport writes as part of it.
     let standard_input = if attested.password_required {
-        Some(password.expect("this case must offer the password its policy demands"))
+        Some(ChannelInput::TerminalAnswer(password.expect(
+            "this case must offer the password its policy demands",
+        )))
     } else {
         None
     };

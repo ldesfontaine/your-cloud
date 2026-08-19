@@ -182,6 +182,46 @@ pub struct ChannelReport {
     pub stderr: Vec<u8>,
 }
 
+/// Ce que l'entrée standard d'un canal EST — pas seulement ce qu'elle contient.
+///
+/// Deux natures traversent ce transport, et les octets seuls ne permettent pas
+/// de les distinguer : une **réponse** qu'un terminal distant lit — un mot de
+/// passe que `sudo -S` attend jusqu'à la fin de ligne, laquelle fait partie de
+/// la réponse — et des **octets exacts** qu'un programme comme `dd` doit
+/// recevoir au bit près, où tout ajout est une corruption.
+///
+/// Le 19 août 2026, la preuve du palier a mesuré l'ancien transport ajouter la
+/// fin de ligne d'une réponse aux octets d'un lot : 6 072 197 octets déposés
+/// pour 6 072 196 mesurés, `StagedSizeMismatch`, et la pose impossible sur
+/// toute machine. Le type oblige désormais chaque site d'appel à dire ce qu'il
+/// écrit, et le compilateur interroge quiconque en ajoute un ; le transport
+/// n'improvise plus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelInput<'a> {
+    /// Une réponse lue par un terminal distant. Elle PORTE sa fin de ligne :
+    /// le transport écrit les octets puis le saut de ligne qui la termine,
+    /// parce que sans lui le lecteur d'en face attendrait toujours.
+    TerminalAnswer(&'a [u8]),
+    /// Des octets exacts. Le transport écrit ce qui lui est donné et rien
+    /// d'autre : `dd` mesure ce qu'il reçoit, et la preuve mesure `dd`.
+    ExactBytes(&'a [u8]),
+}
+
+impl<'a> ChannelInput<'a> {
+    /// Les segments qui partent sur le canal, dans l'ordre, et rien d'autre.
+    ///
+    /// Pure exprès : c'est la surface que les gardes d'octets mesurent, et la
+    /// seule autorité sur « qu'est-ce qui s'écrit pour quelle nature ». Le
+    /// transport la consomme telle quelle — une décision prise ailleurs serait
+    /// une seconde définition, et les deux finiraient par différer.
+    pub fn wire_segments(&self) -> (&'a [u8], Option<&'static [u8]>) {
+        match self {
+            Self::TerminalAnswer(answer) => (answer, Some(b"\n")),
+            Self::ExactBytes(bytes) => (bytes, None),
+        }
+    }
+}
+
 /// What the fixed probe observed, which is one [`ChannelReport`] beside the two
 /// things only the session knows: which host key was attested, and what the
 /// authentication cost.
@@ -388,14 +428,14 @@ impl LiveSession {
     ///
     /// The budget is spent before the channel is opened, so a channel that
     /// failed still counts: a session that could retry by failing would have no
-    /// bound at all. `standard_input`, when present, is the one secret this
-    /// palier ever writes; it is sent once, followed by the single newline the
-    /// far side reads as the end of the answer, and the stream is closed
-    /// immediately so nothing can be asked a second time.
+    /// bound at all. `standard_input`, when present, names its own nature —
+    /// a terminal answer carrying its line end, or exact bytes nothing is
+    /// added to — and the stream is closed right after it so nothing can be
+    /// asked a second time.
     pub fn run_channel(
         &mut self,
         command: FixedCommand,
-        standard_input: Option<&[u8]>,
+        standard_input: Option<ChannelInput<'_>>,
         deadline: Instant,
         guard: &(dyn Fn() -> GuardVerdict + Sync),
     ) -> Result<ChannelReport, TransportRefusal> {
@@ -998,7 +1038,7 @@ async fn authenticate<S: PersonalSigner>(
 async fn exec_channel(
     handle: &mut Handle<PersonalAccessHandler>,
     command: FixedCommand,
-    standard_input: Option<&[u8]>,
+    standard_input: Option<ChannelInput<'_>>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
 ) -> Result<ChannelReport, TransportRefusal> {
     let mut channel: Channel<Msg> = handle
@@ -1015,7 +1055,7 @@ async fn exec_channel(
 async fn collect_channel(
     channel: &mut Channel<Msg>,
     command: FixedCommand,
-    standard_input: Option<&[u8]>,
+    standard_input: Option<ChannelInput<'_>>,
     guard: &(dyn Fn() -> GuardVerdict + Sync),
 ) -> Result<ChannelReport, TransportRefusal> {
     // No PTY is ever requested. The command is a constant of `elevation`, sent
@@ -1025,18 +1065,24 @@ async fn collect_channel(
         .await
         .map_err(|_| TransportRefusal::ChannelRefused)?;
 
-    if let Some(answer) = standard_input {
-        // The one secret this palier writes. Once, then the newline the far
-        // side reads as the end of the answer, then the end of the stream: a
-        // command that asks again finds nothing to read.
+    if let Some(input) = standard_input {
+        // Written once, in the segments the input's own nature dictates — a
+        // terminal answer carries its line end, exact bytes carry nothing —
+        // then the end of the stream: a command that asks again finds nothing
+        // to read. The decision is `wire_segments`' alone; this function used
+        // to append the answer's newline to every input, and the palier proof
+        // measured a bundle arriving one byte too long for its own manifest.
+        let (bytes, terminator) = input.wire_segments();
         channel
-            .data(answer)
+            .data(bytes)
             .await
             .map_err(|_| TransportRefusal::ChannelRefused)?;
-        channel
-            .data(&b"\n"[..])
-            .await
-            .map_err(|_| TransportRefusal::ChannelRefused)?;
+        if let Some(terminator) = terminator {
+            channel
+                .data(terminator)
+                .await
+                .map_err(|_| TransportRefusal::ChannelRefused)?;
+        }
         channel
             .eof()
             .await
@@ -1137,6 +1183,40 @@ async fn close_transport(handle: &Handle<PersonalAccessHandler>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Une réponse de terminal porte sa fin de ligne — c'est sa nature.
+    ///
+    /// Garde d'octets, dans le sens « réponse » : le segment terminateur est
+    /// exactement un saut de ligne, et il existe. Une mutation qui le retire
+    /// de `wire_segments` rougit ici — et `sudo -S`, en face, attendrait
+    /// toujours une réponse qui ne finit jamais.
+    #[test]
+    fn a_terminal_answer_carries_exactly_its_line_end() {
+        let (bytes, terminator) = ChannelInput::TerminalAnswer(b"hunter2").wire_segments();
+        assert_eq!(bytes, b"hunter2");
+        assert_eq!(terminator, Some(&b"\n"[..]));
+    }
+
+    /// Des octets exacts traversent sans qu'un seul leur soit ajouté.
+    ///
+    /// Garde d'octets, dans le sens « lot » : aucun segment terminateur,
+    /// et la longueur écrite est la longueur donnée. Une mutation qui remet le
+    /// saut de ligne des réponses sur cette nature rougit ici — mesuré le
+    /// 19 août 2026 : 6 072 197 octets déposés pour 6 072 196 mesurés, la pose
+    /// impossible sur toute machine, `StagedSizeMismatch` pour seul écho.
+    #[test]
+    fn exact_bytes_cross_with_nothing_added() {
+        let lot = [0x21u8, 0x3c, 0x61, 0x72, 0x63, 0x68]; // « !<arch » — un début de .deb
+        let (bytes, terminator) = ChannelInput::ExactBytes(&lot).wire_segments();
+        assert_eq!(bytes, &lot);
+        assert_eq!(terminator, None);
+        let written: usize = bytes.len() + terminator.map_or(0, <[u8]>::len);
+        assert_eq!(
+            written,
+            lot.len(),
+            "ce qui traverse est ce qui a été mesuré, et rien de plus"
+        );
+    }
 
     /// Le budget dérivé ne s'adopte qu'avant le premier canal, et une seule
     /// fois.

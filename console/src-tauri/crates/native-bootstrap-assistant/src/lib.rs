@@ -1335,7 +1335,17 @@ fn prove_administrator_elevation(
     let mut retained = installation::sequence::SpentSecret::none();
     let elevated = if attested.password_required {
         let password = ask_sudo_password(resolved, deadline, expired, lease)?;
-        let report = live.run_channel(attested.command, Some(password.bytes()), deadline, guard);
+        // Le mot de passe est une RÉPONSE de terminal : `sudo -S` le lit
+        // jusqu'à la fin de ligne, et cette fin de ligne fait partie de la
+        // réponse — c'est sa nature, nommée ici où le secret est écrit.
+        let report = live.run_channel(
+            attested.command,
+            Some(personal_access::session::ChannelInput::TerminalAnswer(
+                password.bytes(),
+            )),
+            deadline,
+            guard,
+        );
         retained = installation::sequence::SpentSecret::holding(password);
         report
     } else {

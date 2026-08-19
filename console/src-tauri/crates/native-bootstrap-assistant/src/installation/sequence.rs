@@ -38,6 +38,7 @@ use super::plan::{InstallPlan, Step};
 use super::rollback::{ItemKind, Ledger, Provenance};
 use super::transfer::{self, TransferReadings};
 use crate::personal_access::elevation::FixedCommand;
+use crate::personal_access::session::ChannelInput;
 use your_cloud_bootstrap_protocol::BootstrapAction;
 
 /// Ce qu'une machine a répondu à une commande.
@@ -55,9 +56,18 @@ pub struct Answer {
 pub trait Channel {
     /// Exécute une commande fixe, en lui donnant éventuellement une entrée.
     ///
-    /// L'entrée est ce qui permet au lot de traverser sans shell ni
-    /// redirection : elle est donnée à `dd`, et à lui seul.
-    fn run(&mut self, command: FixedCommand, input: Option<&[u8]>) -> Result<Answer, ChannelError>;
+    /// L'entrée nomme sa propre nature, et cette séquence émet les deux : les
+    /// dépôts donnent des [`ChannelInput::ExactBytes`] à `dd`, et à lui seul —
+    /// rien ne leur est ajouté, ce que la porte du transfert mesure ensuite
+    /// sur la cible — et, sur la route à mot de passe, chaque acte présente le
+    /// secret retenu à `sudo -S` comme [`ChannelInput::TerminalAnswer`], dont
+    /// la fin de ligne fait partie. Le même canal écrit les deux ; c'est le
+    /// type qui les distingue, plus jamais le transport qui devine.
+    fn run(
+        &mut self,
+        command: FixedCommand,
+        input: Option<ChannelInput<'_>>,
+    ) -> Result<Answer, ChannelError>;
 
     /// Adopte le budget que la séquence a dérivé, **ou confirme qu'il est déjà
     /// celui-là**. Une implémentation qui n'en tient pas rend `Ok(())`.
@@ -274,8 +284,13 @@ impl<'a, C: Channel> Sequence<'a, C> {
             for act in ElevatedAct::authorised_for(plan, *step) {
                 ran_an_act = true;
                 let command = act.command(self.password_required);
+                // Le secret présenté à un acte est une RÉPONSE : `sudo -S` le
+                // lit jusqu'à la fin de ligne, qui fait partie de sa nature —
+                // à la différence des octets d'un dépôt, auxquels rien ne
+                // s'ajoute. C'est ici que la distinction se nomme, parce que
+                // c'est ici que le secret s'écrit.
                 let input = if self.password_required {
-                    secret.bytes(borrow)
+                    secret.bytes(borrow).map(ChannelInput::TerminalAnswer)
                 } else {
                     None
                 };
@@ -458,10 +473,12 @@ impl<'a, C: Channel> Sequence<'a, C> {
         digest: FixedCommand,
     ) -> Result<(Answer, Answer, Answer), SequenceStop> {
         // Les octets ne passent que par l'entrée, et seul un dépôt en reçoit :
-        // c'est ce qui les fait traverser sans shell ni redirection.
+        // c'est ce qui les fait traverser sans shell ni redirection. Leur
+        // nature est EXACTE — le transport n'y ajoute rien, et la mesure d'en
+        // face n'a de sens que comme ça.
         let deposited = self
             .channel
-            .run(deposit, Some(bytes))
+            .run(deposit, Some(ChannelInput::ExactBytes(bytes)))
             .map_err(|_| SequenceStop::Unanswered { step })?;
         let size = self
             .channel
@@ -787,16 +804,26 @@ mod tests {
         fn run(
             &mut self,
             command: FixedCommand,
-            input: Option<&[u8]>,
+            input: Option<ChannelInput<'_>>,
         ) -> Result<Answer, ChannelError> {
-            // L'entrée est conservée telle quelle, et non réduite à « il y en
-            // avait une » : depuis que le transfert passe par ce canal, une
-            // entrée est tantôt le secret, tantôt six mégaoctets de lot, et
-            // confondre les deux laisserait passer le secret présenté à un
-            // `dd`.
+            // Ce qui est conservé est ce que le FIL porterait — le rendu de
+            // `wire_segments`, pas l'entrée brute. C'est le point de vue de la
+            // machine, le seul que ce double incarne, et c'est lui qui rend la
+            // nature indissociable des octets : un dépôt qu'on ferait passer
+            // pour une réponse de terminal arriverait ici avec sa fin de ligne
+            // en trop, et les mesures d'empreinte de cette suite rougiraient —
+            // exactement comme la cible réelle a rougi le 19 août 2026.
+            let wired = input.map(|input| {
+                let (bytes, terminator) = input.wire_segments();
+                let mut written = bytes.to_vec();
+                if let Some(terminator) = terminator {
+                    written.extend_from_slice(terminator);
+                }
+                written
+            });
             self.seen
                 .borrow_mut()
-                .push((command.as_str().to_owned(), input.map(<[u8]>::to_vec)));
+                .push((command.as_str().to_owned(), wired.clone()));
             if self.mute {
                 return Err(ChannelError);
             }
@@ -815,7 +842,7 @@ mod tests {
                 if bytes == deposit.as_str() {
                     let refused = self.failing.iter().any(|command| command == bytes);
                     if !refused {
-                        let written = (self.alter)(input.unwrap_or_default().to_vec());
+                        let written = (self.alter)(wired.clone().unwrap_or_default());
                         self.received
                             .borrow_mut()
                             .push((suffix.to_owned(), written));
@@ -1162,6 +1189,11 @@ mod tests {
     fn the_secret_travels_with_every_privileged_act_and_with_nothing_else() {
         let carried = Held::new();
         const SECRET: &[u8] = b"phrase";
+        // Ce que le FIL porte pour un acte : la réponse et sa fin de ligne —
+        // c'est la nature d'une réponse de terminal, et c'est exactement ce
+        // qui dit à `sudo -S` d'arrêter de lire. Un acte dont l'entrée serait
+        // le secret NU n'aurait pas nommé sa nature, et ce test le verrait.
+        const WIRED_SECRET: &[u8] = b"phrase\n";
         let privileged: Vec<String> =
             super::super::plan::authorized_steps(BootstrapAction::InstallServerBundle)
                 .iter()
@@ -1188,17 +1220,17 @@ mod tests {
         assert!(
             elevated
                 .iter()
-                .all(|(_, input)| input.as_deref() == Some(SECRET)),
-            "un acte a couru sans présenter le secret que la politique exige"
+                .all(|(_, input)| input.as_deref() == Some(WIRED_SECRET)),
+            "un acte a couru sans présenter le secret en réponse de terminal"
         );
         assert!(
             !unprivileged.is_empty(),
             "aucune commande non privilégiée n'a couru"
         );
         assert!(
-            unprivileged
-                .iter()
-                .all(|(_, input)| input.as_deref() != Some(SECRET)),
+            unprivileged.iter().all(|(_, input)| {
+                input.as_deref() != Some(SECRET) && input.as_deref() != Some(WIRED_SECRET)
+            }),
             "le secret a été présenté à une commande qui ne dépense aucun privilège"
         );
 
