@@ -346,7 +346,10 @@ impl DialogState {
         lease: LeaseState,
         #[cfg(test)] automatic_action: Option<AutomaticAction>,
     ) -> Option<Self> {
-        let (title, secret_label, accept) = prompt_copy(scope.prompt);
+        let (title, secret_label, mut accept) = prompt_copy(scope.prompt);
+        if scope.prompt == NativePromptKind::ConfirmPersonalAccess {
+            accept = accept_for_action(scope.actions[0]);
+        }
         let rendered_scope = scope_text(scope);
         let scope_line_count = rendered_scope.split("\r\n").count();
         let has_secret_entry = matches!(
@@ -1282,11 +1285,29 @@ unsafe fn refresh_countdown(state: &mut DialogState) -> bool {
     true
 }
 
+/// Le mot du bouton d'acceptation, par l'action que la session porte.
+///
+/// Jumelle de celle de `native_prompt`, pour la même raison et le même
+/// amendement du 19 août 2026 : le bouton nommait l'audit quelle que soit
+/// l'action, en contradiction avec la ligne « Action : … » affichée au-dessus.
+/// Le mnémonique reste `&A` pour les trois : le mot change, pas le geste.
+fn accept_for_action(action: your_cloud_bootstrap_protocol::BootstrapAction) -> &'static str {
+    match action {
+        your_cloud_bootstrap_protocol::BootstrapAction::AuditTargetReadOnly => "&Autoriser l’audit",
+        your_cloud_bootstrap_protocol::BootstrapAction::InstallServerBundle => "&Autoriser la pose",
+        your_cloud_bootstrap_protocol::BootstrapAction::ActivateApprovedController => {
+            "&Autoriser l’activation"
+        }
+    }
+}
+
 fn prompt_copy(prompt: NativePromptKind) -> (&'static str, Option<&'static str>, &'static str) {
     match prompt {
         NativePromptKind::ConfirmPersonalAccess => (
             "Your Cloud — autoriser l’accès personnel",
             None,
+            // Remplacé par `accept_for_action` à l'ouverture : le bouton
+            // nomme ce que l'humain autorise, jamais une autre action.
             "&Autoriser l’audit",
         ),
         NativePromptKind::ConfirmRootAccess => (

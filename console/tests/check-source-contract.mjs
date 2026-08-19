@@ -3731,6 +3731,11 @@ for (const sentence of [
   "lines.extend(configuration_lines(scope));",
   '"Configuration : écoute {}, source autorisée {}, relais {}"',
   '"Empreinte de la configuration : {}", composed.sha256()',
+  // Le mot du bouton suit l'action (amendement du 19 août 2026) — sur les
+  // deux fenêtres, sinon un consentement Windows nommerait une autre action.
+  "fn accept_for_action(",
+  "Autoriser la pose",
+  "Autoriser l’activation",
 ]) {
   for (const [label, source] of [
     ["native_prompt.rs", nativeAssistantPrompt],

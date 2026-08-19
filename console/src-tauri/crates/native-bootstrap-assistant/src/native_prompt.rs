@@ -96,7 +96,10 @@ fn run_dialog(
         return PromptOutcome::Expired;
     }
 
-    let copy = prompt_copy(scope.prompt);
+    let mut copy = prompt_copy(scope.prompt);
+    if scope.prompt == NativePromptKind::ConfirmPersonalAccess {
+        copy.accept = accept_for_action(scope.actions[0]);
+    }
     let dialog = Dialog::with_buttons::<gtk::Window>(
         Some(copy.title),
         None,
@@ -548,11 +551,33 @@ struct PromptCopy {
     accept: &'static str,
 }
 
+/// Le mot du bouton d'acceptation, par l'action que la session porte.
+///
+/// **Amendement du 19 août 2026 — le bouton nommait l'audit quelle que soit
+/// l'action.** `prompt_copy` ne lit que le genre de fenêtre, et le même
+/// `ConfirmPersonalAccess` sert les trois actions : un humain qui approuvait
+/// une pose consentait sous un bouton disant « Autoriser l'audit », en
+/// contradiction avec la ligne « Action : … » affichée trois lignes plus
+/// haut. Trouvé en écrivant la preuve du palier, par lecture, avant que
+/// l'écran ne le capture. Le mnémonique reste `_A` pour les trois : ce qui
+/// change est le mot, pas le geste.
+fn accept_for_action(action: your_cloud_bootstrap_protocol::BootstrapAction) -> &'static str {
+    match action {
+        your_cloud_bootstrap_protocol::BootstrapAction::AuditTargetReadOnly => "_Autoriser l’audit",
+        your_cloud_bootstrap_protocol::BootstrapAction::InstallServerBundle => "_Autoriser la pose",
+        your_cloud_bootstrap_protocol::BootstrapAction::ActivateApprovedController => {
+            "_Autoriser l’activation"
+        }
+    }
+}
+
 fn prompt_copy(prompt: NativePromptKind) -> PromptCopy {
     match prompt {
         NativePromptKind::ConfirmPersonalAccess => PromptCopy {
             title: "Your Cloud — autoriser l’accès personnel",
             secret_label: None,
+            // Remplacé par [`accept_for_action`] à l'ouverture : le bouton
+            // nomme ce que l'humain autorise, jamais une autre action.
             accept: "_Autoriser l’audit",
         },
         NativePromptKind::KeyPassphrase => PromptCopy {
@@ -1006,6 +1031,33 @@ mod tests {
                     || line.starts_with("Empreinte de la configuration")),
                 "{action:?} annonce une configuration : {lines:?}"
             );
+        }
+    }
+
+    /// **Le bouton d'acceptation nomme l'action que l'humain autorise** — et
+    /// jamais une autre.
+    ///
+    /// Trouvé en écrivant la preuve du palier : `prompt_copy` ne lit que le
+    /// genre de fenêtre, et le même `ConfirmPersonalAccess` sert les trois
+    /// actions — un humain qui approuvait une pose consentait sous un bouton
+    /// disant « Autoriser l'audit », en contradiction avec la ligne
+    /// « Action : … » affichée au-dessus. Le mot suit désormais l'action ; le
+    /// mnémonique reste le même, et le test tient les deux.
+    #[test]
+    fn the_acceptance_button_names_the_action_the_human_authorises() {
+        for (action, word) in [
+            (BootstrapAction::AuditTargetReadOnly, "_Autoriser l’audit"),
+            (BootstrapAction::InstallServerBundle, "_Autoriser la pose"),
+            (
+                BootstrapAction::ActivateApprovedController,
+                "_Autoriser l’activation",
+            ),
+        ] {
+            assert_eq!(accept_for_action(action), word);
+            // Le geste ne change pas : les trois mots portent le même
+            // mnémonique, et un oracle qui presse alt+a presse le bon bouton
+            // quelle que soit l'action.
+            assert!(accept_for_action(action).starts_with("_A"));
         }
     }
 
