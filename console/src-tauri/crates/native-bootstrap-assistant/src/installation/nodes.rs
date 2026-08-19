@@ -35,8 +35,29 @@ use crate::personal_access::elevation::FixedCommand;
 /// pas rejetée — elle rendrait des lignes sur des fichiers inexistants, que ce
 /// module lirait comme illisibles sans jamais dire pourquoi. Une garde de ce
 /// module tient les apostrophes, comme pour l'interrogation du paquet.
+/// **Cette lecture est élevée, et c'est mesuré, pas choisi.** Le répertoire
+/// d'état vit sous `/var/lib/private` — `0700 root`, par construction
+/// systemd : c'est la sémantique même de `DynamicUser`, le durcissement que ce
+/// produit veut. Le 19 août 2026, la première pose réelle a été refusée par ce
+/// juge après des actes pourtant réussis : joué comme le compte prêté, `stat`
+/// rendait `Permission denied` sur ce seul nœud, la ligne manquait, et
+/// l'absence se lisait `Missing`. Une lecture que la cible réserve à `root`
+/// se fait sous l'élévation déjà consentie — commande fixe, aucun privilège
+/// nouveau — ou ne se fait pas.
+///
+/// Les deux formes sont celles des actes : `-k -n` quand la politique n'exige
+/// aucun secret, `-k -S` quand elle en exige un — le secret est alors présenté
+/// à ce constat comme à chaque acte, jamais supposé encore valide.
 pub const STAT_OWNED: FixedCommand = FixedCommand::fixed(
-    "/usr/bin/env LC_ALL=C /usr/bin/stat -c '%n %u %g %a %F' -- \
+    "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/stat -c '%n %u %g %a %F' -- \
+     /etc/your-cloud/controller.env \
+     /var/lib/private/your-cloud-controller \
+     /etc/your-cloud/controller-credentials",
+);
+
+pub const STAT_OWNED_WITH_PASSWORD: FixedCommand = FixedCommand::fixed(
+    "/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- /usr/bin/env LC_ALL=C \
+     /usr/bin/stat -c '%n %u %g %a %F' -- \
      /etc/your-cloud/controller.env \
      /var/lib/private/your-cloud-controller \
      /etc/your-cloud/controller-credentials",
@@ -365,35 +386,52 @@ mod tests {
         );
     }
 
-    /// La commande porte sa locale, son format numérique, et n'interroge que
-    /// les nœuds que ce module juge.
+    /// La commande porte son élévation, sa locale, son format numérique, et
+    /// n'interroge que les nœuds que ce module juge — sous ses deux formes.
+    ///
+    /// L'élévation est la partie mesurée : jouée sans elle, cette lecture
+    /// rendait `Permission denied` sur le répertoire d'état — `/var/lib/private`
+    /// est `0700 root` par construction systemd — la ligne manquait, et un
+    /// juge qui ne peut pas lire refusait une pose réussie (19 août 2026).
+    /// Une mutation qui retirerait le préfixe `sudo` rougit ici.
     #[test]
     fn the_command_asks_for_exactly_the_nodes_this_module_judges() {
-        let command = STAT_OWNED.as_str();
-        assert!(command.starts_with("/usr/bin/env LC_ALL=C "));
-        // Le format est protégé du découpage en mots : sans apostrophes, le
-        // shell de la cible en ferait cinq arguments et `stat` chercherait des
-        // fichiers nommés `%u`, `%g`, `%a` et `%F`.
-        assert!(command.contains("-c '%n %u %g %a %F' --"));
-        // Les identifiants sont demandés numériques : `%u`/`%g`, jamais
-        // `%U`/`%G` qui dépendraient de la base de comptes de la machine.
-        assert!(!command.contains("%U") && !command.contains("%G"));
-        assert!(!command.contains("  "));
-        // Aucun blanc hors apostrophes ne sépare les jetons du format.
-        let (_, after_format) = command
-            .split_once("-c '")
-            .expect("le format est introduit par une apostrophe");
-        let (quoted, tail) = after_format
-            .split_once('\'')
-            .expect("le format est refermé par une apostrophe");
-        assert_eq!(quoted, "%n %u %g %a %F");
-        assert!(!tail.contains('%'));
-        for node in EXPECTED_NODES {
+        for (command, elevation) in [
+            (STAT_OWNED.as_str(), "/usr/bin/sudo -k -n -- "),
+            (
+                STAT_OWNED_WITH_PASSWORD.as_str(),
+                "/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- ",
+            ),
+        ] {
             assert!(
-                command.contains(node.path),
-                "nœud non demandé : {}",
-                node.path
+                command.starts_with(elevation),
+                "la lecture des nœuds dépense l'élévation, sous la forme de sa politique"
             );
+            assert!(command.contains("/usr/bin/env LC_ALL=C /usr/bin/stat"));
+            // Le format est protégé du découpage en mots : sans apostrophes,
+            // le shell de la cible en ferait cinq arguments et `stat`
+            // chercherait des fichiers nommés `%u`, `%g`, `%a` et `%F`.
+            assert!(command.contains("-c '%n %u %g %a %F' --"));
+            // Les identifiants sont demandés numériques : `%u`/`%g`, jamais
+            // `%U`/`%G` qui dépendraient de la base de comptes de la machine.
+            assert!(!command.contains("%U") && !command.contains("%G"));
+            assert!(!command.contains("  "));
+            // Aucun blanc hors apostrophes ne sépare les jetons du format.
+            let (_, after_format) = command
+                .split_once("-c '")
+                .expect("le format est introduit par une apostrophe");
+            let (quoted, tail) = after_format
+                .split_once('\'')
+                .expect("le format est refermé par une apostrophe");
+            assert_eq!(quoted, "%n %u %g %a %F");
+            assert!(!tail.contains('%'));
+            for node in EXPECTED_NODES {
+                assert!(
+                    command.contains(node.path),
+                    "nœud non demandé : {}",
+                    node.path
+                );
+            }
         }
     }
 }

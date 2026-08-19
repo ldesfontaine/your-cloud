@@ -289,15 +289,30 @@ pub enum Constat {
 }
 
 impl Constat {
-    /// La commande qui l'obtient. Elle n'est pas privilégiée : lire l'état
-    /// d'une machine ne demande pas de l'être, et une lecture élevée serait du
-    /// privilège dépensé pour rien.
-    pub fn command(self) -> FixedCommand {
+    /// La commande qui l'obtient — non privilégiée partout où lire ne demande
+    /// rien, élevée là où la cible réserve la lecture à `root`.
+    ///
+    /// La règle d'hier — « une lecture élevée serait du privilège dépensé pour
+    /// rien » — tient pour le paquet et l'unité, et sa PRÉMISSE est tombée
+    /// pour les nœuds : `/var/lib/private` est `0700 root` par construction
+    /// systemd, et la première pose réelle a été refusée par un juge qui ne
+    /// pouvait pas lire ce qu'il jugeait (19 août 2026 ; le double des suites
+    /// rendait les lignes écrites sans les permissions du parent — la même
+    /// couture que le transport). Le privilège n'est pas dépensé pour rien :
+    /// il est la seule voie de cette lecture.
+    pub fn command(self, password_required: bool) -> FixedCommand {
         match self {
             Self::Package => super::package::QUERY_PACKAGE,
             Self::Unit => super::unit::SHOW_CONTROLLER,
+            Self::Nodes if password_required => super::nodes::STAT_OWNED_WITH_PASSWORD,
             Self::Nodes => super::nodes::STAT_OWNED,
         }
+    }
+
+    /// Ce constat dépense-t-il l'élévation — et donc présente-t-il le secret
+    /// quand la politique en exige un, exactement comme un acte.
+    pub fn elevated(self) -> bool {
+        matches!(self, Self::Nodes)
     }
 }
 
@@ -395,6 +410,29 @@ impl ElevatedAct {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le constat des nœuds dépense l'élévation, et lui seul — mesuré, pas
+    /// choisi : `/var/lib/private` réserve cette lecture à `root`.
+    ///
+    /// La garde existe parce que la mutation qui rendrait `elevated()` faux
+    /// survivrait aux autres suites : le `-S` partirait sans secret, et
+    /// `sudo` attendrait sur une machine réelle une réponse qu'aucune suite ne
+    /// peut voir manquer. Ici, elle rougit.
+    #[test]
+    fn the_nodes_constat_alone_spends_the_elevation() {
+        assert!(Constat::Nodes.elevated());
+        assert!(!Constat::Package.elevated());
+        assert!(!Constat::Unit.elevated());
+        // Et ses deux formes portent réellement l'élévation qu'il déclare.
+        assert!(Constat::Nodes
+            .command(false)
+            .as_str()
+            .starts_with("/usr/bin/sudo -k -n -- "));
+        assert!(Constat::Nodes
+            .command(true)
+            .as_str()
+            .starts_with("/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- "));
+    }
 
     fn spellings() -> Vec<(Step, FixedCommand)> {
         ACTS.iter()

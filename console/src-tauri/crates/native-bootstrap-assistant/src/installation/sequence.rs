@@ -329,7 +329,7 @@ impl<'a, C: Channel> Sequence<'a, C> {
             // Le constat, et lui seul, donne sa provenance au registre. Un code
             // de sortie dit qu'un programme s'est terminé sans se plaindre ;
             // seul le constat dit ce que la machine est devenue.
-            match self.constate(*step, plan)? {
+            match self.constate(*step, plan, secret, borrow)? {
                 Some(true) => {
                     // Le constat établit toutes les étapes qu'il couvre, et
                     // celles-là seulement.
@@ -526,13 +526,29 @@ impl<'a, C: Channel> Sequence<'a, C> {
     /// Rien n'est jugé ici : la réponse est portée telle quelle au juge, et
     /// c'est son verdict qui revient. Un refus est donc toujours celui d'un
     /// module éprouvé, jamais une conclusion de l'ordonnanceur.
-    fn constate(&mut self, step: Step, plan: &InstallPlan) -> Result<Option<bool>, SequenceStop> {
+    fn constate<S>(
+        &mut self,
+        step: Step,
+        plan: &InstallPlan,
+        secret: &SpentSecret<S>,
+        borrow: impl Fn(&S) -> &[u8] + Copy,
+    ) -> Result<Option<bool>, SequenceStop> {
         let Some(constat) = acts::constat_for(step) else {
             return Ok(None);
         };
+        // Un constat élevé dépense l'élévation comme un acte : la forme suit
+        // la politique attestée, et le secret est présenté — en réponse de
+        // terminal, sa nature — quand elle en exige un. La lecture des nœuds
+        // est de ceux-là : `/var/lib/private` la réserve à `root`, par
+        // construction systemd (mesuré le 19 août 2026, première pose réelle).
+        let input = if constat.elevated() && self.password_required {
+            secret.bytes(borrow).map(ChannelInput::TerminalAnswer)
+        } else {
+            None
+        };
         let answer = self
             .channel
-            .run(constat.command(), None)
+            .run(constat.command(self.password_required), input)
             .map_err(|_| SequenceStop::Unanswered { step })?;
 
         let verdict = match constat {
@@ -876,12 +892,16 @@ mod tests {
                     });
                 }
             }
-            // Les constats répondent l'état ; tout le reste est un acte.
+            // Les constats répondent l'état ; tout le reste est un acte. Le
+            // constat des nœuds a deux formes, comme les actes : la lecture
+            // est élevée, et le double répond à l'une comme à l'autre.
             let stdout = if bytes == super::super::package::QUERY_PACKAGE.as_str() {
                 self.package.clone()
             } else if bytes == super::super::unit::SHOW_CONTROLLER.as_str() {
                 self.unit.clone()
-            } else if bytes == super::super::nodes::STAT_OWNED.as_str() {
+            } else if bytes == super::super::nodes::STAT_OWNED.as_str()
+                || bytes == super::super::nodes::STAT_OWNED_WITH_PASSWORD.as_str()
+            {
                 self.nodes.clone()
             } else {
                 let refused = self.failing.iter().any(|command| command == bytes);
@@ -1194,11 +1214,22 @@ mod tests {
         // qui dit à `sudo -S` d'arrêter de lire. Un acte dont l'entrée serait
         // le secret NU n'aurait pas nommé sa nature, et ce test le verrait.
         const WIRED_SECRET: &[u8] = b"phrase\n";
+        // Les porteurs légitimes du secret : chaque acte élevé, ET chaque
+        // constat élevé — la lecture des nœuds dépense l'élévation depuis que
+        // la mesure a montré que `/var/lib/private` la réserve à `root`. Un
+        // constat élevé qui ne présenterait pas le secret verrait `sudo -S`
+        // attendre une réponse qui ne vient jamais.
         let privileged: Vec<String> =
             super::super::plan::authorized_steps(BootstrapAction::InstallServerBundle)
                 .iter()
                 .flat_map(|step| acts::ElevatedAct::authorised_for(&plan(), *step))
                 .map(|act| act.command(true).as_str().to_owned())
+                .chain(
+                    [acts::Constat::Nodes]
+                        .into_iter()
+                        .filter(|constat| constat.elevated())
+                        .map(|constat| constat.command(true).as_str().to_owned()),
+                )
                 .collect();
 
         let mut with = ScriptedChannel::in_the_announced_state();
