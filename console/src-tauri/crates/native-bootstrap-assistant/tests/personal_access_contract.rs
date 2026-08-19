@@ -1778,6 +1778,7 @@ fn the_watchdog_cuts_a_live_personal_access_window_before_the_forced_fallback() 
             schema_version: 1,
             request_id: DIRECT_REQUEST_ID.into(),
             event: AssistantEventKind::Expired,
+            installation_scope: None,
         },
         "only a controlled cut writes the expurgated expiry"
     );
@@ -3703,6 +3704,7 @@ fn a_released_lease_closes_the_open_file_selector_and_the_window_under_it() {
             schema_version: 1,
             request_id: DIRECT_REQUEST_ID.into(),
             event: AssistantEventKind::Cancelled,
+            installation_scope: None,
         }
     );
     assert!(output.stderr.is_empty());
@@ -3765,6 +3767,7 @@ fn a_closed_file_selector_chooses_nothing_and_leaves_the_window_it_came_from() {
             schema_version: 1,
             request_id: DIRECT_REQUEST_ID.into(),
             event: AssistantEventKind::Cancelled,
+            installation_scope: None,
         }
     );
     await_disappearance(pid);
@@ -3882,6 +3885,7 @@ fn a_released_lease_closes_the_passphrase_window_and_returns_the_file_it_opened(
             schema_version: 1,
             request_id: DIRECT_REQUEST_ID.into(),
             event: AssistantEventKind::Cancelled,
+            installation_scope: None,
         }
     );
     await_disappearance(pid);
@@ -3928,6 +3932,7 @@ fn a_closed_passphrase_window_returns_the_file_and_derives_nothing() {
             schema_version: 1,
             request_id: DIRECT_REQUEST_ID.into(),
             event: AssistantEventKind::Cancelled,
+            installation_scope: None,
         }
     );
     await_disappearance(pid);
@@ -4097,6 +4102,7 @@ fn a_lease_released_during_the_derivation_is_absorbed_and_opens_no_connection() 
             schema_version: 1,
             request_id: DIRECT_REQUEST_ID.into(),
             event: AssistantEventKind::Cancelled,
+            installation_scope: None,
         },
         "the terminal of an absorbed cancellation says nothing more than any other"
     );
