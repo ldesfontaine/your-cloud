@@ -138,14 +138,42 @@ mount_perimeter() {
 }
 
 journey() {
-  fail "journey: le pilotage du parcours à l'écran est la prochaine phase de ce harnais — voir le commentaire de #147"
+  local machine_address host_key
+  inventory "$console_vm" >/dev/null
+  machine_address=$(inventory "$machine_vm")
+  announce "le parcours nominal à l'écran — compte ycpasude, cible ycpa-target.test"
+  # L'empreinte de la clé d'hôte : relevée du périmètre déjà attesté par le
+  # canal géré — jamais apprise d'une première réponse, jamais écrite en dur.
+  host_key=$("$labctl" ssh "$console_vm" -- \
+    "ssh-keygen -lf /root/your-cloud-lab-personal-access/server-host-key.pub" | awk '{print $2}')
+  [[ "$host_key" == SHA256:* ]] || fail "l'empreinte de la clé d'hôte est illisible : $host_key"
+
+  # La cible de la passe, écrite là où `inside` la relit. Les trois adresses :
+  # la machine écoute sur son adresse LAB, la source autorisée est le /24 du
+  # LAB, et le rendez-vous du Relay est une ADRESSE — pas un service : le
+  # lecteur du Controller est paresseux, et c'est le prévol qui dira ce qui
+  # répond, depuis le Controller lui-même.
+  deploy "$console_vm" run inside console-oracle.py
+  "$labctl" ssh "$console_vm" -- "cat > $remote_harness/target.env <<TARGET
+TARGET_HOST=ycpa-target.test
+TARGET_PORT=22
+TARGET_USERNAME=ycpasude
+TARGET_HOST_KEY=$host_key
+TARGET_LISTEN=$machine_address:9443
+TARGET_ALLOWED_SOURCE=192.168.240.0/24
+TARGET_RELAY_ENDPOINT=192.168.240.9:9444
+TARGET
+chmod 0600 $remote_harness/target.env"
+  "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
+  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey"
 }
 
 case "${1:-}" in
   sync) sync_sources ;;
   build) build_candidate ;;
   perimeter) mount_perimeter ;;
-  journey|asymmetry|hostile|constats|collect|remove|all)
-    fail "$1: phase déclarée, pas encore écrite — ce squelette porte sync/build/perimeter" ;;
+  journey) journey ;;
+  asymmetry|hostile|constats|collect|remove|all)
+    fail "$1: phase déclarée, pas encore écrite — ce harnais porte sync/build/perimeter/journey" ;;
   *) usage; exit 64 ;;
 esac

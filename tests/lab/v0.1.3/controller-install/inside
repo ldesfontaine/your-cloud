@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Tout ce que l'oracle du parcours de création exige, dans l'écran virtuel que
+# `run` a ouvert. Un seul pilote, et c'est le produit installé :
+# /usr/bin/your-cloud-console, le binaire que le .deb de cette passe a posé,
+# conduit par tauri-driver devant le même WebKitWebDriver qui peint la Console.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+stage=${1:?usage: inside <stage>}
+
+application=/usr/bin/your-cloud-console
+output="$here/output"
+driver_port=4444
+native_port=4445
+perimeter=/root/lab-personal-access
+
+install -d -m 0755 "$output"
+fail() { echo "FAILED: $*" >&2; exit 1; }
+[[ -x "$application" ]] || fail "$application is absent; build and install the candidate first"
+[[ -f "$perimeter/needle/key-passphrase" ]] || fail "the personal-access perimeter is not mounted"
+[[ -s "$here/target.env" ]] || fail "the target sheet is absent; the prove writes it"
+# La cible de la passe : le nom déclaré, le compte, l'empreinte de clé d'hôte
+# et les trois adresses — écrits par le prove, relus ici, jamais choisis.
+# shellcheck disable=SC1091
+. "$here/target.env"
+
+wait_for_port() {
+  local label=$1 port=$2 attempt
+  for attempt in $(seq 1 120); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+      echo "  $label ready after $attempt attempts"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "FAILED: $label never opened port $port" >&2
+  return 1
+}
+
+# L'état de la Console : NEUF à chaque journey — cette preuve crée une
+# infrastructure depuis une Console froide, et un coffre survivant d'une passe
+# précédente serait une Console que cette passe n'a pas montée.
+state_root=/root/your-cloud-lab-controller-install/console-state
+if [[ "$stage" == journey ]]; then
+  rm -rf "$state_root"
+fi
+export XDG_DATA_HOME="$state_root/data" XDG_CONFIG_HOME="$state_root/config" XDG_CACHE_HOME="$state_root/cache"
+install -d -m 0700 "$state_root" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+
+/root/.cargo/bin/tauri-driver \
+  --native-driver /usr/bin/WebKitWebDriver \
+  --port "$driver_port" --native-port "$native_port" \
+  >"$output/tauri-driver.log" 2>&1 &
+driver_pid=$!
+cleanup() {
+  kill "$driver_pid" 2>/dev/null || true
+  wait "$driver_pid" 2>/dev/null || true
+  pkill -x your-cloud-console 2>/dev/null || true
+  pkill -x your-cloud-native-bootstrap-assistant 2>/dev/null || true
+}
+trap cleanup EXIT
+
+wait_for_port "tauri-driver" "$driver_port"
+wait_for_port "the native WebKitWebDriver" "$native_port"
+echo "  candidate $(dpkg-query -W -f '${Version}' your-cloud 2>/dev/null || echo '?')"
+
+set +e
+python3 -u -X faulthandler "$here/console-oracle.py" \
+  --base-url "http://127.0.0.1:$driver_port" \
+  --application "$application" \
+  --secrets "$state_root/vault-secrets" \
+  --stage "$stage" \
+  --target-host "$TARGET_HOST" \
+  --target-port "$TARGET_PORT" \
+  --username "$TARGET_USERNAME" \
+  --host-key "$TARGET_HOST_KEY" \
+  --listen "$TARGET_LISTEN" \
+  --allowed-source "$TARGET_ALLOWED_SOURCE" \
+  --relay-endpoint "$TARGET_RELAY_ENDPOINT" \
+  --key-file "$perimeter/keys/files/ed25519" \
+  --passphrase-file "$perimeter/needle/key-passphrase" \
+  --output "$output/controller-install-$stage.json"
+oracle_status=$?
+set -e
+echo "  oracle exit: $oracle_status"
+exit "$oracle_status"
