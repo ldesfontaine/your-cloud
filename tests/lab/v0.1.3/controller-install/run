@@ -18,6 +18,26 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # The X server's own errors are kept: when it dies, `xvfb-run` tears the
 # clients down by signal and nothing else survives to say why.
 install -d -m 0755 "$here/output"
-exec dbus-run-session -- xvfb-run -a -e "$here/output/xvfb-errors.log" \
+
+# Le bus de session est publié SUR LA RACINE X, et non posé en variable — la
+# différence décide de cette preuve.
+#
+# Le produit efface l'environnement du helper et ne lui repasse qu'une liste
+# blanche explicite, où `DBUS_SESSION_BUS_ADDRESS` ne figure pas : c'est une
+# décision de sécurité, pas un oubli. Le helper ne peut donc trouver un bus que
+# par l'autre voie, celle que GTK emprunte sur un poste réel — la propriété
+# `_DBUS_SESSION_BUS_ADDRESS` de la fenêtre racine, publiée par `dbus-launch`.
+#
+# `dbus-run-session`, lui, ne publie rien sur X : il ne pose que la variable,
+# précisément celle que le produit efface. Le helper autospawnait alors son
+# propre `dbus-launch`, qui restait dans SON groupe de processus et lui
+# survivait — et le produit refusait à raison un succès dont le groupe n'était
+# pas vide. Mesuré le 19 août 2026 : un seul survivant, `dbus-launch
+# --autolaunch`, pgid du helper.
+#
+# L'ordre compte donc : X d'abord, le bus publié dedans ensuite. Le harnais
+# offre ainsi ce qu'une session graphique offre, et la garde du produit reste
+# entière — un vrai enfant survivant échoue toujours.
+exec xvfb-run -a -e "$here/output/xvfb-errors.log" \
   -s "-screen 0 1280x1024x24 -noreset" \
-  env NO_AT_BRIDGE=1 "$here/inside" "$@"
+  env NO_AT_BRIDGE=1 dbus-launch --exit-with-session "$here/inside" "$@"

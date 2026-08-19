@@ -456,7 +456,19 @@ internals.invoke = function (name, args, options) {
   catch (error) { record.outcome = 'threw'; record.code = codeOf(error); push(record); throw error; }
   if (!answer || typeof answer.then !== 'function') { record.outcome = 'value'; push(record); return answer; }
   return answer.then(
-    (value) => { record.outcome = 'resolved'; record.millis = Date.now() - started - at; push(record); return value; },
+    (value) => {
+      record.outcome = 'resolved';
+      record.millis = Date.now() - started - at;
+      // Le cycle de vie d'une session d'amorçage, et lui seul : ce n'est pas
+      // un secret — c'est le vocabulaire que la clôture d'affaires publie et
+      // que la vue traduit en phrases. Sans lui, une passe qui s'arrête laisse
+      // déduire ce qu'elle aurait pu dire.
+      if (value && typeof value === 'object' && typeof value.lifecycle === 'string') {
+        record.lifecycle = value.lifecycle;
+      }
+      push(record);
+      return value;
+    },
     (error) => {
       record.outcome = 'rejected';
       record.code = codeOf(error);
@@ -651,6 +663,37 @@ def type_text(window: str, text: str) -> None:
         raise RuntimeError("the text could not be typed")
 
 
+def capture_processes(moment: str) -> dict[str, object]:
+    """L'arbre des processus tel qu'il est à cet instant, filiation comprise.
+
+    La question à laquelle cette capture répond est précise : quand le verdict
+    de succès exige que TOUT le groupe du helper soit parti, qui reste dans ce
+    groupe, et de qui descend-il ? Un bus de session né du helper est un
+    artefact de l'écran nu ; un bus préexistant dont le helper n'est que le
+    client ne devrait jamais peupler son groupe.
+    """
+    listing = subprocess.run(
+        ["ps", "-eo", "pid,ppid,pgid,sid,stat,comm,args"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout
+    kept = [
+        line.rstrip()
+        for line in listing.splitlines()
+        if any(
+            needle in line
+            for needle in ("your-cloud", "dbus", "dconf", "at-spi", "Xvfb", "xvfb")
+        )
+    ]
+    return {
+        "moment": moment,
+        "bus_address": os.environ.get("DBUS_SESSION_BUS_ADDRESS", "(absente)"),
+        "processes": kept,
+    }
+
+
 def answer_access_window(key_file: str, passphrase: str, report: dict) -> None:
     """Nomme le fichier de clé, tape la passphrase, autorise l'accès."""
     window = await_window(ACCESS_WINDOW_TITLE)
@@ -679,6 +722,11 @@ def answer_access_window(key_file: str, passphrase: str, report: dict) -> None:
         raise RuntimeError("the passphrase window never accepted")
     if not window_gone(ACCESS_WINDOW_TITLE, seconds=60):
         raise RuntimeError("the access window never closed after the passphrase")
+    # L'instant où le verdict se joue : le helper vient de finir, et ce qui
+    # reste de son groupe décide si son succès est reconnu.
+    report.setdefault("process_tree", []).append(
+        capture_processes("just after the access window closed")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +784,13 @@ def run_step(
     expect_sudo_password: str | None = None,
 ) -> None:
     """Une étape du parcours : le bouton, la fenêtre, l'issue en phrase."""
+    # Le patch du recorder est réinstallé ici, et son verdict est retenu : une
+    # WebView qui rechargerait entre deux vues emporterait le patch avec elle,
+    # et une bande muette se lirait alors comme « aucun appel » au lieu de
+    # « plus personne n'écoutait ». La question se répond par une mesure.
+    report.setdefault("recorder_reinstall", {})[step] = driver.execute(
+        INSTALL_RECORDER.replace("const buffer = [];", "const buffer = (window.__ycRecorder && window.__ycRecorder.buffer) || [];")
+    )
     click(driver, STEP_BUTTONS[step])
     answer_access_window(key_file, passphrase, report)
     if expect_sudo_password is not None:
@@ -752,6 +807,7 @@ def run_step(
         label=f"the {step} outcome sentence",
     )
     report.setdefault("steps", {})[step] = STEP_SENTENCES[step]
+    report.setdefault("tape_by_step", {})[step] = read_recorder(driver)
 
 
 def main() -> int:
@@ -802,6 +858,7 @@ def main() -> int:
         return 0
     except Exception as error:  # noqa: BLE001 — l'échec entier appartient au rapport.
         report["failure"] = repr(error)
+        report.setdefault("process_tree", []).append(capture_processes("at the failure"))
         try:
             report["screen"] = capture_screen(driver)
             report["commands"] = probe_commands(driver)
