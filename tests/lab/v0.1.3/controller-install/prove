@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# La preuve du palier v0.1.3, sous la règle de docs/contribution/QUALITE.md :
+# aucune fixture ne remplace un composant du produit sur le trajet prouvé.
+# `controller_install_fixture.rs` sort du trajet — la vraie Console installée,
+# pilotée à l'écran, déroule « Créer une infrastructure » jusqu'au Controller
+# actif sur lab-machine-1, et chaque maillon est un binaire livré.
+#
+# Deux machines, deux autorités :
+#   lab-console    la machine de l'humain : le .deb installé, sa WebView, son
+#                  Assistant natif, son coffre — piloté sous Xvfb (patron
+#                  command-path de #128) ;
+#   lab-machine-1  la machine cible : les comptes du périmètre d'accès
+#                  personnel (dont `ycpasude`, ALL sans mot de passe, et les
+#                  étroits pour l'asymétrie du constat n°10), son sshd, et ce
+#                  que dpkg/systemd y constatent indépendamment.
+#
+# Le Relay n'existe pas encore ici — c'est une CRÉATION : le prévol est la
+# dernière étape du plan, collecté par le Controller lui-même une fois actif,
+# et l'adresse de rendez-vous du formulaire est une adresse, pas un service.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat <<'USAGE'
+usage: prove <phase>
+
+  sync        sources → lab-console (arbre de build dédié, jamais l'arbre work)
+  build       construit et installe le candidat .deb sur lab-console
+  perimeter   monte le périmètre d'accès personnel sur lab-machine-1
+              (comptes ycpa*, agent, clé d'hôte relevée) — délègue à
+              tests/lab/v0.1.0/personal-access/install-server
+  journey     le parcours nominal à l'écran : « Créer une infrastructure »,
+              audit → pose → activation, compte ycpasude, chaque issue en
+              phrase (constats 1, 2, 7, 8, 9)
+  asymmetry   le constat n°10 : ycpasudn suffit à l'audit et la pose est
+              refusée AVANT la fenêtre, dans la même passe
+  hostile     lot altéré refusé avant tout dpkg (3) ; arrêt forcé à chaque
+              étape nommée, déroulé exact et retour prouvé (6)
+  constats    relevés indépendants sur lab-machine-1 confrontés à ceux du
+              produit (5) ; unités inactives (8) ; élévation sans
+              persistance (4) ; destruction du secret (les trois constats)
+  collect     rapatrie les artefacts vers tests/artifacts/proofs/
+  remove      démonte tout, comptes compris, et asserte l'absence
+  all         tout, dans cet ordre, remove garanti rouge ou vert
+USAGE
+}
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.3/controller-install"
+personal_access="$root/tests/lab/v0.1.0/personal-access"
+console_vm=lab-console
+machine_vm=lab-machine-1
+remote_harness=/root/your-cloud-lab-controller-install
+remote_build=/root/your-cloud-console-build
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+result_root="$root/tests/artifacts/proofs/controller-install/$run_id"
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+announce() { printf '\n== %s\n' "$*"; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+# La garde d'inventaire obligatoire des règles LAB : jamais de mutation sans
+# relire ce que la machine est, et refuser tout ce qui n'est pas la topologie
+# attendue de ce dépôt.
+inventory() {
+  local name="$1" line
+  line=$("$labctl" list --format=tsv | awk -F'\t' -v n="$name" '$1 == n') ||
+    fail "labctl list n'a pas rendu $name"
+  [[ -n "$line" ]] || fail "$name absente de l'inventaire"
+  awk -F'\t' '{
+    if ($2 != "running") { exit 1 }
+    if ($5 != "quick") { exit 2 }
+    if ($6 != "your-cloud/labctl") { exit 3 }
+    print $3
+  }' <<<"$line" || fail "$name n'est pas la VM attendue (état/topologie/origine)"
+}
+
+deploy() {
+  local vm="$1"; shift
+  "$labctl" ssh "$vm" -- "install -d -m 0700 $remote_harness"
+  local file
+  for file in "$@"; do
+    "$labctl" copy-to "$vm" "$harness/$file" "$remote_harness/$file" >/dev/null
+    "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$file"
+  done
+}
+
+sync_sources() {
+  inventory "$console_vm" >/dev/null
+  announce "sources → $console_vm ($remote_build)"
+  # La forme du dépôt entier, comme la preuve du lot embarqué : le build de la
+  # Console reconstruit le lot serveur (binaire Go + packaging) et le confronte
+  # au manifeste signé committé — un sync réduit à console/ rend un candidat
+  # qui ne peut pas naître, mesuré au premier passage de ce harnais.
+  tar czf "$workdir/console.tgz" -C "$root" \
+    --exclude=console/node_modules \
+    --exclude=console/dist \
+    --exclude=console/dist-reflow \
+    --exclude=console/src-tauri/target \
+    --exclude=console/src-tauri/binaries \
+    --exclude=console/src-tauri/server-bundle \
+    console packaging tools go.mod go.sum cmd internal
+  "$labctl" ssh "$console_vm" -- "install -d -m 0700 $remote_build"
+  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" "$remote_build/console.tgz" >/dev/null
+  # SANS strip-components : la forme du dépôt est la forme, et l'aplatir
+  # mélangerait console/ et packaging/ en un arbre que rien ne livre — le
+  # second fait mesuré par ce harnais, au deuxième passage.
+  "$labctl" ssh "$console_vm" -- "
+set -e
+find $remote_build -mindepth 1 -maxdepth 1 ! -name console.tgz ! -name target-cache -exec rm -rf {} +
+tar xzmf $remote_build/console.tgz -C $remote_build
+rm -f $remote_build/console.tgz
+if [ -d $remote_build/target-cache ]; then
+  mv $remote_build/target-cache $remote_build/console/src-tauri/target
+fi"
+  echo "SYNC_OK"
+}
+
+build_candidate() {
+  inventory "$console_vm" >/dev/null
+  announce "build + install du candidat sur $console_vm"
+  "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
+  deploy "$console_vm" build
+  "$labctl" ssh "$console_vm" -- "$remote_harness/build"
+}
+
+mount_perimeter() {
+  inventory "$machine_vm" >/dev/null
+  announce "périmètre d'accès personnel sur $machine_vm (comptes ycpa*)"
+  # Le périmètre appartient au harnais de #52-#54 : les comptes, leurs
+  # politiques sudoers, le mot de passe synthétique et l'agent sont SES
+  # affaires, et les dupliquer ici donnerait deux définitions du périmètre.
+  # Sa phase `setup` monte le périmètre entier — client, serveur, clé d'hôte
+  # relevée par le canal géré — et son `remove` le démonte avec assertions.
+  "$personal_access/prove" setup
+}
+
+journey() {
+  fail "journey: le pilotage du parcours à l'écran est la prochaine phase de ce harnais — voir le commentaire de #147"
+}
+
+case "${1:-}" in
+  sync) sync_sources ;;
+  build) build_candidate ;;
+  perimeter) mount_perimeter ;;
+  journey|asymmetry|hostile|constats|collect|remove|all)
+    fail "$1: phase déclarée, pas encore écrite — ce squelette porte sync/build/perimeter" ;;
+  *) usage; exit 64 ;;
+esac
