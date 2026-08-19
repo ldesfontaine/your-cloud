@@ -175,6 +175,7 @@ mod tests {
             schema_version: 1,
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::Unavailable,
+            installation_scope: None,
         };
         let mut output = Vec::new();
         write_event(&mut output, &event).unwrap();

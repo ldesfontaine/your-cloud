@@ -119,6 +119,7 @@ fn delay_before_process_main_cannot_renew_the_transmitted_ttl() {
             schema_version: 1,
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::Expired,
+            installation_scope: None,
         }
     );
     assert!(stderr_bytes.is_empty());

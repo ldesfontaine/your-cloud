@@ -424,18 +424,66 @@ impl AssistantEventKind {
     }
 }
 
+/// Ce que l'entrée sudoers attestée permettrait à une **installation**,
+/// exporté par le helper quand un listing a été attesté sous un consentement.
+///
+/// Deux natures d'événement peuvent le porter, et deux seulement :
+/// [`AssistantEventKind::AccessVerified`] — la route d'audit exporte la portée
+/// pour qu'un refus de pose ultérieur tombe avant toute fenêtre (constat n°10
+/// de #143, arbitrage du 19 août 2026) — et [`AssistantEventKind::Refused`] —
+/// la route d'installation nomme ce que l'entrée permet quand c'est
+/// précisément la raison de son refus. Les autres terminaux n'ont attesté
+/// aucun listing, donc n'ont rien à en dire : `validate` les refuse plutôt
+/// que de les laisser affirmer.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttestedInstallationScopeV1 {
+    /// L'entrée autorise toute commande — ce qu'installer exige.
+    pub suffices: bool,
+    /// Ce que l'entrée permet aujourd'hui, mot pour mot depuis le listing —
+    /// non vide exactement quand `suffices` est faux : c'est le refus qui a
+    /// besoin de nommer, et lui seul.
+    pub permits: String,
+}
+
+/// La borne du nom exporté. Le listing d'origine est déjà borné par #51 ;
+/// celle-ci borne ce qui traverse l'événement, qui tient lui-même sous
+/// [`MAX_ASSISTANT_EVENT_FRAME_BYTES`].
+pub const MAX_ATTESTED_PERMITS_BYTES: usize = 512;
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AssistantEventV1 {
     pub schema_version: u8,
     pub request_id: String,
     pub event: AssistantEventKind,
+    /// La portée d'installation attestée, quand la nature de l'événement peut
+    /// la porter — absente partout ailleurs, et absente d'un helper qui n'a
+    /// pas atteint l'attestation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation_scope: Option<AttestedInstallationScopeV1>,
 }
 
 impl AssistantEventV1 {
     pub fn validate(self) -> Result<Self, ProtocolError> {
         if self.schema_version != 1 || !canonical_request_id(&self.request_id) {
             return Err(ProtocolError::InvalidInput);
+        }
+        if let Some(scope) = &self.installation_scope {
+            let carrier = matches!(
+                self.event,
+                AssistantEventKind::AccessVerified | AssistantEventKind::Refused
+            );
+            // La paire est une seule affirmation : « suffit » n'a rien à
+            // nommer, « ne suffit pas » nomme toujours. Un scope qui dirait
+            // « non » sans nom laisserait l'humain deviner ; un scope qui
+            // nommerait tout en disant « oui » porterait deux vérités.
+            let coherent = scope.suffices == scope.permits.is_empty();
+            let bounded =
+                scope.permits.len() <= MAX_ATTESTED_PERMITS_BYTES && scope.permits.is_ascii();
+            if !carrier || !coherent || !bounded {
+                return Err(ProtocolError::InvalidInput);
+            }
         }
         Ok(self)
     }
@@ -1142,12 +1190,100 @@ mod tests {
         }
     }
 
+    /// La portée attestée ne voyage qu'aux côtés d'un terminal qui a jugé un
+    /// listing, et la paire est une seule affirmation.
+    ///
+    /// `AccessVerified` — l'audit exporte pour qu'un refus de pose tombe avant
+    /// toute fenêtre — et `Refused` — la pose sans audit nomme ce que l'entrée
+    /// permet — sont les deux seuls porteurs : les autres terminaux n'ont rien
+    /// attesté, et un scope à leurs côtés serait une affirmation sans juge.
+    /// La paire : « suffit » ne nomme rien, « ne suffit pas » nomme toujours.
+    #[test]
+    fn the_attested_scope_travels_only_beside_a_judging_terminal() {
+        let narrow = AttestedInstallationScopeV1 {
+            suffices: false,
+            permits: "/usr/bin/id".into(),
+        };
+        let event_with = |kind, scope: Option<AttestedInstallationScopeV1>| AssistantEventV1 {
+            schema_version: 1,
+            request_id: REQUEST_ID.into(),
+            event: kind,
+            installation_scope: scope,
+        };
+
+        for kind in [
+            AssistantEventKind::AccessVerified,
+            AssistantEventKind::Refused,
+        ] {
+            assert!(
+                event_with(kind, Some(narrow.clone())).validate().is_ok(),
+                "un terminal qui a jugé porte la portée : {kind:?}"
+            );
+        }
+        for kind in [
+            AssistantEventKind::PromptOpen,
+            AssistantEventKind::Cancelled,
+            AssistantEventKind::Expired,
+            AssistantEventKind::Unavailable,
+        ] {
+            assert_eq!(
+                event_with(kind, Some(narrow.clone())).validate(),
+                Err(ProtocolError::InvalidInput),
+                "un terminal qui n'a rien attesté ne peut rien affirmer : {kind:?}"
+            );
+        }
+
+        // La paire incohérente, dans les deux sens : « oui » qui nomme,
+        // « non » qui ne nomme pas.
+        for scope in [
+            AttestedInstallationScopeV1 {
+                suffices: true,
+                permits: "/usr/bin/id".into(),
+            },
+            AttestedInstallationScopeV1 {
+                suffices: false,
+                permits: String::new(),
+            },
+        ] {
+            assert_eq!(
+                event_with(AssistantEventKind::AccessVerified, Some(scope.clone())).validate(),
+                Err(ProtocolError::InvalidInput),
+                "la paire doit être une seule affirmation : {scope:?}"
+            );
+        }
+
+        // La borne, et l'ASCII que le listing d'origine garantit déjà.
+        let oversized = AttestedInstallationScopeV1 {
+            suffices: false,
+            permits: "a".repeat(MAX_ATTESTED_PERMITS_BYTES + 1),
+        };
+        assert_eq!(
+            event_with(AssistantEventKind::Refused, Some(oversized)).validate(),
+            Err(ProtocolError::InvalidInput)
+        );
+        let non_ascii = AttestedInstallationScopeV1 {
+            suffices: false,
+            permits: "é".into(),
+        };
+        assert_eq!(
+            event_with(AssistantEventKind::Refused, Some(non_ascii)).validate(),
+            Err(ProtocolError::InvalidInput)
+        );
+
+        // Et l'absence reste licite partout : un helper qui n'a pas atteint
+        // l'attestation n'affirme rien.
+        assert!(event_with(AssistantEventKind::Unavailable, None)
+            .validate()
+            .is_ok());
+    }
+
     #[test]
     fn assistant_event_is_closed_and_correlated() {
         let event = AssistantEventV1 {
             schema_version: 1,
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::PromptOpen,
+            installation_scope: None,
         };
         assert!(event.clone().validate().is_ok());
 
@@ -1167,6 +1303,7 @@ mod tests {
             schema_version: 2,
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::Unavailable,
+            installation_scope: None,
         };
         assert_eq!(wrong_schema.validate(), Err(ProtocolError::InvalidInput));
     }

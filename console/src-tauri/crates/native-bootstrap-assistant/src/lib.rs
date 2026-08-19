@@ -41,9 +41,10 @@ use framing::ReadFrameError;
 use lease::{LeaseResolution, LeaseState, UnbufferedStandardInput};
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, AssistantEventKind, AssistantEventV1, AssistantScopeV1,
-    ASSISTANT_EXIT_ACCESS_VERIFIED, ASSISTANT_EXIT_CANCELLED, ASSISTANT_EXIT_INTERNAL_FAILURE,
-    ASSISTANT_EXIT_INVALID_INVOCATION, ASSISTANT_EXIT_IO_FAILURE, ASSISTANT_EXIT_PROTOCOL_REFUSED,
-    ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE, ASSISTANT_EXIT_WATCHDOG_EXPIRED,
+    AttestedInstallationScopeV1, ASSISTANT_EXIT_ACCESS_VERIFIED, ASSISTANT_EXIT_CANCELLED,
+    ASSISTANT_EXIT_INTERNAL_FAILURE, ASSISTANT_EXIT_INVALID_INVOCATION, ASSISTANT_EXIT_IO_FAILURE,
+    ASSISTANT_EXIT_PROTOCOL_REFUSED, ASSISTANT_EXIT_REFUSED, ASSISTANT_EXIT_UNAVAILABLE,
+    ASSISTANT_EXIT_WATCHDOG_EXPIRED,
 };
 
 pub const REQUIRED_MODE_ARGUMENT: &str = "--native-bootstrap-assistant";
@@ -773,10 +774,11 @@ fn serve_scope(
         .tighten_to(deadline)
         .map_err(|_| SessionError::Internal)?;
     if Instant::now() >= deadline {
-        return write_terminal(writer, &scope, SessionTerminal::Expired);
+        return write_terminal(writer, &scope, SessionTerminal::Expired, None);
     }
 
-    let outcome = show_prompt(&scope, deadline, watchdog.expiration_flag(), lease.clone());
+    let (outcome, exported_scope) =
+        show_prompt(&scope, deadline, watchdog.expiration_flag(), lease.clone());
     let lease_resolution = lease.close_and_resolve();
     if lease_resolution == LeaseResolution::ProtocolInvalid {
         return Err(SessionError::Protocol);
@@ -792,12 +794,15 @@ fn serve_scope(
         Some(terminal) => {
             // A secret accepted just before the deadline or parent lease wins must be
             // zeroized before even the expurgated Expired/Cancelled frame is written.
+            // La portée attestée tombe avec lui : un terminal qui n'a rien
+            // jugé n'affirme rien, et le protocole le refuse de toute façon.
             drop(outcome);
-            terminal
+            drop(exported_scope);
+            return write_terminal(writer, &scope, terminal, None);
         }
         None => terminal_from_prompt(outcome),
     };
-    write_terminal(writer, &scope, terminal)
+    write_terminal(writer, &scope, terminal, exported_scope)
 }
 
 fn terminal_from_prompt(outcome: PromptOutcome) -> SessionTerminal {
@@ -831,11 +836,27 @@ fn write_terminal(
     writer: &mut impl io::Write,
     scope: &AssistantScopeV1,
     terminal: SessionTerminal,
+    exported_scope: Option<personal_access::elevation::InstallationScope>,
 ) -> Result<SessionTerminal, SessionError> {
+    // Seuls les deux terminaux qui ont jugé un listing portent la portée : un
+    // accès vérifié — la route d'audit exporte pour que le refus d'une pose
+    // tombe avant toute fenêtre — et un refus dont c'est précisément la cause.
+    // Tout autre terminal la laisse tomber ici plutôt que d'affirmer, et le
+    // protocole refuse de toute façon la combinaison.
+    let installation_scope = match terminal {
+        SessionTerminal::AccessVerified | SessionTerminal::Refused => {
+            exported_scope.map(|scope| AttestedInstallationScopeV1 {
+                suffices: scope.suffices,
+                permits: scope.permits,
+            })
+        }
+        _ => None,
+    };
     let event = AssistantEventV1 {
         schema_version: 1,
         request_id: scope.request_id.clone(),
         event: terminal.event(),
+        installation_scope,
     }
     .validate()
     .map_err(|_| SessionError::Internal)?;
@@ -852,8 +873,11 @@ fn show_prompt(
     _deadline: Instant,
     _expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     _lease: LeaseState,
-) -> PromptOutcome {
-    PromptOutcome::Unavailable
+) -> (
+    PromptOutcome,
+    Option<personal_access::elevation::InstallationScope>,
+) {
+    (PromptOutcome::Unavailable, None)
 }
 
 /// The native window of this process, whichever system it runs on.
@@ -876,20 +900,31 @@ fn show_prompt(
     deadline: Instant,
     expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: LeaseState,
-) -> PromptOutcome {
+) -> (
+    PromptOutcome,
+    Option<personal_access::elevation::InstallationScope>,
+) {
+    // La portée d'installation attestée voyage À CÔTÉ de l'issue, jamais
+    // dedans : elle n'existe que si un listing a été attesté sous ce
+    // consentement, et la seule route qui atteste est celle de l'accès
+    // personnel. La faire porter par chaque variante d'issue laisserait une
+    // fenêtre affirmer un jugement qu'aucun listing n'a rendu.
     match scope.prompt {
         your_cloud_bootstrap_protocol::NativePromptKind::ConfirmPersonalAccess => {
-            serve_personal_access(scope, deadline, expired, lease)
+            let mut exported = None;
+            let outcome = serve_personal_access(scope, deadline, expired, lease, &mut exported);
+            (outcome, exported)
         }
         // The root route is its own entry, and it is entered only through the
         // scope the protocol reserves for it: `ConfirmRootAccess` is refused
         // beside an administrator target, and `ConfirmPersonalAccess` beside a
         // root one, so neither route can be arrived at through the other's
-        // consent.
+        // consent. `root` n'a pas de listing à attester : sa portée n'existe
+        // pas, plutôt que de valoir « tout ».
         your_cloud_bootstrap_protocol::NativePromptKind::ConfirmRootAccess => {
-            serve_root_access(scope, deadline, expired, lease)
+            (serve_root_access(scope, deadline, expired, lease), None)
         }
-        _ => native_window::prompt(scope, deadline, expired, lease),
+        _ => (native_window::prompt(scope, deadline, expired, lease), None),
     }
 }
 
@@ -916,6 +951,7 @@ fn serve_personal_access(
     deadline: Instant,
     expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: LeaseState,
+    exported_scope: &mut Option<personal_access::elevation::InstallationScope>,
 ) -> PromptOutcome {
     use personal_access::session::{AuthenticationRequest, GuardVerdict, Prepared};
     use std::sync::atomic::Ordering;
@@ -1012,8 +1048,15 @@ fn serve_personal_access(
         live.close();
         return PromptOutcome::Unavailable;
     }
-    let proven =
-        prove_administrator_elevation(&mut live, &resolved, deadline, &expired, &lease, &guard);
+    let proven = prove_administrator_elevation(
+        &mut live,
+        &resolved,
+        deadline,
+        &expired,
+        &lease,
+        &guard,
+        exported_scope,
+    );
     let outcome = match proven {
         Ok(proof) => match resolved.actions[0] {
             // L'audit s'arrête à l'accès prouvé : c'est toute sa conversation.
@@ -1280,6 +1323,7 @@ fn prove_administrator_elevation(
     expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: &LeaseState,
     guard: &(dyn Fn() -> personal_access::session::GuardVerdict + Sync),
+    exported_scope: &mut Option<personal_access::elevation::InstallationScope>,
 ) -> Result<ProvenElevation, PromptOutcome> {
     use personal_access::elevation::{self, AccessRoute};
 
@@ -1308,15 +1352,23 @@ fn prove_administrator_elevation(
         &preflight.stderr
     };
     // La portée exigée suit l'action que l'humain a approuvée : auditer ne
-    // demande que la sonde, installer exige toute commande. Le refus tombe donc
-    // ici, avant que la moindre fenêtre s'ouvre.
-    let attested = elevation::attest_policy(
-        succeeded,
-        capture,
-        false,
-        elevation::RequiredScope::for_action(resolved.actions[0]),
-    )
-    .map_err(|_| PromptOutcome::Unavailable)?;
+    // demande que la sonde, installer exige toute commande. L'attestation juge
+    // aussi, sur le même listing, ce que l'entrée permettrait à une
+    // INSTALLATION — et cette portée est EXPORTÉE, réussite comme refus
+    // étroit : c'est elle que la route d'audit rapporte pour qu'un refus de
+    // pose ultérieur tombe avant toute fenêtre, et elle que le refus d'une
+    // pose sans audit nomme au lieu de se taire (arbitrage du 19 août 2026 —
+    // le refus expurgé en Unavailable laissait l'humain deviner, et l'écran
+    // disait « n'a pas pu conclure » là où un contrôle avait jugé).
+    let attested = policy_outcome(
+        elevation::attest_policy(
+            succeeded,
+            capture,
+            false,
+            elevation::RequiredScope::for_action(resolved.actions[0]),
+        ),
+        exported_scope,
+    )?;
 
     // Le secret est RETENU plutôt qu'effacé à la commande, et c'est la
     // décision que le contrat d'amorçage porte (amendement du 16 août 2026) :
@@ -1369,6 +1421,45 @@ fn prove_administrator_elevation(
             retained.destroy();
             Err(PromptOutcome::Unavailable)
         }
+    }
+}
+
+/// La décision rendue sur le verdict de l'attestation de politique — pure,
+/// exprès, pour être exerçable sans session ni fenêtre.
+///
+/// Le refus étroit devient un REFUS qui exporte son nom : l'humain a deux
+/// issues à lire — élargir l'entrée à `ALL`, ou prêter un accès `root` direct
+/// — et un refus qui se taisait le laissait deviner (mesuré le 19 août 2026 :
+/// l'écran disait « n'a pas pu conclure » là où un contrôle avait jugé). Tout
+/// autre refus reste une indisponibilité muette, parce qu'aucun autre ne parle
+/// d'un choix qui appartient à l'humain. La réussite exporte aussi : c'est la
+/// portée que la route d'audit rapporte, celle qui permet à un refus de pose
+/// ultérieur de tomber avant toute fenêtre.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+fn policy_outcome(
+    verdict: Result<
+        personal_access::elevation::AttestedPolicy,
+        personal_access::elevation::ElevationRefusal,
+    >,
+    exported_scope: &mut Option<personal_access::elevation::InstallationScope>,
+) -> Result<personal_access::elevation::AttestedPolicy, PromptOutcome> {
+    use personal_access::elevation::{ElevationRefusal, InstallationScope};
+    match verdict {
+        Ok(attested) => {
+            *exported_scope = Some(attested.installation.clone());
+            Ok(attested)
+        }
+        Err(ElevationRefusal::NarrowerThanTheActionRequires { permits }) => {
+            *exported_scope = Some(InstallationScope {
+                suffices: false,
+                permits,
+            });
+            Err(PromptOutcome::Refused)
+        }
+        Err(_) => Err(PromptOutcome::Unavailable),
     }
 }
 
@@ -1754,6 +1845,66 @@ mod tests {
         );
     }
 
+    /// Le refus étroit est un REFUS qui exporte son nom, et chaque verdict de
+    /// politique exporte la portée — jamais l'expurgation muette d'avant.
+    ///
+    /// C'est la garde du remplacement de `.map_err(|_| Unavailable)` : une
+    /// mutation qui remettrait « tout refus vaut Unavailable » rougit ici, en
+    /// CI, plutôt qu'à la seule passe LAB. Les autres refus restent muets —
+    /// aucun ne parle d'un choix qui appartient à l'humain.
+    #[cfg(all(
+        not(feature = "delayed-start-contract-test"),
+        any(target_os = "linux", target_os = "windows")
+    ))]
+    #[test]
+    fn the_narrow_refusal_is_named_and_every_policy_verdict_exports_the_scope() {
+        use personal_access::elevation::{
+            AttestedPolicy, ElevationRefusal, InstallationScope, ELEVATE_WITHOUT_PASSWORD,
+        };
+
+        // La réussite exporte la portée qu'elle a jugée — c'est ce que la
+        // route d'audit rapporte.
+        let judged = InstallationScope {
+            suffices: false,
+            permits: "/usr/bin/id".into(),
+        };
+        let mut exported = None;
+        // `PromptOutcome` n'a pas de `Debug`, et c'est délibéré — il peut
+        // porter un secret : le succès s'extrait par un match, jamais par un
+        // `expect` qui exigerait d'imprimer l'échec.
+        let Ok(attested) = policy_outcome(
+            Ok(AttestedPolicy {
+                command: ELEVATE_WITHOUT_PASSWORD,
+                password_required: false,
+                installation: judged.clone(),
+            }),
+            &mut exported,
+        ) else {
+            panic!("une politique attestée passe");
+        };
+        assert_eq!(attested.installation, judged);
+        assert_eq!(exported, Some(judged.clone()));
+
+        // Le refus étroit : REFUSÉ, et la portée exportée nomme ce que
+        // l'entrée permet.
+        let mut exported = None;
+        let refused = policy_outcome(
+            Err(ElevationRefusal::NarrowerThanTheActionRequires {
+                permits: "/usr/bin/id".into(),
+            }),
+            &mut exported,
+        );
+        assert!(matches!(refused, Err(PromptOutcome::Refused)));
+        assert_eq!(exported, Some(judged));
+
+        // Tout autre refus reste une indisponibilité muette qui n'exporte
+        // rien : il ne parle pas du choix de l'humain.
+        let mut exported = None;
+        let mute = policy_outcome(Err(ElevationRefusal::AmbiguousPolicy), &mut exported);
+        assert!(matches!(mute, Err(PromptOutcome::Unavailable)));
+        assert_eq!(exported, None);
+    }
+
     /// A consent is not an access, and neither is a secret. Nothing a window
     /// can answer on its own reaches the verified terminal: only the witness
     /// does, and only `personal_access::elevation` builds one.
@@ -1797,6 +1948,7 @@ mod tests {
             schema_version: 1,
             request_id: "00112233445566778899aabbccddeeff".into(),
             event: terminal.event(),
+            installation_scope: None,
         };
         let payload = serde_json::to_vec(&event).expect("expurgated event");
         assert!(!payload

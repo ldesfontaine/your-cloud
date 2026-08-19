@@ -1185,6 +1185,7 @@ mod tests {
             schema_version: 1,
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::Unavailable,
+            installation_scope: None,
         };
         assert_eq!(
             read_event(&mut Cursor::new(event_frame(&event))).unwrap(),

@@ -233,7 +233,7 @@ impl Elevation {
 }
 
 /// What the attested listing says about the one action this palier runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttestedPolicy {
     /// Which of the two elevation commands the session may run next.
     pub command: FixedCommand,
@@ -241,6 +241,25 @@ pub struct AttestedPolicy {
     /// command rather than derived from it at each call site, so "a password
     /// travels" is one decision taken once.
     pub password_required: bool,
+    /// Ce que la même entrée permettrait à une INSTALLATION — jugé ici, sur le
+    /// même listing, par le même juge, quel que soit le scope de l'action en
+    /// cours. C'est ce que la route d'audit exporte pour que le refus d'une
+    /// pose tombe avant toute fenêtre (constat n°10 de #143, arbitrage du
+    /// 19 août 2026) : une seconde lecture ailleurs serait une seconde
+    /// autorité, et les deux finiraient par différer.
+    pub installation: InstallationScope,
+}
+
+/// Ce que l'entrée sudoers attestée permet face à ce qu'installer exige.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstallationScope {
+    /// L'entrée autorise toute commande — ce que les actions d'installation
+    /// exigent, pour la raison écrite à la décision tranchée du contrat.
+    pub suffices: bool,
+    /// Ce que l'entrée permet aujourd'hui, mot pour mot depuis le listing —
+    /// renseigné exactement quand `suffices` est faux, parce que c'est le
+    /// refus qui a besoin de nommer, et lui seul.
+    pub permits: String,
 }
 
 /// Reads the identity probe of the route, and refuses the two accounts that
@@ -317,14 +336,27 @@ pub fn attest_policy(
     if !authorises_the_action(&entry) {
         return Err(ElevationRefusal::DivergentCommand);
     }
+    // La portée d'installation est jugée sur CHAQUE attestation, pas seulement
+    // quand l'action l'exige : c'est elle que la route d'audit exporte, et un
+    // jugement qui n'existerait que sur la route d'installation ne pourrait
+    // jamais faire tomber le refus avant la fenêtre de cette route-là.
+    let suffices = authorises_every_command(&entry);
+    let installation = InstallationScope {
+        permits: if suffices {
+            String::new()
+        } else {
+            entry.commands.join(", ")
+        },
+        suffices,
+    };
     // Le durcissement de portée vient **après** la divergence et non à sa
     // place : une entrée qui nomme un autre programme reste `DivergentCommand`,
     // et seule une entrée par ailleurs valable mais trop étroite pour l'action
     // reçoit le refus qui nomme ce qu'elle permet. Les deux ne demandent pas le
     // même geste à l'humain.
-    if scope == RequiredScope::EveryCommand && !authorises_every_command(&entry) {
+    if scope == RequiredScope::EveryCommand && !installation.suffices {
         return Err(ElevationRefusal::NarrowerThanTheActionRequires {
-            permits: entry.commands.join(", "),
+            permits: installation.permits,
         });
     }
 
@@ -336,6 +368,7 @@ pub fn attest_policy(
             ELEVATE_WITHOUT_PASSWORD
         },
         password_required,
+        installation,
     })
 }
 
@@ -736,6 +769,43 @@ mod tests {
         )
         .expect("ALL names the action among others");
         assert_eq!(wide.command, ELEVATE_WITH_PASSWORD);
+    }
+
+    /// Chaque attestation juge aussi ce que l'entrée permettrait à une
+    /// installation — c'est la portée que la route d'audit exporte.
+    ///
+    /// Le refus d'une pose ne peut tomber avant sa fenêtre que si un jugement
+    /// antérieur, rendu sous un consentement antérieur, a déjà dit ce que
+    /// l'entrée permet (arbitrage du 19 août 2026, constat n°10 de #143). Ce
+    /// cas tient les deux moitiés de la paire : `suffices` sans nom, ou le nom
+    /// exact sans `suffices` — une portée qui dirait « non » sans nommer
+    /// laisserait l'humain deviner, et c'est ce que le contrat refuse.
+    #[test]
+    fn every_attestation_judges_what_the_entry_would_permit_an_installation() {
+        // L'entrée étroite, attestée pour un AUDIT : la politique passe —
+        // c'est l'asymétrie — et la portée dit déjà ce qu'un refus de pose
+        // devra nommer, mot pour mot depuis le listing.
+        let narrow = attest_policy(
+            true,
+            listing("", "/usr/bin/id").as_bytes(),
+            false,
+            RequiredScope::IdentityProbe,
+        )
+        .expect("la sonde nommée suffit à l'audit");
+        assert!(!narrow.installation.suffices);
+        assert_eq!(narrow.installation.permits, "/usr/bin/id");
+
+        // L'entrée qui autorise tout : la portée suffit et ne nomme rien —
+        // c'est le refus qui a besoin de nommer, et lui seul.
+        let wide = attest_policy(
+            true,
+            listing("", "ALL").as_bytes(),
+            false,
+            RequiredScope::IdentityProbe,
+        )
+        .expect("ALL satisfait toute action");
+        assert!(wide.installation.suffices);
+        assert!(wide.installation.permits.is_empty());
     }
 
     /// Le point d'autorité de l'installation : une entrée qui ne nomme que la
