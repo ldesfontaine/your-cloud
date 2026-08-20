@@ -547,6 +547,23 @@ if (
     "tauri.conf.json: le paquet Debian doit livrer exactement le lot serveur préparé sous /usr/lib/your-cloud-console/server-bundle",
   );
 }
+// L'unité du Controller est `Type=notify` : « actif » est une déclaration du
+// service — la readiness émise par `serve` une fois ses écouteurs liés —
+// jamais un instantané pris pendant qu'un démarrage qui va échouer ne l'a pas
+// encore fait (#153). Revenir à `simple` rouvrirait la course mesurée le
+// 20 août : la phrase du palier rendue deux fois pour une unité qui retombait.
+{
+  const controllerUnit = await readFile(
+    join(consoleRoot, "..", "packaging", "server-bundle", "units", "your-cloud-controller.service"),
+    "utf8",
+  );
+  if (!/^Type=notify$/mu.test(controllerUnit)) {
+    failures.push(
+      "units/your-cloud-controller.service: l'unité du Controller déclare sa readiness — Type=notify (#153)",
+    );
+  }
+}
+
 // Le manifeste signé du lot, tel que committé. Le contrat vérifie ici ce que
 // l'Assistant re-vérifiera contre son ancre scellée : échouer à la porte des
 // sources épargne un rouge de matrice une heure plus tard, mais ne remplace

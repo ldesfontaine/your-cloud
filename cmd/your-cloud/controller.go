@@ -478,6 +478,13 @@ func writeWindowSheet(path string, sheet controller.WindowSheet) error {
 }
 
 func serveControllerUntilStopped(mainServer *http.Server, mainListener net.Listener, temporaryServer *http.Server, temporaryListener net.Listener, logger *log.Logger) error {
+	// La readiness se déclare ICI et nulle part ailleurs : cette fonction ne
+	// reçoit que des écouteurs déjà liés — le noyau accepte depuis `Listen` —
+	// donc la déclaration ne peut pas précéder l'état qu'elle affirme. La
+	// déplacer en amont referait la course que `Type=notify` ferme (#153).
+	if err := notifyServiceReadiness(); err != nil {
+		return fmt.Errorf("Controller readiness: %w", err)
+	}
 	errorsFromServer := make(chan error, 2)
 	go func() {
 		logger.Printf("main API listening address=%s", mainServer.Addr)

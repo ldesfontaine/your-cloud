@@ -5,7 +5,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+# `notify` : « actif » est une déclaration du service — émise par `serve` une
+# fois ses écouteurs liés — jamais un instantané pris pendant qu'un démarrage
+# qui va échouer ne l'a pas encore fait. Un `serve` qui refuse sa
+# configuration sort avant de déclarer : `systemctl start` échoue, et le
+# constat d'activation de l'Assistant lit un état vrai (#153).
+Type=notify
 # The account is allocated by systemd for the lifetime of the service. No
 # persistent account with a shell, a password or a home is ever created, and
 # the Daemon's and the Relay's units name different ones.
