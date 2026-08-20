@@ -6959,7 +6959,7 @@ dependencies = [
 
 [[package]]
 name = "your-cloud-bootstrap-protocol"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "base64 0.22.1",
  "libc",
@@ -6971,7 +6971,7 @@ dependencies = [
 
 [[package]]
 name = "your-cloud-console"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
@@ -7005,7 +7005,7 @@ dependencies = [
 
 [[package]]
 name = "your-cloud-native-bootstrap-assistant"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "ed25519-dalek 3.0.0",
  "gtk",

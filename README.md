@@ -1,8 +1,12 @@
 # Your Cloud
 
-> ## ⚠️ En cours de développement — non fonctionnel pour un usage réel.
+> ## ⚠️ Pré-version — en cours de développement.
 >
-> **Aucune release publiée. Ne pas utiliser pour héberger quoi que ce soit.**
+> **Une pre-release existe** ([Releases](https://github.com/ldesfontaine/your-cloud/releases)) :
+> elle installe et active un Controller sur une machine Debian 13 `amd64`, par
+> le parcours prouvé du palier `v0.1.3` — audit, pose, activation, chaque issue
+> en phrase. **Elle n'héberge encore aucun service : ne pas lui confier de
+> données réelles.**
 
 ## Objectif
 

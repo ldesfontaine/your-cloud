@@ -1,1 +1,1 @@
-{"schema_version":1,"kind":"your-cloud-server-bundle","version":"0.1.0","target":"debian-13-amd64","size":6082060,"sha256":"f56298bc60fc5dae1075eb10b2fa58cf3d4fec976fe5123eff55e2b8aa2fbdab"}
+{"schema_version":1,"kind":"your-cloud-server-bundle","version":"0.1.3","target":"debian-13-amd64","size":6082424,"sha256":"a9658b62082563bc7923cb13d29dd54d90ac10d301f888cf12f0bbba64bc88cf"}

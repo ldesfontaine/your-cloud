@@ -1,6 +1,6 @@
 [package]
 name = "your-cloud-native-bootstrap-assistant"
-version = "0.1.0"
+version = "0.1.3"
 license = "AGPL-3.0-only"
 description = "Assistant natif ephemere d'amorcage Your Cloud"
 authors = ["Lucas Desfontaine"]
@@ -150,7 +150,7 @@ tokio = { version = "=1.53.0", default-features = false, features = [
   "rt",
   "time",
 ] }
-your-cloud-bootstrap-protocol = { version = "=0.1.0", path = "../bootstrap-protocol" }
+your-cloud-bootstrap-protocol = { version = "=0.1.3", path = "../bootstrap-protocol" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = { version = "=0.18.2", default-features = false }
