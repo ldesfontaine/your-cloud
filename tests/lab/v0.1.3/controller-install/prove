@@ -367,12 +367,20 @@ if dpkg-query -W your-cloud-server >/dev/null 2>&1; then
   dpkg --purge your-cloud-server
 fi
 rm -rf /home/ycpasude/.your-cloud-bootstrap /home/ycpasudn/.your-cloud-bootstrap
+# Ce que la séquence CRÉE hors inventaire dpkg — sources de credentials,
+# état privé — survit à un purge et ferait mentir la passe suivante : l état
+# initial se rend, il ne se suppose pas. Les noms assertés sont les VRAIS
+# arbres du produit ; les anciens (« your-cloud-server ») n existaient jamais
+# et rendaient l assertion toujours verte.
+rm -rf /etc/your-cloud /var/lib/private/your-cloud-controller
 dpkg-query -W your-cloud-server >/dev/null 2>&1 \
   && { echo "FAILED: le paquet survit à son retrait" >&2; exit 1; }
-[ -e /usr/lib/your-cloud-server ] \
+[ -e /usr/lib/your-cloud ] \
   && { echo "FAILED: le répertoire du produit survit" >&2; exit 1; }
-[ -e /etc/your-cloud-server ] \
+[ -e /etc/your-cloud ] \
   && { echo "FAILED: la configuration survit" >&2; exit 1; }
+[ -e /var/lib/private/your-cloud-controller ] \
+  && { echo "FAILED: l état privé du Controller survit" >&2; exit 1; }
 systemctl list-unit-files "your-cloud-*" --no-legend --no-pager | grep . \
   && { echo "FAILED: une unité du produit survit" >&2; exit 1; }
 echo "REMOVE_TARGET_OK"'
