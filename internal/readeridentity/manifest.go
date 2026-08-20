@@ -109,7 +109,7 @@ func (manifest *Manifest) Authorize(certificate *x509.Certificate, now time.Time
 	if len(certificate.URIs) != 1 || canonicalURI(certificate.URIs[0]) != manifest.URI {
 		return errors.New("reader certificate URI does not match manifest")
 	}
-	if canonicalSerial(certificate.SerialNumber) != manifest.CertificateSerial {
+	if CanonicalSerial(certificate.SerialNumber) != manifest.CertificateSerial {
 		return errors.New("reader certificate serial does not match manifest")
 	}
 	digest := sha256.Sum256(certificate.Raw)
@@ -132,7 +132,11 @@ func canonicalURI(identity *url.URL) string {
 	return rendered
 }
 
-func canonicalSerial(serial *big.Int) string {
+// CanonicalSerial renders the one serial form this module pins and the mint
+// prints — lowercase hexadecimal, no padding. Exported so the birth of a
+// reader identity and its authorization read the same canon from the same
+// place: a second rendering elsewhere would eventually diverge from this one.
+func CanonicalSerial(serial *big.Int) string {
 	if serial == nil || serial.Sign() <= 0 {
 		return ""
 	}

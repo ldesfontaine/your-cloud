@@ -35,6 +35,17 @@ const (
 	commandIdentitiesCredential = "command-identities"
 	commandEndpointsCredential  = "command-endpoints"
 
+	// relayAnchorCredential is the flattened name systemd produces for the
+	// Relay anchor: the unit passes the root-owned directory
+	// `/etc/your-cloud/relay-anchor` as one credential named `relay-anchor`,
+	// and a directory source materialises each file inside as `ID_FILENAME` —
+	// measured on systemd 257 for the command sheets, same mechanism here. An
+	// empty directory produces no credential at all, which is exactly the
+	// state of a freshly created infrastructure whose Relay does not exist
+	// yet: the reader stays dormant until the Relay journey deposits its
+	// anchor and the service restarts.
+	relayAnchorCredential = "relay-anchor_relay-reader-ca.crt"
+
 	// defaultCommandIdentityDirectory is where the enrolment writes them, and
 	// where the unit loads them from. Naming it here rather than making it a
 	// required argument keeps the Assistant's invocation to the one thing it
@@ -65,15 +76,53 @@ func runController(arguments []string) error {
 		return runControllerInit(arguments[1:])
 	case "serve":
 		return runControllerServe(arguments[1:])
+	case "mint-reader":
+		return runControllerMintReader(arguments[1:])
 	case "mint-command-identity":
 		return runControllerMintCommandIdentity(arguments[1:])
 	case "revoke-device":
 		return runControllerRevokeDevice(arguments[1:])
 	default:
 		return fmt.Errorf(
-			"unknown controller operation %q: expected init, serve, mint-command-identity or revoke-device",
+			"unknown controller operation %q: expected init, serve, mint-reader, mint-command-identity or revoke-device",
 			arguments[0])
 	}
+}
+
+// runControllerMintReader strikes this Controller's own reader identity and
+// prints only what may leave this machine: identifiers and fingerprints,
+// never a key.
+//
+// Same decision as the command identity: a local operation, never a route —
+// the Assistant runs it under the named act of an approved plan, as `root`,
+// after `init` gave the immutable identifiers the certificate's URI carries,
+// and before the first activation. The private half is born 0600 where the
+// unit will load it and is named by nothing here.
+func runControllerMintReader(arguments []string) error {
+	flags := flag.NewFlagSet("controller mint-reader", flag.ContinueOnError)
+	stateDirectory := flags.String("state-dir", "", "initialised private Controller state directory")
+	credentialsDirectory := flags.String("credentials-dir", "/etc/your-cloud/controller-credentials",
+		"root-owned directory of the Controller's credential sources")
+	if err := flags.Parse(arguments); err != nil {
+		return fmt.Errorf("controller mint-reader arguments: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return errorsForUnexpectedArguments("controller mint-reader", flags.Args())
+	}
+	if err := validateControllerStatePath(*stateDirectory); err != nil {
+		return err
+	}
+	minted, err := controller.MintReaderIdentity(*stateDirectory, *credentialsDirectory, nil, time.Now())
+	if err != nil {
+		return fmt.Errorf("mint the reader identity of this Controller: %w", err)
+	}
+	// Quatre valeurs, toutes publiques — celles que le manifeste du Relay
+	// épinglera un jour, et que le registre du plan constate aujourd'hui.
+	fmt.Fprintf(os.Stdout, "controller_id=%s\n", minted.ControllerID)
+	fmt.Fprintf(os.Stdout, "infrastructure_id=%s\n", minted.InfrastructureID)
+	fmt.Fprintf(os.Stdout, "reader_serial=%s\n", minted.CertificateSerial)
+	fmt.Fprintf(os.Stdout, "reader_sha256=%s\n", minted.CertificateSHA256)
+	return nil
 }
 
 func runControllerRevokeDevice(arguments []string) error {
@@ -192,19 +241,35 @@ func runControllerServe(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("Controller reader credentials: %w", err)
 	}
-	relayCA, err := credentials.LoadPublic(credentialDirectory, "relay-reader-ca.crt")
-	if err != nil {
+	// L'ancre du Relay arrive par le motif répertoire que l'unité emploie déjà
+	// pour les identités de commandement : `LoadCredential=relay-anchor:…` sur
+	// un répertoire, que systemd aplatit fichier par fichier — vide, il ne
+	// produit rien, et c'est l'état VRAI d'une création, où le Relay n'existe
+	// pas encore. L'identité du Controller, elle, reste exigée dure : un
+	// lecteur sans ancre est une infrastructure sans Relay ; un Controller
+	// sans identité n'est pas un Controller.
+	var reader controller.RelaySnapshotSource
+	relayCA, err := credentials.LoadPublic(credentialDirectory, relayAnchorCredential)
+	switch {
+	case err == nil:
+		relayName := protocol.RelayReaderServerName(state.InfrastructureID)
+		relayHost := relayName + ":8444"
+		client, err := transport.NewControllerReaderClient(relayCA, readerIdentity, relayName, relayHost, configuration.relayEndpoint)
+		if err != nil {
+			return fmt.Errorf("Controller reader transport: %w", err)
+		}
+		live, err := controller.NewRelayReader(client, relayHost, state.ControllerID, state.InfrastructureID, cache)
+		if err != nil {
+			return fmt.Errorf("Controller Relay reader: %w", err)
+		}
+		reader = live
+	case errors.Is(err, os.ErrNotExist):
+		// La dormance se nomme, une fois, au démarrage : le prévol et le
+		// rapport LAB la lisent ici plutôt que de la déduire d'un silence.
+		fmt.Fprintln(os.Stdout, "your-cloud controller: lecteur Relay dormant — aucune ancre posée dans relay-anchor")
+		reader = controller.DormantRelayReader{}
+	default:
 		return fmt.Errorf("Controller reader credentials: %w", err)
-	}
-	relayName := protocol.RelayReaderServerName(state.InfrastructureID)
-	relayHost := relayName + ":8444"
-	client, err := transport.NewControllerReaderClient(relayCA, readerIdentity, relayName, relayHost, configuration.relayEndpoint)
-	if err != nil {
-		return fmt.Errorf("Controller reader transport: %w", err)
-	}
-	reader, err := controller.NewRelayReader(client, relayHost, state.ControllerID, state.InfrastructureID, cache)
-	if err != nil {
-		return fmt.Errorf("Controller Relay reader: %w", err)
 	}
 	pairing, err := controller.NewPairingManager(authority)
 	if err != nil {

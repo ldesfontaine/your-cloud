@@ -18,7 +18,11 @@
 //! Ce module est la moitié qui décide : ses entrées sont ce que la machine a
 //! répondu, il n'écrit rien et n'ouvre rien.
 
-use super::plan::{CONTROLLER_STATE_DIRECTORY, CREDENTIAL_SOURCE_DIRECTORY, MACHINE_CONFIGURATION};
+use super::plan::{
+    COMMAND_ENDPOINT_DIRECTORY, COMMAND_IDENTITY_DIRECTORY, CONTROLLER_STATE_DIRECTORY,
+    CREDENTIAL_SOURCE_DIRECTORY, MACHINE_CONFIGURATION, READER_CERTIFICATE, READER_KEY,
+    RELAY_ANCHOR_DIRECTORY,
+};
 use crate::personal_access::elevation::FixedCommand;
 
 /// Interroge d'un coup les nœuds que l'Assistant possède.
@@ -52,7 +56,12 @@ pub const STAT_OWNED: FixedCommand = FixedCommand::fixed(
     "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/stat -c '%n %u %g %a %F' -- \
      /etc/your-cloud/controller.env \
      /var/lib/private/your-cloud-controller \
-     /etc/your-cloud/controller-credentials",
+     /etc/your-cloud/controller-credentials \
+     /etc/your-cloud/command-identities \
+     /etc/your-cloud/command-endpoints \
+     /etc/your-cloud/relay-anchor \
+     /etc/your-cloud/controller-credentials/controller-reader.crt \
+     /etc/your-cloud/controller-credentials/controller-reader.key",
 );
 
 pub const STAT_OWNED_WITH_PASSWORD: FixedCommand = FixedCommand::fixed(
@@ -60,10 +69,15 @@ pub const STAT_OWNED_WITH_PASSWORD: FixedCommand = FixedCommand::fixed(
      /usr/bin/stat -c '%n %u %g %a %F' -- \
      /etc/your-cloud/controller.env \
      /var/lib/private/your-cloud-controller \
-     /etc/your-cloud/controller-credentials",
+     /etc/your-cloud/controller-credentials \
+     /etc/your-cloud/command-identities \
+     /etc/your-cloud/command-endpoints \
+     /etc/your-cloud/relay-anchor \
+     /etc/your-cloud/controller-credentials/controller-reader.crt \
+     /etc/your-cloud/controller-credentials/controller-reader.key",
 );
 
-/// Quatre lignes courtes. Au-delà, la sortie n'est pas celle qui a été demandée.
+/// Huit lignes courtes. Au-delà, la sortie n'est pas celle qui a été demandée.
 pub const MAX_READING_BYTES: usize = 4096;
 
 /// L'uid et le gid de `root`, numériques : le seul propriétaire que ces nœuds
@@ -92,7 +106,7 @@ pub struct Expectation {
 ///   machine, et la même posture pour tout ce que l'Assistant écrit sous
 ///   `/etc/your-cloud` évite d'avoir à se demander, fichier par fichier, si
 ///   celui-ci méritait d'être plus lâche.
-pub const EXPECTED_NODES: [Expectation; 3] = [
+pub const EXPECTED_NODES: [Expectation; 8] = [
     Expectation {
         path: MACHINE_CONFIGURATION,
         kind: "regular file",
@@ -107,6 +121,38 @@ pub const EXPECTED_NODES: [Expectation; 3] = [
         path: CREDENTIAL_SOURCE_DIRECTORY,
         kind: "directory",
         mode: "700",
+    },
+    // Les trois répertoires du motif-répertoire de l'unité, vides à la
+    // création — leur vacuité n'est pas mesurable par `stat`, et n'a pas à
+    // l'être : ce que ce constat épingle est qu'ils existent, à `root`, fermés.
+    Expectation {
+        path: COMMAND_IDENTITY_DIRECTORY,
+        kind: "directory",
+        mode: "700",
+    },
+    Expectation {
+        path: COMMAND_ENDPOINT_DIRECTORY,
+        kind: "directory",
+        mode: "700",
+    },
+    Expectation {
+        path: RELAY_ANCHOR_DIRECTORY,
+        kind: "directory",
+        mode: "700",
+    },
+    // La paire du lecteur, née sur place par la frappe : la clé fermée, et le
+    // certificat au même mode — rien sous `/etc/your-cloud` n'a de raison
+    // d'être plus lâche, et une posture unique évite la question fichier par
+    // fichier.
+    Expectation {
+        path: READER_CERTIFICATE,
+        kind: "regular file",
+        mode: "600",
+    },
+    Expectation {
+        path: READER_KEY,
+        kind: "regular file",
+        mode: "600",
     },
 ];
 

@@ -22,10 +22,19 @@ UMask=0077
 EnvironmentFile=/etc/your-cloud/controller.env
 # The operational keys stay root-owned on disk and are handed to this one
 # service at start. They never travel through the command line, the environment
-# or the Console.
+# or the Console. The Controller's own identity is required hard: it is minted
+# by a named act of the approved plan, before the first activation, and a
+# Controller without it is not a Controller.
 LoadCredential=controller-reader.crt:/etc/your-cloud/controller-credentials/controller-reader.crt
 LoadCredential=controller-reader.key:/etc/your-cloud/controller-credentials/controller-reader.key
-LoadCredential=relay-reader-ca.crt:/etc/your-cloud/controller-credentials/relay-reader-ca.crt
+# The Relay anchor arrives through the same directory pattern as the command
+# sheets below: on a freshly created infrastructure no Relay exists yet, the
+# directory is empty, and an empty directory source loads zero credentials
+# without failing — which is the true state, not a tolerance. The journey that
+# poses a Relay deposits `relay-reader-ca.crt` here; a service restart picks it
+# up. Nothing is durably optional: the reader is dormant exactly while its
+# component is absent.
+LoadCredential=relay-anchor:/etc/your-cloud/relay-anchor
 # The command identities and the endpoint sheets, one entry per machine inside
 # two directories. Directories rather than a line per machine because the
 # package is what delivers this unit and the package knows no machine: a unit

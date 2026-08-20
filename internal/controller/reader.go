@@ -51,6 +51,23 @@ type RelayReader struct {
 	lastStatus       RelayStatus
 }
 
+// DormantRelayReader est le lecteur d'une infrastructure dont le Relay
+// n'existe pas encore — l'état VRAI d'une création, pas un mode dégradé.
+//
+// Il naît quand aucune ancre de Relay n'a été posée (le répertoire
+// `relay-anchor` est vide), et il répond ce que le vocabulaire clos sait déjà
+// dire : indisponible, sans instantané. Les portes qui exigent le Relay —
+// l'attache d'une machine à l'inventaire en tête — refusent alors comme elles
+// refuseraient une panne, ce qui est exact : rien ne répond, et rien ne
+// répondra tant que le parcours qui pose un Relay n'aura pas déposé son
+// ancre. Un redémarrage du service la prendra ; aucun credential n'est
+// optionnel durablement (décision du 20 août 2026, motif NOPASSWD).
+type DormantRelayReader struct{}
+
+func (DormantRelayReader) Read(context.Context, time.Time) (*RelaySnapshot, RelayStatus, error) {
+	return nil, RelayUnavailable, nil
+}
+
 func NewRelayReader(client *http.Client, originHost, controllerID, infrastructureID string, cache *RelayCacheStore) (*RelayReader, error) {
 	if client == nil || cache == nil || originHost == "" || strings.ContainsAny(originHost, "/?#@") {
 		return nil, errors.New("bounded Relay reader configuration is incomplete")

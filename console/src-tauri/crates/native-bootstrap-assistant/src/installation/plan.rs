@@ -81,6 +81,22 @@ pub const MACHINE_CONFIGURATION: &str = "/etc/your-cloud/controller.env";
 /// the operational keys out of the command line and out of the environment.
 pub const CREDENTIAL_SOURCE_DIRECTORY: &str = "/etc/your-cloud/controller-credentials";
 
+/// Les trois répertoires du motif-répertoire de l'unité, créés VIDES à la
+/// création : leur contenu appartient à d'autres moments consentis —
+/// l'enrôlement pour les deux premiers, le parcours qui posera un Relay pour
+/// le troisième (décision du 20 août 2026, aucun placeholder).
+pub const COMMAND_IDENTITY_DIRECTORY: &str = "/etc/your-cloud/command-identities";
+pub const COMMAND_ENDPOINT_DIRECTORY: &str = "/etc/your-cloud/command-endpoints";
+pub const RELAY_ANCHOR_DIRECTORY: &str = "/etc/your-cloud/relay-anchor";
+
+/// Les deux fichiers de la paire du lecteur, nés sur la cible par la frappe.
+pub const READER_CERTIFICATE: &str = "/etc/your-cloud/controller-credentials/controller-reader.crt";
+pub const READER_KEY: &str = "/etc/your-cloud/controller-credentials/controller-reader.key";
+
+/// Ce que l'init laisse dans l'état privé : l'autorité du Controller. Nommé
+/// pour le registre — un retour à l'état d'avant doit savoir le retirer.
+pub const AUTHORITY_FILE: &str = "/var/lib/private/your-cloud-controller/authority.json";
+
 /// The budgets the Controller unit is confined by. They are named here so the
 /// LAB can assert the running service really carries them, rather than assert
 /// that the file mentioned them.
@@ -117,8 +133,26 @@ pub enum Step {
     /// There is no account step beside it: the unit's dynamic user is allocated
     /// by systemd at start and no persistent account is ever created.
     CreateState,
-    /// The root-owned credential sources the unit will be given.
+    /// The root-owned credential sources the unit will be given : le
+    /// répertoire des credentials du Controller, et les trois répertoires du
+    /// motif-répertoire de l'unité — identités de commandement, feuilles
+    /// d'endpoints, ancre du Relay — créés VIDES, parce que leur contenu
+    /// appartient à d'autres moments consentis : l'enrôlement machine par
+    /// machine, et le parcours qui posera un Relay (décision du 20 août 2026).
     InstallCredentialSources,
+    /// `controller init` : les identifiants immuables naissent sous l'acte
+    /// consenti — imprimés, jugés, constatés au registre — jamais dans l'ombre
+    /// d'un premier démarrage. Mesuré le 19 août 2026 : `serve` ne
+    /// s'auto-initialise pas, et la fixture de v0.1.0 jouait cet acte que le
+    /// plan réel ne jouait nulle part.
+    InitialiseController,
+    /// `controller mint-reader` : la paire du lecteur naît chez celui qu'elle
+    /// identifie et ne voyage jamais — l'empreinte publique est jugée sur la
+    /// sortie de l'acte et constatée au registre, le précédent de la clé
+    /// d'hôte. Après l'init (l'URI porte les identifiants), avant la première
+    /// activation (`LoadCredential=` est une contrainte de forme, pas
+    /// d'autorité).
+    MintReaderIdentity,
     /// Enabling and starting the one unit this palier activates.
     ActivateController,
     /// Binding this Console to this Controller, freshly and for this
@@ -132,12 +166,14 @@ pub enum Step {
 /// The fixed sequence. It is a constant rather than a builder because an
 /// installation whose order could be chosen is an installation whose ordering
 /// guarantees are the caller's problem.
-pub const STEPS: [Step; 8] = [
+pub const STEPS: [Step; 10] = [
     Step::TransferBundle,
     Step::InstallPackage,
     Step::WriteMachineConfiguration,
     Step::CreateState,
     Step::InstallCredentialSources,
+    Step::InitialiseController,
+    Step::MintReaderIdentity,
     Step::ActivateController,
     Step::AssociateConsole,
     Step::Preflight,
@@ -175,6 +211,8 @@ pub const fn authorized_steps(action: BootstrapAction) -> &'static [Step] {
             Step::WriteMachineConfiguration,
             Step::CreateState,
             Step::InstallCredentialSources,
+            Step::InitialiseController,
+            Step::MintReaderIdentity,
         ],
         BootstrapAction::ActivateApprovedController => &[
             Step::ActivateController,
@@ -592,9 +630,11 @@ pub(crate) mod tests {
         let concatenated: Vec<Step> = install.iter().chain(activate).copied().collect();
         assert_eq!(concatenated, STEPS);
 
-        // La coupure : poser s'arrête avant la première unité en écoute,
-        // activer commence à elle.
-        assert_eq!(install.last(), Some(&Step::InstallCredentialSources));
+        // La coupure : poser s'arrête avant la première unité en écoute —
+        // la frappe du lecteur est le dernier acte de la pose, parce que
+        // `LoadCredential=` exige l'identité AVANT le premier démarrage —
+        // et activer commence à l'unité.
+        assert_eq!(install.last(), Some(&Step::MintReaderIdentity));
         assert_eq!(activate.first(), Some(&Step::ActivateController));
     }
 

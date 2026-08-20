@@ -76,7 +76,11 @@ type recoveryKeyRequest struct {
 	NextRecoverySignature    string `json:"next_recovery_signature"`
 }
 
-type relaySnapshotReader interface {
+// RelaySnapshotSource is what the handler reads the Relay through — the live
+// bounded reader when the anchor exists, the dormant one when the Relay of a
+// freshly created infrastructure does not exist yet. Exported so the serve
+// path can hold either without naming a concrete type.
+type RelaySnapshotSource interface {
 	Read(context.Context, time.Time) (*RelaySnapshot, RelayStatus, error)
 }
 
@@ -94,7 +98,7 @@ type ControllerHandler struct {
 	// dispatcher is nil until AttachAuxiliaryDispatcher names one. Nil is not
 	// a degraded mode: it closes the two routes of the command trajectory.
 	dispatcher auxiliaryDispatcher
-	relay      relaySnapshotReader
+	relay      RelaySnapshotSource
 	host       string
 	now        func() time.Time
 	random     io.Reader
@@ -113,7 +117,7 @@ func NewControllerHandler(
 	external *ExternalStore,
 	definitions *ServiceDefinitionStore,
 	dispatches *DispatchRegistryStore,
-	relay relaySnapshotReader,
+	relay RelaySnapshotSource,
 	host string,
 ) (*ControllerHandler, error) {
 	if authority == nil || pairing == nil || sessions == nil || inventory == nil || external == nil ||

@@ -52,6 +52,9 @@ pub mod configuration;
 /// La résolution du lot embarqué depuis la position attestée, et depuis rien
 /// d'autre.
 pub mod embedded;
+
+/// Les juges des actes d'identité — init et frappe du lecteur.
+pub mod identity;
 /// Ce que la machine dit des nœuds que l'Assistant possède, hors inventaire
 /// `dpkg`.
 pub mod nodes;

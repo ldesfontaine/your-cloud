@@ -281,6 +281,7 @@ impl<'a, C: Channel> Sequence<'a, C> {
             self.deposit(*step, payload, ledger)?;
 
             let mut ran_an_act = false;
+            let mut last_answer: Option<Answer> = None;
             for act in ElevatedAct::authorised_for(plan, *step) {
                 ran_an_act = true;
                 let command = act.command(self.password_required);
@@ -312,6 +313,42 @@ impl<'a, C: Channel> Sequence<'a, C> {
                         exit_status: answer.exit_status,
                     });
                 }
+                last_answer = Some(answer);
+            }
+
+            // Les deux actes d'identité disent PLUS qu'un code de sortie : des
+            // identifiants et des empreintes sont nés, et leur sortie est
+            // JUGÉE — canonique ou refusée sous le nom du juge. L'init est
+            // établi par sa propre sortie jugée : son fait vit dans l'état
+            // privé que le compte dynamique possédera, donc aucun `stat`
+            // épinglant `root` ne peut l'établir sans mentir dès le premier
+            // démarrage. La frappe, elle, attend le constat des nœuds — ses
+            // deux fichiers y sont mesurés, présence et modes.
+            match *step {
+                Step::InitialiseController => {
+                    let stdout = last_answer.as_ref().map(|answer| answer.stdout.as_slice());
+                    if let Err(reason) = super::identity::initialised(stdout.unwrap_or_default()) {
+                        pending.push(*step);
+                        return Err(SequenceStop::Refused {
+                            step: *step,
+                            reason,
+                        });
+                    }
+                    record_step(ledger, *step, Provenance::Created);
+                    continue;
+                }
+                Step::MintReaderIdentity => {
+                    let stdout = last_answer.as_ref().map(|answer| answer.stdout.as_slice());
+                    if let Err(reason) = super::identity::minted_reader(stdout.unwrap_or_default())
+                    {
+                        pending.push(*step);
+                        return Err(SequenceStop::Refused {
+                            step: *step,
+                            reason,
+                        });
+                    }
+                }
+                _ => {}
             }
 
             // Une étape n'attend un constat que si elle a **réellement** couru
@@ -321,7 +358,7 @@ impl<'a, C: Channel> Sequence<'a, C> {
             // inconnu qui n'existe pas, et un déroulé qui nomme un inconnu
             // imaginaire est aussi faux qu'un déroulé qui en oublie un.
             if ran_an_act {
-                // Un `stat` mesurant les trois nœuds d'un coup, plusieurs
+                // Un `stat` mesurant les huit nœuds d'un coup, plusieurs
                 // étapes peuvent attendre le même constat.
                 pending.push(*step);
             }
@@ -450,6 +487,8 @@ impl<'a, C: Channel> Sequence<'a, C> {
             Step::InstallPackage
             | Step::CreateState
             | Step::InstallCredentialSources
+            | Step::InitialiseController
+            | Step::MintReaderIdentity
             | Step::ActivateController
             | Step::AssociateConsole
             | Step::Preflight => Ok(()),
@@ -628,6 +667,16 @@ fn record_step(ledger: &mut Ledger, step: Step, provenance: Provenance) {
             super::plan::MACHINE_CONFIGURATION,
             provenance,
         ),
+        // L'autorité née de l'init : un fichier de l'état privé, nommé pour
+        // qu'un retour à l'état d'avant sache le retirer.
+        Step::InitialiseController => {
+            ledger.record(ItemKind::File, super::plan::AUTHORITY_FILE, provenance)
+        }
+        // La paire du lecteur : deux fichiers, nés ensemble, retirés ensemble.
+        Step::MintReaderIdentity => {
+            ledger.record(ItemKind::File, super::plan::READER_CERTIFICATE, provenance);
+            ledger.record(ItemKind::File, super::plan::READER_KEY, provenance);
+        }
         // Le transfert s'inscrit lui-même, au fur et à mesure : son répertoire
         // dès qu'il est créé, son fichier dès que l'empreinte relue l'établit
         // ou le laisse inconnu. Il n'entre donc jamais dans les étapes en
@@ -642,6 +691,12 @@ fn record_step(ledger: &mut Ledger, step: Step, provenance: Provenance) {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    /// Les identifiants que la machine écrite rend aux actes d'identité —
+    /// canoniques, pour que les juges réels les acceptent : la suite exerce la
+    /// séquence, jamais des juges affaiblis.
+    const SYNTHETIC_CONTROLLER_ID: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const SYNTHETIC_INFRASTRUCTURE_ID: &str = "f0e1d2c3-b4a5-4968-8776-655443322110";
 
     /// Un canal écrit qui répond **comme une machine dans un état**, plutôt
     /// que comme une file de statuts.
@@ -685,6 +740,10 @@ mod tests {
         /// Le canal ne connaît pas les étapes, seulement des commandes — c'est
         /// à l'appelant de dériver du plan celles qu'il veut voir échouer.
         failing: Vec<String>,
+        /// Une machine dont les actes d'identité SORTENT zéro mais impriment
+        /// autre chose que le canon : le cas exact que leurs juges existent
+        /// pour arrêter — un code de sortie ne dit pas qu'un identifiant est né.
+        hostile_identity_output: bool,
         /// Chaque commande vue, et l'entrée exacte qu'elle a reçue.
         seen: RefCell<Vec<(String, Option<Vec<u8>>)>>,
         /// Le budget que ce canal porte déjà, quand il en porte un. `None` :
@@ -710,6 +769,7 @@ mod tests {
                 received: RefCell::new(Vec::new()),
                 mute: false,
                 failing: Vec::new(),
+                hostile_identity_output: false,
                 seen: RefCell::new(Vec::new()),
                 budget_carried: None,
                 adopted: RefCell::new(None),
@@ -889,6 +949,38 @@ mod tests {
                     return Ok(Answer {
                         exit_status: 0,
                         stdout,
+                    });
+                }
+            }
+            // Les deux actes d'identité répondent leurs sorties canoniques —
+            // celles que leurs juges exigent — parce que le double incarne une
+            // machine où l'init et la frappe RÉUSSISSENT ; les cas qui veulent
+            // une sortie hostile la scriptent par `failing` ou `alter`.
+            for (step, spelling) in acts::identity_act_spellings() {
+                if bytes == spelling.as_str()
+                    && !self.failing.iter().any(|command| command == bytes)
+                {
+                    if self.hostile_identity_output {
+                        return Ok(Answer {
+                            exit_status: 0,
+                            stdout: b"rien de canonique\n".to_vec(),
+                        });
+                    }
+                    let stdout = match step {
+                        Step::InitialiseController => format!(
+                            "controller_id={SYNTHETIC_CONTROLLER_ID} \
+                             infrastructure_id={SYNTHETIC_INFRASTRUCTURE_ID}\n"
+                        ),
+                        _ => format!(
+                            "controller_id={SYNTHETIC_CONTROLLER_ID}\n\
+                             infrastructure_id={SYNTHETIC_INFRASTRUCTURE_ID}\n\
+                             reader_serial=9f3ac2\nreader_sha256={}\n",
+                            "ab".repeat(32)
+                        ),
+                    };
+                    return Ok(Answer {
+                        exit_status: 0,
+                        stdout: stdout.into_bytes(),
                     });
                 }
             }
@@ -1184,6 +1276,43 @@ mod tests {
         }
     }
 
+    /// Un acte d'identité qui sort zéro sans imprimer le canon est REFUSÉ sous
+    /// le nom de son juge, et l'étape entre en `Unknown` au déroulé.
+    ///
+    /// C'est la garde de la séquence elle-même — les juges ont la leur dans
+    /// `identity` — : une mutation qui débrancherait le jugement du câblage
+    /// (sauter l'appel, ignorer l'erreur) laisserait un init muet « réussir »,
+    /// et `serve` mourrait plus tard sous un nom qui ne désigne pas la cause.
+    /// L'init tombe en premier ; la frappe est exercée par le même drapeau si
+    /// l'init est scripté canonique — le premier refus arrête, c'est l'ordre.
+    #[test]
+    fn a_zero_exit_identity_act_with_a_hostile_output_is_refused_by_its_judge() {
+        let carried = Held::new();
+        let mut channel = ScriptedChannel::in_the_announced_state();
+        channel.hostile_identity_output = true;
+        let mut secret = SpentSecret::<Vec<u8>>::none();
+        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
+            &plan(),
+            &carried.payload(),
+            &mut secret,
+            |held: &Vec<u8>| held.as_slice(),
+        );
+        let Some(SequenceStop::Refused { step, reason }) = outcome.stopped else {
+            panic!("une sortie non canonique doit être un refus nommé : {outcome:?}");
+        };
+        assert_eq!(step, Step::InitialiseController);
+        assert!(
+            reason.contains("shape") || reason.contains("uuid"),
+            "le refus porte le nom du juge, pas un code : {reason}"
+        );
+        // L'étape refusée est au déroulé en Unknown : son effet est peut-être
+        // sur la machine, et personne ne l'a établi.
+        assert!(matches!(
+            outcome.ledger.unwind(),
+            super::super::rollback::Unwind::Incomplete { .. }
+        ));
+    }
+
     /// Le secret voyage avec chaque **acte privilégié** quand la politique
     /// l'exige — et avec rien d'autre, jamais.
     ///
@@ -1349,9 +1478,12 @@ mod tests {
                 Step::TransferBundle => 2,
                 // Le résidu déposé, puis le fichier mis en place.
                 Step::WriteMachineConfiguration => 2,
+                // La frappe laisse ses deux fichiers ; les autres, un item.
+                Step::MintReaderIdentity => 2,
                 Step::InstallPackage
                 | Step::CreateState
                 | Step::InstallCredentialSources
+                | Step::InitialiseController
                 | Step::ActivateController => 1,
                 // Elles ne parlent pas à la machine par ce canal.
                 Step::AssociateConsole | Step::Preflight => 0,

@@ -140,17 +140,82 @@ const INSTALL_CONFIGURATION: ActCommands = ActCommands {
     ),
 };
 
-/// Crée le répertoire des sources de credentials, mêmes droits, même raison.
+/// Crée les répertoires des sources de credentials, mêmes droits, même raison
+/// — les quatre d'un seul acte, parce qu'ils partent ensemble et vides.
+///
+/// Le premier recevra la paire du lecteur, frappée deux étapes plus loin. Les
+/// trois autres sont le motif-répertoire de l'unité : identités de
+/// commandement et feuilles d'endpoints — l'enrôlement les remplira machine
+/// par machine — et l'ancre du Relay, que le parcours qui posera un Relay
+/// déposera. Vides, ils chargent zéro credential sans erreur (systemd 257,
+/// mesuré) : c'est l'état vrai d'une création, jamais un contenu de
+/// remplissage (décision du 20 août 2026).
 const CREATE_CREDENTIAL_SOURCES: ActCommands = ActCommands {
     without_password: FixedCommand::fixed(
         "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/bin/install -d -o root -g root \
-         -m 0700 -- /etc/your-cloud/controller-credentials",
+         -m 0700 -- /etc/your-cloud/controller-credentials /etc/your-cloud/command-identities \
+         /etc/your-cloud/command-endpoints /etc/your-cloud/relay-anchor",
     ),
     with_password: FixedCommand::fixed(
         "/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- /usr/bin/env LC_ALL=C \
-         /usr/bin/install -d -o root -g root -m 0700 -- /etc/your-cloud/controller-credentials",
+         /usr/bin/install -d -o root -g root -m 0700 -- /etc/your-cloud/controller-credentials \
+         /etc/your-cloud/command-identities /etc/your-cloud/command-endpoints \
+         /etc/your-cloud/relay-anchor",
     ),
 };
+
+/// `controller init` : les identifiants immuables naissent sous l'acte
+/// consenti. La sortie est jugée — deux identifiants canoniques, rien d'autre
+/// — parce qu'un init silencieusement partiel laisserait un `serve` mourir
+/// plus tard sous un nom qui ne désignerait pas la cause.
+const INITIALISE_CONTROLLER: ActCommands = ActCommands {
+    without_password: FixedCommand::fixed(
+        "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/lib/your-cloud/your-cloud \
+         controller init -state-dir=/var/lib/private/your-cloud-controller",
+    ),
+    with_password: FixedCommand::fixed(
+        "/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- /usr/bin/env LC_ALL=C \
+         /usr/lib/your-cloud/your-cloud controller init \
+         -state-dir=/var/lib/private/your-cloud-controller",
+    ),
+};
+
+/// `controller mint-reader` : la paire du lecteur naît chez celui qu'elle
+/// identifie, et seules les empreintes reviennent — jugées, puis constatées au
+/// registre. Le précédent est la clé d'hôte relevée.
+const MINT_READER: ActCommands = ActCommands {
+    without_password: FixedCommand::fixed(
+        "/usr/bin/sudo -k -n -- /usr/bin/env LC_ALL=C /usr/lib/your-cloud/your-cloud \
+         controller mint-reader -state-dir=/var/lib/private/your-cloud-controller \
+         -credentials-dir=/etc/your-cloud/controller-credentials",
+    ),
+    with_password: FixedCommand::fixed(
+        "/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- /usr/bin/env LC_ALL=C \
+         /usr/lib/your-cloud/your-cloud controller mint-reader \
+         -state-dir=/var/lib/private/your-cloud-controller \
+         -credentials-dir=/etc/your-cloud/controller-credentials",
+    ),
+};
+
+/// Les orthographes des deux actes d'identité, pour la suite de la séquence :
+/// son double doit reconnaître ces commandes pour leur répondre les sorties
+/// canoniques que leurs juges exigent. Test seulement — le chemin réel ne
+/// joint un acte que par [`ElevatedAct`], plan présenté.
+#[cfg(test)]
+pub(crate) fn identity_act_spellings() -> [(Step, FixedCommand); 4] {
+    [
+        (
+            Step::InitialiseController,
+            INITIALISE_CONTROLLER.without_password,
+        ),
+        (
+            Step::InitialiseController,
+            INITIALISE_CONTROLLER.with_password,
+        ),
+        (Step::MintReaderIdentity, MINT_READER.without_password),
+        (Step::MintReaderIdentity, MINT_READER.with_password),
+    ]
+}
 
 /// Le dernier geste de toute séquence : jeter ce que `sudo` garde de nous.
 ///
@@ -177,12 +242,14 @@ pub const DROP_CREDENTIAL: FixedCommand = FixedCommand::fixed("/usr/bin/sudo -k"
 /// donc un acte fixe comme les quatre autres, et le tenir hors de cette table
 /// décrirait moins bien la réalité qu'elle : il serait le seul acte privilégié
 /// du palier joignable sans présenter de plan.
-const ACTS: [(Step, ActCommands); 6] = [
+const ACTS: [(Step, ActCommands); 8] = [
     (Step::InstallPackage, INSTALL_PACKAGE),
     (Step::InstallPackage, RELOAD_UNITS),
     (Step::WriteMachineConfiguration, INSTALL_CONFIGURATION),
     (Step::CreateState, CREATE_STATE),
     (Step::InstallCredentialSources, CREATE_CREDENTIAL_SOURCES),
+    (Step::InitialiseController, INITIALISE_CONTROLLER),
+    (Step::MintReaderIdentity, MINT_READER),
     (Step::ActivateController, ACTIVATE_CONTROLLER),
 ];
 
@@ -206,10 +273,15 @@ pub const fn channels_for(step: Step) -> usize {
         // n'en ouvre pas un cinquième : le `stat` des nœuds le mesure avec les
         // deux répertoires, et il est compté à la dernière étape qu'il couvre.
         Step::WriteMachineConfiguration => 4,
-        // Un `install -d` chacune. Le constat des nœuds les mesure toutes les
-        // trois d'un seul `stat`, compté à la dernière d'entre elles.
+        // Un `install -d` chacune — les quatre répertoires des sources partent
+        // en un seul acte. Le constat des nœuds mesure tout d'un seul `stat`,
+        // compté à la dernière étape qu'il couvre : la frappe du lecteur.
         Step::CreateState => 1,
-        Step::InstallCredentialSources => 2,
+        Step::InstallCredentialSources => 1,
+        // L'init et la frappe : un acte jugé chacun ; le `stat` des nœuds
+        // clôt la frappe.
+        Step::InitialiseController => 1,
+        Step::MintReaderIdentity => 2,
         // `systemctl enable --now`, puis le constat de l'unité.
         Step::ActivateController => 2,
         // L'association ne parle pas à la cible par ce canal, et le prévol est
@@ -327,10 +399,17 @@ impl Constat {
 pub const fn covered_by(constat: Constat) -> &'static [Step] {
     match constat {
         Constat::Package => &[Step::InstallPackage],
+        // La frappe du lecteur est la dernière étape que ce `stat` mesure :
+        // ses deux fichiers y sont, avec la configuration et les quatre
+        // répertoires. L'init n'y est pas — son fait vit dans l'état privé du
+        // service, que le compte dynamique possédera : l'épingler root ici
+        // mentirait dès le premier démarrage — il est établi par sa propre
+        // sortie jugée.
         Constat::Nodes => &[
             Step::WriteMachineConfiguration,
             Step::CreateState,
             Step::InstallCredentialSources,
+            Step::MintReaderIdentity,
         ],
         Constat::Unit => &[Step::ActivateController],
     }
@@ -345,11 +424,13 @@ pub const fn covered_by(constat: Constat) -> &'static [Step] {
 pub const fn constat_for(step: Step) -> Option<Constat> {
     match step {
         Step::InstallPackage => Some(Constat::Package),
-        Step::InstallCredentialSources => Some(Constat::Nodes),
+        Step::MintReaderIdentity => Some(Constat::Nodes),
         Step::ActivateController => Some(Constat::Unit),
         Step::TransferBundle
         | Step::WriteMachineConfiguration
         | Step::CreateState
+        | Step::InstallCredentialSources
+        | Step::InitialiseController
         | Step::AssociateConsole
         | Step::Preflight => None,
     }
