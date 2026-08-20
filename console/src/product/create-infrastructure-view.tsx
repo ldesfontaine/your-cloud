@@ -6,7 +6,26 @@ import type {
   BootstrapActionName,
   BootstrapSessionView,
   BootstrapStartInput,
+  LedgerItemView,
 } from "./models";
+
+/// Les mots français du déroulé. Le vocabulaire est clos des deux côtés :
+/// une valeur inconnue ne peut pas arriver d'un protocole validé, et ces
+/// tables sont totales par construction du type.
+const LEDGER_KIND_WORDS: Record<LedgerItemView["kind"], string> = {
+  package: "paquet",
+  account: "compte",
+  directory: "répertoire",
+  file: "fichier",
+  unit_state: "état d’unité",
+  credential_source: "source de credentials",
+  association: "association",
+};
+const LEDGER_PROVENANCE_WORDS: Record<LedgerItemView["provenance"], string> = {
+  created: "posé par ce parcours",
+  found: "déjà présent",
+  unknown: "incertain — établi par personne",
+};
 import { operationErrorDetail, operationErrorMessage } from "./errors";
 import { nativeConsole } from "./native";
 
@@ -81,6 +100,9 @@ function outcomeSentence(lifecycle: BootstrapSessionView["lifecycle"]): string |
 type StepOutcome = {
   key: (typeof BOOTSTRAP_STEPS)[number]["key"];
   sentence: string;
+  /// Le déroulé de la séquence quand l'étape en a joué une : chaque entrée
+  /// nomme ce qui a été rendu et d'où il vient. L'audit n'en porte pas.
+  deroule: readonly LedgerItemView[] | null;
 };
 
 export function CreateInfrastructureView({
@@ -113,6 +135,11 @@ export function CreateInfrastructureView({
   // aujourd'hui, sans quoi l'humain devine au lieu de choisir entre ses deux
   // issues (constat n°10 du contrat).
   const [failureDetail, setFailureDetail] = useState<string | null>(null);
+  // Le déroulé du registre au moment où l'étape s'est arrêtée : ce qui a été
+  // rendu, entrée par entrée. Un état partiel se NOMME — il ne se devine pas,
+  // et il ne se cache pas derrière une phrase qui renverrait à un registre
+  // que personne ne peut lire (constats n°6 et n°7 du contrat).
+  const [deroule, setDeroule] = useState<readonly LedgerItemView[] | null>(null);
   const pollTimer = useRef<number | null>(null);
   const activeRequest = useRef<string | null>(null);
 
@@ -159,6 +186,7 @@ export function CreateInfrastructureView({
     setStepIndex(index);
     setFailure(null);
     setFailureDetail(null);
+    setDeroule(null);
     setAwaiting(step.announce);
     let session: BootstrapSessionView;
     try {
@@ -189,10 +217,14 @@ export function CreateInfrastructureView({
         stopPolling();
         setAwaiting(null);
         if (read.lifecycle === "access_verified") {
-          setDone((current) => [...current, { key: step.key, sentence: step.achieved }]);
+          setDone((current) => [
+            ...current,
+            { key: step.key, sentence: step.achieved, deroule: read.install_ledger ?? null },
+          ]);
           setStepIndex(null);
         } else {
           setFailure(outcomeSentence(read.lifecycle));
+          setDeroule(read.install_ledger ?? null);
         }
       })();
     }, 1000);
@@ -324,6 +356,18 @@ export function CreateInfrastructureView({
                   )}
                 </div>
                 {outcome ? <p>{outcome.sentence}</p> : null}
+                {/* Ce que la séquence de cette étape a rendu, entrée par
+                    entrée — la moitié visible de « tout effet naît d'un plan
+                    approuvé et visible ». */}
+                {outcome && outcome.deroule && outcome.deroule.length > 0 ? (
+                  <ul className="yc-mono yc-muted">
+                    {outcome.deroule.map((item) => (
+                      <li key={`${item.kind}:${item.name}`}>
+                        {LEDGER_KIND_WORDS[item.kind]} {item.name} — {LEDGER_PROVENANCE_WORDS[item.provenance]}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 {index === nextIndex && !finished ? (
                   <Button
                     intent="primary"
@@ -351,6 +395,18 @@ export function CreateInfrastructureView({
                 l'existant à lire — pour l'entrée trop étroite, ce que
                 l'entrée sudoers permet aujourd'hui. */}
             {failureDetail ? <p className="yc-mono yc-muted">{failureDetail}</p> : null}
+            {/* Le déroulé : ce que la séquence avait rendu quand elle s'est
+                arrêtée, entrée par entrée. La machine reste dans l'état que ce
+                registre nomme — et le voici, au lieu d'une allusion. */}
+            {deroule && deroule.length > 0 ? (
+              <ul className="yc-mono yc-muted">
+                {deroule.map((item) => (
+                  <li key={`${item.kind}:${item.name}`}>
+                    {LEDGER_KIND_WORDS[item.kind]} {item.name} — {LEDGER_PROVENANCE_WORDS[item.provenance]}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </Banner>
         ) : null}
       </Card>

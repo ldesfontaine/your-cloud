@@ -193,6 +193,12 @@ struct BootstrapSession {
     /// silence. La session conclue reste lisible jusqu'à son échéance ou
     /// jusqu'au démarrage suivant, qui la remplace.
     concluded: Option<BootstrapLifecycle>,
+    /// Le déroulé que l'Assistant a exporté avec son terminal, quand une
+    /// séquence a couru. Retenu avec la conclusion, pour la même raison
+    /// qu'elle : un frontend qui ne peut pas relire ce que la machine est
+    /// devenue ne peut pas le nommer, et « la machine reste dans l'état que
+    /// le registre nomme » exigeait un registre que personne ne pouvait lire.
+    deroule: Option<Vec<your_cloud_bootstrap_protocol::LedgerItemV1>>,
 }
 
 /// Une demande de démarrage validée en forme, prête à devenir une session.
@@ -392,6 +398,24 @@ impl BootstrapState {
         })
     }
 
+    /// Retient le déroulé que l'Assistant a exporté avec son terminal, pour la
+    /// session active `request_id` — avant sa conclusion, comme la portée.
+    /// Une session sans déroulé ne dit rien et ne change rien.
+    pub fn record_install_ledger(
+        &mut self,
+        request_id: &str,
+        ledger: Option<Vec<your_cloud_bootstrap_protocol::LedgerItemV1>>,
+    ) {
+        let Some(ledger) = ledger else { return };
+        if let Some(active) = self
+            .active
+            .as_mut()
+            .filter(|active| active.request_id == request_id)
+        {
+            active.deroule = Some(ledger);
+        }
+    }
+
     /// Retient — ou lève — la portée d'installation que l'Assistant a exportée
     /// à la clôture de la session `request_id`.
     ///
@@ -446,6 +470,7 @@ impl BootstrapState {
             declared_target: prepared.declared_target,
             machine_configuration: prepared.machine_configuration,
             concluded: None,
+            deroule: None,
         });
         self.active_view(now)
     }
@@ -504,6 +529,10 @@ impl BootstrapState {
                 .concluded
                 .unwrap_or(BootstrapLifecycle::AwaitingNativeAssistant),
             expires_in_seconds,
+            // Le déroulé n'apparaît qu'avec la conclusion : une session en
+            // attente n'a encore rien touché à nommer, et un déroulé montré
+            // avant le terminal serait une lecture en cours de course.
+            install_ledger: active.concluded.and(active.deroule.clone()),
         })
     }
 
@@ -755,6 +784,49 @@ mod tests {
             fresh.conclude(REQUEST_TWO, BootstrapLifecycle::AwaitingNativeAssistant),
             Err(BootstrapError::RequestRefused)
         ));
+    }
+
+    /// La moitié visible du registre : le déroulé retenu ne se lit qu'avec la
+    /// conclusion — jamais pendant que la session court, parce qu'un registre
+    /// encore en train de s'écrire n'est pas un état — et seulement pour la
+    /// session qui l'a exporté.
+    #[test]
+    fn the_deroule_reaches_the_view_only_with_the_conclusion() {
+        use your_cloud_bootstrap_protocol::{LedgerItemKind, LedgerItemV1, LedgerProvenance};
+
+        let item = || LedgerItemV1 {
+            kind: LedgerItemKind::Package,
+            name: "your-cloud-server".into(),
+            provenance: LedgerProvenance::Created,
+        };
+        let mut state = BootstrapState::default();
+        let now = Instant::now();
+        state
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|prepared| state.activate(prepared, now, REQUEST_ONE.into()))
+            .expect("la session démarre");
+
+        // Un déroulé posé sous un autre request_id ne dit rien, et une session
+        // sans déroulé ne dit rien non plus.
+        state.record_install_ledger(REQUEST_TWO, Some(vec![item()]));
+        state.record_install_ledger(REQUEST_ONE, None);
+        state.record_install_ledger(REQUEST_ONE, Some(vec![item()]));
+
+        let running = state
+            .status_at(REQUEST_ONE, now)
+            .expect("la session se lit");
+        assert!(
+            running.install_ledger.is_none(),
+            "un déroulé ne se montre pas avant la conclusion"
+        );
+
+        state
+            .conclude(REQUEST_ONE, BootstrapLifecycle::Refused)
+            .expect("la conclusion s'écrit");
+        let read = state.status_at(REQUEST_ONE, now).expect("l'issue se relit");
+        let carried = read.install_ledger.expect("le déroulé se lit avec l'issue");
+        assert_eq!(carried.len(), 1);
+        assert_eq!(carried[0].name, "your-cloud-server");
     }
 
     /// Une session conclue ne bloque pas le parcours suivant, et une issue ne

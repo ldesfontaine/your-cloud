@@ -396,19 +396,34 @@ fn bootstrap_status(
         // conclure : c'est elle qui fera tomber le refus d'une pose suivante
         // avant toute session, et elle qui lève la rétention quand l'entrée a
         // été élargie.
-        Ok(NativeHelperPoll::AccessVerified { installation_scope }) => {
+        Ok(NativeHelperPoll::AccessVerified {
+            installation_scope,
+            install_ledger,
+        }) => {
             local
                 .bootstrap
                 .retain_attested_scope(&request_id, installation_scope);
+            local
+                .bootstrap
+                .record_install_ledger(&request_id, install_ledger);
             conclude(
                 &mut *local,
                 your_cloud_bootstrap_protocol::BootstrapLifecycle::AccessVerified,
             )
         }
-        Ok(NativeHelperPoll::Refused { installation_scope }) => {
+        Ok(NativeHelperPoll::Refused {
+            installation_scope,
+            install_ledger,
+        }) => {
             local
                 .bootstrap
                 .retain_attested_scope(&request_id, installation_scope);
+            // Le déroulé du refus d'abord, la conclusion ensuite : c'est lui
+            // qui permet à la vue de nommer ce qui était posé quand le refus
+            // est tombé, au lieu de renvoyer à un registre illisible.
+            local
+                .bootstrap
+                .record_install_ledger(&request_id, install_ledger);
             conclude(
                 &mut *local,
                 your_cloud_bootstrap_protocol::BootstrapLifecycle::Refused,

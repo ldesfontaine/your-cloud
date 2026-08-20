@@ -380,6 +380,21 @@ export type BootstrapActionName =
   | "install_server_bundle"
   | "activate_approved_controller";
 
+/// Une entrée du déroulé du registre : ce qu'une séquence a touché, et d'où
+/// cela provient. Le vocabulaire est celui du protocole, clos des deux côtés.
+export type LedgerItemView = {
+  kind:
+    | "package"
+    | "account"
+    | "directory"
+    | "file"
+    | "unit_state"
+    | "credential_source"
+    | "association";
+  name: string;
+  provenance: "created" | "found" | "unknown";
+};
+
 export type BootstrapSessionView = {
   schema_version: 1;
   request_id: string;
@@ -398,6 +413,11 @@ export type BootstrapSessionView = {
     | "cancelled"
     | "unavailable";
   expires_in_seconds: number;
+  /// Le déroulé du registre, quand la session conclue en a rendu un : ce qui
+  /// a été touché, entrée par entrée — c'est lui qui permet de nommer ce qui
+  /// a été rendu et ce qui reste, au lieu de renvoyer à un registre que
+  /// personne ne peut lire.
+  install_ledger?: readonly LedgerItemView[];
 };
 
 /// La présentation d’une paire gelée : les phrases qu’un humain lit, et les deux

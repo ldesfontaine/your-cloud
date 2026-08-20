@@ -176,6 +176,7 @@ mod tests {
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::Unavailable,
             installation_scope: None,
+            install_ledger: None,
         };
         let mut output = Vec::new();
         write_event(&mut output, &event).unwrap();

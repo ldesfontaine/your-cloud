@@ -1752,9 +1752,10 @@ const serveScopeBody =
     ? nativeAssistantHelperRuntime.slice(serveScopeStart, serveScopeEnd)
     : "";
 const overriddenSecretDropIndex = serveScopeBody.indexOf("drop(outcome);");
-// Sans parenthèse fermante : l'appel porte désormais la portée d'installation
-// exportée en quatrième argument, et la propriété gardée ici — le secret
-// supplanté meurt AVANT la frame — ne dépend pas de ce que la frame porte.
+// Sans parenthèse fermante : l'appel porte désormais les exports de session
+// (portée attestée, déroulé) en quatrième argument, et la propriété gardée
+// ici — le secret supplanté meurt AVANT la frame — ne dépend pas de ce que
+// la frame porte.
 const overriddenTerminalWriteIndex = serveScopeBody.lastIndexOf(
   "write_terminal(writer, &scope, terminal",
 );
@@ -1774,10 +1775,10 @@ const helperTtlOrder = [
   "let observed_at_monotonic_nanos = monotonic_nanos()",
   "deadline_from_observation(",
   "watchdog\n        .tighten_to(deadline)",
-  // Un helper expiré avant le prompt n'a rien attesté : la frame part sans
-  // portée, et le fragment le fige.
-  "return write_terminal(writer, &scope, SessionTerminal::Expired, None);",
-  "let (outcome, exported_scope) =\n        show_prompt(",
+  // Un helper expiré avant le prompt n'a rien attesté : la frame part avec
+  // des exports vides — ni portée, ni déroulé — et le fragment le fige.
+  "SessionTerminal::Expired,\n            SessionExports::default(),",
+  "let (outcome, exports) =\n        show_prompt(",
 ].map((fragment) => serveScopeBody.indexOf(fragment));
 if (
   helperTtlOrder.some((index) => index < 0) ||
@@ -1936,12 +1937,12 @@ const bootstrapSessionView = productModels.match(
 if (!bootstrapSessionView) {
   failures.push("models.ts: contrat public BootstrapSessionView absent");
 } else {
-  const outputFields = [...bootstrapSessionView.matchAll(/^\s+(\w+):/gmu)].map(
+  const outputFields = [...bootstrapSessionView.matchAll(/^\s+(\w+)\??:/gmu)].map(
     (match) => match[1],
   );
   if (
     outputFields.join(",") !==
-    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds"
+    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds,install_ledger"
   ) {
     failures.push("models.ts: BootstrapSessionView doit rester un schéma positif exact");
   }
@@ -1958,7 +1959,7 @@ if (!rustSessionView) {
   );
   if (
     outputFields.join(",") !==
-    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds"
+    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds,install_ledger"
   ) {
     failures.push("bootstrap-protocol: BootstrapSessionView doit rester un schéma positif exact");
   }
@@ -3708,7 +3709,7 @@ for (const expected of [
 // longs, et une ancre multiligne rougirait au premier reformatage plutôt
 // qu'au premier décâblage.
 for (const expected of [
-  "run_installation(&mut live, &resolved, proof, deadline, &guard)",
+  "run_installation(&mut live, &resolved, proof, deadline, &guard, ledger)",
   "audit::observe(live, deadline, guard)",
   "plan::authorize(&verified, &placement, &witness, plan::Origin::Creation)",
   "transport::SessionChannel::new(live, deadline, guard)",

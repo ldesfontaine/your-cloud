@@ -142,6 +142,36 @@ impl Ledger {
         self.authority_transferred = true;
     }
 
+    /// Le déroulé sous la forme que le protocole transporte — même
+    /// vocabulaire, mot pour mot, parce que deux vocabulaires qui
+    /// divergeraient rendraient le déroulé intraduisible au moment où
+    /// l'humain en a besoin. Aucune coupe, aucun tri : ce qui est au registre
+    /// est ce qui voyage, et un registre plus long que la borne du protocole
+    /// est refusé à la trame plutôt que raccourci ici en silence.
+    pub fn to_protocol(&self) -> Vec<your_cloud_bootstrap_protocol::LedgerItemV1> {
+        use your_cloud_bootstrap_protocol::{LedgerItemKind, LedgerItemV1, LedgerProvenance};
+        self.items
+            .iter()
+            .map(|item| LedgerItemV1 {
+                kind: match item.kind {
+                    ItemKind::Package => LedgerItemKind::Package,
+                    ItemKind::Account => LedgerItemKind::Account,
+                    ItemKind::Directory => LedgerItemKind::Directory,
+                    ItemKind::File => LedgerItemKind::File,
+                    ItemKind::UnitState => LedgerItemKind::UnitState,
+                    ItemKind::CredentialSource => LedgerItemKind::CredentialSource,
+                    ItemKind::Association => LedgerItemKind::Association,
+                },
+                name: item.name.clone(),
+                provenance: match item.provenance {
+                    Provenance::Created => LedgerProvenance::Created,
+                    Provenance::Found => LedgerProvenance::Found,
+                    Provenance::Unknown => LedgerProvenance::Unknown,
+                },
+            })
+            .collect()
+    }
+
     pub fn items(&self) -> &[Item] {
         &self.items
     }
@@ -292,5 +322,76 @@ mod tests {
     #[test]
     fn a_run_that_created_nothing_unwinds_to_nothing() {
         assert_eq!(Ledger::new().unwind(), Unwind::Complete(Vec::new()));
+    }
+
+    /// La garde de la tranche registre : le déroulé traverse vers le protocole
+    /// mot pour mot — chaque nature, chaque provenance, dans l'ordre du
+    /// registre, sans coupe. Une torsion de ce passage rendrait à l'humain un
+    /// déroulé qui ment sur ce qui a été rendu et sur ce qui reste.
+    #[test]
+    fn the_ledger_crosses_into_the_protocol_word_for_word() {
+        use your_cloud_bootstrap_protocol::{LedgerItemKind, LedgerProvenance};
+
+        let mut ledger = Ledger::new();
+        ledger.record(ItemKind::Package, "your-cloud-server", Provenance::Created);
+        ledger.record(ItemKind::Account, CONTROLLER, Provenance::Found);
+        ledger.record(ItemKind::Directory, STATE, Provenance::Created);
+        ledger.record(
+            ItemKind::File,
+            "/etc/your-cloud/controller.yaml",
+            Provenance::Created,
+        );
+        ledger.record(
+            ItemKind::UnitState,
+            "your-cloud-controller.service",
+            Provenance::Unknown,
+        );
+        ledger.record(
+            ItemKind::CredentialSource,
+            "/etc/your-cloud/relay-anchor",
+            Provenance::Created,
+        );
+        ledger.record(
+            ItemKind::Association,
+            "controller sur sa machine",
+            Provenance::Found,
+        );
+
+        let crossed = ledger.to_protocol();
+        assert_eq!(
+            crossed
+                .iter()
+                .map(|item| (item.kind, item.name.as_str(), item.provenance))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    LedgerItemKind::Package,
+                    "your-cloud-server",
+                    LedgerProvenance::Created
+                ),
+                (LedgerItemKind::Account, CONTROLLER, LedgerProvenance::Found),
+                (LedgerItemKind::Directory, STATE, LedgerProvenance::Created),
+                (
+                    LedgerItemKind::File,
+                    "/etc/your-cloud/controller.yaml",
+                    LedgerProvenance::Created
+                ),
+                (
+                    LedgerItemKind::UnitState,
+                    "your-cloud-controller.service",
+                    LedgerProvenance::Unknown
+                ),
+                (
+                    LedgerItemKind::CredentialSource,
+                    "/etc/your-cloud/relay-anchor",
+                    LedgerProvenance::Created
+                ),
+                (
+                    LedgerItemKind::Association,
+                    "controller sur sa machine",
+                    LedgerProvenance::Found
+                ),
+            ]
+        );
     }
 }

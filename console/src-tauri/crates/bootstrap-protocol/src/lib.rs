@@ -79,7 +79,18 @@ pub const MAX_ASSISTANT_REMAINING_MILLIS: u64 = 300_000;
 /// once, and what that resolution froze is displayed before consent.
 pub const MAX_ASSISTANT_TARGET_ADDRESSES: usize = 8;
 pub const MAX_ASSISTANT_SCOPE_FRAME_BYTES: usize = 4_096;
-pub const MAX_ASSISTANT_EVENT_FRAME_BYTES: usize = 1_024;
+/// Re-borné de 1 024 à 4 096 le 20 août 2026, en conscience : l'événement
+/// terminal porte désormais, aux côtés de son verdict, la portée attestée
+/// (≤ ~600 octets bornés) et le déroulé du registre (≤ [`MAX_LEDGER_ITEMS`]
+/// entrées de ≤ [`MAX_LEDGER_NAME_BYTES`] octets de nom, soit ≤ ~2 600 octets
+/// enveloppe JSON comprise). Le pire cas légitime tient sous 4 096 avec de la
+/// marge, et tout au-delà reste un refus de trame — la borne demeure une
+/// borne, elle n'est pas devenue une tolérance.
+pub const MAX_ASSISTANT_EVENT_FRAME_BYTES: usize = 4_096;
+/// Le plan de ce palier touche onze choses ; seize est le plafond du document,
+/// pas une prévision — un déroulé plus long que le plan est un déroulé forgé.
+pub const MAX_LEDGER_ITEMS: usize = 16;
+pub const MAX_LEDGER_NAME_BYTES: usize = 128;
 /// The one code a proven access may answer, and the only code any terminal
 /// event of this protocol maps onto zero. It is declared beside the refusals it
 /// is the counterpart of, so the whole terminal table is read in one place.
@@ -224,6 +235,13 @@ pub struct BootstrapSessionView {
     pub actions: [BootstrapAction; 1],
     pub lifecycle: BootstrapLifecycle,
     pub expires_in_seconds: u64,
+    /// Le déroulé du registre, quand la session conclue en a rendu un : ce que
+    /// la séquence a touché, entrée par entrée, provenance comprise. C'est ce
+    /// qui permet à la vue de nommer ce qui a été rendu et ce qui reste — un
+    /// état partiel ne s'annonce jamais comme succès, et il ne se DEVINE pas
+    /// non plus (constats n°6 et n°7 de #143).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_ledger: Option<Vec<LedgerItemV1>>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -451,6 +469,43 @@ pub struct AttestedInstallationScopeV1 {
 /// [`MAX_ASSISTANT_EVENT_FRAME_BYTES`].
 pub const MAX_ATTESTED_PERMITS_BYTES: usize = 512;
 
+/// Le genre d'une entrée du registre, mot pour mot celui du module de retour
+/// de l'Assistant — deux vocabulaires qui divergeraient rendraient le déroulé
+/// intraduisible au moment où l'humain en a besoin.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerItemKind {
+    Package,
+    Account,
+    Directory,
+    File,
+    UnitState,
+    CredentialSource,
+    Association,
+}
+
+/// La provenance d'une entrée : posée par ce parcours, déjà là, ou incertaine
+/// — et l'incertain est incompressible : c'est lui qui rend un déroulé
+/// `Incomplete`, et un état partiel ne s'annonce jamais comme succès.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerProvenance {
+    Created,
+    Found,
+    Unknown,
+}
+
+/// Une chose que la séquence a touchée, telle que le registre l'a inscrite.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LedgerItemV1 {
+    pub kind: LedgerItemKind,
+    /// Ce qui nomme la chose sur la machine — un chemin, un nom d'unité.
+    /// Borné et ASCII : le déroulé se lit, il ne transporte pas d'octets.
+    pub name: String,
+    pub provenance: LedgerProvenance,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AssistantEventV1 {
@@ -462,6 +517,13 @@ pub struct AssistantEventV1 {
     /// pas atteint l'attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installation_scope: Option<AttestedInstallationScopeV1>,
+    /// Le déroulé du registre, quand une séquence a couru : ce que ses étapes
+    /// ont touché, entrée par entrée, provenance comprise. C'est la moitié
+    /// visible de « tout effet naît d'un plan approuvé et visible » (constats
+    /// n°6 et n°7 de #143, arbitrage du 19 août 2026) — la clôture d'affaires
+    /// le rend à la vue au lieu de le laisser mourir avec le processus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_ledger: Option<Vec<LedgerItemV1>>,
 }
 
 impl AssistantEventV1 {
@@ -469,11 +531,11 @@ impl AssistantEventV1 {
         if self.schema_version != 1 || !canonical_request_id(&self.request_id) {
             return Err(ProtocolError::InvalidInput);
         }
+        let carrier = matches!(
+            self.event,
+            AssistantEventKind::AccessVerified | AssistantEventKind::Refused
+        );
         if let Some(scope) = &self.installation_scope {
-            let carrier = matches!(
-                self.event,
-                AssistantEventKind::AccessVerified | AssistantEventKind::Refused
-            );
             // La paire est une seule affirmation : « suffit » n'a rien à
             // nommer, « ne suffit pas » nomme toujours. Un scope qui dirait
             // « non » sans nom laisserait l'humain deviner ; un scope qui
@@ -483,6 +545,26 @@ impl AssistantEventV1 {
                 scope.permits.len() <= MAX_ATTESTED_PERMITS_BYTES && scope.permits.is_ascii();
             if !carrier || !coherent || !bounded {
                 return Err(ProtocolError::InvalidInput);
+            }
+        }
+        if let Some(ledger) = &self.install_ledger {
+            // Les mêmes porteurs que la portée : seuls les terminaux d'une
+            // session qui a couru une séquence ont un déroulé à rendre. Un
+            // déroulé VIDE reste licite chez eux — une séquence arrêtée avant
+            // son premier registre est un déroulé sans entrée, pas une
+            // absence — et chaque entrée est bornée, lisible, sans octet de
+            // contrôle : le déroulé se lit, il ne transporte pas.
+            if !carrier || ledger.len() > MAX_LEDGER_ITEMS {
+                return Err(ProtocolError::InvalidInput);
+            }
+            for item in ledger {
+                if item.name.is_empty()
+                    || item.name.len() > MAX_LEDGER_NAME_BYTES
+                    || !item.name.is_ascii()
+                    || item.name.bytes().any(|byte| byte.is_ascii_control())
+                {
+                    return Err(ProtocolError::InvalidInput);
+                }
             }
         }
         Ok(self)
@@ -1190,6 +1272,70 @@ mod tests {
         }
     }
 
+    /// Le déroulé ne voyage qu'aux côtés d'un terminal de séquence, borné et
+    /// lisible — et vide reste licite chez eux : une séquence arrêtée avant
+    /// son premier registre n'a rien à dire, ce qui n'est pas rien à cacher.
+    #[test]
+    fn the_ledger_travels_only_beside_a_sequence_terminal_and_stays_readable() {
+        let item = |name: &str| LedgerItemV1 {
+            kind: LedgerItemKind::File,
+            name: name.into(),
+            provenance: LedgerProvenance::Created,
+        };
+        let event_with = |kind, ledger: Option<Vec<LedgerItemV1>>| AssistantEventV1 {
+            schema_version: 1,
+            request_id: REQUEST_ID.into(),
+            event: kind,
+            installation_scope: None,
+            install_ledger: ledger,
+        };
+
+        for kind in [
+            AssistantEventKind::AccessVerified,
+            AssistantEventKind::Refused,
+        ] {
+            assert!(
+                event_with(kind, Some(vec![item("/etc/your-cloud/controller.env")]))
+                    .validate()
+                    .is_ok()
+            );
+            assert!(
+                event_with(kind, Some(Vec::new())).validate().is_ok(),
+                "un déroulé vide est un état, pas une invalidité"
+            );
+        }
+        for kind in [
+            AssistantEventKind::PromptOpen,
+            AssistantEventKind::Cancelled,
+            AssistantEventKind::Expired,
+            AssistantEventKind::Unavailable,
+        ] {
+            assert_eq!(
+                event_with(kind, Some(Vec::new())).validate(),
+                Err(ProtocolError::InvalidInput),
+                "un terminal sans séquence n'a pas de déroulé : {kind:?}"
+            );
+        }
+
+        // Les bornes : le compte, la longueur d'un nom, le nom vide, l'octet
+        // de contrôle et le non-ASCII sont refusés un par un.
+        let too_many: Vec<LedgerItemV1> = (0..=MAX_LEDGER_ITEMS)
+            .map(|index| item(&format!("/n{index}")))
+            .collect();
+        for hostile in [
+            too_many,
+            vec![item(&"a".repeat(MAX_LEDGER_NAME_BYTES + 1))],
+            vec![item("")],
+            vec![item("/etc/\nyour-cloud")],
+            vec![item("/etc/é")],
+        ] {
+            assert_eq!(
+                event_with(AssistantEventKind::Refused, Some(hostile)).validate(),
+                Err(ProtocolError::InvalidInput)
+            );
+        }
+    }
+
     /// La portée attestée ne voyage qu'aux côtés d'un terminal qui a jugé un
     /// listing, et la paire est une seule affirmation.
     ///
@@ -1209,6 +1355,7 @@ mod tests {
             request_id: REQUEST_ID.into(),
             event: kind,
             installation_scope: scope,
+            install_ledger: None,
         };
 
         for kind in [
@@ -1284,6 +1431,7 @@ mod tests {
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::PromptOpen,
             installation_scope: None,
+            install_ledger: None,
         };
         assert!(event.clone().validate().is_ok());
 
@@ -1304,6 +1452,7 @@ mod tests {
             request_id: REQUEST_ID.into(),
             event: AssistantEventKind::Unavailable,
             installation_scope: None,
+            install_ledger: None,
         };
         assert_eq!(wrong_schema.validate(), Err(ProtocolError::InvalidInput));
     }

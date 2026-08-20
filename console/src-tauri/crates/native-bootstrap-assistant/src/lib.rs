@@ -774,10 +774,15 @@ fn serve_scope(
         .tighten_to(deadline)
         .map_err(|_| SessionError::Internal)?;
     if Instant::now() >= deadline {
-        return write_terminal(writer, &scope, SessionTerminal::Expired, None);
+        return write_terminal(
+            writer,
+            &scope,
+            SessionTerminal::Expired,
+            SessionExports::default(),
+        );
     }
 
-    let (outcome, exported_scope) =
+    let (outcome, exports) =
         show_prompt(&scope, deadline, watchdog.expiration_flag(), lease.clone());
     let lease_resolution = lease.close_and_resolve();
     if lease_resolution == LeaseResolution::ProtocolInvalid {
@@ -794,15 +799,15 @@ fn serve_scope(
         Some(terminal) => {
             // A secret accepted just before the deadline or parent lease wins must be
             // zeroized before even the expurgated Expired/Cancelled frame is written.
-            // La portée attestée tombe avec lui : un terminal qui n'a rien
-            // jugé n'affirme rien, et le protocole le refuse de toute façon.
+            // Les exports tombent avec lui : un terminal qui n'a rien jugé
+            // n'affirme rien, et le protocole le refuse de toute façon.
             drop(outcome);
-            drop(exported_scope);
-            return write_terminal(writer, &scope, terminal, None);
+            drop(exports);
+            return write_terminal(writer, &scope, terminal, SessionExports::default());
         }
         None => terminal_from_prompt(outcome),
     };
-    write_terminal(writer, &scope, terminal, exported_scope)
+    write_terminal(writer, &scope, terminal, exports)
 }
 
 fn terminal_from_prompt(outcome: PromptOutcome) -> SessionTerminal {
@@ -836,32 +841,48 @@ fn write_terminal(
     writer: &mut impl io::Write,
     scope: &AssistantScopeV1,
     terminal: SessionTerminal,
-    exported_scope: Option<personal_access::elevation::InstallationScope>,
+    exports: SessionExports,
 ) -> Result<SessionTerminal, SessionError> {
-    // Seuls les deux terminaux qui ont jugé un listing portent la portée : un
-    // accès vérifié — la route d'audit exporte pour que le refus d'une pose
-    // tombe avant toute fenêtre — et un refus dont c'est précisément la cause.
-    // Tout autre terminal la laisse tomber ici plutôt que d'affirmer, et le
-    // protocole refuse de toute façon la combinaison.
-    let installation_scope = match terminal {
-        SessionTerminal::AccessVerified | SessionTerminal::Refused => {
-            exported_scope.map(|scope| AttestedInstallationScopeV1 {
-                suffices: scope.suffices,
-                permits: scope.permits,
-            })
-        }
-        _ => None,
+    // Seuls les deux terminaux d'une session qui a jugé portent les exports :
+    // un accès vérifié — la route d'audit exporte la portée, une pose réussie
+    // exporte son déroulé — et un refus, dont la portée est parfois la cause
+    // et dont le déroulé dit ce qui restait quand il est tombé. Tout autre
+    // terminal les laisse tomber ici plutôt que d'affirmer, et le protocole
+    // refuse de toute façon la combinaison.
+    let (installation_scope, install_ledger) = match terminal {
+        SessionTerminal::AccessVerified | SessionTerminal::Refused => (
+            exports
+                .installation_scope
+                .map(|scope| AttestedInstallationScopeV1 {
+                    suffices: scope.suffices,
+                    permits: scope.permits,
+                }),
+            exports.install_ledger,
+        ),
+        _ => (None, None),
     };
     let event = AssistantEventV1 {
         schema_version: 1,
         request_id: scope.request_id.clone(),
         event: terminal.event(),
         installation_scope,
+        install_ledger,
     }
     .validate()
     .map_err(|_| SessionError::Internal)?;
     framing::write_event(writer, &event).map_err(|_| SessionError::Io)?;
     Ok(terminal)
+}
+
+/// Ce qu'une session exporte au-delà de son verdict : la portée attestée de
+/// l'entrée sudoers, et le déroulé du registre quand une séquence a couru.
+/// Rassemblés parce qu'ils voyagent ensemble, sur les deux mêmes terminaux
+/// porteurs, et qu'un troisième export rejoindrait cette structure plutôt que
+/// d'allonger chaque signature du chemin.
+#[derive(Default)]
+struct SessionExports {
+    installation_scope: Option<personal_access::elevation::InstallationScope>,
+    install_ledger: Option<Vec<your_cloud_bootstrap_protocol::LedgerItemV1>>,
 }
 
 /// The delayed-start process proof needs a non-graphical marker for crossing
@@ -873,11 +894,8 @@ fn show_prompt(
     _deadline: Instant,
     _expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     _lease: LeaseState,
-) -> (
-    PromptOutcome,
-    Option<personal_access::elevation::InstallationScope>,
-) {
-    (PromptOutcome::Unavailable, None)
+) -> (PromptOutcome, SessionExports) {
+    (PromptOutcome::Unavailable, SessionExports::default())
 }
 
 /// The native window of this process, whichever system it runs on.
@@ -900,20 +918,18 @@ fn show_prompt(
     deadline: Instant,
     expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: LeaseState,
-) -> (
-    PromptOutcome,
-    Option<personal_access::elevation::InstallationScope>,
-) {
-    // La portée d'installation attestée voyage À CÔTÉ de l'issue, jamais
-    // dedans : elle n'existe que si un listing a été attesté sous ce
-    // consentement, et la seule route qui atteste est celle de l'accès
-    // personnel. La faire porter par chaque variante d'issue laisserait une
-    // fenêtre affirmer un jugement qu'aucun listing n'a rendu.
+) -> (PromptOutcome, SessionExports) {
+    // Les exports voyagent À CÔTÉ de l'issue, jamais dedans : la portée
+    // n'existe que si un listing a été attesté sous ce consentement, le
+    // déroulé que si une séquence a couru — et la seule route qui fait l'un
+    // ou l'autre est celle de l'accès personnel. Les faire porter par chaque
+    // variante d'issue laisserait une fenêtre affirmer un jugement qu'aucun
+    // listing n'a rendu.
     match scope.prompt {
         your_cloud_bootstrap_protocol::NativePromptKind::ConfirmPersonalAccess => {
-            let mut exported = None;
-            let outcome = serve_personal_access(scope, deadline, expired, lease, &mut exported);
-            (outcome, exported)
+            let mut exports = SessionExports::default();
+            let outcome = serve_personal_access(scope, deadline, expired, lease, &mut exports);
+            (outcome, exports)
         }
         // The root route is its own entry, and it is entered only through the
         // scope the protocol reserves for it: `ConfirmRootAccess` is refused
@@ -921,10 +937,14 @@ fn show_prompt(
         // root one, so neither route can be arrived at through the other's
         // consent. `root` n'a pas de listing à attester : sa portée n'existe
         // pas, plutôt que de valoir « tout ».
-        your_cloud_bootstrap_protocol::NativePromptKind::ConfirmRootAccess => {
-            (serve_root_access(scope, deadline, expired, lease), None)
-        }
-        _ => (native_window::prompt(scope, deadline, expired, lease), None),
+        your_cloud_bootstrap_protocol::NativePromptKind::ConfirmRootAccess => (
+            serve_root_access(scope, deadline, expired, lease),
+            SessionExports::default(),
+        ),
+        _ => (
+            native_window::prompt(scope, deadline, expired, lease),
+            SessionExports::default(),
+        ),
     }
 }
 
@@ -951,7 +971,7 @@ fn serve_personal_access(
     deadline: Instant,
     expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: LeaseState,
-    exported_scope: &mut Option<personal_access::elevation::InstallationScope>,
+    exports: &mut SessionExports,
 ) -> PromptOutcome {
     use personal_access::session::{AuthenticationRequest, GuardVerdict, Prepared};
     use std::sync::atomic::Ordering;
@@ -1055,7 +1075,7 @@ fn serve_personal_access(
         &expired,
         &lease,
         &guard,
-        exported_scope,
+        &mut exports.installation_scope,
     );
     let outcome = match proven {
         Ok(proof) => match resolved.actions[0] {
@@ -1074,7 +1094,8 @@ fn serve_personal_access(
             // clé d'hôte, une seconde signature.
             your_cloud_bootstrap_protocol::BootstrapAction::InstallServerBundle
             | your_cloud_bootstrap_protocol::BootstrapAction::ActivateApprovedController => {
-                run_installation(&mut live, &resolved, proof, deadline, &guard)
+                let ledger = &mut exports.install_ledger;
+                run_installation(&mut live, &resolved, proof, deadline, &guard, ledger)
             }
         },
         // Every refusal of the elevation is already expurgated into an outcome
@@ -1133,6 +1154,7 @@ fn run_installation(
     proof: ProvenElevation,
     deadline: Instant,
     guard: &(dyn Fn() -> personal_access::session::GuardVerdict + Sync),
+    exported_ledger: &mut Option<Vec<your_cloud_bootstrap_protocol::LedgerItemV1>>,
 ) -> PromptOutcome {
     use installation::{anchor, bundle, configuration, embedded, plan, sequence, transport};
     use personal_access::{audit, placement};
@@ -1240,6 +1262,11 @@ fn run_installation(
             &mut secret,
             |held: &secret::ProtectedSecret| held.bytes(),
         );
+    // Le déroulé est EXPORTÉ dans les deux cas, succès comme arrêt : c'est
+    // l'arbitrage du 19 août 2026 — le registre calculé puis abandonné
+    // laissait les constats n°6 et n°7 sans surface, et la phrase de la vue
+    // renvoyait à un registre que personne ne pouvait lire.
+    *exported_ledger = Some(outcome.ledger.to_protocol());
 
     // Le registre est rendu dans les deux cas ; sa consommation — nommer à
     // l'humain ce qui a été posé et ce qui reste — appartient à la clôture
@@ -1949,10 +1976,77 @@ mod tests {
             request_id: "00112233445566778899aabbccddeeff".into(),
             event: terminal.event(),
             installation_scope: None,
+            install_ledger: None,
         };
         let payload = serde_json::to_vec(&event).expect("expurgated event");
         assert!(!payload
             .windows(b"synthetic-canary".len())
             .any(|window| window == b"synthetic-canary"));
+    }
+
+    /// La garde de la tranche registre côté frame : le déroulé exporté part
+    /// avec les DEUX terminaux d'une session qui a jugé — le refus surtout,
+    /// c'est lui qui doit dire ce qui restait — et avec aucun autre. Un
+    /// terminal qui n'a pas jugé écrit une frame sans déroulé, et la même
+    /// fonction refuserait de l'affirmer.
+    #[test]
+    fn the_terminal_frame_carries_the_deroule_exactly_when_the_session_judged() {
+        use your_cloud_bootstrap_protocol::{
+            AssistantScopeV1, BootstrapAccessKind, BootstrapAction, BootstrapMode, BootstrapStep,
+            BootstrapTarget, LedgerItemKind, LedgerItemV1, LedgerProvenance, NativePromptKind,
+        };
+
+        let scope = AssistantScopeV1 {
+            schema_version: 1,
+            request_id: "00112233445566778899aabbccddeeff".into(),
+            mode: BootstrapMode::Create,
+            target: BootstrapTarget {
+                host: "controller.example.test".into(),
+                port: 22,
+                username: "infra_admin".into(),
+                host_key_sha256: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+                access_kind: BootstrapAccessKind::Administrator,
+            },
+            step: BootstrapStep::PersonalAccess,
+            actions: [BootstrapAction::InstallServerBundle],
+            prompt: NativePromptKind::ConfirmPersonalAccess,
+            target_addresses: Vec::new(),
+            machine_configuration: None,
+            declared_target: None,
+            issued_at_monotonic_nanos: 1,
+            remaining_millis: 5_000,
+        };
+        let deroule = || SessionExports {
+            installation_scope: None,
+            install_ledger: Some(vec![LedgerItemV1 {
+                kind: LedgerItemKind::Package,
+                name: "your-cloud-server".into(),
+                provenance: LedgerProvenance::Created,
+            }]),
+        };
+        let written = |terminal: SessionTerminal| {
+            let mut output = Vec::new();
+            write_terminal(&mut output, &scope, terminal, deroule())
+                .expect("un terminal licite s'écrit");
+            serde_json::from_slice::<AssistantEventV1>(&output[4..])
+                .expect("la frame écrite se relit")
+        };
+
+        // Les deux porteurs : le déroulé voyage tel quel.
+        for terminal in [SessionTerminal::AccessVerified, SessionTerminal::Refused] {
+            let event = written(terminal);
+            let carried = event.install_ledger.expect("le déroulé exporté voyage");
+            assert_eq!(carried.len(), 1);
+            assert_eq!(carried[0].name, "your-cloud-server");
+        }
+
+        // Tout autre terminal le laisse tomber plutôt que d'affirmer.
+        for terminal in [
+            SessionTerminal::Cancelled,
+            SessionTerminal::Expired,
+            SessionTerminal::Unavailable,
+        ] {
+            assert!(written(terminal).install_ledger.is_none());
+        }
     }
 }
