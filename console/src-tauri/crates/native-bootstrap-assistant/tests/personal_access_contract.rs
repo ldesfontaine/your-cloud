@@ -4506,7 +4506,13 @@ fn every_hostile_policy_fails_closed_at_the_stage_that_judged_it() {
         ),
         (
             SUDO_AMBIGUOUS_USERNAME,
-            Stop::Policy(ElevationRefusal::AmbiguousPolicy),
+            // Les entrées vues voyagent avec ce refus depuis n°157, et elles
+            // sont celles de la machine : l'attendu nomme la nature, et
+            // l'assertion qui suit lit le contenu sur ce que le compte porte
+            // réellement plutôt que sur une chaîne écrite ici.
+            Stop::Policy(ElevationRefusal::AmbiguousPolicy {
+                entries: String::new(),
+            }),
         ),
     ];
     for (name, expected) in hostile {
@@ -4514,11 +4520,18 @@ fn every_hostile_policy_fails_closed_at_the_stage_that_judged_it() {
         // The password is offered on every one of them. None may reach a
         // channel: a policy that was refused never asks for one.
         let run = elevate_as(&username, Some(&sudo_password()));
-        assert_eq!(
-            run.outcome,
-            Err(expected),
-            "{username} did not fail closed where it should have"
-        );
+        if let Err(Stop::Policy(ElevationRefusal::AmbiguousPolicy { entries })) = &run.outcome {
+            assert!(
+                entries.matches("Sudoers entry").count() >= 2,
+                "{username} n'a pas nommé les entrées qui rendent sa politique ambiguë : {entries}"
+            );
+        } else {
+            assert_eq!(
+                run.outcome,
+                Err(expected),
+                "{username} did not fail closed where it should have"
+            );
+        }
         assert_eq!(
             run.password_required, None,
             "{username} decided about a password despite an unattestable policy"
