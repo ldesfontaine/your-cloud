@@ -153,10 +153,13 @@ cat /root/mot-de-passe-inconnu')
   # Le compte administrateur ORDINAIRE d'une Debian, et rien de plus : créé
   # par `useradd`, membre du groupe `sudo`, un mot de passe, sa clé autorisée.
   # C'est ce que l'installateur Debian produit quand on répond « oui » à
-  # « cet utilisateur peut-il administrer la machine ». AUCUNE politique
-  # sudoers n'est écrite ici : en écrire une serait importer une connaissance
-  # du produit que l'inconnu n'a pas — et la première passe a mesuré ce que
-  # cela coûte (voir le rapport, écart n°3).
+  # « cet utilisateur peut-il administrer la machine ».
+  #
+  # La POLITIQUE sudoers, elle, n'est pas écrite ici : elle est LUE dans le
+  # README publié, section « Préparer la machine », et jouée telle quelle —
+  # exactement comme la phase `installer` lit les commandes d'installation.
+  # Le harnais n'invente donc aucune configuration : il applique celle que le
+  # produit documente, et si elle est fausse, la mesure le dit.
   "$labctl" ssh "$serveur_vm" -- "
 set -e
 id inconnu >/dev/null 2>&1 || useradd --create-home --shell /bin/bash inconnu
@@ -168,6 +171,24 @@ printf '%s\n' '$public' > /home/inconnu/.ssh/authorized_keys
 chown inconnu:inconnu /home/inconnu/.ssh/authorized_keys
 chmod 0600 /home/inconnu/.ssh/authorized_keys
 sudo -l -U inconnu 2>/dev/null | tail -2"
+  # Ce que le README demande de faire SUR LA MACHINE CIBLE, lu chez lui.
+  "$labctl" ssh "$serveur_vm" -- "
+set -e
+curl -sSL -o /root/README.md '$readme_raw'
+python3 - <<'PY' > /root/preparer-la-machine
+import re, pathlib
+texte = pathlib.Path('/root/README.md').read_text()
+debut = texte.index('### Préparer la machine')
+blocs = re.findall(r'\`\`\`bash\n(.*?)\`\`\`', texte[debut:], re.S)
+# Le premier bloc est la politique du compte prêté ; les suivants se jouent
+# ailleurs (l'empreinte se RELÈVE, elle ne se pose pas).
+lignes = [l for l in blocs[0].strip().split('\n') if l.strip()]
+print('\n'.join(lignes).replace('<compte>', 'inconnu'))
+PY
+echo '  ce que le README demande sur la cible :'
+sed 's/^/    /' /root/preparer-la-machine
+bash -e /root/preparer-la-machine
+sudo -l -U inconnu | tail -1"
   echo "SERVEUR_OK"
 }
 
@@ -258,17 +279,24 @@ print(f'  {len(lignes)} commandes lues dans le README publié :')
 for ligne in lignes:
     print(f'    {ligne}')
 PY"
+  # La liste se lit sur le descripteur 3, et non sur l'entrée standard : une
+  # commande documentée a le droit de POSER UNE QUESTION — `apt install`
+  # demande de confirmer ce qu'il va poser — et la boucle qui lui laisserait
+  # son entrée standard lui donnerait la commande suivante pour réponse.
+  # Mesuré : `apt` a lu la ligne d'après et s'est interrompu. L'humain, lui,
+  # répond « y » ; `yes` est cette main-là, et rien d'autre : ce n'est pas une
+  # commande de secours, c'est la réponse à une invite que le README assume.
   "$labctl" ssh "$poste_vm" -- '
 set -e
 cd /root
 ecarts=0
 numero=0
-while IFS= read -r commande; do
+while IFS= read -r commande <&3; do
   numero=$((numero + 1))
   echo "--- README, commande $numero : $commande"
   debut=$(date +%s)
   set +e
-  sortie=$(eval "$commande" 2>&1)
+  sortie=$(yes | eval "$commande" 2>&1)
   code=$?
   set -e
   echo "  code=$code  durée=$(( $(date +%s) - debut ))s"
@@ -277,7 +305,7 @@ while IFS= read -r commande; do
     ecarts=$((ecarts + 1))
     echo "  ECART: une commande du README échoue sur une Debian 13 nue"
   fi
-done < /root/commandes-du-readme
+done 3< /root/commandes-du-readme
 # La vérification que le README promet est le dernier mot : elle doit rendre
 # VERIFIED, sans quoi le paquet installé ne contient pas ce qu il annonce.
 echo "ECARTS_README=$ecarts"
@@ -292,6 +320,23 @@ parcours() {
   local serveur_ip
   serveur_ip=$(inventory "$serveur_vm")
   announce "« Créer une infrastructure » depuis la Console publiée"
+  # La cible doit être à son état initial : une passe qui trouve l'état d'une
+  # passe précédente rend un déroulé « incertain — établi par personne », et
+  # ce n'est pas un défaut du produit mais un harnais qui n'a pas rangé.
+  # Mesuré le 20 août 2026, sur cette preuve même.
+  "$labctl" ssh "$serveur_vm" -- '
+for reste in /etc/your-cloud /var/lib/private/your-cloud-controller /home/inconnu/.your-cloud-bootstrap; do
+  [ -e "$reste" ] && { echo "FAILED: la cible porte $reste — jouer remove puis serveur" >&2; exit 1; }
+done
+dpkg-query -W your-cloud-server >/dev/null 2>&1 \
+  && { echo "FAILED: le lot est déjà posé sur la cible" >&2; exit 1; }
+exit 0'
+  # Aucun mot de passe sudo n'est passé : la forme que le README documente
+  # est une entrée `NOPASSWD`, donc le produit n'en demande pas — et l'oracle
+  # attendrait en vain une fenêtre que rien n'ouvre. Le fichier reste écrit
+  # sur le poste : il servira à #158, quand la posture à mot de passe sera
+  # servie.
+  #
   # L'empreinte de la clé d'hôte : relevée SUR le serveur, comme un
   # utilisateur la relèverait avant de la porter dans le formulaire. Le
   # produit dit son format (« SHA256:… — confirmée hors bande ») ; la
@@ -307,7 +352,6 @@ TARGET_HOST_KEY=$host_key
 TARGET_LISTEN=$serveur_ip:9443
 TARGET_ALLOWED_SOURCE=192.168.240.9/32
 TARGET_RELAY_ENDPOINT=192.168.240.9:8444
-TARGET_SUDO_PASSWORD_FILE=/root/mot-de-passe-inconnu
 TARGET"
   local start finish
   start=$(date +%s)
