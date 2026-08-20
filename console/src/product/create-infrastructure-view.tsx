@@ -7,6 +7,7 @@ import type {
   BootstrapSessionView,
   BootstrapStartInput,
   LedgerItemView,
+  RefusalView,
 } from "./models";
 
 /// Les mots français du déroulé. Le vocabulaire est clos des deux côtés :
@@ -21,6 +22,28 @@ const LEDGER_KIND_WORDS: Record<LedgerItemView["kind"], string> = {
   credential_source: "source de credentials",
   association: "association",
 };
+/// Ce qu'un refus qui a JUGÉ dit à l'humain : la cause, et le geste suivant.
+///
+/// Les deux phrases remplacent « L'Assistant n'a pas pu conclure cette
+/// session » — celle de qui n'a rien décidé — là où un contrôle avait décidé.
+/// Chacune nomme trois choses : ce qui a été refusé, POURQUOI, et le geste qui
+/// marche aujourd'hui (n°157, mesuré par le parcours d'un inconnu n°149).
+const REFUSAL_SENTENCES: Record<RefusalView["cause"], string> = {
+  policy_unreadable_without_secret:
+    "L’entrée sudoers du compte prêté ne peut pas être lue sans son mot de passe — et " +
+    "c’est cette lecture qui permet de vérifier qu’y envoyer un mot de passe est sûr. " +
+    "L’Assistant s’arrête donc plutôt que d’envoyer un secret à une politique qu’il n’a " +
+    "pas pu attester. Ce qui marche aujourd’hui : prêter un compte dont l’entrée sudoers " +
+    "ne demande pas de mot de passe (NOPASSWD) et qui n’appartient pas au groupe sudo, ou " +
+    "prêter un accès root direct. Servir un compte à mot de passe est une dette nommée du " +
+    "produit, et elle est ouverte.",
+  policy_ambiguous:
+    "Le compte prêté porte plusieurs entrées sudoers, et rien ne dit laquelle s’applique : " +
+    "l’Assistant refuse de deviner. Le geste exact : retirer le compte du groupe qui lui " +
+    "donne sa seconde entrée — « sudo deluser <compte> sudo » — pour qu’il ne reste que son " +
+    "entrée dédiée. Les entrées vues sont nommées ci-dessous.",
+};
+
 const LEDGER_PROVENANCE_WORDS: Record<LedgerItemView["provenance"], string> = {
   created: "posé par ce parcours",
   found: "déjà présent",
@@ -140,6 +163,10 @@ export function CreateInfrastructureView({
   // et il ne se cache pas derrière une phrase qui renverrait à un registre
   // que personne ne peut lire (constats n°6 et n°7 du contrat).
   const [deroule, setDeroule] = useState<readonly LedgerItemView[] | null>(null);
+  // La cause du refus, quand un contrôle l'a nommée : elle remplace la phrase
+  // générique au lieu de s'y ajouter — deux phrases pour un seul verdict
+  // laisseraient l'humain choisir laquelle croire.
+  const [refusalCause, setRefusalCause] = useState<RefusalView | null>(null);
   const pollTimer = useRef<number | null>(null);
   const activeRequest = useRef<string | null>(null);
 
@@ -187,6 +214,7 @@ export function CreateInfrastructureView({
     setFailure(null);
     setFailureDetail(null);
     setDeroule(null);
+    setRefusalCause(null);
     setAwaiting(step.announce);
     let session: BootstrapSessionView;
     try {
@@ -225,6 +253,7 @@ export function CreateInfrastructureView({
         } else {
           setFailure(outcomeSentence(read.lifecycle));
           setDeroule(read.install_ledger ?? null);
+          setRefusalCause(read.refusal ?? null);
         }
       })();
     }, 1000);
@@ -389,7 +418,13 @@ export function CreateInfrastructureView({
         ) : null}
         {failure ? (
           <Banner tone="danger" icon={ServerCog} title="Cette étape n’a pas abouti">
-            {failure}
+            {refusalCause ? REFUSAL_SENTENCES[refusalCause.cause] : failure}
+            {/* L'existant que la cause donne à lire — les entrées vues, pour
+                une politique ambiguë : c'est ce qui rend le geste choisissable
+                au lieu d'être deviné. */}
+            {refusalCause && refusalCause.detail !== "" ? (
+              <p className="yc-mono yc-muted">{refusalCause.detail}</p>
+            ) : null}
             {/* La seconde moitié du refus, quand le contrôle l'a nommée : la
                 phrase dit ce qu'un humain doit comprendre, celle-ci lui donne
                 l'existant à lire — pour l'entrée trop étroite, ce que

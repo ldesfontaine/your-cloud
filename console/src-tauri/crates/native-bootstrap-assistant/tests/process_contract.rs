@@ -153,6 +153,7 @@ fn exact_invocation_returns_one_expurgated_unavailable_event() {
             event: AssistantEventKind::Unavailable,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
 }
@@ -175,6 +176,7 @@ fn prebuffered_eof_wins_over_an_immediately_unavailable_prompt() {
             event: AssistantEventKind::Cancelled,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
 }
@@ -277,6 +279,7 @@ fn watchdog_expires_a_live_prompt_before_the_forced_fallback() {
             event: AssistantEventKind::Expired,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
     assert!(output.stderr.is_empty());

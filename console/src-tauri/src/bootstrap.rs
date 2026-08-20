@@ -199,6 +199,8 @@ struct BootstrapSession {
     /// devenue ne peut pas le nommer, et « la machine reste dans l'état que
     /// le registre nomme » exigeait un registre que personne ne pouvait lire.
     deroule: Option<Vec<your_cloud_bootstrap_protocol::LedgerItemV1>>,
+    /// La cause du refus, quand un contrôle l'a nommée (#157).
+    cause: Option<your_cloud_bootstrap_protocol::AssistantRefusalV1>,
 }
 
 /// Une demande de démarrage validée en forme, prête à devenir une session.
@@ -416,6 +418,24 @@ impl BootstrapState {
         }
     }
 
+    /// Retient la cause du refus que l'Assistant a nommée, pour la session
+    /// active `request_id` — avant sa conclusion, comme le déroulé. Une
+    /// session sans cause ne dit rien et ne change rien.
+    pub fn record_refusal(
+        &mut self,
+        request_id: &str,
+        refusal: Option<your_cloud_bootstrap_protocol::AssistantRefusalV1>,
+    ) {
+        let Some(refusal) = refusal else { return };
+        if let Some(active) = self
+            .active
+            .as_mut()
+            .filter(|active| active.request_id == request_id)
+        {
+            active.cause = Some(refusal);
+        }
+    }
+
     /// Retient — ou lève — la portée d'installation que l'Assistant a exportée
     /// à la clôture de la session `request_id`.
     ///
@@ -471,6 +491,7 @@ impl BootstrapState {
             machine_configuration: prepared.machine_configuration,
             concluded: None,
             deroule: None,
+            cause: None,
         });
         self.active_view(now)
     }
@@ -533,6 +554,7 @@ impl BootstrapState {
             // attente n'a encore rien touché à nommer, et un déroulé montré
             // avant le terminal serait une lecture en cours de course.
             install_ledger: active.concluded.and(active.deroule.clone()),
+            refusal: active.concluded.and(active.cause.clone()),
         })
     }
 
@@ -827,6 +849,50 @@ mod tests {
         let carried = read.install_ledger.expect("le déroulé se lit avec l'issue");
         assert_eq!(carried.len(), 1);
         assert_eq!(carried[0].name, "your-cloud-server");
+    }
+
+    /// La cause d'un refus suit la même règle que le déroulé : elle ne se lit
+    /// qu'avec la conclusion, et seulement pour la session qui l'a nommée.
+    ///
+    /// C'est elle qui remplace « n'a pas pu conclure » par une phrase qui dit
+    /// la cause et le geste suivant (n°157) ; la montrer pendant que la
+    /// session court annoncerait un verdict que personne n'a encore rendu.
+    #[test]
+    fn the_named_cause_reaches_the_view_only_with_the_conclusion() {
+        use your_cloud_bootstrap_protocol::{AssistantRefusalCauseV1, AssistantRefusalV1};
+
+        let cause = || AssistantRefusalV1 {
+            cause: AssistantRefusalCauseV1::PolicyAmbiguous,
+            detail: "Sudoers entry: /etc/sudoers ; Sudoers entry: /etc/sudoers.d/90-x".into(),
+        };
+        let mut state = BootstrapState::default();
+        let now = Instant::now();
+        state
+            .prepare_start(input(BootstrapMode::Create), now)
+            .and_then(|prepared| state.activate(prepared, now, REQUEST_ONE.into()))
+            .expect("la session démarre");
+
+        // Une cause posée sous un autre request_id ne dit rien ; une session
+        // sans cause ne dit rien non plus.
+        state.record_refusal(REQUEST_TWO, Some(cause()));
+        state.record_refusal(REQUEST_ONE, None);
+        state.record_refusal(REQUEST_ONE, Some(cause()));
+
+        let running = state
+            .status_at(REQUEST_ONE, now)
+            .expect("la session se lit");
+        assert!(
+            running.refusal.is_none(),
+            "une cause ne se montre pas avant la conclusion"
+        );
+
+        state
+            .conclude(REQUEST_ONE, BootstrapLifecycle::Refused)
+            .expect("la conclusion s'écrit");
+        let read = state.status_at(REQUEST_ONE, now).expect("l'issue se relit");
+        let carried = read.refusal.expect("la cause se lit avec l'issue");
+        assert_eq!(carried.cause, AssistantRefusalCauseV1::PolicyAmbiguous);
+        assert!(carried.detail.contains("/etc/sudoers.d/90-x"));
     }
 
     /// Une session conclue ne bloque pas le parcours suivant, et une issue ne

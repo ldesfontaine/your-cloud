@@ -242,6 +242,10 @@ pub struct BootstrapSessionView {
     /// non plus (constats n°6 et n°7 de #143).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_ledger: Option<Vec<LedgerItemV1>>,
+    /// La cause du refus, quand un contrôle a jugé. Elle rend la phrase de la
+    /// vue précise là où « n'a pas pu conclure » ne nommait rien (#157).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<AssistantRefusalV1>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -469,6 +473,35 @@ pub struct AttestedInstallationScopeV1 {
 /// [`MAX_ASSISTANT_EVENT_FRAME_BYTES`].
 pub const MAX_ATTESTED_PERMITS_BYTES: usize = 512;
 
+/// Ce qu'un contrôle de la politique sudoers a refusé, quand il a jugé plutôt
+/// que renoncé.
+///
+/// Ces deux refus s'expurgeaient en « indisponible » — la phrase qui dit « je
+/// n'ai pas pu conclure » là où un contrôle avait, en vérité, décidé. Mesuré
+/// le 20 août 2026 par le parcours d'un inconnu (#149) : les deux
+/// configurations de compte les plus répandues au monde recevaient ce silence.
+/// Un refus qui a jugé se nomme (#157) — c'est le même principe que le refus
+/// d'entrée trop étroite, arbitré le 19 août.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantRefusalCauseV1 {
+    /// Lister la politique exigerait déjà le mot de passe que l'attestation
+    /// existe pour protéger : `sudo` refuse de la dire sans lui.
+    PolicyUnreadableWithoutSecret,
+    /// Le listing porte plusieurs entrées, et le produit n'en juge qu'une.
+    PolicyAmbiguous,
+}
+
+/// La cause d'un refus, et ce qu'elle donne à lire.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssistantRefusalV1 {
+    pub cause: AssistantRefusalCauseV1,
+    /// L'existant que l'humain doit voir pour choisir : les entrées vues, pour
+    /// une politique ambiguë. Vide quand la cause se suffit à elle-même.
+    pub detail: String,
+}
+
 /// Le genre d'une entrée du registre, mot pour mot celui du module de retour
 /// de l'Assistant — deux vocabulaires qui divergeraient rendraient le déroulé
 /// intraduisible au moment où l'humain en a besoin.
@@ -524,6 +557,11 @@ pub struct AssistantEventV1 {
     /// le rend à la vue au lieu de le laisser mourir avec le processus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_ledger: Option<Vec<LedgerItemV1>>,
+    /// La cause, quand un contrôle a JUGÉ plutôt que renoncé. Elle ne voyage
+    /// qu'avec le refus : un accès vérifié n'a rien refusé, et les terminaux
+    /// qui n'ont pas jugé n'ont rien à nommer (#157).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<AssistantRefusalV1>,
 }
 
 impl AssistantEventV1 {
@@ -544,6 +582,18 @@ impl AssistantEventV1 {
             let bounded =
                 scope.permits.len() <= MAX_ATTESTED_PERMITS_BYTES && scope.permits.is_ascii();
             if !carrier || !coherent || !bounded {
+                return Err(ProtocolError::InvalidInput);
+            }
+        }
+        if let Some(refusal) = &self.refusal {
+            // Le seul porteur est le refus : c'est lui, et lui seul, qui a une
+            // cause à nommer. Le détail est borné et lisible comme le nom que
+            // porte la portée attestée — il se lit, il ne transporte pas.
+            if self.event != AssistantEventKind::Refused
+                || refusal.detail.len() > MAX_ATTESTED_PERMITS_BYTES
+                || !refusal.detail.is_ascii()
+                || refusal.detail.bytes().any(|byte| byte.is_ascii_control())
+            {
                 return Err(ProtocolError::InvalidInput);
             }
         }
@@ -1275,6 +1325,78 @@ mod tests {
     /// Le déroulé ne voyage qu'aux côtés d'un terminal de séquence, borné et
     /// lisible — et vide reste licite chez eux : une séquence arrêtée avant
     /// son premier registre n'a rien à dire, ce qui n'est pas rien à cacher.
+    /// La cause d'un refus ne voyage qu'avec le refus, et elle reste lisible.
+    ///
+    /// Les deux contrôles qui JUGENT — politique illisible sans son secret,
+    /// politique ambiguë — s'expurgeaient en « indisponible » : la phrase
+    /// disait « je n'ai pas pu conclure » là où une décision avait été prise
+    /// (#149, #157). Le porteur est unique parce qu'un accès vérifié n'a rien
+    /// refusé, et qu'un terminal qui n'a pas jugé n'a rien à nommer.
+    #[test]
+    fn a_refusal_cause_travels_only_beside_a_refusal_and_stays_readable() {
+        let event = |kind: AssistantEventKind, refusal: Option<AssistantRefusalV1>| {
+            AssistantEventV1 {
+                schema_version: 1,
+                request_id: "00112233445566778899aabbccddeeff".into(),
+                event: kind,
+                installation_scope: None,
+                install_ledger: None,
+                refusal,
+            }
+            .validate()
+        };
+        let nommee = || AssistantRefusalV1 {
+            cause: AssistantRefusalCauseV1::PolicyAmbiguous,
+            detail: "Sudoers entry: /etc/sudoers ; Sudoers entry: /etc/sudoers.d/90-x".into(),
+        };
+
+        assert!(
+            event(AssistantEventKind::Refused, Some(nommee())).is_ok(),
+            "le refus porte sa cause"
+        );
+        for muet in [
+            AssistantEventKind::AccessVerified,
+            AssistantEventKind::Cancelled,
+            AssistantEventKind::Expired,
+            AssistantEventKind::Unavailable,
+            AssistantEventKind::PromptOpen,
+        ] {
+            assert_eq!(
+                event(muet, Some(nommee())),
+                Err(ProtocolError::InvalidInput),
+                "{muet:?} n'a rien jugé : il n'a pas de cause à porter"
+            );
+            assert!(event(muet, None).is_ok(), "et il reste licite sans cause");
+        }
+
+        // Le détail se lit : borné, ASCII, sans octet de contrôle. Une cause
+        // sans détail reste licite — « illisible sans secret » se suffit.
+        assert!(event(
+            AssistantEventKind::Refused,
+            Some(AssistantRefusalV1 {
+                cause: AssistantRefusalCauseV1::PolicyUnreadableWithoutSecret,
+                detail: String::new(),
+            })
+        )
+        .is_ok());
+        for illisible in [
+            "x".repeat(MAX_ATTESTED_PERMITS_BYTES + 1),
+            "entrée accentuée".into(),
+            "deux\nlignes".replace("\\n", "\n"),
+        ] {
+            assert_eq!(
+                event(
+                    AssistantEventKind::Refused,
+                    Some(AssistantRefusalV1 {
+                        cause: AssistantRefusalCauseV1::PolicyAmbiguous,
+                        detail: illisible,
+                    })
+                ),
+                Err(ProtocolError::InvalidInput)
+            );
+        }
+    }
+
     #[test]
     fn the_ledger_travels_only_beside_a_sequence_terminal_and_stays_readable() {
         let item = |name: &str| LedgerItemV1 {
@@ -1288,6 +1410,7 @@ mod tests {
             event: kind,
             installation_scope: None,
             install_ledger: ledger,
+            refusal: None,
         };
 
         for kind in [
@@ -1356,6 +1479,7 @@ mod tests {
             event: kind,
             installation_scope: scope,
             install_ledger: None,
+            refusal: None,
         };
 
         for kind in [
@@ -1432,6 +1556,7 @@ mod tests {
             event: AssistantEventKind::PromptOpen,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         };
         assert!(event.clone().validate().is_ok());
 
@@ -1453,6 +1578,7 @@ mod tests {
             event: AssistantEventKind::Unavailable,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         };
         assert_eq!(wrong_schema.validate(), Err(ProtocolError::InvalidInput));
     }

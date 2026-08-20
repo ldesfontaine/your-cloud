@@ -395,6 +395,20 @@ export type LedgerItemView = {
   provenance: "created" | "found" | "unknown";
 };
 
+/// La cause d'un refus, quand un contrôle a JUGÉ plutôt que renoncé.
+///
+/// Le vocabulaire est clos des deux côtés : le protocole n'en émet pas
+/// d'autre, et la table des phrases de la vue est totale par construction du
+/// type. Ces deux refus rendaient « L'Assistant n'a pas pu conclure cette
+/// session » — la phrase de celui qui n'a rien décidé — là où une décision
+/// avait été prise (n°157).
+export type RefusalView = {
+  cause: "policy_unreadable_without_secret" | "policy_ambiguous";
+  /// L'existant à lire : les entrées vues, pour une politique ambiguë. Vide
+  /// quand la cause se suffit à elle-même.
+  detail: string;
+};
+
 export type BootstrapSessionView = {
   schema_version: 1;
   request_id: string;
@@ -418,6 +432,7 @@ export type BootstrapSessionView = {
   /// a été rendu et ce qui reste, au lieu de renvoyer à un registre que
   /// personne ne peut lire.
   install_ledger?: readonly LedgerItemView[];
+  refusal?: RefusalView;
 };
 
 /// La présentation d’une paire gelée : les phrases qu’un humain lit, et les deux

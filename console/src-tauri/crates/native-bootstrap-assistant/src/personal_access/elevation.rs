@@ -184,7 +184,12 @@ pub enum ElevationRefusal {
     NarrowerThanTheActionRequires { permits: String },
     /// No sudoers entry, or more than one: which of them applies to the action
     /// cannot be told, and guessing is not a bound.
-    AmbiguousPolicy,
+    ///
+    /// Elle porte **les entrées vues**, pour la même raison que le refus
+    /// d'entrée trop étroite porte ce que l'entrée permet : le geste qui la
+    /// lève — retirer le compte du groupe qui lui donne sa seconde entrée —
+    /// ne peut se choisir qu'en voyant lesquelles s'empilent (#157).
+    AmbiguousPolicy { entries: String },
     /// The listing authorises another program, another target user, or negates
     /// the one this palier runs.
     DivergentCommand,
@@ -420,14 +425,25 @@ struct Entry {
 /// action falls under is decided by `sudo`'s own ordering and not by anything
 /// observable here, so it is refused rather than guessed.
 fn single_entry(text: &str) -> Result<Entry, ElevationRefusal> {
+    // Les entrées telles que le listing les nomme, dans son ordre : c'est ce
+    // que le refus rendra à l'humain s'il y en a plusieurs. La borne du nom
+    // exporté s'applique au moment de l'export, pas ici.
+    let named: Vec<&str> = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with("Sudoers entry"))
+        .map(str::trim)
+        .collect();
+    let ambiguous = || ElevationRefusal::AmbiguousPolicy {
+        entries: named.join(" ; "),
+    };
     let mut starts = text
         .lines()
         .enumerate()
         .filter(|(_, line)| line.trim_start().starts_with("Sudoers entry"))
         .map(|(index, _)| index);
-    let start = starts.next().ok_or(ElevationRefusal::AmbiguousPolicy)?;
+    let start = starts.next().ok_or_else(ambiguous)?;
     if starts.next().is_some() {
-        return Err(ElevationRefusal::AmbiguousPolicy);
+        return Err(ambiguous());
     }
 
     let mut entry = Entry {
@@ -931,16 +947,24 @@ mod tests {
                     User operator may run the following commands on target:\n\n";
         assert_eq!(
             attest_policy(true, none.as_bytes(), false, RequiredScope::IdentityProbe),
-            Err(ElevationRefusal::AmbiguousPolicy)
+            Err(ElevationRefusal::AmbiguousPolicy {
+                entries: String::new()
+            }),
+            "aucune entrée : il n'y a rien à nommer, et le refus le dit ainsi"
         );
 
         let two = format!(
             "{}\nSudoers entry: /etc/sudoers.d/91-other\n    RunAsUsers: root\n    Commands:\n\t/usr/bin/id\n",
             listing("", "/usr/bin/id")
         );
+        // Les DEUX entrées sont nommées, dans l'ordre du listing : c'est ce
+        // que l'humain doit voir pour choisir laquelle retirer (#157).
         assert_eq!(
             attest_policy(true, two.as_bytes(), false, RequiredScope::IdentityProbe),
-            Err(ElevationRefusal::AmbiguousPolicy),
+            Err(ElevationRefusal::AmbiguousPolicy {
+                entries: "Sudoers entry: /etc/sudoers.d/90-operator ; Sudoers entry: /etc/sudoers.d/91-other"
+                    .into()
+            }),
             "two entries mean sudo's own ordering decides, and this module does not read it"
         );
     }

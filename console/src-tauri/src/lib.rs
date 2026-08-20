@@ -414,6 +414,7 @@ fn bootstrap_status(
         Ok(NativeHelperPoll::Refused {
             installation_scope,
             install_ledger,
+            refusal,
         }) => {
             local
                 .bootstrap
@@ -424,6 +425,9 @@ fn bootstrap_status(
             local
                 .bootstrap
                 .record_install_ledger(&request_id, install_ledger);
+            // La cause avant la conclusion, pour la même raison : la vue rend
+            // une phrase qui nomme, au lieu de « n'a pas pu conclure » (#157).
+            local.bootstrap.record_refusal(&request_id, refusal);
             conclude(
                 &mut *local,
                 your_cloud_bootstrap_protocol::BootstrapLifecycle::Refused,

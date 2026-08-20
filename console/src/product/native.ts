@@ -283,10 +283,16 @@ export function localErrorMessage(code: NativeErrorCode): string {
       // que l'action exige et les deux issues — et le détail à côté nomme ce
       // que l'entrée permet aujourd'hui. Personne n'est contraint d'élargir :
       // c'est un choix nommé.
+      // Le conseil dit REMPLACER, et hors du groupe : ajouter une entrée
+      // `ALL` à un compte qui appartient déjà au groupe `sudo` en fabrique
+      // deux, et le produit refuse un listing ambigu — le conseil produisait
+      // donc le refus suivant (mesuré le 20 août 2026, n°149 / n°157).
       return (
         "L’entrée sudoers du compte prêté ne permet pas cette action : installer exige " +
-        "d’autoriser toute commande (ALL). Deux issues : élargir l’entrée à ALL, ou prêter " +
-        "un accès root direct. Ce que l’entrée permet aujourd’hui est nommé ci-dessous."
+        "d’autoriser toute commande (ALL). Deux issues : remplacer son entrée par une " +
+        "entrée unique autorisant ALL — le compte doit alors être hors du groupe sudo, " +
+        "sans quoi il en porterait deux — ou prêter un accès root direct. Ce que " +
+        "l’entrée permet aujourd’hui est nommé ci-dessous."
       );
     case "native_assistant_unavailable":
       return "L’assistant natif d’amorçage est indisponible.";

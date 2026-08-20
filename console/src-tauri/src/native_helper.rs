@@ -28,8 +28,8 @@ use std::os::unix::{
 // naming the constants here again would be a second table to keep in step.
 use your_cloud_bootstrap_protocol::{
     monotonic_nanos, ApprovalConsentOutcomeV1, ApprovalConsentV1, AssistantEventKind,
-    AssistantEventV1, AssistantScopeV1, AttestedInstallationScopeV1, LedgerItemV1,
-    MAX_APPROVAL_CONSENT_FRAME_BYTES, MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES,
+    AssistantEventV1, AssistantRefusalV1, AssistantScopeV1, AttestedInstallationScopeV1,
+    LedgerItemV1, MAX_APPROVAL_CONSENT_FRAME_BYTES, MAX_APPROVAL_CONSENT_OUTCOME_FRAME_BYTES,
     MAX_ASSISTANT_EVENT_FRAME_BYTES, MAX_ASSISTANT_SCOPE_FRAME_BYTES,
 };
 
@@ -246,6 +246,10 @@ pub(crate) enum NativeHelperPoll {
         /// Le déroulé au moment du refus : ce qui était posé quand il est
         /// tombé — la moitié du constat qui dit qu'un état partiel se NOMME.
         install_ledger: Option<Vec<LedgerItemV1>>,
+        /// La cause, quand un contrôle a jugé : politique illisible sans son
+        /// secret, ou politique ambiguë. C'est ce qui rend la phrase précise
+        /// là où « n'a pas pu conclure » ne nommait rien (#157).
+        refusal: Option<AssistantRefusalV1>,
     },
     Cancelled,
     Unavailable,
@@ -774,6 +778,7 @@ fn complete_bootstrap_session(
         AssistantEventKind::Refused => Ok(NativeHelperPoll::Refused {
             installation_scope: event.installation_scope,
             install_ledger: event.install_ledger,
+            refusal: event.refusal,
         }),
         AssistantEventKind::Cancelled => Ok(NativeHelperPoll::Cancelled),
         // Un événement qui ne termine rien n'a rien à faire sur ce canal.
@@ -1212,6 +1217,7 @@ mod tests {
             event: AssistantEventKind::Unavailable,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         };
         assert_eq!(
             read_event(&mut Cursor::new(event_frame(&event))).unwrap(),

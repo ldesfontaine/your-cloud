@@ -2025,7 +2025,7 @@ if (!bootstrapSessionView) {
   );
   if (
     outputFields.join(",") !==
-    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds,install_ledger"
+    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds,install_ledger,refusal"
   ) {
     failures.push("models.ts: BootstrapSessionView doit rester un schéma positif exact");
   }
@@ -2042,7 +2042,7 @@ if (!rustSessionView) {
   );
   if (
     outputFields.join(",") !==
-    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds,install_ledger"
+    "schema_version,request_id,mode,target,step,actions,lifecycle,expires_in_seconds,install_ledger,refusal"
   ) {
     failures.push("bootstrap-protocol: BootstrapSessionView doit rester un schéma positif exact");
   }

@@ -861,12 +861,20 @@ fn write_terminal(
         ),
         _ => (None, None),
     };
+    // La cause n'a qu'un porteur : le refus. Un accès vérifié n'a rien refusé,
+    // et un terminal qui n'a pas jugé n'a rien à nommer — le protocole refuse
+    // de toute façon la combinaison (#157).
+    let refusal = match terminal {
+        SessionTerminal::Refused => exports.refusal,
+        _ => None,
+    };
     let event = AssistantEventV1 {
         schema_version: 1,
         request_id: scope.request_id.clone(),
         event: terminal.event(),
         installation_scope,
         install_ledger,
+        refusal,
     }
     .validate()
     .map_err(|_| SessionError::Internal)?;
@@ -883,6 +891,8 @@ fn write_terminal(
 struct SessionExports {
     installation_scope: Option<personal_access::elevation::InstallationScope>,
     install_ledger: Option<Vec<your_cloud_bootstrap_protocol::LedgerItemV1>>,
+    /// La cause, quand un contrôle a jugé plutôt que renoncé (#157).
+    refusal: Option<your_cloud_bootstrap_protocol::AssistantRefusalV1>,
 }
 
 /// The delayed-start process proof needs a non-graphical marker for crossing
@@ -1069,13 +1079,7 @@ fn serve_personal_access(
         return PromptOutcome::Unavailable;
     }
     let proven = prove_administrator_elevation(
-        &mut live,
-        &resolved,
-        deadline,
-        &expired,
-        &lease,
-        &guard,
-        &mut exports.installation_scope,
+        &mut live, &resolved, deadline, &expired, &lease, &guard, exports,
     );
     let outcome = match proven {
         Ok(proof) => match resolved.actions[0] {
@@ -1350,7 +1354,7 @@ fn prove_administrator_elevation(
     expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     lease: &LeaseState,
     guard: &(dyn Fn() -> personal_access::session::GuardVerdict + Sync),
-    exported_scope: &mut Option<personal_access::elevation::InstallationScope>,
+    exports: &mut SessionExports,
 ) -> Result<ProvenElevation, PromptOutcome> {
     use personal_access::elevation::{self, AccessRoute};
 
@@ -1394,7 +1398,7 @@ fn prove_administrator_elevation(
             false,
             elevation::RequiredScope::for_action(resolved.actions[0]),
         ),
-        exported_scope,
+        exports,
     )?;
 
     // Le secret est RETENU plutôt qu'effacé à la commande, et c'est la
@@ -1471,18 +1475,52 @@ fn policy_outcome(
         personal_access::elevation::AttestedPolicy,
         personal_access::elevation::ElevationRefusal,
     >,
-    exported_scope: &mut Option<personal_access::elevation::InstallationScope>,
+    exports: &mut SessionExports,
 ) -> Result<personal_access::elevation::AttestedPolicy, PromptOutcome> {
     use personal_access::elevation::{ElevationRefusal, InstallationScope};
+    use personal_access::sudo_policy::SudoRefusal;
+    use your_cloud_bootstrap_protocol::{AssistantRefusalCauseV1, AssistantRefusalV1};
+
+    // Ce que le protocole accepte de porter, borné ici plutôt qu'espéré : un
+    // listing plus long que la borne rendrait la frame invalide, et le refus
+    // deviendrait le silence qu'il vient de remplacer.
+    fn borne(detail: String) -> String {
+        let mut detail: String = detail
+            .chars()
+            .filter(|caractere| caractere.is_ascii() && !caractere.is_ascii_control())
+            .collect();
+        detail.truncate(your_cloud_bootstrap_protocol::MAX_ATTESTED_PERMITS_BYTES);
+        detail
+    }
+
     match verdict {
         Ok(attested) => {
-            *exported_scope = Some(attested.installation.clone());
+            exports.installation_scope = Some(attested.installation.clone());
             Ok(attested)
         }
         Err(ElevationRefusal::NarrowerThanTheActionRequires { permits }) => {
-            *exported_scope = Some(InstallationScope {
+            exports.installation_scope = Some(InstallationScope {
                 suffices: false,
                 permits,
+            });
+            Err(PromptOutcome::Refused)
+        }
+        // Les deux refus qui JUGENT, et qui s'expurgeaient en « indisponible » :
+        // la phrase disait « je n'ai pas pu conclure » là où un contrôle avait
+        // décidé, et l'humain n'avait ni la cause ni le geste suivant. Mesuré
+        // par le parcours d'un inconnu (#149), corrigé ici (#157) sur le patron
+        // du refus d'entrée trop étroite.
+        Err(ElevationRefusal::Policy(SudoRefusal::AuthenticationRequired)) => {
+            exports.refusal = Some(AssistantRefusalV1 {
+                cause: AssistantRefusalCauseV1::PolicyUnreadableWithoutSecret,
+                detail: String::new(),
+            });
+            Err(PromptOutcome::Refused)
+        }
+        Err(ElevationRefusal::AmbiguousPolicy { entries }) => {
+            exports.refusal = Some(AssistantRefusalV1 {
+                cause: AssistantRefusalCauseV1::PolicyAmbiguous,
+                detail: borne(entries),
             });
             Err(PromptOutcome::Refused)
         }
@@ -1895,7 +1933,7 @@ mod tests {
             suffices: false,
             permits: "/usr/bin/id".into(),
         };
-        let mut exported = None;
+        let mut exports = SessionExports::default();
         // `PromptOutcome` n'a pas de `Debug`, et c'est délibéré — il peut
         // porter un secret : le succès s'extrait par un match, jamais par un
         // `expect` qui exigerait d'imprimer l'échec.
@@ -1905,31 +1943,68 @@ mod tests {
                 password_required: false,
                 installation: judged.clone(),
             }),
-            &mut exported,
+            &mut exports,
         ) else {
             panic!("une politique attestée passe");
         };
         assert_eq!(attested.installation, judged);
-        assert_eq!(exported, Some(judged.clone()));
+        assert_eq!(exports.installation_scope, Some(judged.clone()));
+        assert!(exports.refusal.is_none(), "une réussite n'a rien refusé");
 
         // Le refus étroit : REFUSÉ, et la portée exportée nomme ce que
         // l'entrée permet.
-        let mut exported = None;
+        let mut exports = SessionExports::default();
         let refused = policy_outcome(
             Err(ElevationRefusal::NarrowerThanTheActionRequires {
                 permits: "/usr/bin/id".into(),
             }),
-            &mut exported,
+            &mut exports,
         );
         assert!(matches!(refused, Err(PromptOutcome::Refused)));
-        assert_eq!(exported, Some(judged));
+        assert_eq!(exports.installation_scope, Some(judged));
 
-        // Tout autre refus reste une indisponibilité muette qui n'exporte
-        // rien : il ne parle pas du choix de l'humain.
-        let mut exported = None;
-        let mute = policy_outcome(Err(ElevationRefusal::AmbiguousPolicy), &mut exported);
+        // Les deux refus qui JUGENT nomment leur cause au lieu de se taire —
+        // et le second rend les entrées vues, qui sont le geste à faire
+        // (#157). Une mutation qui les replie sur `Unavailable` rougit ici.
+        let mut exports = SessionExports::default();
+        let unreadable = policy_outcome(
+            Err(ElevationRefusal::Policy(
+                personal_access::sudo_policy::SudoRefusal::AuthenticationRequired,
+            )),
+            &mut exports,
+        );
+        assert!(matches!(unreadable, Err(PromptOutcome::Refused)));
+        assert_eq!(
+            exports.refusal,
+            Some(your_cloud_bootstrap_protocol::AssistantRefusalV1 {
+                cause: your_cloud_bootstrap_protocol::AssistantRefusalCauseV1::PolicyUnreadableWithoutSecret,
+                detail: String::new(),
+            })
+        );
+
+        let mut exports = SessionExports::default();
+        let ambiguous = policy_outcome(
+            Err(ElevationRefusal::AmbiguousPolicy {
+                entries: "Sudoers entry: /etc/sudoers ; Sudoers entry: /etc/sudoers.d/90-x".into(),
+            }),
+            &mut exports,
+        );
+        assert!(matches!(ambiguous, Err(PromptOutcome::Refused)));
+        let carried = exports.refusal.expect("la cause voyage");
+        assert_eq!(
+            carried.cause,
+            your_cloud_bootstrap_protocol::AssistantRefusalCauseV1::PolicyAmbiguous
+        );
+        assert!(carried.detail.contains("/etc/sudoers.d/90-x"));
+
+        // Un refus qui n'a pas jugé — le listing illisible pour une autre
+        // raison — reste une indisponibilité muette : il ne parle pas du choix
+        // de l'humain.
+        let mut exports = SessionExports::default();
+        let mute = policy_outcome(Err(ElevationRefusal::DivergentCommand), &mut exports);
         assert!(matches!(mute, Err(PromptOutcome::Unavailable)));
-        assert_eq!(exported, None);
+        assert!(exports.refusal.is_none());
+        assert_eq!(exports.installation_scope, None);
     }
 
     /// A consent is not an access, and neither is a secret. Nothing a window
@@ -1977,6 +2052,7 @@ mod tests {
             event: terminal.event(),
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         };
         let payload = serde_json::to_vec(&event).expect("expurgated event");
         assert!(!payload
@@ -2023,6 +2099,7 @@ mod tests {
                 name: "your-cloud-server".into(),
                 provenance: LedgerProvenance::Created,
             }]),
+            refusal: None,
         };
         let written = |terminal: SessionTerminal| {
             let mut output = Vec::new();

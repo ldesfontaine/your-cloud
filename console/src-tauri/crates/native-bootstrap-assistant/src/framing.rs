@@ -177,6 +177,7 @@ mod tests {
             event: AssistantEventKind::Unavailable,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         };
         let mut output = Vec::new();
         write_event(&mut output, &event).unwrap();

@@ -121,6 +121,7 @@ fn delay_before_process_main_cannot_renew_the_transmitted_ttl() {
             event: AssistantEventKind::Expired,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
     assert!(stderr_bytes.is_empty());

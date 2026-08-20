@@ -1780,6 +1780,7 @@ fn the_watchdog_cuts_a_live_personal_access_window_before_the_forced_fallback() 
             event: AssistantEventKind::Expired,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         },
         "only a controlled cut writes the expurgated expiry"
     );
@@ -3707,6 +3708,7 @@ fn a_released_lease_closes_the_open_file_selector_and_the_window_under_it() {
             event: AssistantEventKind::Cancelled,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
     assert!(output.stderr.is_empty());
@@ -3771,6 +3773,7 @@ fn a_closed_file_selector_chooses_nothing_and_leaves_the_window_it_came_from() {
             event: AssistantEventKind::Cancelled,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
     await_disappearance(pid);
@@ -3890,6 +3893,7 @@ fn a_released_lease_closes_the_passphrase_window_and_returns_the_file_it_opened(
             event: AssistantEventKind::Cancelled,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
     await_disappearance(pid);
@@ -3938,6 +3942,7 @@ fn a_closed_passphrase_window_returns_the_file_and_derives_nothing() {
             event: AssistantEventKind::Cancelled,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         }
     );
     await_disappearance(pid);
@@ -4109,6 +4114,7 @@ fn a_lease_released_during_the_derivation_is_absorbed_and_opens_no_connection() 
             event: AssistantEventKind::Cancelled,
             installation_scope: None,
             install_ledger: None,
+            refusal: None,
         },
         "the terminal of an absorbed cancellation says nothing more than any other"
     );
