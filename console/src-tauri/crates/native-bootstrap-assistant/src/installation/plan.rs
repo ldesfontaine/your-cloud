@@ -143,8 +143,8 @@ pub enum Step {
     /// `controller init` : les identifiants immuables naissent sous l'acte
     /// consenti — imprimés, jugés, constatés au registre — jamais dans l'ombre
     /// d'un premier démarrage. Mesuré le 19 août 2026 : `serve` ne
-    /// s'auto-initialise pas, et la fixture de v0.1.0 jouait cet acte que le
-    /// plan réel ne jouait nulle part.
+    /// s'auto-initialise pas, et la fixture du palier antérieur jouait cet
+    /// acte que le plan réel ne jouait nulle part.
     InitialiseController,
     /// `controller mint-reader` : la paire du lecteur naît chez celui qu'elle
     /// identifie et ne voyage jamais — l'empreinte publique est jugée sur la
