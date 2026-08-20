@@ -282,12 +282,27 @@ dpkg -L your-cloud-server | while read -r path; do
   [ -f "$path" ] && stat -c "%n %U %G %a" "$path"
 done
 echo "--- setuid/setgid sous les chemins du paquet (constat n°4) ---"
-find /usr/bin /usr/lib/your-cloud-server /etc/your-cloud-server -xdev \
-  \( -perm -4000 -o -perm -2000 \) -print 2>/dev/null | grep . \
+# Le périmètre du constat est ce que le PRODUIT a posé : chaque fichier de
+# son inventaire dpkg — testé fichier par fichier, car dpkg -L liste aussi
+# les répertoires parents partagés — et les arbres que la séquence crée.
+# /usr/bin entier ne relève pas du constat : les setuid de la distribution
+# (sudo, su, passwd...) y vivent de droit, et un relevé qui les nomme
+# « apparus » ment sur ce que la pose a fait.
+{ dpkg -L your-cloud-server | while read -r path; do
+    [ -f "$path" ] && find "$path" -maxdepth 0 \( -perm -4000 -o -perm -2000 \) -print
+  done
+  for tree in /etc/your-cloud /var/lib/private; do
+    [ -d "$tree" ] && find "$tree" -xdev \( -perm -4000 -o -perm -2000 \) -print
+  done
+} 2>/dev/null | sort -u | grep . \
   && { echo "FAILED: un binaire setuid/setgid est apparu" >&2; exit 1; }
 echo "aucun"
 echo "--- capacités de fichier (constat n°4) ---"
-/usr/sbin/getcap -r /usr/bin /usr/lib/your-cloud-server 2>/dev/null | grep . \
+{ dpkg -L your-cloud-server | while read -r path; do
+    [ -f "$path" ] && /usr/sbin/getcap "$path"
+  done
+  [ -d /etc/your-cloud ] && /usr/sbin/getcap -r /etc/your-cloud
+} 2>/dev/null | grep . \
   && { echo "FAILED: une capacité de fichier est apparue" >&2; exit 1; }
 echo "aucune"
 echo "--- règles sudo du produit (constat n°4) ---"
