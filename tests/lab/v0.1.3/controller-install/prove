@@ -144,12 +144,12 @@ journey() {
   announce "le parcours nominal à l'écran — compte ycpasude, cible ycpa-target.test"
   require_pristine_target
   # La cible de la passe, écrite là où `inside` la relit. Les trois adresses :
-  # la machine écoute sur son adresse LAB, la source autorisée est le /24 du
-  # LAB, et le rendez-vous du Relay est une ADRESSE — pas un service : le
-  # lecteur du Controller est paresseux, et c'est le prévol qui dira ce qui
-  # répond, depuis le Controller lui-même. L'empreinte de la clé d'hôte y est
-  # relevée du périmètre déjà attesté par le canal géré — jamais apprise d'une
-  # première réponse, jamais écrite en dur.
+  # la machine écoute sur son adresse LAB, la source autorisée est le /32 du
+  # rendez-vous (#128), et le rendez-vous du Relay est une ADRESSE — pas un
+  # service : le lecteur du Controller est paresseux, et c'est le prévol qui
+  # dira ce qui répond, depuis le Controller lui-même. L'empreinte de la clé
+  # d'hôte y est relevée du périmètre déjà attesté par le canal géré — jamais
+  # apprise d'une première réponse, jamais écrite en dur.
   write_target ycpasude
   "$labctl" ssh "$console_vm" -- "$remote_harness/run journey"
 }
@@ -158,6 +158,13 @@ journey() {
 # empreinte de clé d'hôte, un compte qui change. Factorisé parce que trois
 # phases en ont besoin et qu'une cible écrite trois fois est une cible qui
 # divergera une fois.
+#
+# La source autorisée est le /32 du rendez-vous du Relay : le périmètre du
+# chemin de commande (#128) exige UNE adresse exacte — le Relay est la porte —
+# et le serveur refuse toute plage au démarrage. Le rendez-vous du Relay vit
+# sur 8444 — 9444 est la fenêtre d'amorçage qui expire, pas le rendez-vous.
+# Les valeurs d'avant cet arbitrage faisaient dire « actif » à un service qui
+# retombait aussitôt.
 write_target() {
   local username="$1" machine_address host_key
   machine_address=$(inventory "$machine_vm")
@@ -171,8 +178,8 @@ TARGET_PORT=22
 TARGET_USERNAME=$username
 TARGET_HOST_KEY=$host_key
 TARGET_LISTEN=$machine_address:9443
-TARGET_ALLOWED_SOURCE=192.168.240.0/24
-TARGET_RELAY_ENDPOINT=192.168.240.9:9444
+TARGET_ALLOWED_SOURCE=192.168.240.9/32
+TARGET_RELAY_ENDPOINT=192.168.240.9:8444
 TARGET
 chmod 0600 $remote_harness/target.env"
   "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
