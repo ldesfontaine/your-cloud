@@ -125,9 +125,12 @@ C'est une exigence que nous ne trouvons pas satisfaisante, et elle est
 ouverte : le contrat d'amorçage promet de s'adapter à la posture de la machine
 plutôt que d'en imposer une, et le produit ne tient pas encore cette promesse
 pour un compte à mot de passe. Voir
-[l'issue 158](https://github.com/ldesfontaine/your-cloud/issues/158). En
-attendant, l'Assistant vous dit lequel des deux cas vous êtes et quel geste le
-lève.
+[l'issue 158](https://github.com/ldesfontaine/your-cloud/issues/158).
+
+Si vous vous trompez de forme, rien n'est posé sur la machine — mais la
+`v0.1.3` publiée rend alors un refus qui ne dit pas encore lequel des deux cas
+vous êtes. La version suivante le nomme, avec le geste qui le lève
+([l'issue 157](https://github.com/ldesfontaine/your-cloud/issues/157)).
 
 **L'empreinte de la clé d'hôte.** Relevez-la **sur la machine cible**, jamais
 en acceptant ce qu'une première connexion propose :

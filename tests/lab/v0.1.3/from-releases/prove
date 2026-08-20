@@ -35,9 +35,8 @@ usage: prove <phase>
 
   page        lit la page publique : le nom du fichier et l'empreinte annoncée
   telecharger télécharge, confronte l'empreinte, mesure le refus d'un octet altéré
-  installer   joue les commandes de la page, dans leur ordre — ROUGE tant qu'un
-              écart demeure : c'est l'oracle du premier critère de #149
-  continuation ce qu'un README juste donnerait ; nommée, hors critères
+  installer   LIT les commandes du README publié et les joue dans son ordre —
+              ROUGE tant qu'un écart demeure : l'oracle du premier critère
   poste       l'écran et les yeux, plus la clé SSH de l'inconnu — APRÈS installer
   serveur     le serveur de l'inconnu : compte administrateur ordinaire, sa clé
   parcours    lance la Console et joue « Créer une infrastructure » jusqu'au Controller
@@ -64,6 +63,9 @@ result_root="$root/tests/artifacts/proofs/from-releases/$run_id"
 # dépôt : c'est ce qu'un inconnu lit dans l'URL de la release.
 release_tag=v0.1.3
 release_api="https://api.github.com/repos/ldesfontaine/your-cloud/releases/tags/$release_tag"
+# Le README que voit un inconnu qui arrive sur le dépôt : celui de la branche
+# par défaut, pas celui figé dans le tag.
+readme_raw="https://raw.githubusercontent.com/ldesfontaine/your-cloud/main/README.md"
 
 announce() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAILED: $*" >&2; exit 1; }
@@ -229,61 +231,58 @@ rm -f altere.deb"
 
 installer() {
   inventory "$poste_vm" >/dev/null
-  announce "les commandes de la page, dans leur ordre, sur une machine nue"
-  # Chaque commande est jouée telle que la page l'écrit, et son issue est
-  # relevée SANS être corrigée. Les écarts sont le produit de cette phase.
+  announce "les commandes du README, dans leur ordre, sur une machine nue"
+  # L'ORACLE DU PREMIER CRITÈRE DE #149. Les commandes ne sont pas recopiées
+  # ici : elles sont LUES dans le README publié, celui qu'un inconnu voit en
+  # arrivant sur le dépôt, et jouées dans son ordre. Un harnais qui porterait
+  # sa propre copie mesurerait sa fidélité à lui-même, pas celle du README.
+  #
+  # Seuls les blocs de « Installer (Linux) » avant « Préparer la machine »
+  # sont joués : les suivants s'exécutent sur la MACHINE CIBLE, et la phase
+  # `parcours` les emploie là où ils vivent.
+  "$labctl" ssh "$poste_vm" -- "
+set -e
+cd /root
+curl -sSL -o README.md '$readme_raw'
+python3 - <<'PY'
+import re, pathlib
+texte = pathlib.Path('/root/README.md').read_text()
+debut = texte.index('## Installer (Linux)')
+fin = texte.index('### Préparer la machine', debut)
+blocs = re.findall(r'\`\`\`bash\n(.*?)\`\`\`', texte[debut:fin], re.S)
+lignes = [ligne for bloc in blocs for ligne in bloc.strip().split('\n') if ligne.strip()]
+if not lignes:
+    raise SystemExit('FAILED: le README ne publie aucune commande d installation')
+pathlib.Path('/root/commandes-du-readme').write_text('\n'.join(lignes) + '\n')
+print(f'  {len(lignes)} commandes lues dans le README publié :')
+for ligne in lignes:
+    print(f'    {ligne}')
+PY"
   "$labctl" ssh "$poste_vm" -- '
 set -e
 cd /root
-file=$(cat page-file)
 ecarts=0
-echo "--- page, commande 2 : sudo dpkg -i $file"
-set +e
-sudo dpkg -i "$file" > dpkg.log 2>&1
-code=$?
-set -e
-echo "  code=$code"
-if [ "$code" -ne 0 ]; then
-  ecarts=$((ecarts + 1))
-  echo "  ECART: la commande d installation de la page échoue sur une Debian 13 nue"
-  grep -E "depends on|error processing" dpkg.log | sed "s/^/    /" | head -4
-fi
-echo "--- page, commande 3 : --verify-embedded-server-bundle"
-set +e
-verdict=$(/usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle 2>&1)
-code=$?
-set -e
-echo "  code=$code"
-echo "  $verdict" | head -2
-if [ "$code" -ne 0 ]; then
-  ecarts=$((ecarts + 1))
-  echo "  ECART: la vérification que la page promet est inatteignable après sa propre commande"
-fi
-echo "ECARTS_PAGE=$ecarts"
+numero=0
+while IFS= read -r commande; do
+  numero=$((numero + 1))
+  echo "--- README, commande $numero : $commande"
+  debut=$(date +%s)
+  set +e
+  sortie=$(eval "$commande" 2>&1)
+  code=$?
+  set -e
+  echo "  code=$code  durée=$(( $(date +%s) - debut ))s"
+  echo "$sortie" | tail -2 | sed "s/^/    /"
+  if [ "$code" -ne 0 ]; then
+    ecarts=$((ecarts + 1))
+    echo "  ECART: une commande du README échoue sur une Debian 13 nue"
+  fi
+done < /root/commandes-du-readme
+# La vérification que le README promet est le dernier mot : elle doit rendre
+# VERIFIED, sans quoi le paquet installé ne contient pas ce qu il annonce.
+echo "ECARTS_README=$ecarts"
 [ "$ecarts" -eq 0 ] || exit 1'
-  echo "INSTALLER_OK — les commandes de la page suffisent, sans commande de secours"
-}
-
-# La continuation : ce que la page AURAIT DÛ donner. Elle est nommée comme
-# telle — hors du parcours littéral, hors des critères — parce qu'une seule
-# passe doit découvrir TOUS les écarts, plutôt qu'un par rejeu.
-continuation() {
-  inventory "$poste_vm" >/dev/null
-  announce "continuation nommée : la commande qu'un README juste donnerait"
-  "$labctl" ssh "$poste_vm" -- '
-set -e
-cd /root
-file=$(cat page-file)
-sudo dpkg --purge your-cloud >/dev/null 2>&1 || true
-start=$(date +%s)
-sudo apt-get update -qq >/dev/null 2>&1
-echo "  apt-get update : $(( $(date +%s) - start ))s"
-start=$(date +%s)
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "./$file" >/dev/null 2>&1
-echo "  apt-get install ./$file : $(( $(date +%s) - start ))s"
-dpkg -l your-cloud | tail -1
-/usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle'
-  echo "CONTINUATION_OK"
+  echo "INSTALLER_OK — les commandes du README suffisent, sans commande de secours"
 }
 
 # --- le parcours -------------------------------------------------------------
@@ -380,7 +379,6 @@ case "$command" in
   page) page ;;
   telecharger) telecharger ;;
   installer) installer ;;
-  continuation) continuation ;;
   parcours) parcours ;;
   constats) constats ;;
   collect) collect ;;
@@ -395,7 +393,6 @@ case "$command" in
     page
     telecharger
     installer
-    continuation
     poste
     serveur
     parcours
