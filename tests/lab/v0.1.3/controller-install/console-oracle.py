@@ -980,9 +980,20 @@ def main() -> int:
     parser.add_argument("--relay-endpoint", required=True)
     parser.add_argument("--key-file", required=True)
     parser.add_argument("--passphrase-file", required=True)
+    # Le mot de passe sudo du compte prêté, quand ce compte en exige un —
+    # c'est le cas du compte administrateur ORDINAIRE d'une Debian, membre du
+    # groupe `sudo` : sa politique ne renonce pas à l'authentification. La
+    # preuve du palier (#147) prête un compte sans mot de passe et n'en passe
+    # aucun ; l'option reste donc absente par défaut, et ce chemin inchangé.
+    parser.add_argument("--sudo-password-file", default=None)
     arguments = parser.parse_args()
 
     passphrase = pathlib.Path(arguments.passphrase_file).read_text()
+    sudo_password = (
+        pathlib.Path(arguments.sudo_password_file).read_text().rstrip("\n")
+        if arguments.sudo_password_file
+        else None
+    )
     report: dict = {"stage": arguments.stage, "mechanism": (
         "WebDriver (tauri-driver → WebKitWebDriver) pour la WebView ; xdotool "
         "XTEST pour les fenêtres natives, par le chemin du fichier de clé. "
@@ -1008,7 +1019,14 @@ def main() -> int:
             os.chmod(arguments.secrets, 0o600)
             open_creation(driver, target, report)
             for step in ["audit", "install", "activate"]:
-                run_step(driver, step, arguments.key_file, passphrase, report)
+                run_step(
+                    driver,
+                    step,
+                    arguments.key_file,
+                    passphrase,
+                    report,
+                    expect_sudo_password=sudo_password,
+                )
         elif arguments.stage == "asymmetry":
             asymmetry(driver, arguments, target, passphrase, report)
         else:

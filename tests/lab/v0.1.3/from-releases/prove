@@ -1,0 +1,406 @@
+#!/usr/bin/env bash
+# La preuve de `#149` : le parcours d'un INCONNU, joué littéralement depuis la
+# page Releases publique.
+#
+# Ce qui sépare cette preuve de celle du palier (`#147`) tient en une phrase :
+# **rien ne vient du dépôt cloné**. Le paquet est celui que la page publie, son
+# empreinte est celle que les notes annoncent, et chaque commande produit jouée
+# ici est une commande que la page donne — dans son ordre, sans commande de
+# secours. Ce que la page ne donne pas n'est pas comblé depuis le harnais : il
+# est MESURÉ comme écart, et l'écart appartient au README (`#150`).
+#
+# Deux machines, et la distinction est celle du monde d'un utilisateur :
+#   lab-vps        le POSTE de l'inconnu — image Debian 13 nue du LAB, aucun
+#                  provisioning produit ; instantané `vierge` pour rejouer ;
+#   lab-machine-1  SON SERVEUR — une machine qu'il possède déjà, avec un compte
+#                  administrateur ordinaire et sa propre clé SSH. Rien du
+#                  périmètre d'accès personnel de `#52-#54` n'y est monté :
+#                  celui-ci encode des politiques que le produit exige, donc
+#                  une connaissance que l'inconnu n'a pas.
+#
+# CE QUE LE HARNAIS APPORTE, ET POURQUOI CE N'EST PAS DE LA TRICHE. Un
+# utilisateur réel a un écran et des yeux ; cette machine n'en a pas. Le
+# harnais installe donc un serveur X virtuel (`xvfb`), de quoi publier un bus
+# de session (`dbus-x11`), un clavier synthétique (`xdotool`) et le pilote qui
+# LIT ce que la WebView peint (`WebKitWebDriver` + `tauri-driver`). Aucun de
+# ces outils n'est le produit, aucun ne remplace un composant du trajet : ils
+# sont l'écran et les yeux. Le produit, lui, est le `.deb` publié — et rien
+# d'autre ne l'installe.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat <<'USAGE'
+usage: prove <phase>
+
+  page        lit la page publique : le nom du fichier et l'empreinte annoncée
+  telecharger télécharge, confronte l'empreinte, mesure le refus d'un octet altéré
+  installer   joue les commandes de la page, dans leur ordre — ROUGE tant qu'un
+              écart demeure : c'est l'oracle du premier critère de #149
+  continuation ce qu'un README juste donnerait ; nommée, hors critères
+  poste       l'écran et les yeux, plus la clé SSH de l'inconnu — APRÈS installer
+  serveur     le serveur de l'inconnu : compte administrateur ordinaire, sa clé
+  parcours    lance la Console et joue « Créer une infrastructure » jusqu'au Controller
+  constats    relève indépendant sur le serveur, et le temps réel du parcours
+  collect     rapatrie les artefacts vers tests/artifacts/proofs/
+  remove      rend les deux machines à leur état de départ
+  all         tout, dans cet ordre
+USAGE
+}
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+harness="$root/tests/lab/v0.1.3/from-releases"
+# Les yeux appartiennent à la preuve du palier ; les dupliquer donnerait deux
+# oracles qui divergeraient. Celui-ci est le même, nourri d'autres données.
+oracle_home="$root/tests/lab/v0.1.3/controller-install"
+poste_vm=lab-vps
+serveur_vm=lab-machine-1
+remote=/root/your-cloud-lab-from-releases
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+result_root="$root/tests/artifacts/proofs/from-releases/$run_id"
+
+# La page, et rien qu'elle. Le tag est la seule chose que ce harnais sait du
+# dépôt : c'est ce qu'un inconnu lit dans l'URL de la release.
+release_tag=v0.1.3
+release_api="https://api.github.com/repos/ldesfontaine/your-cloud/releases/tags/$release_tag"
+
+announce() { printf '\n== %s\n' "$*"; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+inventory() {
+  local name="$1" line
+  line=$("$labctl" list --format=tsv | awk -F'\t' -v n="$name" '$1 == n') ||
+    fail "labctl list n'a pas rendu $name"
+  [[ -n "$line" ]] || fail "$name absente de l'inventaire"
+  awk -F'\t' '{
+    if ($2 != "running") { exit 1 }
+    if ($6 != "your-cloud/labctl") { exit 2 }
+    print $3
+  }' <<<"$line" || fail "$name n'est pas la VM attendue (état/origine)"
+}
+
+# --- le poste de l'inconnu ---------------------------------------------------
+
+poste() {
+  inventory "$poste_vm" >/dev/null
+  announce "l'écran et les yeux sur le poste nu ($poste_vm)"
+  # Ce que le harnais installe est nommé une fois, ici, et jamais mélangé au
+  # produit : un écran virtuel, un bus de session, un clavier, un pilote qui
+  # lit la WebView. `tauri-driver` n'existe pas en paquet Debian — il est
+  # PORTÉ depuis la machine de build plutôt que compilé ici, parce
+  # qu'installer Rust sur le poste d'un inconnu serait exactement le
+  # provisioning que cette preuve refuse.
+  "$labctl" ssh "$poste_vm" -- '
+set -e
+sudo apt-get update -qq >/dev/null
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+  xvfb dbus-x11 xdotool lsof webkit2gtk-driver >/dev/null
+command -v WebKitWebDriver >/dev/null || { echo "FAILED: WebKitWebDriver absent" >&2; exit 1; }
+install -d -m 0755 /root/.cargo/bin'
+  local carried="$root/tests/artifacts/tauri-driver"
+  if [[ ! -x "$carried" ]]; then
+    install -d -m 0755 "$(dirname "$carried")"
+    "$labctl" copy-from lab-console /root/.cargo/bin/tauri-driver "$carried" >/dev/null
+    chmod 0755 "$carried"
+  fi
+  "$labctl" copy-to "$poste_vm" "$carried" /root/.cargo/bin/tauri-driver >/dev/null
+  "$labctl" ssh "$poste_vm" -- 'chmod 0755 /root/.cargo/bin/tauri-driver && /root/.cargo/bin/tauri-driver --help >/dev/null 2>&1 || true'
+
+  # Les yeux : les mêmes scripts que la preuve du palier.
+  "$labctl" ssh "$poste_vm" -- "install -d -m 0700 $remote"
+  local file
+  for file in run inside console-oracle.py; do
+    "$labctl" copy-to "$poste_vm" "$oracle_home/$file" "$remote/$file" >/dev/null
+    "$labctl" ssh "$poste_vm" -- "chmod 0700 $remote/$file"
+  done
+
+  # La clé SSH de l'inconnu : la sienne, née sur SON poste, protégée par une
+  # passphrase. Les chemins sont ceux que l'oracle attend ; le contenu est
+  # celui d'un utilisateur, pas d'un périmètre de preuve.
+  "$labctl" ssh "$poste_vm" -- '
+set -e
+install -d -m 0700 /root/lab-personal-access/keys/files /root/lab-personal-access/needle
+if [ ! -f /root/lab-personal-access/keys/files/ed25519 ]; then
+  head -c 18 /dev/urandom | base64 | tr -d "\n=" > /root/lab-personal-access/needle/key-passphrase
+  chmod 0600 /root/lab-personal-access/needle/key-passphrase
+  ssh-keygen -q -t ed25519 -C "inconnu@poste" \
+    -N "$(cat /root/lab-personal-access/needle/key-passphrase)" \
+    -f /root/lab-personal-access/keys/files/ed25519
+fi
+ssh-keygen -lf /root/lab-personal-access/keys/files/ed25519.pub'
+  echo "POSTE_OK"
+}
+
+# --- le serveur de l'inconnu -------------------------------------------------
+
+serveur() {
+  inventory "$serveur_vm" >/dev/null
+  announce "le serveur de l'inconnu ($serveur_vm) : compte administrateur ordinaire"
+  local public secret
+  public=$("$labctl" ssh "$poste_vm" -- 'cat /root/lab-personal-access/keys/files/ed25519.pub')
+  [[ -n "$public" ]] || fail "la clé publique de l'inconnu est illisible"
+  # Le mot de passe est CHOISI SUR LE POSTE : c'est celui que l'inconnu
+  # connaît, celui qu'il tapera dans la fenêtre du produit. Le serveur le
+  # reçoit ; il ne le dicte pas.
+  secret=$("$labctl" ssh "$poste_vm" -- '
+set -e
+[ -f /root/mot-de-passe-inconnu ] || { head -c 12 /dev/urandom | base64 | tr -d "\n=" > /root/mot-de-passe-inconnu; chmod 0600 /root/mot-de-passe-inconnu; }
+cat /root/mot-de-passe-inconnu')
+  [[ -n "$secret" ]] || fail "le mot de passe de l'inconnu est illisible"
+  # Le compte administrateur ORDINAIRE d'une Debian, et rien de plus : créé
+  # par `useradd`, membre du groupe `sudo`, un mot de passe, sa clé autorisée.
+  # C'est ce que l'installateur Debian produit quand on répond « oui » à
+  # « cet utilisateur peut-il administrer la machine ». AUCUNE politique
+  # sudoers n'est écrite ici : en écrire une serait importer une connaissance
+  # du produit que l'inconnu n'a pas — et la première passe a mesuré ce que
+  # cela coûte (voir le rapport, écart n°3).
+  "$labctl" ssh "$serveur_vm" -- "
+set -e
+id inconnu >/dev/null 2>&1 || useradd --create-home --shell /bin/bash inconnu
+usermod -aG sudo inconnu
+printf 'inconnu:%s\n' '$secret' | chpasswd
+rm -f /etc/sudoers.d/90-inconnu
+install -d -m 0700 -o inconnu -g inconnu /home/inconnu/.ssh
+printf '%s\n' '$public' > /home/inconnu/.ssh/authorized_keys
+chown inconnu:inconnu /home/inconnu/.ssh/authorized_keys
+chmod 0600 /home/inconnu/.ssh/authorized_keys
+sudo -l -U inconnu 2>/dev/null | tail -2"
+  echo "SERVEUR_OK"
+}
+
+# --- la page publique --------------------------------------------------------
+
+page() {
+  inventory "$poste_vm" >/dev/null
+  announce "ce que la page publique offre à un inconnu"
+  "$labctl" ssh "$poste_vm" -- "
+set -e
+cd /root
+curl -sSL -H 'Accept: application/vnd.github+json' '$release_api' -o page.json
+python3 - <<'PY'
+import json, re, sys
+document = json.load(open('/root/page.json'))
+body = document['body']
+fingerprint = re.search(r'sha256\s*:\s*([0-9a-f]{64})', body)
+name = re.search(r'^([a-z0-9_.\-]+\.deb)\$', body, re.M)
+print('titre          :', document['name'])
+print('pre-release    :', document['prerelease'])
+print('fichier nommé  :', name.group(1) if name else 'ABSENT DE LA PAGE')
+print('empreinte      :', fingerprint.group(1) if fingerprint else 'ABSENTE DE LA PAGE')
+print('artefacts      :', ', '.join(asset['name'] for asset in document['assets']))
+if not (fingerprint and name):
+    sys.exit(1)
+open('/root/page-fingerprint', 'w').write(fingerprint.group(1))
+open('/root/page-file', 'w').write(name.group(1))
+PY"
+  echo "PAGE_OK"
+}
+
+# --- télécharger, confronter, altérer ---------------------------------------
+
+telecharger() {
+  inventory "$poste_vm" >/dev/null
+  announce "télécharger depuis la page, confronter l'empreinte, altérer un octet"
+  "$labctl" ssh "$poste_vm" -- "
+set -e
+cd /root
+file=\$(cat page-file)
+published=\$(cat page-fingerprint)
+start=\$(date +%s)
+curl -sSL -o \"\$file\" 'https://github.com/ldesfontaine/your-cloud/releases/download/$release_tag/'\"\$file\"
+echo \"  téléchargement : \$(( \$(date +%s) - start ))s, \$(stat -c %s \"\$file\") octets\"
+measured=\$(sha256sum \"\$file\" | cut -d' ' -f1)
+echo \"  publiée : \$published\"
+echo \"  mesurée : \$measured\"
+[ \"\$published\" = \"\$measured\" ] || { echo 'FAILED: le fichier téléchargé n est pas celui que la page annonce' >&2; exit 1; }
+# Un octet altéré, et l'empreinte publiée cesse de le reconnaître : c'est le
+# contrôle que la page met entre les mains de l'inconnu.
+cp \"\$file\" altere.deb
+printf '\\x00' | dd of=altere.deb bs=1 seek=7000000 conv=notrunc status=none
+altered=\$(sha256sum altere.deb | cut -d' ' -f1)
+[ \"\$published\" = \"\$altered\" ] && { echo 'FAILED: un octet altéré passe l empreinte publiée' >&2; exit 1; }
+echo \"  altéré  : \$altered — refusé par l empreinte publiée\"
+rm -f altere.deb"
+  echo "TELECHARGER_OK"
+}
+
+# --- installer : les commandes de la page, dans leur ordre --------------------
+
+installer() {
+  inventory "$poste_vm" >/dev/null
+  announce "les commandes de la page, dans leur ordre, sur une machine nue"
+  # Chaque commande est jouée telle que la page l'écrit, et son issue est
+  # relevée SANS être corrigée. Les écarts sont le produit de cette phase.
+  "$labctl" ssh "$poste_vm" -- '
+set -e
+cd /root
+file=$(cat page-file)
+ecarts=0
+echo "--- page, commande 2 : sudo dpkg -i $file"
+set +e
+sudo dpkg -i "$file" > dpkg.log 2>&1
+code=$?
+set -e
+echo "  code=$code"
+if [ "$code" -ne 0 ]; then
+  ecarts=$((ecarts + 1))
+  echo "  ECART: la commande d installation de la page échoue sur une Debian 13 nue"
+  grep -E "depends on|error processing" dpkg.log | sed "s/^/    /" | head -4
+fi
+echo "--- page, commande 3 : --verify-embedded-server-bundle"
+set +e
+verdict=$(/usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle 2>&1)
+code=$?
+set -e
+echo "  code=$code"
+echo "  $verdict" | head -2
+if [ "$code" -ne 0 ]; then
+  ecarts=$((ecarts + 1))
+  echo "  ECART: la vérification que la page promet est inatteignable après sa propre commande"
+fi
+echo "ECARTS_PAGE=$ecarts"
+[ "$ecarts" -eq 0 ] || exit 1'
+  echo "INSTALLER_OK — les commandes de la page suffisent, sans commande de secours"
+}
+
+# La continuation : ce que la page AURAIT DÛ donner. Elle est nommée comme
+# telle — hors du parcours littéral, hors des critères — parce qu'une seule
+# passe doit découvrir TOUS les écarts, plutôt qu'un par rejeu.
+continuation() {
+  inventory "$poste_vm" >/dev/null
+  announce "continuation nommée : la commande qu'un README juste donnerait"
+  "$labctl" ssh "$poste_vm" -- '
+set -e
+cd /root
+file=$(cat page-file)
+sudo dpkg --purge your-cloud >/dev/null 2>&1 || true
+start=$(date +%s)
+sudo apt-get update -qq >/dev/null 2>&1
+echo "  apt-get update : $(( $(date +%s) - start ))s"
+start=$(date +%s)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "./$file" >/dev/null 2>&1
+echo "  apt-get install ./$file : $(( $(date +%s) - start ))s"
+dpkg -l your-cloud | tail -1
+/usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle'
+  echo "CONTINUATION_OK"
+}
+
+# --- le parcours -------------------------------------------------------------
+
+parcours() {
+  inventory "$poste_vm" >/dev/null
+  local serveur_ip
+  serveur_ip=$(inventory "$serveur_vm")
+  announce "« Créer une infrastructure » depuis la Console publiée"
+  # L'empreinte de la clé d'hôte : relevée SUR le serveur, comme un
+  # utilisateur la relèverait avant de la porter dans le formulaire. Le
+  # produit dit son format (« SHA256:… — confirmée hors bande ») ; la
+  # commande qui la rend appartient au README, et son absence est un écart.
+  local host_key
+  host_key=$("$labctl" ssh "$serveur_vm" -- 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub' | awk '{print $2}')
+  [[ "$host_key" == SHA256:* ]] || fail "l'empreinte de la clé d'hôte est illisible : $host_key"
+  "$labctl" ssh "$poste_vm" -- "cat > $remote/target.env <<TARGET
+TARGET_HOST=$serveur_ip
+TARGET_PORT=22
+TARGET_USERNAME=inconnu
+TARGET_HOST_KEY=$host_key
+TARGET_LISTEN=$serveur_ip:9443
+TARGET_ALLOWED_SOURCE=192.168.240.9/32
+TARGET_RELAY_ENDPOINT=192.168.240.9:8444
+TARGET_SUDO_PASSWORD_FILE=/root/mot-de-passe-inconnu
+TARGET"
+  local start finish
+  start=$(date +%s)
+  "$labctl" ssh "$poste_vm" -- "$remote/run journey"
+  finish=$(date +%s)
+  echo "  parcours joué en $(( finish - start ))s"
+  echo "$(( finish - start ))" > "$workdir/parcours-seconds"
+  echo "PARCOURS_OK"
+}
+
+# --- constats ----------------------------------------------------------------
+
+constats() {
+  inventory "$serveur_vm" >/dev/null
+  announce "le relevé indépendant sur le serveur de l'inconnu"
+  "$labctl" ssh "$serveur_vm" -- '
+set -e
+echo "--- le paquet, par dpkg ---"
+dpkg -l your-cloud-server | tail -1
+echo "--- l unité, par systemd ---"
+systemctl is-active your-cloud-controller
+systemctl show your-cloud-controller -p Type -p NRestarts -p ExecMainStatus
+echo "--- les unités du produit : une seule active ---"
+for unit in $(systemctl list-unit-files "your-cloud-*" --no-legend --no-pager | awk "{print \$1}"); do
+  printf "%s active=%s enabled=%s\n" "$unit" \
+    "$(systemctl is-active "$unit" 2>/dev/null || true)" \
+    "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+done
+echo "--- ce que le parcours a laissé chez l inconnu ---"
+[ -e /home/inconnu/.your-cloud-bootstrap ] && echo "résidu: /home/inconnu/.your-cloud-bootstrap (#156)" || echo "aucun répertoire d attente"'
+  echo "CONSTATS_OK"
+}
+
+collect() {
+  announce "rapatriement des artefacts vers $result_root"
+  install -d -m 0755 "$result_root"
+  "$labctl" copy-from "$poste_vm" "$remote/output/controller-install-journey.json" \
+    "$result_root/from-releases-journey.json" >/dev/null 2>&1 || echo "  (absent : journey)"
+  "$labctl" copy-from "$poste_vm" /root/page.json "$result_root/page.json" >/dev/null 2>&1 || true
+  ls -1 "$result_root"
+  echo "COLLECT_OK"
+}
+
+remove() {
+  announce "les deux machines rendues à leur état de départ"
+  "$labctl" ssh "$serveur_vm" -- '
+set -e
+if dpkg-query -W your-cloud-server >/dev/null 2>&1; then
+  systemctl disable --now your-cloud-controller 2>/dev/null || true
+  dpkg --purge your-cloud-server
+fi
+rm -rf /etc/your-cloud /var/lib/private/your-cloud-controller /home/inconnu/.your-cloud-bootstrap
+userdel -r inconnu 2>/dev/null || true
+rm -f /etc/sudoers.d/90-inconnu
+dpkg-query -W your-cloud-server >/dev/null 2>&1 && { echo "FAILED: le paquet survit" >&2; exit 1; }
+[ -e /etc/your-cloud ] && { echo "FAILED: la configuration survit" >&2; exit 1; }
+echo "SERVEUR_RENDU_OK"'
+  echo "REMOVE_OK — le poste se rend par: labctl revert lab-vps vierge"
+}
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+command=${1-}
+[[ $# -le 1 ]] || { usage >&2; exit 2; }
+case "$command" in
+  poste) poste ;;
+  serveur) serveur ;;
+  page) page ;;
+  telecharger) telecharger ;;
+  installer) installer ;;
+  continuation) continuation ;;
+  parcours) parcours ;;
+  constats) constats ;;
+  collect) collect ;;
+  remove) remove ;;
+  all)
+    # L'ORDRE EST UNE PROPRIÉTÉ, pas une commodité — mesuré le 20 août 2026.
+    # Les yeux du harnais (`webkit2gtk-driver`) DÉPENDENT de `libwebkit2gtk`,
+    # la bibliothèque dont l'absence est justement l'écart que la commande de
+    # la page rencontre. Monter le poste avant de jouer cette commande ferait
+    # RÉPARER par le harnais le défaut qu'il doit mesurer, et rendrait un vert
+    # qui ment. La page se joue donc sur la machine nue, d'abord.
+    page
+    telecharger
+    installer
+    continuation
+    poste
+    serveur
+    parcours
+    constats
+    collect
+    ;;
+  *) usage >&2; exit 2 ;;
+esac

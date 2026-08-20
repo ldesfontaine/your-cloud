@@ -281,7 +281,7 @@ constats() {
   "$labctl" ssh "$machine_vm" -- '
 set -e
 echo "--- inventaire dpkg (constat n°5) ---"
-dpkg-query -W -f="${Package} ${Version} ${Status}\n" your-cloud-server
+dpkg -l your-cloud-server | tail -1
 echo "--- ce que le paquet possède ---"
 dpkg -L your-cloud-server | sort
 echo "--- modes et propriétaires ---"

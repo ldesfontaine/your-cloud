@@ -80,6 +80,7 @@ python3 -u -X faulthandler "$here/console-oracle.py" \
   --relay-endpoint "$TARGET_RELAY_ENDPOINT" \
   --key-file "$perimeter/keys/files/ed25519" \
   --passphrase-file "$perimeter/needle/key-passphrase" \
+  ${TARGET_SUDO_PASSWORD_FILE:+--sudo-password-file "$TARGET_SUDO_PASSWORD_FILE"} \
   --output "$output/controller-install-$stage.json"
 oracle_status=$?
 set -e
