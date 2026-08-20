@@ -327,13 +327,13 @@ export function CreateInfrastructureView({
           empreinte dans la fenêtre de pose, avant votre consentement.
         </p>
         <div className="yc-form-grid">
-          <Field id="ci-listen" label="Adresse d’écoute" help="Exemple : 192.168.1.10:9443">
+          <Field id="ci-listen" label="Adresse d’écoute" help="Une adresse IPv4 privée exacte, port 9443. Exemple : 192.168.1.10:9443">
             <TextInput id="ci-listen" value={listen} onChange={(event) => setListen(event.target.value)} disabled={finished || running} />
           </Field>
-          <Field id="ci-allowed" label="Source autorisée" help="Exemple : 192.168.1.0/24">
+          <Field id="ci-allowed" label="Source autorisée" help="Une adresse exacte (/32), jamais une plage. Exemple : 192.168.1.9/32">
             <TextInput id="ci-allowed" value={allowedSource} onChange={(event) => setAllowedSource(event.target.value)} disabled={finished || running} />
           </Field>
-          <Field id="ci-relay" label="Point de rendez-vous du Relay" help="Exemple : 192.168.1.9:9444">
+          <Field id="ci-relay" label="Point de rendez-vous du Relay" help="Une adresse IPv4 privée exacte, port 8444. Exemple : 192.168.1.9:8444">
             <TextInput id="ci-relay" value={relayEndpoint} onChange={(event) => setRelayEndpoint(event.target.value)} disabled={finished || running} />
           </Field>
         </div>

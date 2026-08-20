@@ -547,6 +547,56 @@ if (
     "tauri.conf.json: le paquet Debian doit livrer exactement le lot serveur préparé sous /usr/lib/your-cloud-console/server-bundle",
   );
 }
+// Les exemples du formulaire de création n'enseignent que des valeurs que
+// `serve` accepte : écoute IPv4 privée exacte sur 9443, source en /32 exact,
+// rendez-vous du Relay sur 8444 — les règles telles que
+// `cmd/your-cloud/controller.go` les juge au démarrage. Un exemple en plage
+// ou sur la fenêtre d'amorçage (9444) guiderait l'humain droit dans le refus
+// mesuré le 20 août (#154).
+{
+  const createInfrastructureView = await readSourceText(
+    new URL("../src/product/create-infrastructure-view.tsx", import.meta.url),
+  );
+  const privateExactIPv4 = (value) => {
+    const parts = value.split(".").map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+      return false;
+    }
+    return (
+      parts[0] === 10 ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168)
+    );
+  };
+  const helpExample = (fieldId) => {
+    const match = createInfrastructureView.match(
+      new RegExp(`id="${fieldId}"[^>]*help="[^"]*Exemple : (?<example>[^"]+)"`, "u"),
+    );
+    return match?.groups?.example ?? null;
+  };
+  const listenExample = helpExample("ci-listen");
+  if (!listenExample || !/^(?<address>[0-9.]+):9443$/u.test(listenExample) ||
+      !privateExactIPv4(listenExample.replace(/:9443$/u, ""))) {
+    failures.push(
+      "create-infrastructure-view: l'exemple d'écoute doit être une IPv4 privée exacte sur 9443 (#154)",
+    );
+  }
+  const allowedExample = helpExample("ci-allowed");
+  if (!allowedExample || !/^(?<address>[0-9.]+)\/32$/u.test(allowedExample) ||
+      !privateExactIPv4(allowedExample.replace(/\/32$/u, ""))) {
+    failures.push(
+      "create-infrastructure-view: l'exemple de source doit être un /32 privé exact, jamais une plage (#154)",
+    );
+  }
+  const relayExample = helpExample("ci-relay");
+  if (!relayExample || !/^(?<address>[0-9.]+):8444$/u.test(relayExample) ||
+      !privateExactIPv4(relayExample.replace(/:8444$/u, ""))) {
+    failures.push(
+      "create-infrastructure-view: l'exemple de rendez-vous doit être une IPv4 privée exacte sur 8444 — 9444 est la fenêtre qui expire (#154)",
+    );
+  }
+}
+
 // L'unité du Controller est `Type=notify` : « actif » est une déclaration du
 // service — la readiness émise par `serve` une fois ses écouteurs liés —
 // jamais un instantané pris pendant qu'un démarrage qui va échouer ne l'a pas
