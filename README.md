@@ -5,8 +5,8 @@
 > **Une pre-release existe** ([Releases](https://github.com/ldesfontaine/your-cloud/releases)) :
 > elle installe et active un Controller sur une machine Debian 13 `amd64`, par
 > le parcours prouvé du palier `v0.1.3` — audit, pose, activation, chaque issue
-> en phrase. **Elle n'héberge encore aucun service : ne pas lui confier de
-> données réelles.**
+> en phrase, chaque refus nommé. **Elle n'héberge encore aucun service : ne pas
+> lui confier de données réelles.**
 
 ## Objectif
 
@@ -67,7 +67,7 @@ l'empreinte avant d'installer : c'est le seul contrôle qui vous appartient
 entièrement.
 
 ```bash
-sha256sum your-cloud_0.1.3_amd64.deb
+sha256sum your-cloud_0.1.4_amd64.deb
 ```
 
 Elle doit être exactement celle que les notes de la release affichent. Si elle
@@ -77,7 +77,7 @@ diffère, n'installez pas.
 
 ```bash
 sudo apt update
-sudo apt install ./your-cloud_0.1.3_amd64.deb
+sudo apt install ./your-cloud_0.1.4_amd64.deb
 ```
 
 Le `./` n'est pas décoratif : il dit à `apt` d'installer ce fichier plutôt que
@@ -127,10 +127,10 @@ plutôt que d'en imposer une, et le produit ne tient pas encore cette promesse
 pour un compte à mot de passe. Voir
 [l'issue 158](https://github.com/ldesfontaine/your-cloud/issues/158).
 
-Si vous vous trompez de forme, rien n'est posé sur la machine — mais la
-`v0.1.3` publiée rend alors un refus qui ne dit pas encore lequel des deux cas
-vous êtes. La version suivante le nomme, avec le geste qui le lève
-([l'issue 157](https://github.com/ldesfontaine/your-cloud/issues/157)).
+Si vous vous trompez de forme, rien n'est posé sur la machine, et l'Assistant
+vous dit lequel des deux cas vous êtes — la politique qu'il n'a pas pu lire
+sans son mot de passe, ou les entrées qui s'empilent — avec le geste qui le
+lève.
 
 **L'empreinte de la clé d'hôte.** Relevez-la **sur la machine cible**, jamais
 en acceptant ce qu'une première connexion propose :
