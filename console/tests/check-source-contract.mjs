@@ -505,6 +505,22 @@ if (tauriConfig.version !== "../package.json") {
       "internal/observation/observation.go: DaemonVersion ne porte pas la version de release préfixée v",
     );
   }
+  // La version du producteur n'a qu'une source, et les FIXTURES en font
+  // partie : une enveloppe de test qui écrit sa version en dur devient
+  // invalide au premier bump — mesuré le 20 août 2026, six tests rouges à la
+  // porte de la release, dans deux fichiers qu'aucune garde ne relisait. Les
+  // mentions en commentaire d'un palier passé restent licites : ce qui est
+  // interdit, c'est de porter la version comme DONNÉE.
+  for (const path of await filesBelow(join(consoleRoot, "..", "internal"))) {
+    if (extname(path) !== ".go") continue;
+    if (path.endsWith(join("observation", "observation.go"))) continue;
+    const contents = await readSourceText(path);
+    if (/DaemonVersion:\s*"|"daemon_version"\s*:\s*"v\d/u.test(contents)) {
+      failures.push(
+        `${relative(join(consoleRoot, ".."), path)}: la version du producteur se lit sur observation.DaemonVersion, jamais en dur`,
+      );
+    }
+  }
 }
 if (
   JSON.stringify(tauriConfig.bundle?.externalBin) !==

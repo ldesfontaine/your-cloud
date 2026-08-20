@@ -108,7 +108,13 @@ func TestEnvelopeRejectsUnknownProfileAndFreeCollectorData(t *testing.T) {
 		t.Fatal("unknown profile accepted")
 	}
 
-	encoded := []byte(`{"schema_version":1,"machine_id":"lab-machine-1","daemon_version":"v0.1.0","profile":"host-health.v1","sequence":1,"observed_at":"2026-07-18T12:00:00Z","health":{"uptime":{"status":"ok","uptime_seconds":1,"command":"id"},"memory":{"status":"error","error":"source_unavailable"},"rootfs":{"status":"error","error":"source_unavailable"}}}`)
+	// La version du producteur est celle de la livraison courante, lue à sa
+	// source unique : écrite en dur, elle ferait refuser cette enveloppe pour
+	// SA version au lieu de la donnée libre du collecteur, et le test
+	// passerait pour une raison qui n'est pas la sienne.
+	encoded := []byte(`{"schema_version":1,"machine_id":"lab-machine-1","daemon_version":"` +
+		DaemonVersion +
+		`","profile":"host-health.v1","sequence":1,"observed_at":"2026-07-18T12:00:00Z","health":{"uptime":{"status":"ok","uptime_seconds":1,"command":"id"},"memory":{"status":"error","error":"source_unavailable"},"rootfs":{"status":"error","error":"source_unavailable"}}}`)
 	if decoded, err := Decode(encoded); err == nil {
 		t.Fatalf("free collector data accepted: %#v", decoded)
 	}
