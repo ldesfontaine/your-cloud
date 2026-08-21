@@ -1,27 +1,17 @@
 # Your Cloud
 
+Héberger ses propres services sur ses propres machines, sans avoir à tenir
+dans sa tête ce que font une douzaine d'outils. Ce que l'écran affiche est ce
+qui s'est produit : jamais un bouton qui cache ce qu'il déclenche.
+
 > ## ⚠️ Pré-version — en cours de développement.
 >
 > **Une pre-release existe** ([Releases](https://github.com/ldesfontaine/your-cloud/releases)) :
-> elle installe et active un Controller sur une machine Debian 13 `amd64`, par
-> le parcours prouvé du palier `v0.1.3` — audit, pose, activation, chaque issue
-> en phrase, chaque refus nommé. **Elle n'héberge encore aucun service : ne pas
-> lui confier de données réelles.**
-
-## Objectif
-
-Héberger soi-même demande aujourd'hui de tenir dans sa tête ce que font une
-douzaine d'outils. Your Cloud vise l'inverse : déclarer ses machines, les voir
-rapporter leur état, choisir un service, lire en phrases ce que la machine
-recevra, approuver, et regarder le résultat que la machine a réellement
-rapporté.
-
-Ce que l'écran affiche est ce qui s'est produit, pas une promesse d'interface :
-jamais un bouton qui cache ce qu'il déclenche.
-
-C'est un projet pour qui veut héberger ses propres services — un serveur loué,
-un mini-PC, une machine au grenier — et refuse d'échanger la simplicité contre
-l'opacité.
+> la `v0.1.4` installe et met en service un Controller — le programme qui
+> pilotera vos machines — sur une machine Debian 13 `amd64`. Chaque étape est
+> approuvée dans une fenêtre, chaque issue est une phrase, chaque refus dit sa
+> cause. **Elle n'héberge encore aucun service : ne lui confiez pas de données
+> réelles.**
 
 ## Ce qui existe
 
@@ -48,71 +38,79 @@ vraies machines — les [rapports de preuve](docs/lab/README.md) le documentent.
 - **Mode externe** — permet de déclarer un service existant sans le confier à
   Your Cloud.
 
-## Prochaines versions
-
-- Approbation des plans depuis la Console Windows, mise en page au zoom
-  texte 200 % sous Windows, signature Windows publiquement reconnue.
-- Gestion DNS Cloudflare : à partir de la v0.1.3.
-- Sauvegardes gérées : v0.2.0.
-
 ## Installer (Linux)
 
-Debian 13 `amd64`. Chaque commande ci-dessous a été exécutée sur une machine
-nue, et le [rapport de preuve](docs/lab/v0.1.3-from-releases.md) dit combien
-de temps chacune a pris.
+Il vous faut deux machines : celle où vous travaillez, sous Debian 13
+(`amd64`), et celle que vous voulez faire piloter — un serveur loué, un
+mini-PC, une machine au grenier.
 
-**1. Télécharger le paquet et son empreinte.** Les deux sont sur la page
-[Releases](https://github.com/ldesfontaine/your-cloud/releases). Vérifiez
-l'empreinte avant d'installer : c'est le seul contrôle qui vous appartient
-entièrement.
+Les commandes ci-dessous se tapent dans un terminal, l'une après l'autre.
+Chacune a été jouée telle quelle sur une machine neuve.
+
+**1. Télécharger le fichier.** Sur la page
+[Releases](https://github.com/ldesfontaine/your-cloud/releases), prenez le
+fichier dont le nom se termine par `.deb`. Il arrive en général dans votre
+dossier « Téléchargements » : ouvrez un terminal dans ce dossier.
+
+**2. Vérifier que le fichier reçu est bien celui qui a été publié.** La
+commande ci-dessous calcule une empreinte du fichier — une longue suite de
+chiffres et de lettres qui change entièrement si un seul caractère du fichier
+a été modifié en route.
 
 ```bash
 sha256sum your-cloud_0.1.4_amd64.deb
 ```
 
-Elle doit être exactement celle que les notes de la release affichent. Si elle
-diffère, n'installez pas.
+Comparez ce qu'elle affiche à l'empreinte donnée sur la page de la release.
+Les deux doivent être identiques. Si elles diffèrent, arrêtez-vous : n'ouvrez
+pas ce fichier et ne l'installez pas.
 
-**2. Installer.**
+**3. Installer l'application.** La première commande met à jour la liste des
+logiciels disponibles ; la seconde installe le fichier que vous venez de
+vérifier, en ajoutant au passage les composants dont il a besoin pour
+fonctionner. Votre mot de passe vous sera demandé, puis une confirmation.
 
 ```bash
 sudo apt update
 sudo apt install ./your-cloud_0.1.4_amd64.deb
 ```
 
-Le `./` n'est pas décoratif : il dit à `apt` d'installer ce fichier plutôt que
-de chercher ce nom dans les dépôts. `sudo dpkg -i` seul ne suffit pas — il ne
-résout pas les dépendances (`libwebkit2gtk-4.1-0`, `libgtk-3-0`) et laisse le
-paquet non configuré. Comptez quelques minutes : ces dépendances pèsent
-environ 200 Mio.
+Comptez quelques minutes : les composants à télécharger pèsent environ
+200 Mio. Le `./` devant le nom du fichier compte : sans lui, votre machine
+irait chercher ce nom sur Internet au lieu d'installer le fichier que vous
+avez sous la main.
 
-**3. Vérifier que le paquet contient bien ce qu'il annonce.**
+**4. Vérifier que l'application n'a pas été altérée.** Elle transporte avec
+elle le programme qu'elle posera sur votre serveur ; cette commande lui
+demande de le vérifier elle-même, avant que vous vous en serviez.
 
 ```bash
 /usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle
 ```
 
-La réponse doit commencer par `VERIFIED`. L'Assistant vient de confronter le
-lot serveur qu'il transporte à son manifeste signé, contre une ancre scellée
-dans son propre binaire. Un refus se nomme (`DigestMismatch`,
-`SignatureNotByAnchor`, `UnexpectedVersion`) plutôt que de se taire.
+La réponse doit commencer par `VERIFIED`. Toute autre réponse est un refus :
+n'allez pas plus loin.
 
-**4. Lancer la Console.** Elle apparaît dans le menu des applications sous
-**Your Cloud**. Depuis un terminal : `your-cloud-console`.
+**5. Ouvrir l'application.** Elle s'appelle **Your Cloud** dans le menu des
+applications.
 
 ### Préparer la machine que vous voulez installer
 
-Le parcours « Créer une infrastructure » demande une machine cible, un compte
-sur cette machine, et l'empreinte de sa clé d'hôte.
+L'application vous demandera trois choses au sujet de cette machine : un
+compte pour s'y connecter, son empreinte, et trois adresses.
 
-**Le compte prêté.** Aujourd'hui, il doit satisfaire deux conditions
-précises — et ce ne sont pas celles d'un compte administrateur Debian
-ordinaire :
+**Le compte.** L'application se connecte à votre serveur avec un compte que
+vous lui prêtez, et ce compte doit pouvoir y installer des logiciels. Il doit
+aujourd'hui remplir deux conditions précises, qui ne sont pas celles d'un
+compte d'administrateur habituel :
 
-- il porte **une seule** entrée sudoers, qui autorise toute commande sans mot
-  de passe ;
-- il n'appartient **pas** au groupe `sudo` — sans quoi il en porterait deux, et
-  l'Assistant refuse un listing ambigu.
+- pouvoir tout faire sans qu'on lui redemande son mot de passe ;
+- ne pas appartenir au groupe `sudo` — sinon il reçoit deux autorisations
+  différentes, et l'application ne sait pas laquelle s'applique.
+
+Les commandes ci-dessous mettent le compte dans cette forme. Elles se tapent
+**sur la machine que vous voulez installer**, et vous y remplacez `<compte>`
+par le nom du compte, partout où il apparaît.
 
 ```bash
 sudo deluser <compte> sudo
@@ -121,31 +119,32 @@ sudo chmod 0440 /etc/sudoers.d/90-<compte>
 sudo visudo -c
 ```
 
-C'est une exigence que nous ne trouvons pas satisfaisante, et elle est
-ouverte : le contrat d'amorçage promet de s'adapter à la posture de la machine
-plutôt que d'en imposer une, et le produit ne tient pas encore cette promesse
-pour un compte à mot de passe. Voir
-[l'issue 158](https://github.com/ldesfontaine/your-cloud/issues/158).
+La dernière ligne relit ce qui vient d'être écrit et doit répondre
+`parsed OK` : c'est ce qui vous protège d'une faute de frappe.
 
-Si vous vous trompez de forme, rien n'est posé sur la machine, et l'Assistant
-vous dit lequel des deux cas vous êtes — la politique qu'il n'a pas pu lire
-sans son mot de passe, ou les entrées qui s'empilent — avec le geste qui le
-lève.
+Cette exigence ne nous satisfait pas et elle est ouverte — voir
+[l'issue 158](https://github.com/ldesfontaine/your-cloud/issues/158). Si vous
+vous trompez, rien n'est posé sur votre serveur, et l'application vous dit
+laquelle des deux conditions manque et quelle commande la corrige.
 
-**L'empreinte de la clé d'hôte.** Relevez-la **sur la machine cible**, jamais
-en acceptant ce qu'une première connexion propose :
+**L'empreinte de la machine.** Elle permet à l'application de reconnaître
+votre serveur, et de refuser de parler à une autre machine qui prendrait sa
+place. Relevez-la **sur le serveur lui-même**, jamais en acceptant ce qu'une
+première connexion vous propose :
 
 ```bash
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-Le formulaire attend la partie `SHA256:…`. C'est la clé `ed25519` qui compte :
-c'est l'algorithme que l'Assistant négocie en premier.
+Recopiez la partie qui commence par `SHA256:`.
 
-**Les trois adresses.** L'écoute du Controller est une adresse IPv4 privée
-exacte sur le port `9443` ; la source autorisée est **une** adresse en `/32`,
-jamais une plage ; le rendez-vous du Relay est une adresse IPv4 privée exacte
-sur le port `8444`.
+**Les trois adresses.** L'application vous demandera ensuite :
+
+- l'adresse de votre serveur suivie de `:9443` — c'est là qu'il répondra ;
+- l'adresse de la seule machine autorisée à lui parler, suivie de `/32` : une
+  machine précise, jamais un réseau entier ;
+- l'adresse du point de rendez-vous — le champ « Relay » du formulaire —
+  suivie de `:8444`.
 
 ## Limites
 
@@ -153,17 +152,6 @@ sur le port `8444`.
 - Les sauvegardes restent locales et à la demande — aucune copie hors machine.
 - DNS et certificats TLS publics restent manuels.
 - Debian 13 sur `amd64` seulement.
-
-## Pour lire plus loin
-
-La [carte documentaire](docs/README.md) est le point d'entrée : elle donne le
-chemin de lecture selon le sujet — le [cap du projet](docs/projet/CAP.md) et ses
-limites durables, l'[anatomie](docs/architecture/ANATOMIE.md) du placement et des
-flux, les [rapports de preuve](docs/lab/README.md), et les
-[règles de qualité](docs/contribution/QUALITE.md) appliquées à chaque changement.
-
-[`tools/labctl`](tools/labctl) contrôle les machines de l'environnement isolé.
-Sa présence ne prouve aucune capacité du produit.
 
 ## Licence
 
@@ -177,7 +165,7 @@ Cloud à des tiers par un réseau doit leur en offrir la source, modifications
 comprises. Une licence permissive aurait laissé refermer ce que ce dépôt
 ouvre.
 
-Les profils de service que la `v0.1.0` prend en charge sont eux-mêmes sous
+Les profils de service que ce dépôt prend en charge sont eux-mêmes sous
 AGPL — BentoPDF, Vaultwarden — et ne sont ni redistribués, ni modifiés, ni
 liés par ce dépôt : Your Cloud les déploie par leur image officielle
 épinglée, ce que le contrat de chaque profil écrit.
