@@ -7,7 +7,7 @@ qui s'est produit : jamais un bouton qui cache ce qu'il déclenche.
 > ## ⚠️ Pré-version — en cours de développement.
 >
 > **Une pre-release existe** ([Releases](https://github.com/ldesfontaine/your-cloud/releases)) :
-> la `v0.1.4` installe et met en service un Controller — le programme qui
+> la `v0.2.0` installe et met en service un Controller — le programme qui
 > pilotera vos machines — sur une machine Debian 13 `amd64`. Chaque étape est
 > approuvée dans une fenêtre, chaque issue est une phrase, chaque refus dit sa
 > cause. **Elle n'héberge encore aucun service : ne lui confiez pas de données
@@ -58,7 +58,7 @@ chiffres et de lettres qui change entièrement si un seul caractère du fichier
 a été modifié en route.
 
 ```bash
-sha256sum your-cloud_0.1.4_amd64.deb
+sha256sum your-cloud_0.2.0_amd64.deb
 ```
 
 Comparez ce qu'elle affiche à l'empreinte donnée sur la page de la release.
@@ -72,7 +72,7 @@ fonctionner. Votre mot de passe vous sera demandé, puis une confirmation.
 
 ```bash
 sudo apt update
-sudo apt install ./your-cloud_0.1.4_amd64.deb
+sudo apt install ./your-cloud_0.2.0_amd64.deb
 ```
 
 Comptez quelques minutes : les composants à télécharger pèsent environ
