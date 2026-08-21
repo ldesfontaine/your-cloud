@@ -299,7 +299,7 @@ présence :
   provisionnées. Cette capacité est optionnelle sur chaque Agent, mais la chaîne
   d'observation de `v0.1.0` provisionne exactement un Relay ;
 - un **Auxiliaire local** optionnel peut être activé uniquement pour une machine
-  placée en mode géré. Il n'est pas permanent, n'écoute aucun port, est lancé
+  enrôlée. Il n'est pas permanent, n'écoute aucun port, est lancé
   pour un plan précis, applique une opération nommée avec les seuls privilèges
   nécessaires, renvoie un résultat structuré puis s'arrête.
 
@@ -350,7 +350,7 @@ Toutes les actions de l'interface ne traversent donc pas l'Agent :
 | Ressource OpenStack | Adaptateur central utilisant l'API OpenStack et une identité limitée |
 | Plan Terraform, OpenTofu ou Ansible | Runner d'automatisation isolé avec artefact et résultat vérifiables |
 | K3s | Agent pour l'amorçage local si nécessaire, puis adaptateur utilisant l'API du cluster |
-| Élément conservé en mode externe | Outil de l'utilisateur ; Your Cloud observe sans reprendre l'autorité |
+| Service dont Your Cloud ne connaît pas la recette | Outil de l'utilisateur ; Your Cloud observe sans reprendre l'autorité |
 
 Pour une opération coordonnée sur plusieurs machines, le Controller construit un
 plan global puis une partie ciblée par machine ou plateforme. L'App le rend
@@ -512,7 +512,7 @@ reste strictement limité à l'observation, son Relay ne transporte aucune actio
 et son Auxiliaire n'est ni permanent, ni un listener, ni un shell général.
 
 Le contrat de `v0.1.0` n'exige aucun adaptateur OpenStack ou K3s ni runner IaC.
-Ansible reste utilisable par l'utilisateur en mode externe ; une intégration
+Ansible reste utilisable par l'utilisateur hors de Your Cloud ; une intégration
 isolée pourra être étudiée après stabilisation sans changer le plan que
 l'utilisateur comprend et approuve.
 <!-- coherence: AGENT-AUTHORITY:end -->
@@ -565,15 +565,7 @@ nécessaires et en vérifier les refus. Il ne qualifiera jamais automatiquement
 une machine publique de « DMZ » en raison de son adresse ou de son fournisseur.
 <!-- coherence: V1-NETWORK:end -->
 
-<!-- coherence: OWNERSHIP-MODES:start -->
-## Gestion choisie, jamais imposée
-
-Un élément est **géré** seulement lorsque Your Cloud conserve son état attendu
-et peut appliquer un plan approuvé. Il reste **externe** lorsque l'utilisateur
-le configure avec ses propres outils : l'App peut alors le représenter et, si
-un adaptateur borné existe, le vérifier en lecture seule sans revendiquer son
-cycle de vie. Un état fourni par l'utilisateur reste **déclaré** tant qu'une
-observation datée ne l'a pas rendu **vérifié**.
+## Rien n'est imposé, rien n'est deviné
 
 Your Cloud n'impose ni une topologie type, ni un catalogue de services à
 installer. Un **profil de service** décrit seulement un parcours pris en charge :
@@ -581,32 +573,10 @@ sa présence dans l'App ne crée rien sans déclaration, placement, plan et
 approbation. Les services nommés dans une preuve LAB rendent ce scénario
 reproductible ; ils ne deviennent pas des prérequis de l'infrastructure réelle.
 
-## Découverte et adoption
-
-Your Cloud peut construire un inventaire assisté depuis les machines déjà
-enrôlées. Des adaptateurs en lecture seule peuvent notamment
-relever les unités systemd, conteneurs, services K3s, ports d'écoute, passages
-réseau et routes d'exposition qu'ils savent interpréter.
-
-Un élément trouvé apparaît d'abord comme **détecté**, avec la preuve et la date
-de l'observation. L'utilisateur choisit ensuite :
-
-- l'ignorer ;
-- le déclarer externe et continuer à le gérer manuellement ;
-- demander son adoption par Your Cloud.
-
-L'adoption n'est jamais une importation silencieuse. Elle commence par un audit
-de la configuration actuelle, indique les parties comprises ou inconnues,
-compare cet état au modèle pris en charge, prépare un plan de reprise et attend
-une approbation. Your Cloud n'affirme pouvoir mettre à jour, restaurer ou
-supprimer l'élément qu'après une adoption réellement réussie.
-
-Cette capacité vise à rendre une infrastructure existante lisible sans imposer
-Your Cloud comme autorité unique. La découverte reste locale aux machines déjà
-déclarées ou enrôlées. Your Cloud ne scanne pas le réseau environnant : un VPS
-chez un fournisseur n'en a pas besoin et la présence sur un LAN privé ne crée
-aucune autorisation envers les autres appareils.
-<!-- coherence: OWNERSHIP-MODES:end -->
+L'inventaire que Your Cloud construit reste **local aux machines déjà
+enrôlées**. Your Cloud ne scanne pas le réseau environnant : un VPS chez un
+fournisseur n'en a pas besoin, et la présence sur un LAN privé ne crée aucune
+autorisation envers les autres appareils.
 
 ## Contraintes durables
 

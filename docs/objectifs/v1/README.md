@@ -601,7 +601,6 @@ et s'inscrit dans les mesures proportionnées de cryptographie, contrôle d'acc�
 et gestion des risques de l'[article 21 de NIS2](https://eur-lex.europa.eu/legal-content/FR/TXT/?uri=CELEX:32022L2555).
 Il ne constitue pas à lui seul une preuve de conformité.
 
-<!-- coherence: OWNERSHIP-MODES:start -->
 ## Deux modes de responsabilité
 
 `v0.1.0` distingue explicitement qui possède le droit de modifier chaque service
@@ -647,7 +646,6 @@ L'App affiche alors :
 `v0.1.0` ne découvre pas arbitrairement tous les services et tunnels existants.
 Elle exige une déclaration explicite. Une future reprise en **Mode géré** devra
 commencer par un audit, un diff et une approbation ; elle n'est jamais implicite.
-<!-- coherence: OWNERSHIP-MODES:end -->
 
 ## Capacités nécessaires
 
@@ -1020,9 +1018,9 @@ du Daemon**. Pour chaque collecteur, le plan présente :
 - ce que le résultat permet réellement de conclure.
 
 Le même mécanisme sert à observer un service géré et à vérifier en lecture seule
-un service ou un passage externe explicitement déclaré. Le statut reste
-« externe vérifié » : obtenir une preuve ne transfère aucune autorité de
-modification à Your Cloud.
+un service ou un passage explicitement déclaré. Le statut reste celui d'une
+observation en lecture seule : obtenir une preuve ne transfère aucune autorité
+de modification à Your Cloud.
 
 Le Daemon refuse :
 

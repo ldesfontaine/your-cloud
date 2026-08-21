@@ -158,7 +158,7 @@ Références de départ :
 ## Ansible externe ou futur
 
 - Ansible n'est ni une dépendance du Controller, ni le runtime d'action de
-  `v0.1.0`. L'utilisateur peut conserver ses playbooks en mode externe.
+  `v0.1.0`. L'utilisateur peut conserver ses playbooks hors de Your Cloud.
 - Une intégration future exige son propre contrat et un runner isolé ; elle
   n'est pas préconçue dans le cœur ou l'Auxiliaire actuel.
 - Lorsqu'un playbook existe pour le LAB, un parcours externe ou une future

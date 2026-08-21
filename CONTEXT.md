@@ -117,28 +117,8 @@ Sélection approuvée d'informations nommées que le Daemon peut relever sur des
 Intervalle signalé pour lequel le tampon local n'a pas pu conserver toutes les observations en attente.
 <!-- coherence: V1-OBSERVATION:end -->
 
-<!-- coherence: OWNERSHIP-MODES:start -->
-**Mode géré**:
-Mode dans lequel Your Cloud conserve l'état attendu d'un élément, prépare ses changements et peut les appliquer après approbation.
-
-**Mode externe**:
-Mode dans lequel l'utilisateur configure un élément en dehors de Your Cloud tandis que l'App peut le représenter et l'observer sans le modifier.
-
 **Profil de service**:
 Définition bornée d'un type de service que Your Cloud sait proposer dans un plan. Sa disponibilité ne crée aucune ressource : chaque instance exige une déclaration, un placement, un plan et une approbation explicites. Un profil utilisé comme référence dans le LAB n'est pas imposé aux infrastructures utilisateur.
-
-**État déclaré**:
-Information fournie par l'utilisateur sans preuve actuelle obtenue par Your Cloud.
-
-**État vérifié**:
-Information confirmée par une observation en lecture seule, datée et adaptée au type d'élément.
-
-**Élément détecté**:
-Service, passage ou autre capacité observée en lecture seule sur une machine enrôlée mais pas encore déclarée ni placée sous gestion de Your Cloud.
-
-**Adoption**:
-Parcours explicite qui audite un élément détecté ou externe avant de permettre son passage en mode géré après approbation.
-<!-- coherence: OWNERSHIP-MODES:end -->
 
 **Définition de service**:
 Document inerte rédigé par l'utilisateur dans des bornes fermées, puis gelé et haché par le Controller. Elle décrit un service sans produire aucun effet : seul un plan approuvé et signé peut l'épingler par son digest et en faire naître une instance.
@@ -195,13 +175,8 @@ _Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliq
 - Un **Point d'entrée public** appartient à une **Zone d'exposition**, mais cette
   zone ne devient une **DMZ** que si sa séparation réseau avec Internet et les
   zones privées est réellement appliquée et vérifiée.
-- En **Mode géré**, un changement de placement ou de publication produit un
-  nouveau **Plan d'action** ; il ne déclenche aucune mutation silencieuse.
-- En **Mode externe**, un **Service** ou un **Passage privé** reste sous
-  l'autorité de l'utilisateur. L'App distingue toujours son **État déclaré** de
-  son **État vérifié**.
-- Un **Élément détecté** ne devient jamais géré par sa seule découverte. Une
-  **Adoption** réussie est nécessaire pour transférer cette autorité.
+- Un changement de placement ou de publication produit un nouveau **Plan
+  d'action** ; il ne déclenche aucune mutation silencieuse.
 - Une **Définition de service** ne crée rien par elle-même : seul un **Plan de
   déploiement** approuvé qui épingle une de ses **Révisions** par digest
   produit une instance sur une machine.

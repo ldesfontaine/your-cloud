@@ -631,7 +631,6 @@ future DMZ exigera un segment dédié et des frontières filtrantes indépendant
 vers Internet, les zones privées et le plan d'administration.
 <!-- coherence: V1-NETWORK:end -->
 
-<!-- coherence: OWNERSHIP-MODES:start -->
 ### Palier dépendant — responsabilité externe visible
 
 **Résultat :** déclarer dans l'App un service ou un passage installé à la main,
@@ -646,7 +645,6 @@ peut rester externe.
 **Preuve de sortie :** un élément inconnu n'est ni découvert par scan, ni adopté
 silencieusement, ni présenté comme géré ; l'App annonce clairement ce qu'elle ne
 peut ni mettre à jour, ni restaurer, ni supprimer.
-<!-- coherence: OWNERSHIP-MODES:end -->
 
 ### Preuve complète de `v0.1.0`
 

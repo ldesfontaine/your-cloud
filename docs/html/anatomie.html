@@ -107,15 +107,9 @@
     </div>
     <!-- coherence: V1-OBSERVATION:end -->
 
-    <!-- coherence: OWNERSHIP-MODES:start -->
     <h2>Gestion explicite, jamais découverte du LAN</h2>
-    <div class="compare">
-      <article class="explain"><h3>Mode géré</h3><ul><li>État attendu conservé</li><li>Plan puis approbation</li><li>Application et vérification</li><li>Nouveau plan pour chaque changement</li></ul></article>
-      <article class="explain warning"><h3>Mode externe</h3><ul><li>Autorité conservée par l'utilisateur</li><li>État déclaré distingué du vérifié</li><li>Aucune promesse de mise à jour</li><li>Adoption future auditée et approuvée</li></ul></article>
-    </div>
     <p class="boundary">Un profil disponible dans l'App ne crée aucune ressource. Chaque instance exige une déclaration, un placement, un plan et une approbation explicites ; les profils nommés dans le LAB ne deviennent jamais une topologie imposée aux utilisateurs.</p>
     <p class="boundary">Une future découverte reste en lecture seule et limitée aux machines enrôlées. Ni le Daemon, ni le Relay, ni l'App ne scannent le LAN ; la présence sur le même réseau ne donne aucune confiance.</p>
-    <!-- coherence: OWNERSHIP-MODES:end -->
 
     <h2>Pourquoi le file provider protège</h2>
     <div class="flow" aria-label="Flux de publication Traefik"><div class="step">Demande dans l'App</div><div class="step">Route calculée</div><div class="step">Plan affiché</div><div class="step">Approbation</div><div class="step">Fichier Traefik</div><div class="step">HTTPS vérifié</div></div>
