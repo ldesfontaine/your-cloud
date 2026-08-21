@@ -519,6 +519,18 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
 
 ## Rapports exécutés
 
+- [`v0.2.0` — la publication du renommage, depuis la page Releases](v0.2.0-from-releases.md) :
+  passage du 21 août 2026 sur `lab-vps` (le poste) et `lab-machine-1` (le
+  serveur). Premier rejeu de cette preuve **sans aucun écart** : `ECARTS_README=0`,
+  les quatre commandes lues dans le README publié suffisent, et l'Assistant
+  installé rend `VERIFIED version=0.2.0` sur le lot qu'il transporte. Le parcours
+  « Créer une infrastructure » mène au Controller actif en **34 s**, et le relevé
+  indépendant confirme une seule unité active. La passe mesure une publication de
+  **renommage** : le périmètre fonctionnel de la `v0.1.4` n'y est pas rejugé.
+  Limites nommées : le `.deb` n'est pas reproductible — seul le lot serveur
+  embarqué l'est —, la reprise d'un coffre de `v0.1.4` n'existe pas, et le résidu
+  de `#156` est reconduit.
+
 - [`v0.1.2` — le retrait propre de l'App Linux](v0.1.2-clean-removal.md) :
   passage du 15 août 2026 sur `lab-app`. Le `.deb` du tag `v0.1.0` est
   installé sur une machine rendue à `clean`, l'App est réellement lancée
