@@ -15,7 +15,8 @@ Groupe logique dans lequel l'utilisateur rassemble des machines et les services 
 Hôte Linux physique ou virtuel déjà installé et accessible à Your Cloud jusqu'à `v0.1.0`.
 
 **Machine enrôlée**:
-Machine dont l'identité a été explicitement approuvée pour rejoindre une infrastructure Your Cloud.
+Machine dont l'identité a été explicitement approuvée pour rejoindre une infrastructure Your Cloud. **Une machine appartient à une seule infrastructure** : elle n'est jamais partagée entre deux. La retirer d'une infrastructure est un geste explicite, préalable à tout enrôlement ailleurs.
+_Avoid_: « machine partagée », car deux infrastructures ne détiennent jamais simultanément une autorité sur le même hôte.
 
 **Service**:
 Application ou capacité que l'utilisateur veut exécuter sur une ou plusieurs machines.
@@ -117,6 +118,20 @@ Sélection approuvée d'informations nommées que le Daemon peut relever sur des
 Intervalle signalé pour lequel le tampon local n'a pas pu conserver toutes les observations en attente.
 <!-- coherence: V1-OBSERVATION:end -->
 
+**Découverte**:
+Ce que le Daemon relève de lui-même sur une machine enrôlée, sans rien recevoir d'en haut : les unités systemd et les ports en écoute. Un service découvert est identifié par son **nom d'unité ou de conteneur, jamais par son port** — il redémarre ou change de port sans cesser d'être le même service.
+_Avoid_: « scan », car la découverte est locale à une machine déjà enrôlée et ne regarde jamais le réseau environnant.
+
+**Recette**:
+Ce que Your Cloud sait d'un service pour pouvoir le refaire : son image épinglée par digest, ses volumes, son environnement et son port. **C'est la connaissance de la recette, et non l'origine du service, qui ouvre les verbes** : sans elle, un service découvert se voit et se démarre ; avec elle, il se met à jour, se sauvegarde, se publie et se recrée ailleurs.
+
+**Reprise**:
+Parcours qui donne à Your Cloud la recette d'un service découvert : un audit approuvé en lecture seule lit sa configuration réelle, l'humain la relit et la valide, puis le service redémarre depuis cette recette pendant que l'ancien conteneur est conservé. **Un service est repris quand il tourne depuis la recette validée**, jamais quand l'audit se termine.
+_Avoid_: « adoption », qui nommait un parcours jamais implémenté et supposait des modes de responsabilité que le produit n'a plus.
+
+**Visibilité d'un service**:
+Qui peut joindre un service, et par où. **Publique** : tout le monde, par le point d'entrée, sans authentification. **Privée** : les seules personnes créées par l'administrateur, par le point d'entrée avec un portail d'authentification devant. La visibilité ne décrit pas l'autorité sur le service, seulement l'accès à son usage.
+
 **Profil de service**:
 Définition bornée d'un type de service que Your Cloud sait proposer dans un plan. Sa disponibilité ne crée aucune ressource : chaque instance exige une déclaration, un placement, un plan et une approbation explicites. Un profil utilisé comme référence dans le LAB n'est pas imposé aux infrastructures utilisateur.
 
@@ -210,8 +225,6 @@ _Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliq
 - « Ne jamais diffuser l'IP du LAN » signifie ne pas la publier comme
   destination et ne créer aucune entrée directe. Le VPS voit nécessairement
   l'adresse source utilisée par la connexion sortante.
-- L'appartenance éventuelle d'une machine à plusieurs infrastructures n'est pas
-  encore décidée.
 - « Afficher un élément manuel » ne signifie pas que Your Cloud peut deviner ou
   garantir toute sa configuration. Sans adaptateur de lecture et preuve
   actuelle, l'App affiche un état déclaré non vérifié.
