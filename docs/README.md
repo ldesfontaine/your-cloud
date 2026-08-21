@@ -10,9 +10,9 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 |---|---|
 | Comprendre les termes du produit | [`CONTEXT.md`](../CONTEXT.md) |
 | Comprendre la destination à long terme | [`projet/CAP.md`](projet/CAP.md) |
-| Savoir ce qui doit être vrai pour `v0.1.0` | [`objectifs/v1/README.md`](objectifs/v1/README.md) |
-| Voir l'ordre des preuves jusqu'à `v0.1.0` | [`objectifs/v1/ROADMAP.md`](objectifs/v1/ROADMAP.md) |
-| Cadrer l'App cliente et le Controller de lecture `v0.0.3` | [`objectifs/v1/CONTRAT-V0.0.3.md`](objectifs/v1/CONTRAT-V0.0.3.md) |
+| Relire ce qui devait être vrai pour `v0.1.0` — **objectif atteint** | [`objectifs/v1/README.md`](objectifs/v1/README.md) |
+| Relire l'ordre des preuves qui a mené à `v0.1.0` — **objectif atteint** | [`objectifs/v1/ROADMAP.md`](objectifs/v1/ROADMAP.md) |
+| Relire le contrat de l'App cliente et du Controller de lecture `v0.0.3` — **archive datée** | [`objectifs/v1/CONTRAT-V0.0.3.md`](objectifs/v1/CONTRAT-V0.0.3.md) |
 | Comprendre les machines, composants et flux | [`architecture/ANATOMIE.md`](architecture/ANATOMIE.md) |
 | Comprendre l'amorçage et le remplacement du Controller | [`architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`](architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) |
 | Comprendre les appels, données, états et protections de la chaîne d'observation | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
@@ -27,13 +27,17 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Propager une décision validée | [`projet/COHERENCE.md`](projet/COHERENCE.md) |
 | Ouvrir la documentation visuelle | [`html/index.html`](html/index.html) |
 
+Un objectif marqué **atteint** se relit comme un récit : il dit ce que le
+produit devait rendre et l'a rendu, pas ce qu'il vise maintenant. La
+destination à long terme se lit dans [`projet/CAP.md`](projet/CAP.md).
+
 ## Organisation
 
 ```text
 docs/
 |- projet/          cap et cohérence des sources
 |- objectifs/
-|  `- v1/           ligne d'arrivée et roadmap de v0.1.0
+|  `- v1/           objectif ATTEINT : ligne d'arrivée et roadmap de v0.1.0
 |- architecture/    placements, autorités et futurs sujets techniques
 |- contribution/    manière de travailler et qualité
 |- lab/             règles et preuves réellement exécutées
