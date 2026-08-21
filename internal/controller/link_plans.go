@@ -7,7 +7,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
-// The three requests below are everything the Console may choose about a plan of
+// The three requests below are everything the App may choose about a plan of
 // the private passage, one closed schema per operation group.
 //
 // Three sibling routes rather than one route carrying a role and a phase is the
@@ -44,7 +44,7 @@ type linkPlanRequest struct {
 // passage will carry.
 //
 // The peer key is the one value here that nobody chose: it is an observation the
-// other machine's preparation reported, carried by the Console into this request
+// other machine's preparation reported, carried by the App into this request
 // so that the human approves a plan naming exactly the peer they accept. It is
 // held against exactly the canonicity the document validation requires, and by
 // that validation rather than beside it — a key this route accepted and the plan

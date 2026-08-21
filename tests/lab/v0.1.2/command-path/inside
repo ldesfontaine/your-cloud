@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Everything the Console oracle needs, inside the virtual screen `run` opened.
+# Everything the App oracle needs, inside the virtual screen `run` opened.
 #
-# One pilot only, and it is the installed product: `/usr/bin/your-cloud-console`,
+# One pilot only, and it is the installed product: `/usr/bin/your-cloud-app`,
 # the binary the `.deb` of this run really placed, driven through `tauri-driver`
-# proxying the same WebKitWebDriver the Linux Console paints with. There is no
+# proxying the same WebKitWebDriver the Linux App paints with. There is no
 # fixture pilot here and there deliberately cannot be one: this proof exists to
 # exercise the command path with the product's own binaries, and a bundle served
 # beside the application would be exactly the substitution it must refuse.
@@ -14,7 +14,7 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 stage=${1:?usage: inside <stage> <window-sheet>}
 window_sheet=${2:?usage: inside <stage> <window-sheet>}
 
-application=/usr/bin/your-cloud-console
+application=/usr/bin/your-cloud-app
 output="$here/output"
 driver_port=4444
 native_port=4445
@@ -25,7 +25,7 @@ fail() { echo "FAILED: $*" >&2; exit 1; }
 
 [[ -x "$application" ]] || fail "$application is absent; build and install the candidate first"
 # Only the stage that associates needs the Controller's one-time sheet; the
-# later ones open a Console that already holds this run's association.
+# later ones open an App that already holds this run's association.
 if [[ "$stage" == associate ]]; then
   [[ -s "$window_sheet" ]] || fail "the Controller's one-time enrolment sheet is absent or empty"
 fi
@@ -47,7 +47,7 @@ wait_for_port() {
   return 1
 }
 
-# The Console's state root is **kept between stages**, and emptied only by the
+# The App's state root is **kept between stages**, and emptied only by the
 # stage that associates.
 #
 # This is forced by the product rather than chosen. An association is a
@@ -56,8 +56,8 @@ wait_for_port() {
 # a Controller it can no longer associate with, and the whole run would be
 # stuck one screen after the start. The vault, its keys and the association
 # therefore live across the stages of one run, exactly as they do for a human
-# who opens the Console twice.
-state_root=/root/your-cloud-lab-command-path/console-state
+# who opens the App twice.
+state_root=/root/your-cloud-lab-command-path/app-state
 if [[ "$stage" == associate ]]; then
   rm -rf "$state_root"
 fi
@@ -72,7 +72,7 @@ driver_pid=$!
 cleanup() {
   kill "$driver_pid" 2>/dev/null || true
   wait "$driver_pid" 2>/dev/null || true
-  pkill -x your-cloud-console 2>/dev/null || true
+  pkill -x your-cloud-app 2>/dev/null || true
   pkill -x your-cloud-native-bootstrap-assistant 2>/dev/null || true
   # The state root deliberately survives: see above. `remove` takes it away.
 }
@@ -88,7 +88,7 @@ echo "  candidate $(dpkg-query -W -f '${Version}' your-cloud 2>/dev/null || echo
 # is a harness defect of its own. The oracle's exit code is echoed so the log
 # carries the verdict even when the transport that returned it does not survive.
 set +e
-python3 -u -X faulthandler "$here/console-oracle.py" \
+python3 -u -X faulthandler "$here/app-oracle.py" \
   --base-url "http://127.0.0.1:$driver_port" \
   --application "$application" \
   --window-sheet "$window_sheet" \

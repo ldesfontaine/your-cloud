@@ -21,7 +21,7 @@ lancé. Le code produit s'exécute dans une VM LAB ou un runner distant isolé.
 - les snapshots et retours à un état propre ;
 - des commandes SSH et de copie qui utilisent une identité synthétique dédiée.
 
-Les noms de gabarits et de topologies tels que `console`, `coordinateur`,
+Les noms de gabarits et de topologies tels que `app`, `coordinateur`,
 `quick` ou `v1-full` décrivent uniquement l'outillage LAB. Ils ne constituent
 ni l'architecture du produit ni une preuve fonctionnelle. Toute évolution de
 ces profils suit le besoin du scénario concerné sans réutiliser implicitement
@@ -102,10 +102,10 @@ que les preuves compilent sont posées par
 
 ```text
 tools/labctl topology create quick
-tools/provision-lab [lab-console | lab-machine-1 | lab-vps | all]
+tools/provision-lab [lab-app | lab-machine-1 | lab-vps | all]
 ```
 
-`lab-console` reçoit le swap, les dépendances de construction GTK et la chaîne
+`lab-app` reçoit le swap, les dépendances de construction GTK et la chaîne
 Rust ; `lab-machine-1` et `lab-vps` reçoivent la chaîne Go et le sol de
 conteneurs sans privilèges. `lab-vps` reçoit en plus **`slirp4netns`**, que la
 fiche du point d'entrée nomme à la main : sans lui l'entrée ne démarre pas, et
@@ -134,7 +134,7 @@ affirmations :
   la dernière poignée de main plutôt que le fichier que le produit a écrit.
 
 La topologie `quick` compte donc trois machines, et elles ne sont pas
-interchangeables. `lab-console` porte la Console ; `lab-machine-1` tient le rôle
+interchangeables. `lab-app` porte l'App ; `lab-machine-1` tient le rôle
 du mini-PC domestique ; `lab-vps` tient celui du VPS public — c'est la seule
 machine qui écoute publiquement, et les preuves du profil public la lisent
 **depuis l'extérieur**, depuis le poste ou depuis une autre VM. Elle rejoint le
@@ -154,7 +154,7 @@ compilateur que la porte n'exécute jamais.
 Deux points que le provisionnement ne règle pas seul :
 
 - le swapfile est **délibérément absent de `/etc/fstab`**. Sans lui la
-  compilation du crate de la Console est tuée par l'OOM sur cette machine, et
+  compilation du crate de l'App est tuée par l'OOM sur cette machine, et
   [`tests/lab/v0.1.0/prove`](../../tests/lab/v0.1.0/prove) le remonte après
   chaque démarrage — ce chemin reste ainsi éprouvé plutôt que de devenir du code
   mort ;
@@ -170,7 +170,7 @@ Pour `v0.0.1`,
 d'orchestration. Le poste de développement ne fait qu'empaqueter le lot non
 sensible, calculer ses empreintes et appeler `labctl`.
 [`tests/checks/source-v0.0.1`](../../tests/checks/source-v0.0.1) s'exécute en
-mode `lab` dans `lab-console` ou en mode `ci` dans un runner CI distant isolé ;
+mode `lab` dans `lab-app` ou en mode `ci` dans un runner CI distant isolé ;
 aucun de ces contrôles ni aucun build ne s'exécute sur le laptop. HTTP et
 systemd restent propres à la preuve dans les VM LAB. Une erreur après mutation
 sélectionne et vérifie l'état absent ; un succès réinstalle l'état final
@@ -179,7 +179,7 @@ documenté.
 Pour `v0.1.0`,
 [`tests/lab/v0.1.0/personal-access/prove`](../../tests/lab/v0.1.0/personal-access/prove)
 est l'entrée d'orchestration du périmètre de l'accès personnel. Elle applique la
-même garde d'inventaire, monte les deux côtés du périmètre sur `lab-console` et
+même garde d'inventaire, monte les deux côtés du périmètre sur `lab-app` et
 `lab-machine-1`, exécute la suite `personal-access-contract`, puis démonte et
 prouve l'absence de ce qu'elle a créé, même lorsque la suite échoue. Les
 comptes, clés et agents sont synthétiques et générés au montage ; les deux VM
@@ -201,7 +201,7 @@ périmètre sur deux machines à la fois** : `lab-machine-1` tient le rôle
 port entrant — et `lab-vps` le rôle `listener`. Elle applique les quatre plans
 dans l'ordre du contrat, porte la clé publique rapportée par la préparation de
 chaque machine dans le plan de jonction de l'autre, redémarre réellement les
-deux machines, puis démonte tout même quand une étape échoue. `lab-console` n'y
+deux machines, puis démonte tout même quand une étape échoue. `lab-app` n'y
 reçoit rien du produit : elle sert d'**observateur hostile**, à qui la preuve
 donne à la main les routes qu'un attaquant se donnerait, et qui les rend. Le
 poste, lui, scanne les deux machines avant et après pour que « aucun port
@@ -214,7 +214,7 @@ hostile atteint déjà l'adresse propre de `lab-machine-1` avant que le passage
 existe — ce que la preuve constate est qu'il n'en atteint **pas un port de
 plus** ; et un poste pilote peut lui-même porter une adresse de `10.66.66.0/24`
 pour des raisons étrangères au LAB, auquel cas il le dit et laisse
-`lab-console` faire l'observation à sa place.
+`lab-app` faire l'observation à sa place.
 
 Pour le palier du profil privé (`#17`),
 [`tests/lab/v0.1.0/private-service/prove`](../../tests/lab/v0.1.0/private-service/prove)
@@ -222,7 +222,7 @@ est l'entrée d'orchestration, et c'est la première preuve qui joue le **scéna
 de référence entier d'un seul tenant** : `lab-machine-1` tient le service à
 données, son volume, ses archives et son confinement de sortie ; `lab-vps` tient
 le point d'entrée, le profil sans état du palier précédent, les deux noms
-déclarés et l'écouteur du passage ; `lab-console` sert à la fois d'observateur
+déclarés et l'écouteur du passage ; `lab-app` sert à la fois d'observateur
 hostile et de **voisin synthétique du LAN** — un vrai serveur HTTP que la preuve
 démarre et arrête, sans quoi « le service confiné ne joint aucun voisin » ne se
 distinguerait pas d'une adresse morte. Le poste pilote épingle l'autorité
@@ -253,7 +253,7 @@ est l'entrée d'orchestration, et c'est la première preuve LAB qui **monte la
 chaîne d'observation entière** plutôt que de la remplacer par une fiction :
 `lab-machine-1` tient le Daemon et le Relay, `lab-vps` tient le Controller — un
 vrai `controller init`, un vrai inventaire déclaré, ses propres identifiants et
-ses propres dates —, et `lab-console` tient le client qui parle à sa surface.
+ses propres dates —, et `lab-app` tient le client qui parle à sa surface.
 Chaque état, chaque date et chaque mot d'ancienneté que le rapport cite sort de
 ce Controller-là.
 
@@ -283,7 +283,7 @@ preuve ; et **placer deux adresses**, `192.168.243.153` et `192.168.242.103`,
 que le Relay et son lecteur exigent et que la topologie `quick` ne porte pas.
 Cette dernière est une contrainte du produit lue par le LAB, jamais un
 comportement du produit modifié pour lui plaire. Le rapport porte aussi la dette
-que `#108` a nommée : **la Console n'est pas exercée par ce harnais** — elle lit
+que `#108` a nommée : **l'App n'est pas exercée par ce harnais** — elle lit
 l'inventaire et retire une déclaration, elle n'a pas de formulaire de
 déclaration, et c'est sa propre suite Rust et TypeScript qui la prouve.
 
@@ -318,7 +318,7 @@ tools/provision-lab all                 le sol est reposé par la recette
 
 La destruction n'est pas conditionnée à une topologie que l'inventaire
 montrerait : elle est exactement l'inventaire que cette étape existe pour ne pas
-croire. Le coût est de vingt à trente minutes, la chaîne Rust de `lab-console`
+croire. Le coût est de vingt à trente minutes, la chaîne Rust de `lab-app`
 en tenant l'essentiel.
 
 **Onze passes, chacune rejouée telle quelle.** Les six passes du palier `#13`,
@@ -413,7 +413,7 @@ interchangeable : `lab-machine-1` tient le service sous preuve, ses deux
 volumes, ses archives, sa valeur générée et son confinement, **le coffre
 `vaultwarden` à côté de lui** et l'initiateur du passage ; `lab-vps` tient
 l'entrée, l'écouteur du passage, un **second service utilisateur qui ne garde
-rien** et les deux noms déclarés ; `lab-console` tient l'**origine de l'image**
+rien** et les deux noms déclarés ; `lab-app` tient l'**origine de l'image**
 et, par le même écouteur, le voisin synthétique du LAN.
 
 **La décision centrale de ce harnais est l'acheminement de l'image, parce
@@ -421,7 +421,7 @@ qu'aucun registre n'existe dans le LAB et qu'aucune image tierce ne peut entrer
 dans cette preuve.** L'image est construite sur place à partir du binaire Go
 statique de l'application synthétique — une couche `tar.gz`, une configuration
 et un manifeste OCI écrits par la fixture, sans date, donc de digest
-reproductible — puis servie depuis `lab-console` par la moitié en lecture de
+reproductible — puis servie depuis `lab-app` par la moitié en lecture de
 l'API de distribution : `GET /v2/`, un manifeste **par digest** et ses blobs, en
 TLS sous l'autorité synthétique de la course. Le tirage est donc un vrai tirage
 — moteur rootless, réseau, autre machine, par empreinte — et l'origine ne sait
@@ -473,13 +473,13 @@ documentée et reproductible dans le LAB approprié.
 ## La preuve de la milestone `v0.1.2` : `tests/lab/v0.1.2/command-path/prove`
 
 [`tests/lab/v0.1.2/command-path/prove`](../../tests/lab/v0.1.2/command-path/prove)
-est l'entrée d'orchestration de la milestone « La Console aux commandes »
+est l'entrée d'orchestration de la milestone « L'App aux commandes »
 (`#122`), et la **première preuve de ce dépôt sous la règle sans fixture** de
 [`QUALITE.md`](../contribution/QUALITE.md) : aucun composant du produit n'y est
 remplacé sur le trajet prouvé, et la liste de ces remplacements est vide.
 
 Les trois machines de `quick` tiennent trois autorités qui ne sont pas
-interchangeables : `lab-console` est la machine de l'humain — le `.deb` de la
+interchangeables : `lab-app` est la machine de l'humain — le `.deb` de la
 passe, sa WebView, son helper natif et son coffre, et rien du côté serveur ;
 `lab-vps` est le Controller, seul côté qui ouvre une session vers une machine ;
 `lab-machine-1` est la machine — l'Auxiliaire, l'ancre, sa position anti-rejeu,
@@ -499,9 +499,9 @@ appliqué » de « rien n'a été vérifié ».
 ## Le retrait propre : `tests/lab/v0.1.2/clean-removal/prove`
 
 [`tests/lab/v0.1.2/clean-removal/prove`](../../tests/lab/v0.1.2/clean-removal/prove)
-répond à une question que rien n'avait posée pour la Console : après une
+répond à une question que rien n'avait posée pour l'App : après une
 désinstallation, que reste-t-il sur la machine ? Elle ne parle qu'à
-`lab-console`, qu'elle rend d'abord à son instantané `clean`, et ne crée ni ne
+`lab-app`, qu'elle rend d'abord à son instantané `clean`, et ne crée ni ne
 détruit de topologie.
 
 Sa méthode est une **différence entre recensements du disque** — jamais une
@@ -519,9 +519,9 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
 
 ## Rapports exécutés
 
-- [`v0.1.2` — le retrait propre de la Console Linux](v0.1.2-clean-removal.md) :
-  passage du 15 août 2026 sur `lab-console`. Le `.deb` du tag `v0.1.0` est
-  installé sur une machine rendue à `clean`, la Console est réellement lancée
+- [`v0.1.2` — le retrait propre de l'App Linux](v0.1.2-clean-removal.md) :
+  passage du 15 août 2026 sur `lab-app`. Le `.deb` du tag `v0.1.0` est
+  installé sur une machine rendue à `clean`, l'App est réellement lancée
   sous un compte non privilégié jusqu'au formulaire d'association, puis retirée
   en deux mesures. Plancher de bruit **nul** ; l'installation pose **six
   entrées** et rien sous `/etc` ni `/var` hors comptabilité dpkg ; le retrait
@@ -534,7 +534,7 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   prouvé** — ce dépôt n'en publie aucun, et la preuve porte sur la recette
   d'empaquetage à la révision attestée.
 - [`v0.1.2` — le trajet de commande entier, sans fixture](v0.1.2-command-path.md) :
-  passage `quick` du 12 août 2026 pour #128. La Console installée gèle une
+  passage `quick` du 12 août 2026 pour #128. L'App installée gèle une
   définition, « Déployer » ne porte qu'un nom, la **vraie fenêtre native** —
   processus GTK séparé, conduit par XTEST et non par un événement synthétique que
   GTK ignore — recueille le consentement, le cœur signe, le Controller consomme
@@ -555,7 +555,7 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   absence de chaque dérivation sur l'autre machine et y est publié par une
   **route locale**, si bien que les deux genres de route ouverts à la troisième
   porte sont exercés et que les deux noms répondent sur la même IP publique et le
-  même `443`. L'image est servie **par digest seul** depuis `lab-console` par la
+  même `443`. L'image est servie **par digest seul** depuis `lab-app` par la
   moitié en lecture de l'API de distribution, en TLS sous l'autorité de la course :
   faire de cette origine le **voisin synthétique** donne au confinement son
   contrôle positif — l'hôte d'où le moteur a réellement tiré cette image est celui
@@ -609,7 +609,7 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   machine auditée plutôt que sur une troisième machine du réseau.
 - [`v0.1.0` — remplacement explicite d'un Controller, et retrait de ses autorités](v0.1.0-controller-replacement.md) :
   passage `quick` du 5 août 2026 pour #40, le seul palier dont le sujet est ce
-  qui se passe **quand on ne sait pas**. `lab-console` est **réellement
+  qui se passe **quand on ne sait pas**. `lab-app` est **réellement
   arrêtée** : la panne jugée est une vraie panne, observée depuis deux postes
   indépendants d'espèces différentes — une tentative TCP depuis `lab-machine-1`
   et l'état du domaine rapporté par l'hyperviseur — et les 310 secondes de
@@ -633,7 +633,7 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
 - [`v0.1.0` — identité SSH bornée par machine, et activation des rôles approuvés](v0.1.0-machine-identity.md) :
   passage `quick` du 5 août 2026 pour #39. Chaque machine reçoit une paire qui
   n'est la sienne que sur elle : un **vrai `sshd`** refuse l'identité de
-  `lab-machine-1` sur `lab-console` et l'inverse, et la porte compilée rend
+  `lab-machine-1` sur `lab-app` et l'inverse, et la porte compilée rend
   `ForeignIdentity`, `Unattributed` et `SharedIdentity` sous leur propre nom. La
   commande forcée n'ouvre ni shell, ni PTY, ni SFTP, ni fichier rc, ni X11, ni
   transfert de port ou d'agent, ni argument libre, chaque capacité étant refusée
@@ -660,13 +660,13 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   et trois unités `root:root` `0644` livrées inactives, sans setuid, setgid ni
   capacité ; une seule unité est activée. Le Controller tourne sous un compte
   dynamique sans capacité, avec `TasksMax=128` et `MemoryMax=384 Mio`, ses
-  secrets `root:root` `0600` remis par systemd seul. `lab-console` est
+  secrets `root:root` `0600` remis par systemd seul. `lab-app` est
   **réellement arrêtée** après extinction des processus de l'Assistant : le
   Controller garde le **même PID** et écoute toujours. Un arrêt à chacune des
   quatre premières étapes rend un registre que le déroulé reconstruit
   exactement, et la machine revient à son état initial à chaque fois. Trois
   épreuves par mutation font rougir la suite. Le lot n'est pas encore embarqué
-  dans l'installateur de la Console et l'ancre n'y est pas scellée.
+  dans l'installateur de l'App et l'ancre n'y est pas scellée.
 - [`v0.1.0` — approbation signée vérifiée sans faire confiance au Controller](v0.1.0-signed-approval.md) :
   passage `quick` du 5 août 2026 pour #37. Le cœur natif signe une enveloppe
   canonique versionnée qui lie infrastructure, machine, époque, séquence, plan,
@@ -674,7 +674,7 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   de diagnostic la vérifie contre sa propre ancre `root`, consomme
   atomiquement la séquence avant tout traitement et refuse rejeu, séquence
   ancienne, sautée ou concurrente. Un vecteur déterministe unique est épinglé
-  côté Console et côté Auxiliaire : la signature produite par le code Rust est
+  côté App et côté Auxiliaire : la signature produite par le code Rust est
   vérifiée par le code Go. `lab-machine-1` est **réellement arrêtée puis
   redémarrée** par le contrôleur du LAB ; la position anti-rejeu est retrouvée
   octet pour octet et les mêmes refus tiennent. Une nouvelle clé humaine laisse
@@ -695,7 +695,7 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   fois ces trois-là levés. Le palier #14 n'est pas prouvé.
 - [`v0.1.0` — bornes KDF et politique `sudo` de l'accès personnel](v0.1.0-personal-access-bounds.md) :
   passage `quick` du 3 août 2026 pour #51. La calibration `bcrypt_pbkdf` sur
-  `lab-console` rend environ 4,6 ms par round, identiques pour Ed25519 et RSA
+  `lab-app` rend environ 4,6 ms par round, identiques pour Ed25519 et RSA
   3072, et fixe `MAX_BCRYPT_ROUNDS = 2048`, vérifié à 9355 ms sur les 300 s de
   l'échéance. La matrice `sudo` réelle sur Debian 13 valide les refus de
   `log_input` et `log_stdin` et révèle que les entrées Defaults sont réparties
@@ -737,12 +737,12 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   #43 ; elle ne ferme ni #45, ni #42, ni #35, ni le palier #13 ou `v0.1.0`.
 - [`v0.1.0` — bornage IPC et gate du helper Linux](v1-bootstrap-ipc-linux.md) :
   passage LAB Linux historique du 2 août 2026 ; WebKitGTK et JavaScriptCoreGTK
-  sont des dépendances directes du binaire Console, ce qui impose le helper
+  sont des dépendances directes du binaire App, ce qui impose le helper
   compagnon distinct prévu par #44. Le premier consentement GTK3 sans secret et
   la récolte autonome y sont prouvés. Les manques #43 Windows et Tauri vivant
   sont traités par le rapport Windows ci-dessus ; les secrets de #45 et l'accès
   SSH de #42 restent ouverts.
-- [`v0.0.3` — porte Linux Console–Controller](v0.0.3-console-controller-linux.md) :
+- [`v0.0.3` — porte Linux App–Controller](v0.0.3-console-controller-linux.md) :
   `.deb` signé et installé, coffre et appairage, deux Controllers séparés,
   matrice hostile depuis une seconde VM, frontière réseau privée, Relay
   indisponible, donnée ancienne, lacune, reprise, redémarrages et sept vues
@@ -804,7 +804,7 @@ automatisation complète attend que sa valeur soit démontrée. Elle sert la
 validation continue du helper Windows pendant le développement, au même titre
 que le LAB Linux pour sa moitié :
 [`tests/lab/v0.1.0/windows-helper/prove`](../../tests/lab/v0.1.0/windows-helper/prove)
-y synchronise les sources natives de la Console et y exécute les suites de
+y synchronise les sources natives de l'App et y exécute les suites de
 contrat propres à Windows — Job Object et handles suspendus, pipe nommé et
 parent déclaré, dialogue Win32 vivant, crash et dump du secret — avec les
 invocations exactes de la porte native. Son adresse et sa clé viennent de

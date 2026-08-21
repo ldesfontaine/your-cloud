@@ -65,7 +65,7 @@ intégration permet ensuite l'accès SSH personnel borné #42. La fermeture de #
 exige ces quatre résultats et leurs preuves, dans l'ordre
 `#44 → (#43 + #45) → #42 → #35` ; une seule sous-issue verte ne suffit pas.
 Le gate ELF Linux du 2 août 2026 a activé le repli prévu par #44 : #45 doit
-livrer un binaire helper distinct dont le graphe exclut la Console, Tauri, Wry,
+livrer un binaire helper distinct dont le graphe exclut l'App, Tauri, Wry,
 Tao, WebKit et JavaScriptCore. Cette décision ne change pas l'ordre des issues
 et ne vaut pas à elle seule preuve du helper. Sa fondation fail-closed et ses
 gates Linux sont exécutés ; le lancement parent et le premier consentement
@@ -144,14 +144,14 @@ Types usuels :
 - `refactor` pour une transformation sans changement de contrat ;
 - `chore` pour un travail d'entretien borné.
 
-Le `scope` nomme le domaine stable le plus étroit, par exemple `console`,
+Le `scope` nomme le domaine stable le plus étroit, par exemple `app`,
 `controller`, `agent`, `relay`, `lab` ou `ci`. Le reste du titre décrit le
 résultat, pas l'action vague « travailler sur ».
 
 Exemples :
 
 ```text
-ci(console): router les contrôles selon les chemins modifiés
+ci(app): router les contrôles selon les chemins modifiés
 test(windows): prouver le lancement du MSI sans listener local
 docs(v0.1.0): propager le contrat d'amorçage dans la roadmap
 ```

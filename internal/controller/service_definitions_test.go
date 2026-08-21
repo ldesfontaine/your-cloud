@@ -16,7 +16,7 @@ import (
 const (
 	// The reference vector of `#116`, byte for byte, with the digest that palier
 	// pinned. It is spelled here rather than derived so that this Controller is
-	// held against the same bytes the Console and the deterministic vectors of the
+	// held against the same bytes the App and the deterministic vectors of the
 	// two implementations are held against: a freeze that agreed with an encoder
 	// this test called would prove only that one encoder agrees with itself.
 	definitionVectorDocument = `{"schema_version":1,"slug":"lab-notes",` +

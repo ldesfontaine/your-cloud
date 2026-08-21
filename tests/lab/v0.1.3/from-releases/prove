@@ -39,7 +39,7 @@ usage: prove <phase>
               ROUGE tant qu'un écart demeure : l'oracle du premier critère
   poste       l'écran et les yeux, plus la clé SSH de l'inconnu — APRÈS installer
   serveur     le serveur de l'inconnu : compte administrateur ordinaire, sa clé
-  parcours    lance la Console et joue « Créer une infrastructure » jusqu'au Controller
+  parcours    lance l'App et joue « Créer une infrastructure » jusqu'au Controller
   constats    relève indépendant sur le serveur, et le temps réel du parcours
   collect     rapatrie les artefacts vers tests/artifacts/proofs/
   remove      rend les deux machines à leur état de départ
@@ -103,7 +103,7 @@ install -d -m 0755 /root/.cargo/bin'
   local carried="$root/tests/artifacts/tauri-driver"
   if [[ ! -x "$carried" ]]; then
     install -d -m 0755 "$(dirname "$carried")"
-    "$labctl" copy-from lab-console /root/.cargo/bin/tauri-driver "$carried" >/dev/null
+    "$labctl" copy-from lab-app /root/.cargo/bin/tauri-driver "$carried" >/dev/null
     chmod 0755 "$carried"
   fi
   "$labctl" copy-to "$poste_vm" "$carried" /root/.cargo/bin/tauri-driver >/dev/null
@@ -112,7 +112,7 @@ install -d -m 0755 /root/.cargo/bin'
   # Les yeux : les mêmes scripts que la preuve du palier.
   "$labctl" ssh "$poste_vm" -- "install -d -m 0700 $remote"
   local file
-  for file in run inside console-oracle.py; do
+  for file in run inside app-oracle.py; do
     "$labctl" copy-to "$poste_vm" "$oracle_home/$file" "$remote/$file" >/dev/null
     "$labctl" ssh "$poste_vm" -- "chmod 0700 $remote/$file"
   done
@@ -319,7 +319,7 @@ parcours() {
   inventory "$poste_vm" >/dev/null
   local serveur_ip
   serveur_ip=$(inventory "$serveur_vm")
-  announce "« Créer une infrastructure » depuis la Console publiée"
+  announce "« Créer une infrastructure » depuis l'App publiée"
   # La cible doit être à son état initial : une passe qui trouve l'état d'une
   # passe précédente rend un déroulé « incertain — établi par personne », et
   # ce n'est pas un défaut du produit mais un harnais qui n'a pas rangé.

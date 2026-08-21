@@ -1,4 +1,4 @@
-# Unpack the Console native sources into the evaluation machine's work tree.
+# Unpack the App native sources into the evaluation machine's work tree.
 #
 # Only the sources travel. The build cache is deliberately kept: rebuilding
 # this workspace from nothing on four virtual processors costs far more than

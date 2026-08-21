@@ -1,7 +1,7 @@
 # Déploiement du Controller et du reader Relay `v0.0.3`
 
 Ce dossier ne déploie que le Controller privé et strictement en lecture envers
-les machines et le Relay. Il n'ajoute aucun frontend, serveur local de Console,
+les machines et le Relay. Il n'ajoute aucun frontend, serveur local de App,
 canal d'action, Ansible métier ou liaison réseau future.
 
 L'unité [`your-cloud-relay.service`](your-cloud-relay.service) prolonge le

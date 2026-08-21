@@ -3,7 +3,7 @@
 #
 # Everything installed here is synthetic and root-owned: one approval anchor
 # minted from a synthetic seed, one empty anti-replay position, the product
-# binary and the fixture that stands in for the Controller, the Console and the
+# binary and the fixture that stands in for the Controller, the App and the
 # certificate authority of the declared names. No real key, no real
 # infrastructure, no service, no entrypoint and no route: those four are what
 # the proof asks the product to create.

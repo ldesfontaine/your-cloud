@@ -21,10 +21,10 @@ Machine dont l'identité a été explicitement approuvée pour rejoindre une inf
 Application ou capacité que l'utilisateur veut exécuter sur une ou plusieurs machines.
 
 <!-- coherence: V1-APP-ACCESS:start -->
-**App**:
-Produit formé par une Console et un ou plusieurs Controllers, sans confondre leur interface et leur autorité.
+**Your Cloud**:
+Produit formé par une App et un ou plusieurs Controllers, sans confondre leur interface et leur autorité.
 
-**Console**:
+**App**:
 Application cliente installée et signée sur un appareil administrateur. Elle embarque l'interface, conserve les associations approuvées vers des Controllers et recueille les demandes sans être la source de leur inventaire ni conserver de secret de machine. Elle n'héberge aucun serveur local et ne télécharge pas son code depuis un Controller.
 Dans le profil géré, elle présente une opération de connexion privée nommée pour
 chaque infrastructure sans exposer à l'administrateur une configuration réseau
@@ -40,7 +40,7 @@ Parcours qui utilise temporairement l'accès personnel pour installer un Control
 _Avoid_: « découverte automatique », car l'utilisateur déclare chaque machine et prête lui-même l'accès initial.
 
 **Assistant d'amorçage**:
-Composant temporaire de la Console qui utilise l'accès personnel seulement pendant un amorçage ou un remplacement du Controller, sans le transmettre au frontend ni le conserver.
+Composant temporaire de l'App qui utilise l'accès personnel seulement pendant un amorçage ou un remplacement du Controller, sans le transmettre au frontend ni le conserver.
 _Avoid_: « Controller local », car l'Assistant s'arrête après le transfert d'autorité.
 
 **Accès d'administration personnel**:
@@ -52,12 +52,12 @@ Accès SSH opérationnel propre à une machine, détenu par son Controller et li
 _Avoid_: « clé SSH globale », car deux machines ne partagent jamais cette identité.
 
 **Remplacement du Controller**:
-Amorçage explicite après la perte ou l'isolement d'un Controller, qui associe la Console à son remplaçant et renouvelle ses autorités sans réinstaller les Agents compatibles.
-_Avoid_: « récupération de la Console », qui réassocie seulement une Console à un Controller encore vivant.
+Amorçage explicite après la perte ou l'isolement d'un Controller, qui associe l'App à son remplaçant et renouvelle ses autorités sans réinstaller les Agents compatibles.
+_Avoid_: « récupération de l'App », qui réassocie seulement une App à un Controller encore vivant.
 
 Il existe exactement deux catégories d'accès SSH d'administration des machines :
 l'accès personnel conservé par l'utilisateur et l'identité Your Cloud propre à
-chaque machine. L'authentification Console–Controller autorise l'humain dans le
+chaque machine. L'authentification App–Controller autorise l'humain dans le
 produit, mais ne constitue pas une troisième autorité SSH.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
@@ -170,7 +170,7 @@ _Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliq
   d'observation de `v0.1.0` exige un Relay explicitement provisionné pour l'infrastructure.
 - Un **Daemon** connaît uniquement son **Relay** approuvé. Il ne connaît aucun
   **Controller** et ne reçoit aucune action de sa part.
-- L'**Utilisateur** agit dans une **Console**. La Console contacte le
+- L'**Utilisateur** agit dans une **App**. L'App contacte le
   **Controller** approuvé de l'**Infrastructure** concernée ; elle peut conserver
   plusieurs associations indépendantes sans fusionner leurs autorités.
 - Un **Agent** peut rester limité à l'observation. Activer un **Auxiliaire local**
@@ -184,13 +184,13 @@ _Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliq
   une continuité supposée.
 - Le **Controller** obtient les observations auprès du **Relay**, mais dirige les
   **Plans d'action** approuvés vers une autorité distincte adaptée à leur cible.
-  La **Console** ne contacte pas le Relay et le Relay ne transporte jamais ces
+  L'**App** ne contacte pas le Relay et le Relay ne transporte jamais ces
   actions.
 - Un **Plan de déploiement** est une forme de **Plan d'action**.
 - Une **Bascule** avec données nomme son **Point de non-retour** et conserve
   l'ancien état pendant la **Fenêtre de retour** annoncée.
 - Pour publier un service privé, le **Controller** prépare un plan que la
-  **Console** présente avant de faire configurer le **Passage privé** et le
+  **App** présente avant de faire configurer le **Passage privé** et le
   **Point d'entrée public** par l'autorité adaptée.
 - Un **Point d'entrée public** appartient à une **Zone d'exposition**, mais cette
   zone ne devient une **DMZ** que si sa séparation réseau avec Internet et les
@@ -215,7 +215,7 @@ _Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliq
   **Controller** le lit, le refuse s'il ne nomme pas cette machine, cette
   opération et cette séquence, et affiche « lancé, non rapporté » plutôt que de
   supposer un résultat.
-- Une panne de la **Console**, du **Controller** ou du **Relay** ne doit pas
+- Une panne de l'**App**, du **Controller** ou du **Relay** ne doit pas
   arrêter un **Service** déjà déployé.
 
 ## Example dialogue
@@ -223,7 +223,7 @@ _Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliq
 > **Utilisateur :** « Je publie ce service du LAN par mon VPS. Qu'est-ce que
 > Your Cloud va modifier ? »
 >
-> **Console :** « Voici le plan : créer le passage privé, limiter le trafic
+> **App :** « Voici le plan : créer le passage privé, limiter le trafic
 > autorisé et ajouter la route HTTPS sur le VPS. Rien ne sera appliqué avant ton
 > approbation. »
 
@@ -247,15 +247,15 @@ _Avoid_: « accusé de réception », car un plan parti n'est pas un plan appliq
   une exécution unique : son Daemon permanent, son éventuel Relay et son
   Auxiliaire local restent des rôles séparés avec des droits différents.
 - L'utilisateur n'a pas à mémoriser l'adresse d'un **Controller**, mais la
-  **Console** possède nécessairement une association approuvée pour le joindre.
+  **App** possède nécessairement une association approuvée pour le joindre.
   Cela ne donne aucune connaissance du Controller aux **Daemons**.
-- Une **Console** installée n'est ni un site hébergé par le Controller, ni une
+- Une **App** installée n'est ni un site hébergé par le Controller, ni une
   page servie sur `localhost`. Son interface peut employer des technologies Web
   embarquées sans ouvrir de serveur local ni dépendre d'une origine distante.
-- Une Console multi-Controller reste une cible. Sa distribution signée, ses
+- Une App multi-Controller reste une cible. Sa distribution signée, ses
   identités d'appareil et ses sessions séparées doivent empêcher qu'un
   Controller fournisse du code ou obtienne silencieusement autorité sur les
   autres.
 - Un futur accès par navigateur serait un mode distinct à contracter. Il ne
-  remplace pas implicitement la Console installée et ne rend aucun Controller
+  remplace pas implicitement l'App installée et ne rend aucun Controller
   public.

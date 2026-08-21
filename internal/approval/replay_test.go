@@ -145,7 +145,7 @@ func TestConsumingIsAtomicAndExclusive(t *testing.T) {
 }
 
 // TestANewEpochInvalidatesTheOldOneInsteadOfCoexisting is the rule that keeps a
-// replaced Console from leaving two signers behind.
+// replaced App from leaving two signers behind.
 func TestANewEpochInvalidatesTheOldOneInsteadOfCoexisting(t *testing.T) {
 	directory := requireRootLAB(t)
 	anchor := vectorAnchor()

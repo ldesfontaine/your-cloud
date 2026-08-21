@@ -5,7 +5,7 @@
 # It runs inside a LAB machine that holds Go and dpkg-deb, never on the
 # workstation. It signs nothing: the detached signature over the manifest bytes
 # is produced separately by the signer that holds the anchor, exactly as the
-# Console's own candidate manifest is signed out of band. A manifest without
+# App's own candidate manifest is signed out of band. A manifest without
 # that signature is refused by the Assistant, which is the point.
 set -euo pipefail
 

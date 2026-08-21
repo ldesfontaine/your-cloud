@@ -7,7 +7,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
-// The four requests below are everything the Console may choose about a plan of
+// The four requests below are everything the App may choose about a plan of
 // the private profile, one closed schema per operation group.
 //
 // Four sibling routes rather than one route carrying a discriminator is the

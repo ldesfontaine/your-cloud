@@ -11,7 +11,7 @@ import (
 // names.
 //
 // It is the counterpart, function for function, of
-// `verify_service_definition_document` on the Console side, and it exists for the
+// `verify_service_definition_document` on the App side, and it exists for the
 // same reason a definition travels as its exact canonical bytes beside its
 // digest: the digest is rebuilt here from the fields parsed out of those very
 // bytes and never read from what accompanied them. A transport may therefore

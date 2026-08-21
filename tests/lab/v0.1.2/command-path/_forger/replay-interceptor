@@ -2,9 +2,9 @@
 """An external hostile actor that captures signed approval bytes and replays them.
 
 This is **not** a fixture of the product. It replaces no component on the proven
-path: the real Console still builds the pair, the real native window collects
+path: the real App still builds the pair, the real native window collects
 the consent, the real core signs, and the real Controller receives every byte.
-This program stands only where a network attacker stands — between the Console
+This program stands only where a network attacker stands — between the App
 and `:9443`, on the wire — and does two things no honest party would: it keeps a
 copy of one exchange, and it plays that copy back after the Controller has
 restarted.
@@ -13,35 +13,35 @@ What it attests, and what it does not, is written where it is used
 (`tests/lab/v0.1.2/command-path/prove`). In one line: it proves that a signed
 approval, once spent, cannot be launched a second time — even by an attacker who
 has compromised the transport (it holds the Controller's own server key, read
-from the Controller's disk) **and** stolen the Console's device credential (read
+from the Controller's disk) **and** stolen the App's device credential (read
 from the vault with the phrase, by the product's own code), and who resubmits
-the exact bytes onto a session the real Console freshly and legitimately opened.
+the exact bytes onto a session the real App freshly and legitimately opened.
 
 It never holds the human signing key. That abstention is the whole point: the
-session it replays onto is a real one the Console minted, so the refusal it
+session it replays onto is a real one the App minted, so the refusal it
 draws — `409 approval_already_dispatched` — can only come from the Controller's
 durable dispatch registry, never from a session it forged.
 
 How it works, in three acts, driven by `prove`:
 
   serve     A TLS man-in-the-middle in front of :9443. It terminates the
-            Console's connection presenting the Controller's server certificate
-            (so the Console's pinning is satisfied) and re-originates to the
+            App's connection presenting the Controller's server certificate
+            (so the App's pinning is satisfied) and re-originates to the
             real Controller presenting the stolen device certificate (so the
             Controller's mutual-TLS and its exact-fingerprint pin are
             satisfied). Every request is forwarded faithfully; the POST to
             /v0/plan-approvals is recorded whole, and the Authorization bearer
             of every request is remembered — the last one seen is always the
-            Console's currently-valid session.
+            App's currently-valid session.
 
   replay    Open a fresh connection to the real Controller with the stolen
             device certificate, and send the recorded approval POST **verbatim**
             except for its Authorization header, which is replaced by the bearer
-            last seen on the wire — the one the Console minted after the restart.
+            last seen on the wire — the one the App minted after the restart.
             Print the status line the Controller returns.
 
 The two acts are one long-lived process and a control socket, because the
-capture has to survive across the Console runs that happen between them.
+capture has to survive across the App runs that happen between them.
 """
 
 import json
@@ -118,7 +118,7 @@ def upstream_context(device_cert, device_key, server_ca):
     context.maximum_version = ssl.TLSVersion.TLSv1_3
     context.load_cert_chain(certfile=device_cert, keyfile=device_key)
     context.load_verify_locations(cafile=server_ca)
-    # The Console reaches the Controller by a name the LAB resolves; the
+    # The App reaches the Controller by a name the LAB resolves; the
     # certificate carries that name and the interceptor must check it against
     # the same name, not against the address it dials.
     context.check_hostname = True
@@ -126,12 +126,12 @@ def upstream_context(device_cert, device_key, server_ca):
 
 
 def downstream_context(controller_cert, controller_key):
-    """A server context that impersonates the Controller to the Console."""
+    """A server context that impersonates the Controller to the App."""
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_3
     context.maximum_version = ssl.TLSVersion.TLSv1_3
     context.load_cert_chain(certfile=controller_cert, keyfile=controller_key)
-    # The Console presents a client certificate. The interceptor does not verify
+    # The App presents a client certificate. The interceptor does not verify
     # it — it is not the Controller, and what it wants is the plaintext behind
     # the handshake, not to authorise the peer. The real Controller downstream
     # still verifies everything, against the device certificate the interceptor
@@ -187,7 +187,7 @@ class Interceptor:
         connection: a proxy that recorded only the first would miss the approval
         whenever a read preceded it on the same socket. Every request and every
         response is therefore parsed by Content-Length — this product never
-        chunks, since the Console refuses a Transfer-Encoding outright — and the
+        chunks, since the App refuses a Transfer-Encoding outright — and the
         loop continues until either side asks to close.
         """
         while True:
@@ -268,9 +268,9 @@ class Interceptor:
         if bearer is None:
             return json.dumps({"error": "no session bearer was ever seen"})
         # Rebuild the exact POST, replacing only the Authorization line. Every
-        # other header is the one the Console really sent — the Host in
+        # other header is the one the App really sent — the Host in
         # particular, which the Controller checks byte-for-byte (it carries the
-        # `:9443` the Console dials with, and a Host without it is refused
+        # `:9443` the App dials with, and a Host without it is refused
         # `scope_forbidden` before any authority is even read).
         headers = dict(approval["headers"])
         headers["authorization"] = bearer

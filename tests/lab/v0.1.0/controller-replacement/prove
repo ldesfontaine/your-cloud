@@ -4,7 +4,7 @@
 #
 # Les deux machines jouent :
 #
-#   lab-console    l'hôte de l'ancien Controller — celui qu'on remplace, et donc
+#   lab-app    l'hôte de l'ancien Controller — celui qu'on remplace, et donc
 #                  celui qu'on arrête réellement pour observer une panne
 #   lab-machine-1  l'hôte du nouveau Controller, le Relay, et une cible
 #
@@ -21,7 +21,7 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
 labctl="$root/tools/labctl"
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
-console_vm=lab-console
+app_vm=lab-app
 target_vm=lab-machine-1
 remote_harness=/root/your-cloud-lab-controller-replacement-harness
 state=/root/your-cloud-lab-controller-replacement
@@ -114,39 +114,39 @@ wait_for_ssh() {
 # ---------------------------------------------------------------------------
 
 setup() {
-  console_ip=$(inventory "$console_vm")
+  app_ip=$(inventory "$app_vm")
   target_ip=$(inventory "$target_vm")
   mkdir -p "$workdir"
 
-  deploy "$console_vm"
+  deploy "$app_vm"
   deploy "$target_vm"
 
   local vm
-  for vm in "$console_vm" "$target_vm"; do
+  for vm in "$app_vm" "$target_vm"; do
     on "$vm" "$remote_harness/mount-perimeter install"
   done
 
   # La clé d'hôte est épinglée depuis le canal `labctl`, jamais depuis une
   # première réponse du réseau.
-  "$labctl" ssh "$console_vm" -- "mkdir -p $state && : >$state/known_hosts"
-  for vm in "$console_vm" "$target_vm"; do
+  "$labctl" ssh "$app_vm" -- "mkdir -p $state && : >$state/known_hosts"
+  for vm in "$app_vm" "$target_vm"; do
     local address key
     address=$(inventory "$vm")
     key=$("$labctl" ssh "$vm" -- cat /etc/ssh/ssh_host_ed25519_key.pub)
-    "$labctl" ssh "$console_vm" -- \
+    "$labctl" ssh "$app_vm" -- \
       "printf '%s %s\n' '$address' '$(echo "$key" | cut -d' ' -f1-2)' >>$state/known_hosts"
   done
 
   # Les sources de l'arbre sous test partent dans la VM, et la fixture y est
   # construite. Rien n'est compilé sur le poste.
   tar -czf "$workdir/work.tgz" -C "$root" \
-    --exclude='console/src-tauri/target' --exclude='console/node_modules' \
-    console/src-tauri console/package.json
-  "$labctl" copy-to "$console_vm" "$workdir/work.tgz" /root/work.tgz >/dev/null
-  on "$console_vm" "mkdir -p /root/work && tar -xzmf /root/work.tgz -C /root/work --strip-components=1"
+    --exclude='app/src-tauri/target' --exclude='app/node_modules' \
+    app/src-tauri app/package.json
+  "$labctl" copy-to "$app_vm" "$workdir/work.tgz" /root/work.tgz >/dev/null
+  on "$app_vm" "mkdir -p /root/work && tar -xzmf /root/work.tgz -C /root/work --strip-components=1"
 
   # La fixture, construite dans le LAB et nulle part ailleurs.
-  on "$console_vm" ". /root/.cargo/env; cd /root/work/src-tauri && \
+  on "$app_vm" ". /root/.cargo/env; cd /root/work/src-tauri && \
     export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8 && \
     cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
       --features controller-replacement-contract-test \
@@ -154,24 +154,24 @@ setup() {
     install -m 0700 target/debug/your-cloud-controller-replacement-fixture $fixture"
 
   # Les deux identités opérationnelles, forgées par le Controller lui-même.
-  on "$console_vm" "$remote_harness/run-from-controller forge old" >"$workdir/old.pub"
-  on "$console_vm" "$remote_harness/run-from-controller forge new" >"$workdir/new.pub"
-  old_print=$(on "$console_vm" "$remote_harness/run-from-controller fingerprint old")
-  new_print=$(on "$console_vm" "$remote_harness/run-from-controller fingerprint new")
+  on "$app_vm" "$remote_harness/run-from-controller forge old" >"$workdir/old.pub"
+  on "$app_vm" "$remote_harness/run-from-controller forge new" >"$workdir/new.pub"
+  old_print=$(on "$app_vm" "$remote_harness/run-from-controller fingerprint old")
+  new_print=$(on "$app_vm" "$remote_harness/run-from-controller fingerprint new")
   printf '%s\n' "$old_print" >"$workdir/old.print"
   printf '%s\n' "$new_print" >"$workdir/new.print"
 
   # Les entrées sont rendues par la fixture — le harnais n'en compose aucune.
   local body
   body=$(cut -d' ' -f2 "$workdir/old.pub")
-  on "$console_vm" "$fixture render-entry ssh-ed25519 '$body'" >"$workdir/old.entry"
+  on "$app_vm" "$fixture render-entry ssh-ed25519 '$body'" >"$workdir/old.entry"
   body=$(cut -d' ' -f2 "$workdir/new.pub")
-  on "$console_vm" "$fixture render-entry ssh-ed25519 '$body'" >"$workdir/new.entry"
+  on "$app_vm" "$fixture render-entry ssh-ed25519 '$body'" >"$workdir/new.entry"
   grep -q '^command="/usr/bin/sudo -n ' "$workdir/old.entry" \
     || fail "the entry the product rendered is not the bounded one"
 
   install_entries old
-  echo "SETUP_OK console=$console_ip target=$target_ip"
+  echo "SETUP_OK app=$app_ip target=$target_ip"
   report "the old identity" "$old_print"
   report "the new identity" "$new_print"
 }
@@ -187,7 +187,7 @@ install_entries() {
     none) content="" ;;
     *) fail "unknown entry set $which" ;;
   esac
-  for vm in "$console_vm" "$target_vm"; do
+  for vm in "$app_vm" "$target_vm"; do
     printf '%s\n' "$content" >"$workdir/entries"
     "$labctl" copy-to "$vm" "$workdir/entries" "$state/entries" >/dev/null
     on "$vm" "$remote_harness/mount-perimeter entries <$state/entries" >/dev/null
@@ -212,9 +212,9 @@ perimeter() {
 
 judge() {
   local label=$1 path=$2 expected=$3
-  "$labctl" copy-to "$console_vm" "$path" "$state/perimeter" >/dev/null
+  "$labctl" copy-to "$app_vm" "$path" "$state/perimeter" >/dev/null
   local output
-  if output=$(on "$console_vm" "$fixture ${4:-qualify} $state/perimeter" 2>&1); then
+  if output=$(on "$app_vm" "$fixture ${4:-qualify} $state/perimeter" 2>&1); then
     case "$output" in
       "$expected"*) report "$label" "${output:0:120}" ;;
       *) red "$label" "accepted with an unexpected verdict: $output" ;;
@@ -226,9 +226,9 @@ judge() {
 
 refuse() {
   local label=$1 path=$2 expected=$3
-  "$labctl" copy-to "$console_vm" "$path" "$state/perimeter" >/dev/null
+  "$labctl" copy-to "$app_vm" "$path" "$state/perimeter" >/dev/null
   local output
-  if output=$(on "$console_vm" "$fixture ${4:-qualify} $state/perimeter" 2>&1); then
+  if output=$(on "$app_vm" "$fixture ${4:-qualify} $state/perimeter" 2>&1); then
     red "$label" "accepted: $output"
     return
   fi
@@ -239,25 +239,25 @@ refuse() {
 }
 
 incident() {
-  console_ip=$(inventory "$console_vm")
+  app_ip=$(inventory "$app_vm")
   target_ip=$(inventory "$target_vm")
 
   # L'ancien Controller écoute réellement.
-  on "$console_vm" "$remote_harness/mount-perimeter reader-open $controller_port" >/dev/null
+  on "$app_vm" "$remote_harness/mount-perimeter reader-open $controller_port" >/dev/null
   on "$target_vm" "$remote_harness/mount-perimeter reader-open $reader_port" >/dev/null
 
   local answer
-  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
+  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $app_ip $controller_port" || true)
   [[ "$answer" == answered ]] || fail "the old Controller does not answer before it is stopped"
   local hypervisor
-  hypervisor=$(domain_state "$console_vm")
+  hypervisor=$(domain_state "$app_vm")
   [[ "$hypervisor" == running ]] || fail "the hypervisor does not report the old host as running"
 
   perimeter "$workdir/healthy.perimeter" \
     "qualification	hardware-loss" \
     "old-controller	$old_controller" \
     "new-controller	$new_controller" \
-    "suspect-host	$console_vm" \
+    "suspect-host	$app_vm" \
     "new-host	distinct	$target_vm" \
     "isolation	unverified" \
     "confirmed	true" \
@@ -270,7 +270,7 @@ incident() {
     "qualification	hardware-loss" \
     "old-controller	$old_controller" \
     "new-controller	$new_controller" \
-    "suspect-host	$console_vm" \
+    "suspect-host	$app_vm" \
     "new-host	distinct	$target_vm" \
     "isolation	unverified" \
     "confirmed	false" \
@@ -280,15 +280,15 @@ incident() {
     "NotRequestedByTheUser"
 
   # L'arrêt réel. Le compteur part d'ici, et il n'est pas simulé.
-  echo "stopping $console_vm — the outage of this proof is a real one"
-  "$labctl" stop "$console_vm" >/dev/null
+  echo "stopping $app_vm — the outage of this proof is a real one"
+  "$labctl" stop "$app_vm" >/dev/null
   local started_at
   started_at=$(date +%s)
 
-  [[ "$(domain_state "$console_vm")" == "shut off" ]] \
+  [[ "$(domain_state "$app_vm")" == "shut off" ]] \
     || fail "the hypervisor does not report the old host as stopped"
 
-  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
+  answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $app_ip $controller_port" || true)
   local young=$(($(date +%s) - started_at))
   printf '%s %s\n' "$answer" "$young" >"$workdir/young.probe"
   [[ "$answer" == unreachable || "$answer" == no-answer ]] \
@@ -298,7 +298,7 @@ incident() {
     "qualification	hardware-loss" \
     "old-controller	$old_controller" \
     "new-controller	$new_controller" \
-    "suspect-host	$console_vm" \
+    "suspect-host	$app_vm" \
     "new-host	distinct	$target_vm" \
     "isolation	unverified" \
     "confirmed	true" \
@@ -325,7 +325,7 @@ incident() {
   # un périmètre déclaré à la place d'une observation.
   local answer_deadline=$(($(date +%s) + 120))
   while :; do
-    answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $console_ip $controller_port" || true)
+    answer=$(on "$target_vm" "$remote_harness/run-from-controller reach $app_ip $controller_port" || true)
     [[ "$answer" != answered ]] || fail "the stopped host answered again: $answer"
     [[ "$answer" != unreachable ]] || break
     [[ $(date +%s) -lt $answer_deadline ]] \
@@ -339,7 +339,7 @@ incident() {
     "qualification	hardware-loss" \
     "old-controller	$old_controller" \
     "new-controller	$new_controller" \
-    "suspect-host	$console_vm" \
+    "suspect-host	$app_vm" \
     "new-host	distinct	$target_vm" \
     "isolation	unverified" \
     "confirmed	true" \
@@ -351,13 +351,13 @@ incident() {
     "cleared	$target_vm" \
     "association	$new_controller	$infrastructure	sheet-lab"
 
-  echo "restarting $console_vm"
-  "$labctl" start "$console_vm" >/dev/null
-  wait_for_ssh "$console_vm"
-  # Le swap de lab-console ne survit à aucun redémarrage : il est réactivé avant
+  echo "restarting $app_vm"
+  "$labctl" start "$app_vm" >/dev/null
+  wait_for_ssh "$app_vm"
+  # Le swap de lab-app ne survit à aucun redémarrage : il est réactivé avant
   # toute compilation ou tout jugement.
-  on "$console_vm" "swapon /swapfile 2>/dev/null || true; swapon --show=NAME --noheadings"
-  console_ip=$(inventory "$console_vm")
+  on "$app_vm" "swapon /swapfile 2>/dev/null || true; swapon --show=NAME --noheadings"
+  app_ip=$(inventory "$app_vm")
 
   refuse "a silence younger than the bound" "$workdir/young.perimeter" "SilenceTooYoung"
   judge "a confirmed loss on ${silence}s of observed silence" "$workdir/silent.perimeter" \
@@ -385,8 +385,8 @@ sample_reader() {
 reconstruct() {
   local vm=$1 address=$2 label=$3 expected=$4
   local old_attempt new_attempt
-  old_attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address old" || true)
-  new_attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address new" || true)
+  old_attempt=$(on "$app_vm" "$remote_harness/run-from-controller probe $address old" || true)
+  new_attempt=$(on "$app_vm" "$remote_harness/run-from-controller probe $address new" || true)
   {
     printf 'old-fingerprint\t%s\n' "$(cat "$workdir/old.print")"
     printf 'new-fingerprint\t%s\n' "$(cat "$workdir/new.print")"
@@ -401,9 +401,9 @@ reconstruct() {
     printf 'old-attempt\t%s\n' "$old_attempt"
     printf 'new-attempt\t%s\n' "$new_attempt"
   } >"$workdir/evidence"
-  "$labctl" copy-to "$console_vm" "$workdir/evidence" "$state/evidence" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/evidence" "$state/evidence" >/dev/null
   local output
-  output=$(on "$console_vm" "$fixture reconstruct $state/evidence" 2>&1 || true)
+  output=$(on "$app_vm" "$fixture reconstruct $state/evidence" 2>&1 || true)
   case "$output" in
     "STATE $expected"*) report "$label" "$output" ;;
     *) red "$label" "expected $expected, the machine rebuilt: $output" ;;
@@ -411,12 +411,12 @@ reconstruct() {
 }
 
 switch() {
-  console_ip=$(inventory "$console_vm")
+  app_ip=$(inventory "$app_vm")
   target_ip=$(inventory "$target_vm")
 
   # `ancien seul` — la bascule n'a rien touché.
   install_entries old
-  reconstruct "$console_vm" "$console_ip" "the old Controller alone, on lab-console" "old-only"
+  reconstruct "$app_vm" "$app_ip" "the old Controller alone, on lab-app" "old-only"
   reconstruct "$target_vm" "$target_ip" "the old Controller alone, on lab-machine-1" "old-only"
 
   # Le lecteur est fermé pour toute la durée de la bascule, et échantillonné à
@@ -427,7 +427,7 @@ switch() {
   for step in install associate epoch identities; do
     local sample
     sample=$(sample_reader)
-    samples+=("reader-during	$old_controller	$console_ip	active	$sample")
+    samples+=("reader-during	$old_controller	$app_ip	active	$sample")
     report "the reader, sampled at the $step transition" "$sample"
     [[ "$sample" == not-listening ]] || red "reader at $step" "the reader was open during the switch"
   done
@@ -435,7 +435,7 @@ switch() {
   # `chevauchement borné` — les deux autorités atteignent la machine, entre la
   # vérification et le retrait, et nulle part ailleurs.
   install_entries both
-  reconstruct "$console_vm" "$console_ip" "the bounded overlap, on lab-console" "bounded-overlap"
+  reconstruct "$app_vm" "$app_ip" "the bounded overlap, on lab-app" "bounded-overlap"
   reconstruct "$target_vm" "$target_ip" "the bounded overlap, on lab-machine-1" "bounded-overlap"
 
   # Le lecteur revient, au seul nouveau Controller et sur une autre adresse
@@ -450,7 +450,7 @@ switch() {
   printf '%s\n' "${samples[@]}" >>"$workdir/rotation.perimeter"
   {
     printf 'reader-after\t%s\t%s\tactive\t%s\n' "$new_controller" "$target_ip" "$after"
-    printf 'reader-old-address\t%s\n' "$console_ip"
+    printf 'reader-old-address\t%s\n' "$app_ip"
   } >>"$workdir/rotation.perimeter"
   judge "the reader closed across the switch and reopened to one Controller" \
     "$workdir/rotation.perimeter" "ROTATED" rotate
@@ -464,26 +464,26 @@ switch() {
 # ---------------------------------------------------------------------------
 
 withdraw() {
-  console_ip=$(inventory "$console_vm")
+  app_ip=$(inventory "$app_vm")
   target_ip=$(inventory "$target_vm")
   local old_print new_print
   old_print=$(cat "$workdir/old.print")
   new_print=$(cat "$workdir/new.print")
 
   local vm address
-  for pair in "$console_vm:$console_ip" "$target_vm:$target_ip"; do
+  for pair in "$app_vm:$app_ip" "$target_vm:$target_ip"; do
     vm=${pair%%:*}
     address=${pair##*:}
     on "$vm" "$remote_harness/mount-perimeter observed" >"$workdir/observed.$vm"
-    "$labctl" copy-to "$console_vm" "$workdir/observed.$vm" "$state/observed" >/dev/null
+    "$labctl" copy-to "$app_vm" "$workdir/observed.$vm" "$state/observed" >/dev/null
 
     local output
-    output=$(on "$console_vm" \
+    output=$(on "$app_vm" \
       "$fixture classify $state/observed '$old_print,$new_print'" 2>&1 || true)
     report "what $vm really holds" "$(echo "$output" | tr '\n' ' ')"
     echo "$output" | grep -q '^personal ' || red "$vm" "the operator's own key was not seen at all"
 
-    output=$(on "$console_vm" \
+    output=$(on "$app_vm" \
       "$fixture withdraw $vm $vm $state/observed '$new_print' '$old_print'" 2>&1 || true)
     case "$output" in
       "WITHDRAWN"*) report "the withdrawal proposed on $vm" "$output" ;;
@@ -498,24 +498,24 @@ withdraw() {
   # Le retrait est appliqué pour de bon, puis l'ancienne autorité est éprouvée
   # contre les vraies machines.
   install_entries new
-  for pair in "$console_vm:$console_ip" "$target_vm:$target_ip"; do
+  for pair in "$app_vm:$app_ip" "$target_vm:$target_ip"; do
     vm=${pair%%:*}
     address=${pair##*:}
     local attempt
-    attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address old" || true)
+    attempt=$(on "$app_vm" "$remote_harness/run-from-controller probe $address old" || true)
     if [[ "$attempt" == refused ]]; then
       report "the old Controller still trying SSH on $vm" "refused by sshd"
     else
       red "the old Controller on $vm" "still reaches the machine: $attempt"
     fi
-    attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $address new" || true)
+    attempt=$(on "$app_vm" "$remote_harness/run-from-controller probe $address new" || true)
     [[ "$attempt" == answered ]] || red "the new authority on $vm" "does not answer: $attempt"
     reconstruct "$vm" "$address" "the new Controller alone, on $vm" "new-only"
   done
 
   # L'époque d'approbation avance strictement, jugée avant d'être installée.
   local output
-  output=$(on "$console_vm" "$fixture supersede 1 2" 2>&1 || true)
+  output=$(on "$app_vm" "$fixture supersede 1 2" 2>&1 || true)
   case "$output" in
     "SUPERSEDED epoch=2"*) report "the approval epoch superseded" "$output" ;;
     *) red "the approval epoch" "did not supersede: $output" ;;
@@ -524,7 +524,7 @@ withdraw() {
   # Le balayage résiduel et le démarrage propre, sur le périmètre réel.
   {
     cat "$workdir/base.perimeter"
-    printf 'target\t%s\tnew-only\n' "$console_vm"
+    printf 'target\t%s\tnew-only\n' "$app_vm"
     printf 'target\t%s\tnew-only\n' "$target_vm"
     printf 'containment\tnot-applicable\n'
     printf 'carried\tcertificate\tserver authority\tminted\n'
@@ -568,8 +568,8 @@ refuse_all() {
   judge "the suspected-compromise journey, isolated" "$workdir/isolated.perimeter" \
     "AUTHORIZED" authorize
   local output
-  "$labctl" copy-to "$console_vm" "$workdir/isolated.perimeter" "$state/perimeter" >/dev/null
-  output=$(on "$console_vm" "$fixture authorize $state/perimeter" 2>&1 || true)
+  "$labctl" copy-to "$app_vm" "$workdir/isolated.perimeter" "$state/perimeter" >/dev/null
+  output=$(on "$app_vm" "$fixture authorize $state/perimeter" 2>&1 || true)
   echo "$output" | grep -q 'journey=suspected-compromise' \
     || red "the compromise journey" "did not name itself: $output"
   echo "$output" | grep -q 'steps=isolate,' \
@@ -631,14 +631,14 @@ refuse_all() {
     "Inherited" admit
 
   # Le retrait pris sur une autre machine que celle qui a répondu.
-  on "$console_vm" "$remote_harness/mount-perimeter observed" >"$workdir/observed.console"
-  "$labctl" copy-to "$console_vm" "$workdir/observed.console" "$state/observed" >/dev/null
+  on "$app_vm" "$remote_harness/mount-perimeter observed" >"$workdir/observed.app"
+  "$labctl" copy-to "$app_vm" "$workdir/observed.app" "$state/observed" >/dev/null
   local new_print old_print
   new_print=$(cat "$workdir/new.print")
   old_print=$(cat "$workdir/old.print")
   local output
-  if output=$(on "$console_vm" \
-    "$fixture withdraw $console_vm $target_vm $state/observed '$new_print' '$old_print'" 2>&1); then
+  if output=$(on "$app_vm" \
+    "$fixture withdraw $app_vm $target_vm $state/observed '$new_print' '$old_print'" 2>&1); then
     red "a withdrawal verified on another machine" "accepted: $output"
   else
     case "$output" in
@@ -655,7 +655,7 @@ refuse_all() {
 # ---------------------------------------------------------------------------
 
 interrupt() {
-  console_ip=$(inventory "$console_vm")
+  app_ip=$(inventory "$app_vm")
   target_ip=$(inventory "$target_vm")
 
   # Une coupure à chaque transition : ce que la machine détient à cet instant est
@@ -678,8 +678,8 @@ interrupt() {
 
   # Et l'état inconnu ne propose aucun retrait.
   local output
-  "$labctl" copy-to "$console_vm" "$workdir/evidence" "$state/evidence" >/dev/null
-  output=$(on "$console_vm" "$fixture reconstruct $state/evidence" 2>&1 || true)
+  "$labctl" copy-to "$app_vm" "$workdir/evidence" "$state/evidence" >/dev/null
+  output=$(on "$app_vm" "$fixture reconstruct $state/evidence" 2>&1 || true)
   echo "$output" | grep -q 'next=observe-only' \
     || red "an unknown target" "proposed something other than observing: $output"
 
@@ -693,16 +693,16 @@ interrupt() {
     printf 'FILE\t/etc/your-cloud/authorized-keys/your-cloud-auxiliary\tCREATED\n'
     printf 'FILE\t/etc/your-cloud/approval-anchor.json\tCREATED\n'
   } >"$workdir/ledger"
-  "$labctl" copy-to "$console_vm" "$workdir/ledger" "$state/ledger" >/dev/null
-  output=$(on "$console_vm" "$fixture unwind $state/ledger" 2>&1 || true)
+  "$labctl" copy-to "$app_vm" "$workdir/ledger" "$state/ledger" >/dev/null
+  output=$(on "$app_vm" "$fixture unwind $state/ledger" 2>&1 || true)
   case "$output" in
     "COMPLETE"*) report "a cut before the transfer, judged by the registry of #38" "$output" ;;
     *) red "the registry of #38" "did not unwind completely: $output" ;;
   esac
 
   printf 'UNIT_STATE\tyour-cloud-controller.service\tUNKNOWN\n' >>"$workdir/ledger"
-  "$labctl" copy-to "$console_vm" "$workdir/ledger" "$state/ledger" >/dev/null
-  if output=$(on "$console_vm" "$fixture unwind $state/ledger" 2>&1); then
+  "$labctl" copy-to "$app_vm" "$workdir/ledger" "$state/ledger" >/dev/null
+  if output=$(on "$app_vm" "$fixture unwind $state/ledger" 2>&1); then
     red "an unknown item in the registry" "was reported as a complete unwind: $output"
   else
     case "$output" in
@@ -719,7 +719,7 @@ interrupt() {
 # ---------------------------------------------------------------------------
 
 mutate() {
-  console_ip=$(inventory "$console_vm")
+  app_ip=$(inventory "$app_vm")
   target_ip=$(inventory "$target_vm")
 
   # Mutation 1 — la porte d'incident cesse de refuser une panne ambiguë.
@@ -733,9 +733,9 @@ source = source.replace(needle, """        Reading::Ambiguous(ambiguity) => {
         }""", 1)
 '''
 
-  "$labctl" copy-to "$console_vm" "$workdir/young.perimeter" "$state/perimeter" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/young.perimeter" "$state/perimeter" >/dev/null
   local output
-  output=$(on "$console_vm" "$state/fixture-mutated qualify $state/perimeter" 2>&1 || true)
+  output=$(on "$app_vm" "$state/fixture-mutated qualify $state/perimeter" 2>&1 || true)
   case "$output" in
     QUALIFIED*)
       echo "MUTATION_CAUGHT: a replacement became possible on an ambiguous failure"
@@ -744,7 +744,7 @@ source = source.replace(needle, """        Reading::Ambiguous(ambiguity) => {
     *) red "mutation 1" "was not caught: the mutated gate answered $output" ;;
   esac
   restore_mutation incident.rs "Reading::Ambiguous(ambiguity) => return Err"
-  output=$(on "$console_vm" "$fixture qualify $state/perimeter" 2>&1 || true)
+  output=$(on "$app_vm" "$fixture qualify $state/perimeter" 2>&1 || true)
   case "$output" in
     *SilenceTooYoung*) report "the restored gate refuses the ambiguity again" "$output" ;;
     *) red "the restored gate" "did not come back green: $output" ;;
@@ -765,12 +765,12 @@ source = source.replace(needle, """    if observed.file != key_file() {
 
   install_entries both
   on "$target_vm" "$remote_harness/mount-perimeter observed" >"$workdir/observed.mutated"
-  "$labctl" copy-to "$console_vm" "$workdir/observed.mutated" "$state/observed" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/observed.mutated" "$state/observed" >/dev/null
   local personal_print new_print old_print
   new_print=$(cat "$workdir/new.print")
   old_print=$(cat "$workdir/old.print")
   personal_print=$(awk -F'\t' '$1 ~ /ycreplop/ {print $2}' "$workdir/observed.mutated")
-  output=$(on "$console_vm" \
+  output=$(on "$app_vm" \
     "$state/fixture-mutated withdraw $target_vm $target_vm $state/observed '$new_print' '$old_print,$personal_print'" 2>&1 || true)
   case "$output" in
     *"removed="*"$personal_print"*)
@@ -780,7 +780,7 @@ source = source.replace(needle, """    if observed.file != key_file() {
     *) red "mutation 2" "was not caught: the mutated gate answered ${output:0:150}" ;;
   esac
   restore_mutation withdrawal.rs "if observed.file != key_file()"
-  output=$(on "$console_vm" \
+  output=$(on "$app_vm" \
     "$fixture withdraw $target_vm $target_vm $state/observed '$new_print' '$old_print,$personal_print'" 2>&1 || true)
   case "$output" in
     *"personal:$personal_print"*) report "the restored gate keeps the personal key again" "${output:0:150}" ;;
@@ -791,7 +791,7 @@ source = source.replace(needle, """    if observed.file != key_file() {
   # machines et non sur les sources : l'entrée de l'ancienne identité est remise
   # dans le fichier géré, et la suite doit le voir.
   local attempt
-  attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $target_ip old" || true)
+  attempt=$(on "$app_vm" "$remote_harness/run-from-controller probe $target_ip old" || true)
   if [[ "$attempt" == answered ]]; then
     echo "MUTATION_CAUGHT: the old authority reaches the machine again after the replacement"
     report "the old identity, reinstalled behind the replacement" "answered"
@@ -801,14 +801,14 @@ source = source.replace(needle, """    if observed.file != key_file() {
   reconstruct "$target_vm" "$target_ip" "the fleet under mutation 3" "bounded-overlap"
   {
     grep -v '^target	' "$workdir/base.perimeter"
-    printf 'target\t%s\tnew-only\n' "$console_vm"
+    printf 'target\t%s\tnew-only\n' "$app_vm"
     printf 'target\t%s\tbounded-overlap\n' "$target_vm"
   } >"$workdir/mutated.perimeter"
   refuse "the conclusion, under mutation 3" "$workdir/mutated.perimeter" \
     "TargetsNotFinished" conclude
 
   install_entries new
-  attempt=$(on "$console_vm" "$remote_harness/run-from-controller probe $target_ip old" || true)
+  attempt=$(on "$app_vm" "$remote_harness/run-from-controller probe $target_ip old" || true)
   [[ "$attempt" == refused ]] || red "the restored perimeter" "the old identity still answers"
   report "the mutations removed, the suite green again" "old=$attempt"
 
@@ -821,7 +821,7 @@ source = source.replace(needle, """    if observed.file != key_file() {
 # de ne rien faire et de laisser la suite verte pour rien.
 source_mutation() {
   local file=$1 patch=$2
-  on "$console_vm" "cd /root/work/src-tauri/crates/native-bootstrap-assistant/src/replacement \
+  on "$app_vm" "cd /root/work/src-tauri/crates/native-bootstrap-assistant/src/replacement \
 && cp $file $file.original && python3 - <<'PATCH'
 import pathlib
 path = pathlib.Path('$file')
@@ -834,15 +834,15 @@ PATCH"
 
 restore_mutation() {
   local file=$1 needle=$2
-  on "$console_vm" \
+  on "$app_vm" \
     "cd /root/work/src-tauri/crates/native-bootstrap-assistant/src/replacement && \
      mv $file.original $file && touch $file && grep -q '$needle' $file"
   build_fixture "$fixture"
-  on "$console_vm" "rm -f $state/fixture-mutated"
+  on "$app_vm" "rm -f $state/fixture-mutated"
 }
 
 build_fixture() {
-  on "$console_vm" ". /root/.cargo/env; cd /root/work/src-tauri; \
+  on "$app_vm" ". /root/.cargo/env; cd /root/work/src-tauri; \
     export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8; \
     cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
       --features controller-replacement-contract-test \
@@ -856,7 +856,7 @@ build_fixture() {
 
 remove() {
   local status=0 vm
-  for vm in "$console_vm" "$target_vm"; do
+  for vm in "$app_vm" "$target_vm"; do
     "$labctl" ssh "$vm" -- "$remote_harness/mount-perimeter reader-close $reader_port" \
       >/dev/null 2>&1 || true
     "$labctl" ssh "$vm" -- "$remote_harness/mount-perimeter reader-close $controller_port" \
@@ -866,8 +866,8 @@ remove() {
   done
   # L'archive des sources part avec le reste ; le répertoire de construction
   # `/root/work` est un cache partagé par les suites du palier et reste en place.
-  "$labctl" ssh "$console_vm" -- "rm -f /root/work.tgz" || status=1
-  for vm in "$console_vm" "$target_vm"; do
+  "$labctl" ssh "$app_vm" -- "rm -f /root/work.tgz" || status=1
+  for vm in "$app_vm" "$target_vm"; do
     local path
     for path in "$remote_harness" "$state"; do
       if "$labctl" ssh "$vm" -- "test ! -e $path"; then

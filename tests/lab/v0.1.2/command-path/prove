@@ -5,15 +5,15 @@
 # This is the milestone's proof under the rule written at
 # `docs/contribution/QUALITE.md`: **no fixture replaces a component of the
 # product on this path.** Every past proof of this repository crossed links 3, 4
-# and 5 by a fixture — a synthetic signer, a synthetic Console, a piped
-# wrapper — and each said so. Here the real Console builds the pair, the real
+# and 5 by a fixture — a synthetic signer, a synthetic App, a piped
+# wrapper — and each said so. Here the real App builds the pair, the real
 # native window collects the consent, the real core signs, the real Controller
 # receives, spends the sequence and launches over SSH, and the real Auxiliary
 # applies on another machine.
 #
 # Three machines, three authorities, none interchangeable:
 #
-#   lab-console    the human's machine: the installed `.deb`, its WebView, its
+#   lab-app    the human's machine: the installed `.deb`, its WebView, its
 #                  native helper and its vault. Nothing of the server side;
 #   lab-vps        the Controller: the product binary, the command identities,
 #                  the endpoint sheets, and the only side that opens an SSH
@@ -35,21 +35,21 @@ export LC_ALL=C.UTF-8
 
 usage() {
   cat >&2 <<'EOF'
-usage: prove [artifact | controller | console | associate | relay | enrol |
+usage: prove [artifact | controller | app | associate | relay | enrol |
               attach | origin | journey | refuse | verify | collect | remove | all]
 
   artifact    build the product binary on the machine that carries Go
   controller  init the real Controller on lab-vps and start it serving, with
               one enrolment window open
-  console     sync the console sources, build the .deb and install it
-  associate   drive the real Console to its association with that Controller,
+  app     sync the app sources, build the .deb and install it
+  associate   drive the real App to its association with that Controller,
               then close the window: a Controller holding an active device
               refuses to open a second one, and it is right to
   relay        stand the Relay and the Daemon up — the gate a machine enters
               the Controller's inventory through
   enrol       pose the anchor carrying the **real** approval key of the real
-              Console, the forced command and the bounded elevation
-  attach      rattach the machine from the Console's own Parc view
+              App, the forced command and the bounded elevation
+  attach      rattach the machine from the App's own Parc view
   origin      build this run's image, serve it, and ground the machine for it
   journey     the whole path twice: the failure that reaches the machine and
               comes back, then the success that really poses a service
@@ -73,7 +73,7 @@ EOF
 command=${1:-all}
 [[ $# -le 1 ]] || usage
 case "$command" in
-  artifact | controller | console | associate | relay | enrol | attach | origin \
+  artifact | controller | app | associate | relay | enrol | attach | origin \
     | journey | refuse | replay | verify | collect | remove | all) ;;
   *) usage ;;
 esac
@@ -81,7 +81,7 @@ esac
 root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
 harness=$(cd -- "$(dirname -- "$0")" && pwd)
 labctl="$root/tools/labctl"
-console_vm=lab-console
+app_vm=lab-app
 controller_vm=lab-vps
 machine_vm=lab-machine-1
 expected_origin=your-cloud/labctl
@@ -92,7 +92,7 @@ remote_origin=/root/lab-command-path-origin
 # The origin of this run's image. It is the environment, not the product: the
 # name, the repository and the apparatus are `v0.1.1`'s, reused rather than
 # rebuilt, and it is served from the Controller's machine only because that is a
-# third host neither the Console nor the machine is.
+# third host neither the App nor the machine is.
 origin_host=registry.lab.your-cloud.test
 origin_repository="$origin_host/lab/synthetic-app"
 # The service this run really poses, and the three values that must agree
@@ -187,10 +187,10 @@ cd $remote_build && go build -o $remote_build/your-cloud ./cmd/your-cloud"
 # controller — the real Controller, serving, with the dispatcher attached.
 # --------------------------------------------------------------------------
 mount_controller() {
-  local controller_address machine_address console_address
+  local controller_address machine_address app_address
   controller_address=$(inventory "$controller_vm")
   machine_address=$(inventory "$machine_vm")
-  console_address=$(inventory "$console_vm")
+  app_address=$(inventory "$app_vm")
   [[ -s "$carried/your-cloud" ]] || fail "no product binary is carried; run the artifact phase first"
 
   announce "mounting the Controller on $controller_vm — $controller_address"
@@ -257,50 +257,50 @@ printf '%s' '{\"schema_version\":1,\"machine_id\":\"$machine_vm\",\"host\":\"$ma
 chmod 0600 /etc/your-cloud/command-endpoints/$machine_vm.json"
 
   # The allowed source is one exact address, and the product refuses anything
-  # wider: the Console's own, and nothing else on this network.
+  # wider: the App's own, and nothing else on this network.
   printf '%s' "$controller_address" >"$carried/controller-address"
   serve_controller open
   echo "  the Controller's one-time sheet is carried, and it expires by itself"
 }
 
 # --------------------------------------------------------------------------
-# console — the candidate, built and installed on the human's machine.
+# app — the candidate, built and installed on the human's machine.
 # --------------------------------------------------------------------------
-mount_console() {
-  local console_address
-  console_address=$(inventory "$console_vm")
-  announce "syncing the console sources to $console_vm — $console_address"
+mount_app() {
+  local app_address
+  app_address=$(inventory "$app_vm")
+  announce "syncing the app sources to $app_vm — $app_address"
   # `-m` re-stamps every file to now, so the build caches that survive under
   # `target/` can never mistake an older synced file for an already-built one.
-  tar czf "$workdir/console.tgz" -C "$root" \
-    --exclude=console/node_modules \
-    --exclude=console/dist \
-    --exclude=console/dist-reflow \
-    --exclude=console/src-tauri/target \
-    --exclude=console/src-tauri/binaries \
-    console
-  "$labctl" ssh "$console_vm" -- "install -d -m 0700 /root/your-cloud-console-build"
-  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" /root/your-cloud-console-build/console.tgz >/dev/null
-  "$labctl" ssh "$console_vm" -- "
+  tar czf "$workdir/app.tgz" -C "$root" \
+    --exclude=app/node_modules \
+    --exclude=app/dist \
+    --exclude=app/dist-reflow \
+    --exclude=app/src-tauri/target \
+    --exclude=app/src-tauri/binaries \
+    app
+  "$labctl" ssh "$app_vm" -- "install -d -m 0700 /root/your-cloud-app-build"
+  "$labctl" copy-to "$app_vm" "$workdir/app.tgz" /root/your-cloud-app-build/app.tgz >/dev/null
+  "$labctl" ssh "$app_vm" -- "
 set -e
-tar xzf /root/your-cloud-console-build/console.tgz -C /root/your-cloud-console-build -m --strip-components=1
-rm -f /root/your-cloud-console-build/console.tgz"
+tar xzf /root/your-cloud-app-build/app.tgz -C /root/your-cloud-app-build -m --strip-components=1
+rm -f /root/your-cloud-app-build/app.tgz"
 
-  announce "building and installing the candidate on $console_vm (offline, one job)"
+  announce "building and installing the candidate on $app_vm (offline, one job)"
   # The swap this build needs does not come back by itself after a boot, and a
   # release build of the Tauri stack without it ends in the OOM reaper rather
   # than in a candidate.
-  "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
-  deploy "$console_vm" common run inside console-oracle.py build
-  "$labctl" ssh "$console_vm" -- "$remote_harness/build"
+  "$labctl" ssh "$app_vm" -- "swapon /swapfile 2>/dev/null || true"
+  deploy "$app_vm" common run inside app-oracle.py build
+  "$labctl" ssh "$app_vm" -- "$remote_harness/build"
 }
 
 # --------------------------------------------------------------------------
-# associate — the real Console, driven, against that real Controller.
+# associate — the real App, driven, against that real Controller.
 # --------------------------------------------------------------------------
 associate() {
-  local console_address controller_address infrastructure_id
-  console_address=$(inventory "$console_vm")
+  local app_address controller_address infrastructure_id
+  app_address=$(inventory "$app_vm")
   [[ -s "$carried/window.json" ]] || fail "no enrolment sheet is carried; run the controller phase first"
   controller_address=$(cat "$carried/controller-address")
   infrastructure_id=$(cat "$carried/infrastructure-id")
@@ -309,7 +309,7 @@ associate() {
   # own sheet are names. The name is pointed at the machine that really serves
   # it; nothing of the product is changed to fit the LAB.
   announce "pointing the Controller's own names at $controller_address"
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 name=controller.$infrastructure_id.your-cloud.test
 sed -i \"/ \$name\$/d\" /etc/hosts
@@ -318,26 +318,26 @@ getent hosts \"\$name\""
 
   # The sheet the Controller wrote when it was started with a window open. It
   # is carried the way a human carries it, and it expires by itself.
-  "$labctl" copy-to "$console_vm" "$carried/window.json" "$remote_harness/window.json" >/dev/null
+  "$labctl" copy-to "$app_vm" "$carried/window.json" "$remote_harness/window.json" >/dev/null
 
-  announce "driving the installed Console to its association"
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run associate $remote_harness/window.json"
+  announce "driving the installed App to its association"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run associate $remote_harness/window.json"
 
   # And the window closes behind it. This is not tidiness: a Controller holding
   # an active device refuses to open a second enrolment window and exits, so a
   # perimeter left with `--window` cannot be restarted at all afterwards.
-  announce "closing the enrolment window: one Console, one association"
+  announce "closing the enrolment window: one App, one association"
   serve_controller closed
 }
 
 # serve_controller <open|closed> — the two shapes the product really has.
 serve_controller() {
-  local window=$1 controller_address machine_address console_address
+  local window=$1 controller_address machine_address app_address
   controller_address=$(inventory "$controller_vm")
   machine_address=$(inventory "$machine_vm")
-  console_address=$(inventory "$console_vm")
+  app_address=$(inventory "$app_vm")
   "$labctl" ssh "$controller_vm" -- "$remote_harness/install-controller serve \
-    $remote_harness/creds $console_address/32 $controller_address $machine_address $window"
+    $remote_harness/creds $app_address/32 $controller_address $machine_address $window"
   if [[ "$window" == open ]]; then
     "$labctl" copy-from "$controller_vm" "$remote_state/window.json" "$carried/window.json" >/dev/null
     chmod 0600 "$carried/window.json"
@@ -369,18 +369,18 @@ cp $remote_build/pki/machine-1/daemon.crt $remote_build/pki/machine-1/daemon.key
 }
 
 # --------------------------------------------------------------------------
-# enrol — the anchor carries the real approval key of the real Console, which
+# enrol — the anchor carries the real approval key of the real App, which
 # is why this phase can only run after the association.
 # --------------------------------------------------------------------------
 enrol_machine() {
   local infrastructure_id human_key public
   infrastructure_id=$(cat "$carried/infrastructure-id")
 
-  announce "reading the approval key the real Console published to this Controller"
+  announce "reading the approval key the real App published to this Controller"
   human_key=$("$labctl" ssh "$controller_vm" -- \
     "python3 -c 'import json;print(json.load(open(\"/var/lib/private/your-cloud-controller/identity.json\"))[\"active\"][\"human_public_key\"])'" \
     | tr -d '\r\n')
-  [[ -n "$human_key" ]] || fail "this Controller holds no active device: the Console never associated"
+  [[ -n "$human_key" ]] || fail "this Controller holds no active device: the App never associated"
   echo "  the machine will accept approvals from this key, and no other"
 
   # The anchor is composed here from the Controller's own device record. In
@@ -394,19 +394,19 @@ enrol_machine() {
   # product's own module, through the contract-test binary that exposes it —
   # never composed by this harness. It is built from this run's sources.
   announce "rendering the entry and the elevation rule with the product's own module"
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 . /root/.cargo/env
-cd /root/your-cloud-console-build/src-tauri
+cd /root/your-cloud-app-build/src-tauri
 export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8
 cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
   --features machine-identity-contract-test --bin your-cloud-machine-identity-fixture >/dev/null 2>&1
 install -m 0700 target/debug/your-cloud-machine-identity-fixture $remote_harness/identity-fixture"
 
   public=$(cat "$carried/command-public-key")
-  "$labctl" ssh "$console_vm" -- \
+  "$labctl" ssh "$app_vm" -- \
     "$remote_harness/identity-fixture render-entry $public" >"$workdir/entry"
-  "$labctl" ssh "$console_vm" -- \
+  "$labctl" ssh "$app_vm" -- \
     "$remote_harness/identity-fixture render-elevation" >"$workdir/sudoers"
   [[ -s "$workdir/entry" && -s "$workdir/sudoers" ]] \
     || fail "the product's own module rendered no entry or no elevation rule"
@@ -421,11 +421,11 @@ install -m 0700 target/debug/your-cloud-machine-identity-fixture $remote_harness
 }
 
 # --------------------------------------------------------------------------
-# attach — from the Console's own Parc view, through the Relay's snapshot.
+# attach — from the App's own Parc view, through the Relay's snapshot.
 # --------------------------------------------------------------------------
 attach_machine() {
-  announce "attaching $machine_vm to the inventory, from the Console"
-  "$labctl" ssh "$console_vm" -- \
+  announce "attaching $machine_vm to the inventory, from the App"
+  "$labctl" ssh "$app_vm" -- \
     "$remote_harness/run attach $remote_harness/window.json $machine_vm"
 }
 
@@ -539,7 +539,7 @@ run_journey() {
 }
 
 # read_dispatch <expected outcome> <expected sequence> <label> — the Controller's
-# own record, read from the machine that holds it, never from what the Console
+# own record, read from the machine that holds it, never from what the App
 # displayed.
 #
 # The sequence is asserted as well as the outcome, and that is the anti-replay
@@ -567,17 +567,17 @@ read_dispatch() {
 # each case is put back before the next runs.
 # --------------------------------------------------------------------------
 
-# journey_once <slug> <digest> — one full approval, driven by the Console.
+# journey_once <slug> <digest> — one full approval, driven by the App.
 #
 # The Controller's own journal for the same window of time is captured whatever
 # the outcome, and that is the half this proof had never named: a
-# `response_refused` says the Controller **answered** and the Console refused
-# its answer, so the two accounts have to be read side by side. A Console tape
+# `response_refused` says the Controller **answered** and the App refused
+# its answer, so the two accounts have to be read side by side. An App tape
 # alone can only ever say which call broke, never what came back.
 journey_once() {
   local slug=$1 digest=$2 started outcome=0
   started=$(date -u +%Y-%m-%d\ %H:%M:%S)
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run journey $remote_harness/window.json \
     $machine_vm $digest $slug" || outcome=$?
   "$labctl" ssh "$controller_vm" -- \
     "journalctl -u your-cloud-controller.service --since '$started' --no-pager -o short-iso" \
@@ -716,24 +716,24 @@ grep -q 'auxiliary approve' $forced_key"
 # restarted.
 #
 # The interceptor is an **external hostile actor, not a fixture**. It replaces
-# no component of the product: the real Console builds the pair, the real window
+# no component of the product: the real App builds the pair, the real window
 # consents, the real core signs, the real Controller receives every byte. It
 # only stands where a network attacker stands, and it is granted two things the
 # constat says the attacker may have — the transport (it reads the Controller's
 # own server key from the Controller's disk) and the device credential (it reads
 # it from the vault, with the phrase, by the product's own code). It is **not**
 # granted the human signing key: the session it replays onto is one the real
-# Console freshly and legitimately opens, so the refusal can only come from the
+# App freshly and legitimately opens, so the refusal can only come from the
 # durable dispatch registry, never from a session the attacker forged.
 #
 # What this does NOT attest is named in the LAB report: that the transport held
-# (its keys were handed over, not broken), that the Console's pinning held (it
+# (its keys were handed over, not broken), that the App's pinning held (it
 # was satisfied by the real cert, not tested), and that anything but
 # POST /v0/plan-approvals is refused on replay.
 # --------------------------------------------------------------------------
 replay_constat() {
-  local console_address controller_address infrastructure_id name digest
-  console_address=$(inventory "$console_vm")
+  local app_address controller_address infrastructure_id name digest
+  app_address=$(inventory "$app_vm")
   controller_address=$(cat "$carried/controller-address")
   infrastructure_id=$(cat "$carried/infrastructure-id")
   name=controller.$infrastructure_id.your-cloud.test
@@ -754,11 +754,11 @@ replay_constat() {
   # teardown that destroyed it with the keys would leave a red that accuses
   # nothing. The keys themselves are shredded — they are the one thing this
   # perimeter must never leave behind.
-  "$labctl" copy-from "$console_vm" "$replay_dir/interceptor.log" \
+  "$labctl" copy-from "$app_vm" "$replay_dir/interceptor.log" \
     "$workdir/replay-interceptor.log" >/dev/null 2>&1 || true
   install -d -m 0755 "$result_root/$run_id"
   cp "$workdir/replay-interceptor.log" "$result_root/$run_id/" 2>/dev/null || true
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 systemctl stop lab-replay-interceptor.service 2>/dev/null || true
 sed -i \"/ $name\$/d\" /etc/hosts
 printf '%s %s\n' '$controller_address' '$name' >>/etc/hosts
@@ -772,16 +772,16 @@ rm -rf $replay_dir" || true
 replay_work() {
   announce "the replay: an external actor steals the credentials it needs"
   # The device credential, read from the vault by the product's own code. This
-  # is the attacker who has the phrase, opening the Console's own store exactly
-  # as the Console does — never a reimplementation, and a **read**, never a
+  # is the attacker who has the phrase, opening the App's own store exactly
+  # as the App does — never a reimplementation, and a **read**, never a
   # write. Only the device key comes out; the human seed stays sealed.
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 install -d -m 0700 $replay_dir
-phrase=\$(python3 -c \"import json;print(json.load(open('$remote_harness/console-state/vault.json'))['unlock_phrase'])\")
-cd /root/your-cloud-console-build/src-tauri
+phrase=\$(python3 -c \"import json;print(json.load(open('$remote_harness/app-state/vault.json'))['unlock_phrase'])\")
+cd /root/your-cloud-app-build/src-tauri
 . /root/.cargo/env
-YC_ATTACKER_STATE_DIR=$remote_harness/console-state/data/fr.your-cloud.console/native-vault \
+YC_ATTACKER_STATE_DIR=$remote_harness/app-state/data/fr.your-cloud.app/native-vault \
 YC_ATTACKER_PHRASE=\"\$phrase\" \
 YC_ATTACKER_INFRA=$infrastructure_id \
 YC_ATTACKER_OUT=$replay_dir/device-credential.json \
@@ -808,16 +808,16 @@ PY"
   "$labctl" copy-from "$controller_vm" /tmp/replay-controller.crt "$workdir/controller.crt" >/dev/null
   "$labctl" copy-from "$controller_vm" /tmp/replay-controller.key "$workdir/controller.key" >/dev/null
   "$labctl" ssh "$controller_vm" -- "shred -u /tmp/replay-controller.crt /tmp/replay-controller.key"
-  "$labctl" copy-to "$console_vm" "$workdir/controller.crt" "$replay_dir/controller.crt" >/dev/null
-  "$labctl" copy-to "$console_vm" "$workdir/controller.key" "$replay_dir/controller.key" >/dev/null
-  "$labctl" copy-to "$console_vm" "$harness/_forger/replay-interceptor" "$replay_dir/replay-interceptor" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/controller.crt" "$replay_dir/controller.crt" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/controller.key" "$replay_dir/controller.key" >/dev/null
+  "$labctl" copy-to "$app_vm" "$harness/_forger/replay-interceptor" "$replay_dir/replay-interceptor" >/dev/null
 
-  announce "standing the interceptor between the Console and :9443"
-  # The interceptor listens on the Console's own loopback; the Controller's name
-  # is pointed there so the Console dials the attacker without a line of the
+  announce "standing the interceptor between the App and :9443"
+  # The interceptor listens on the App's own loopback; the Controller's name
+  # is pointed there so the App dials the attacker without a line of the
   # product changing. The attacker re-originates to the real address by IP,
   # checking the real name against the real certificate.
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 chmod 0700 $replay_dir/replay-interceptor
 python3 - <<PY
@@ -848,11 +848,11 @@ systemctl is-active lab-replay-interceptor.service"
   # irrelevant: the approval is spent by being submitted, before any launch, so
   # its bytes are worth replaying either way.
   local replay_slug=rejeu-$$
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey $remote_harness/window.json \
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run journey $remote_harness/window.json \
     $machine_vm $digest $replay_slug" >"$workdir/replay-capture.log" 2>&1 \
     || { sed -n '1,40p' "$workdir/replay-capture.log" | sed 's/^/    /'; fail "the capture journey did not complete"; }
   local captured
-  captured=$("$labctl" ssh "$console_vm" -- \
+  captured=$("$labctl" ssh "$app_vm" -- \
     "printf status | socat - UNIX-CONNECT:$control_socket 2>/dev/null || python3 -c \"import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect('$control_socket'); s.send(b'status'); sys.stdout.write(s.recv(4096).decode())\"")
   echo "  the interceptor's tally: $captured"
   echo "$captured" | grep -q '"approvals_seen": *[1-9]' \
@@ -865,14 +865,14 @@ systemctl is-active lab-replay-interceptor.service"
   position_before=$(machine_position)
   "$labctl" ssh "$controller_vm" -- "systemctl restart your-cloud-controller.service; sleep 3"
 
-  announce "a fresh, legitimate session — opened by the real Console"
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run touch $remote_harness/window.json $machine_vm" \
+  announce "a fresh, legitimate session — opened by the real App"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run touch $remote_harness/window.json $machine_vm" \
     >"$workdir/replay-touch.log" 2>&1 \
-    || { sed -n '1,40p' "$workdir/replay-touch.log" | sed 's/^/    /'; fail "the Console did not open a fresh session after the restart"; }
+    || { sed -n '1,40p' "$workdir/replay-touch.log" | sed 's/^/    /'; fail "the App did not open a fresh session after the restart"; }
 
   announce "the replay: the stale signed bytes, grafted onto that fresh session"
   local verdict
-  verdict=$("$labctl" ssh "$console_vm" -- \
+  verdict=$("$labctl" ssh "$app_vm" -- \
     "python3 -c \"import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect('$control_socket'); s.send(b'replay'); sys.stdout.write(s.recv(4096).decode())\"")
   echo "  the Controller's answer to the replay: $verdict"
 
@@ -942,7 +942,7 @@ echo '  the service answers, names its slug, and holds the scratch it was given'
 collect() {
   announce "collecting the structured results"
   install -d -m 0755 "$result_root/$run_id"
-  "$labctl" copy-from "$console_vm" "$remote_harness/output" "$workdir/collected" >/dev/null 2>&1 || true
+  "$labctl" copy-from "$app_vm" "$remote_harness/output" "$workdir/collected" >/dev/null 2>&1 || true
   local produced="$workdir/collected"
   [[ -d "$produced" ]] || produced="$workdir/collected/output"
   [[ -d "$produced" ]] && cp -a "$produced/." "$result_root/$run_id/" || true
@@ -1010,10 +1010,10 @@ rm -rf /etc/your-cloud /var/lib/your-cloud-auxiliary /usr/lib/your-cloud \
   # free space is printed, because the failure this hygiene exists for did not
   # look like a disk problem: on 12 August 2026 the build succeeded and the
   # install died on « No space left on device », an hour after the cause.
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 dpkg --purge your-cloud >/dev/null 2>&1 || true
 rm -rf $remote_harness
-rm -rf /root/your-cloud-console-build/src-tauri/target/release/bundle
+rm -rf /root/your-cloud-app-build/src-tauri/target/release/bundle
 sed -i '/your-cloud.test\$/d' /etc/hosts
 printf '  free space on the pilot after this pass: %s MiB\n' \"\$((\$(df --output=avail -k / | tail -1) / 1024))\"" || status=1
   rm -rf "$carried"
@@ -1021,7 +1021,7 @@ printf '  free space on the pilot after this pass: %s MiB\n' \"\$((\$(df --outpu
   for pair in "$controller_vm $remote_harness" "$controller_vm /etc/your-cloud/command-identities" \
     "$controller_vm $remote_origin" "$machine_vm $remote_build" \
     "$machine_vm /etc/your-cloud/approval-anchor.json" \
-    "$machine_vm /var/lib/your-cloud-auxiliary" "$console_vm $remote_harness"; do
+    "$machine_vm /var/lib/your-cloud-auxiliary" "$app_vm $remote_harness"; do
     read -r vm path <<<"$pair"
     "$labctl" ssh "$vm" -- "test ! -e $path" \
       || { echo "FAILED: $path is still present in $vm" >&2; status=1; }
@@ -1033,7 +1033,7 @@ printf '  free space on the pilot after this pass: %s MiB\n' \"\$((\$(df --outpu
 case "$command" in
   artifact) build_artifact ;;
   controller) mount_controller ;;
-  console) mount_console ;;
+  app) mount_app ;;
   associate) associate ;;
   relay) mount_relay ;;
   enrol) enrol_machine ;;
@@ -1047,8 +1047,8 @@ case "$command" in
   remove) remove ;;
   all)
     # The order is the order of authorities, and not one step of it is a
-    # convenience: the Console cannot associate before a Controller serves with
-    # a window, the anchor cannot be posed before the Console has published the
+    # convenience: the App cannot associate before a Controller serves with
+    # a window, the anchor cannot be posed before the App has published the
     # key it will carry, a machine cannot enter the inventory before the Relay
     # reports it, and no plan can be approved for a machine outside it.
     status=0
@@ -1078,7 +1078,7 @@ case "$command" in
     }
     step build_artifact
     step mount_controller
-    step mount_console
+    step mount_app
     step associate
     step mount_relay
     step enrol_machine

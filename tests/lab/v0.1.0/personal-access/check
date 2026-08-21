@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prove the Console crate still compiles against the synchronised sources.
+# Prove the App crate still compiles against the synchronised sources.
 set -euo pipefail
 
 [[ $(id -u) -eq 0 ]] || { echo "check must run as root" >&2; exit 1; }
@@ -25,7 +25,7 @@ export CARGO_BUILD_JOBS=1
 
 # The external binary `tauri.conf.json` declares. It is built from the sources
 # this run synchronised — never downloaded, never committed — and rebuilt every
-# time, so the Console is never checked against a helper that no longer exists.
+# time, so the App is never checked against a helper that no longer exists.
 #
 # It is built for the host rather than through `--target`, which would open a
 # second target directory sharing nothing with the warm one: this machine has
@@ -36,5 +36,5 @@ cargo "+$toolchain" build --locked --offline -j 1 \
 install -d -m 0755 binaries
 install -m 0755 "target/debug/$sidecar" "binaries/$sidecar-$target"
 
-cargo "+$toolchain" check --locked --offline -j 1 --package your-cloud-console
-echo "CHECK_CONSOLE_OK"
+cargo "+$toolchain" check --locked --offline -j 1 --package your-cloud-app
+echo "CHECK_APP_OK"

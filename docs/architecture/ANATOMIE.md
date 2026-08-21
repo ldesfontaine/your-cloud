@@ -54,7 +54,7 @@ redéployée. Ce passage est vert **après deux rouges produit corrigés** — u
 répertoire intermédiaire de volume laissé à root, et une valeur approuvée
 tronquée à sa première espace dans la fiche. Ce qui reste hors preuve machine de
 cette milestone est nommé dans ce rapport : la surface HTTP du Controller et la
-vue Services de la Console restent tenues par leurs propres suites, et la
+vue Services de l'App restent tenues par leurs propres suites, et la
 révision jugée porte `+worktree`.
 
 ## Distribution réellement prouvée pour `v0.0.2`
@@ -107,8 +107,8 @@ lacune, reprise et cycle de retrait-réinstallation.
 
        +--------------------------------------------------+
        | Environnement d'administration                   |
-       | Console installée -- API privée --> Controller   |
-       | Controller -- GET mTLS :8444 -------> Relay     |
+       | App installée -- API privée --> Controller       |
+       | Controller -- GET mTLS :8444 -------> Relay      |
        | Controller -> SSH forcé -> Auxiliaire ponctuel   |
        +--------------------------------------------------+
 ```
@@ -121,24 +121,24 @@ un service placé autrement reste externe tant qu'un parcours géré dédié n'e
 pas pris en charge.
 
 <!-- coherence: V1-APP-ACCESS:start -->
-La Console, le Controller et le Relay restent hors du chemin emprunté par le
+L'App, le Controller et le Relay restent hors du chemin emprunté par le
 trafic Web vers les services : la panne de leurs processus ne doit pas arrêter
 un service hébergé sur une autre machine. La perte d'un hôte interrompt
 cependant les services qui y cohabitent. Le Controller porte l'autorité d'une
-seule infrastructure. `v0.1.0` prouve une Console installée, un Controller et une
+seule infrastructure. `v0.1.0` prouve une App installée, un Controller et une
 infrastructure ; les associations futures à plusieurs Controllers isolent
 identités d'appareil et sessions.
 
-La Console est une application Tauri 2 signée qui embarque un frontend React,
+L'App est une application Tauri 2 signée qui embarque un frontend React,
 TypeScript et Vite et son client réseau natif. Elle n'ouvre aucun serveur local,
 n'utilise pas une page `localhost`, ne donne aucun client réseau général au
 frontend et ne télécharge jamais son code depuis un Controller. Le premier
 palier vise un `.deb` Linux et un `.msi` Windows issus du même commit et du même
 frontend responsive ; le téléphone conserve ce design mais exige une preuve
 ultérieure de son empaquetage et de son stockage sécurisé. Le Controller reste
-un backend API privé sans frontend. La Console l'appelle sur une origine HTTPS
+un backend API privé sans frontend. L'App l'appelle sur une origine HTTPS
 exacte avec identité d'appareil mTLS et session humaine séparée. Le Controller
-initie sa lecture authentifiée du Relay ; la Console ne contacte jamais le Relay
+initie sa lecture authentifiée du Relay ; l'App ne contacte jamais le Relay
 et les Daemons ne connaissent aucun Controller.
 
 L'interface est centrée sur l'infrastructure sélectionnée, avec `Synthèse`,
@@ -146,13 +146,13 @@ L'interface est centrée sur l'infrastructure sélectionnée, avec `Synthèse`,
 les secrets, l'appareil et la session restent sous `Profil et sessions` ; aucun
 de ces concepts ne devient une rubrique d'infrastructure artificielle. Les
 tokens visuels communs pilotent thèmes, fontes, espacements et composants sous
-Linux et Windows. Le statut Relay décrit le transport : la Console ne fabrique
+Linux et Windows. Le statut Relay décrit le transport : l'App ne fabrique
 ni machine Relay dédiée, ni badge de placement absent de l'API. Un hôte qui
 exécute Daemon et Relay reste une machine normale lorsqu'il appartient réellement
 à l'inventaire.
 
 L'autorité TLS serveur des Controllers, l'autorité qui émet les certificats
-d'appareil Console, l'autorité cliente des Daemons et l'autorité cliente de
+d'appareil App, l'autorité cliente des Daemons et l'autorité cliente de
 lecture Controller–Relay sont distinctes. Un certificat ou une chaîne d'une de
 ces classes ne donne aucun droit dans une autre et doit y être refusé.
 
@@ -203,7 +203,7 @@ Le Controller non-root sépare son autorité métier `inventory.json` du cache d
 transport `relay-cache.json`. Ces fichiers privés, bornés et atomiques ne
 partagent ni état P4 ni secret. Une insertion exige le snapshot P5 frais
 persisté avant l'inventaire ; un renommage déjà rattaché reste local. La
-projection Console contient seulement les zéro à 64 machines attendues sous
+projection App contient seulement les zéro à 64 machines attendues sous
 128 Kio. Elle distingue transport, enrôlement, observation récente jusqu'à 90
 secondes incluses ou ancienne, et continuité. Les lacunes sont résumées sans
 troncature et les 2 Mio bruts restent côté Controller. Les libellés Unicode NFC
@@ -216,7 +216,7 @@ appareil administrateur possède un pair distinct et révocable, avec un routage
 limité aux adresses d'administration et un refus serveur par défaut. La
 possession de la clé du pair ne prouve ni l'intégrité de l'appareil ni l'identité
 de l'humain. Une identité d'appareil et une authentification humaine forte
-restent obligatoires après l'accès réseau ; SSO/OIDC est facultatif. La Console
+restent obligatoires après l'accès réseau ; SSO/OIDC est facultatif. L'App
 devra masquer la configuration WireGuard derrière une opération de connexion
 nommée, déverrouiller uniquement la clé de l'infrastructure choisie et fermer la
 liaison au timeout ou à la demande. Cette direction ne choisit pas encore le
@@ -237,7 +237,7 @@ directement.
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ## Créer puis remplacer le Controller
 
-L'installation de la Console contient un Assistant natif temporaire distinct du
+L'installation de l'App contient un Assistant natif temporaire distinct du
 frontend. La création suit ce transfert d'autorité :
 
 ```text
@@ -247,7 +247,7 @@ Utilisateur
 `- prête son accès SSH personnel pour cette opération
                      |
                      v
-Console
+App
 |- frontend : demandes et résultats typés, aucun secret SSH
 `- binaire compagnon signé lancé en helper éphémère
    |- graphe autonome sans Tauri, Wry, Tao ni WebKit
@@ -270,13 +270,13 @@ Controller autonome
 
 Le binaire distinct n'est pas une préférence de packaging : le gate ELF Linux
 du 2 août 2026 a trouvé WebKitGTK et JavaScriptCoreGTK dans le `DT_NEEDED` de la
-Console. Le helper possède donc son propre crate, son propre graphe et sa propre
+App. Le helper possède donc son propre crate, son propre graphe et sa propre
 preuve d'absence de WebView, tout en restant livré dans la même release.
 
 Le socle `#43` est implémenté et prouvé sous Linux et Windows sur le commit
 `f3fef79`, dans le run `30753216798`. Les modes `create` et `replace` passent
 par trois commandes Tauri positives sans champ secret et un identifiant natif
-anti-rejeu ; ni la Console ni le helper n'ouvrent de listener. Les gates natifs
+anti-rejeu ; ni l'App ni le helper n'ouvrent de listener. Les gates natifs
 bornent aussi le packaging. Sous Windows, le processus est créé suspendu avec
 une liste exacte de handles héritables, affecté au Job Object avant reprise, et
 les descendants ainsi que les branches d'échec sont terminés avec lui. Voir le
@@ -304,7 +304,7 @@ complète sur `b76ded8`, avec trois artefacts inspectés.
 
 Il existe deux catégories d'accès SSH d'administration des machines : l'accès
 personnel conservé par l'utilisateur et l'identité Your Cloud propre à chaque
-machine. L'authentification Console–Controller est séparée et ne devient pas une
+machine. L'authentification App–Controller est séparée et ne devient pas une
 troisième autorité SSH. Shell, PTY, SFTP et transferts sont interdits à la clé
 Your Cloud. Un accès personnel `root` exige un consentement explicite pour
 l'opération exacte ; le défaut recommandé reste un compte non-root avec `sudo`
@@ -335,7 +335,7 @@ perte confirmée ou ancien hôte isolé + choix explicite
         v
 accès SSH personnel -> Assistant -> nouveau Controller
                                       |
-                                      |- nouvelle association Console
+                                      |- nouvelle association App
                                       |- nouveau lecteur Relay exclusif
                                       |- réutilise les Agents compatibles
                                       |- tourne approbation, sessions et clés
@@ -347,7 +347,7 @@ services des autres hôtes ----------------------> inchangés
 service colocalisé sur l'hôte perdu ------------> interruption possible
 ```
 
-Le code de récupération d'une Console réassocie celle-ci à un Controller encore
+Le code de récupération d'une App réassocie celle-ci à un Controller encore
 vivant ; il ne remplace pas ce parcours. Sans sauvegarde de l'ancien
 Controller, l'utilisateur redéclare ses endpoints. L'installateur de `v0.1.0`
 embarque l'Assistant, un unique paquet serveur `.deb` Debian 13 `amd64`, ses
@@ -362,7 +362,7 @@ volée.
 Le remplacement avance cible par cible : `ancien seul`, `chevauchement borné`,
 `nouveau seul` ou `inconnu`. Après une coupure, l'Assistant reconstruit ces
 états depuis les marqueurs root-owned avant toute nouvelle décision. Il ne
-déclare une réussite que lorsque la Console, le lecteur Relay et chaque cible
+déclare une réussite que lorsque l'App, le lecteur Relay et chaque cible
 font confiance au nouveau Controller seul. Une suspicion de compromission
 impose une base saine et l'isolement vérifié de l'ancien hôte.
 
@@ -426,7 +426,7 @@ Le contrat et ses scénarios sont détaillés dans le
 Dans `v0.1.0`, une action demandée dans l'interface suit ce chemin :
 
 ```text
-Utilisateur -> Console -> plan lisible -> confirmation native -> signature
+Utilisateur -> App -> plan lisible -> confirmation native -> signature
                                                                |
                                                                v
 Controller -> enveloppe inchangée -> identité SSH par machine -> commande forcée
@@ -435,14 +435,14 @@ Controller -> enveloppe inchangée -> identité SSH par machine -> commande forc
 machine -> Auxiliaire ponctuel -> opération typée -> résultat direct
                                                    |
                                                    v
-Controller -> Console
-Daemon de la machine -> observations -> Relay -> Controller -> Console
+Controller -> App
+Daemon de la machine -> observations -> Relay -> Controller -> App
 ```
 
 Le Daemon ne reçoit aucun ordre et ne connaît aucun Controller. Le Relay accuse
 et conserve le dernier état d'observation validé sans porter l'inventaire métier
 ni calculer le statut affiché. Le Controller rapproche les machines attendues,
-les heures de réception, les séquences et les lacunes afin que la Console montre
+les heures de réception, les séquences et les lacunes afin que l'App montre
 l'état obtenu après qu'un autre chemin a appliqué le plan. Les dates réseau sont
 normalisées en UTC `Z` : le fuseau n'affecte pas l'instant. L'âge part de
 `snapshot_at - received_at`, puis avance sur l'horloge monotone du Controller.
@@ -476,7 +476,7 @@ Podman rootless le registre autorisé et le digest exact annoncés dans le plan.
 Une machine d'observation ne l'active pas. Le Daemon et le Relay restent
 consacrés aux observations. Ansible reste disponible comme outil externe de
 l'utilisateur ; il n'appartient pas au cœur de `v0.1.0`. Le Controller ne
-possède pas la clé humaine de la Console et ne peut donc pas forger seul une approbation.
+possède pas la clé humaine de l'App et ne peut donc pas forger seul une approbation.
 
 Les autres cibles utilisent leur propre autorité plutôt que ce chemin local :
 

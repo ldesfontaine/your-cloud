@@ -166,7 +166,7 @@ func TestUnverifiableAlwaysNamesItsReason(t *testing.T) {
 			Observation: held,
 		}, externalTestTime(t, "2026-08-07T10:01:10Z"))
 		if err != nil || projected.Reason == nil || *projected.Reason != reason {
-			t.Fatalf("the reason did not reach the Console's view: %+v %v", projected, err)
+			t.Fatalf("the reason did not reach the App's view: %+v %v", projected, err)
 		}
 	}
 }

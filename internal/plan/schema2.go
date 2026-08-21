@@ -798,7 +798,7 @@ func BuildLinkRoutePair(operation, infrastructureID, machineID, routeHost string
 // The second direction is the asymmetry the contract names rather than hides:
 // the rollback of a discard is a snapshot of the same slot, and what it will
 // archive is the state the machine holds when it runs — not the archive that was
-// destroyed, which nothing can bring back. The Console says so in those words;
+// destroyed, which nothing can bring back. The App says so in those words;
 // this builder only builds the document.
 //
 // The reserved slot is refused here as it is refused by validation, in both

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ouvre l'écran virtuel sur lequel la Console peint réellement, puis passe la
+# Ouvre l'écran virtuel sur lequel l'App peint réellement, puis passe la
 # main à `inside`.
 #
 # `-noreset` n'est pas de la décoration : sans lui le serveur X se régénère entre

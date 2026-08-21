@@ -410,7 +410,7 @@ func (handler *ControllerHandler) serveMachines(response http.ResponseWriter, re
 	// projection rather than inside it: the projection answers for the
 	// inventory and the observation chain, the registry answers for what a
 	// machine reported having consumed, and merging the two readers would make
-	// one of them look like a source of the other. No new route: the Console
+	// one of them look like a source of the other. No new route: the App
 	// learns the successor it must sign where it already reads its machines.
 	for index := range view.Machines {
 		sequence, certain := handler.dispatches.CommandPosition(view.Machines[index].MachineID)
@@ -491,7 +491,7 @@ func (handler *ControllerHandler) serveMachine(response http.ResponseWriter, req
 		// Relay l'ait rapportée `active`, puisque le cas contraire a déjà répondu
 		// `422 machine_not_active` plus haut et retourné. Le couple
 		// `(409, machine_not_active)` est donc impossible sur cette voie, et
-		// `known_problem` côté Console ne le connaît pas — correctement.
+		// `known_problem` côté App ne le connaît pas — correctement.
 		handler.writeProblem(response, http.StatusConflict, "state_conflict", 0)
 		return
 	}

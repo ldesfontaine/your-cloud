@@ -11,7 +11,7 @@
 #   lab-vps        the public machine. It holds the entrypoint, the listener's side
 #                  of the passage, a second service of the third door that keeps
 #                  nothing, and the two declared names;
-#   lab-console    the third machine. It holds **the origin of the image** — a
+#   lab-app    the third machine. It holds **the origin of the image** — a
 #                  static OCI distribution tree served over this run's own TLS by
 #                  the harness's own binary — and, by the same listener, the
 #                  synthetic neighbour of the LAN that the confinement is measured
@@ -23,8 +23,8 @@
 # constat that is about what those machines serve.
 #
 # One VM plays every authority this palier separates, and that is honest rather
-# than convenient: the Controller, the Console, the certificate authority and the
-# image origin are a synthetic fixture — the Console window is not wired to this
+# than convenient: the Controller, the App, the certificate authority and the
+# image origin are a synthetic fixture — the App window is not wired to this
 # proof and no HTTP surface of the Controller is mounted — while the Auxiliary is
 # the real product binary, built from the synchronised sources, running as root
 # against a real systemd, a real rootless Podman, a real Traefik, a real kernel
@@ -41,7 +41,7 @@ usage: prove [setup | run | verify | dismantle | remove | all]
   setup      synchronise the sources, build the binaries, the synthetic
              application and its image, mount the anchors and the empty
              anti-replay positions on both machines, serve the image from
-             lab-console, and audit both machines before anything exists
+             lab-app, and audit both machines before anything exists
   run        the palier up to the two published names: the definitions written,
              frozen and read back, the vault, the user service, the second user
              service on the other machine, the confinement, the passage and the
@@ -54,7 +54,7 @@ usage: prove [setup | run | verify | dismantle | remove | all]
 
 This harness belongs to the milestone v0.1.1 «Services utilisateur» (#121). It
 mounts and removes its own perimeter on lab-machine-1 and lab-vps, borrows
-lab-console as the origin of its image and as a synthetic neighbour without
+lab-app as the origin of its image and as a synthetic neighbour without
 installing anything of the product on it, and creates no topology.
 EOF
   exit 2
@@ -72,7 +72,7 @@ labctl="$root/tools/labctl"
 harness="$root/tests/lab/v0.1.1/user-service"
 lan_vm=lab-machine-1
 vps_vm=lab-vps
-origin_vm=lab-console
+origin_vm=lab-app
 expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-user-service
 remote_sources=/root/lab-user-service-sources
@@ -256,7 +256,7 @@ setup() {
       "/root/lab-user-service-certificates/$leaf" >/dev/null
   done
 
-  # The origin. lab-console receives three files and one script, and none of them
+  # The origin. lab-app receives three files and one script, and none of them
   # is the product: the harness's own binary, the image tree it serves, and the
   # leaf of the name it presents.
   "$labctl" ssh "$origin_vm" -- "rm -rf $remote_harness $remote_origin \
@@ -470,9 +470,9 @@ what this proof does not claim, whatever its outcome:
     it back and building the pair that pins one go through the product's own
     `internal/controller` and `internal/plan`; the session, the client certificate
     and the three routes of `v0.1.1` are held by their own Go tests.
-  - the Console window is not wired to this run. What the machines are proven to do
+  - the App window is not wired to this run. What the machines are proven to do
     is what they do with documents they did not write, and interoperability with
-    the real Console is held by the pinned cross-language vectors.
+    the real App is held by the pinned cross-language vectors.
   - the two machines are not rebooted. That the confinement and the passage come
     back by their boot units is what proof #104 established on these very machines,
     and this run does not re-establish it.
@@ -485,7 +485,7 @@ what this proof does not claim, whatever its outcome:
     synthetic image ships no client, by design; what is established is that the
     account is refused, that the engine of that account cannot fetch, and that the
     userspace stack carrying container packets runs as that account.
-  - the topology is flat. `quick` puts lab-console, lab-vps and lab-machine-1 on
+  - the topology is flat. `quick` puts lab-app, lab-vps and lab-machine-1 on
     one subnet, so a hostile host can reach lab-machine-1's own address directly —
     it could before this proof mounted anything and it can afterwards.
   - the hosted gate does not run this harness. It needs libvirt, a LAB and the

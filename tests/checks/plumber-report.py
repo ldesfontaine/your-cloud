@@ -305,7 +305,7 @@ def validate_action_pinning_failure(
     if not isinstance(issues, list) or len(issues) != expected_issues:
         raise ValidationError("le nombre de constats ISSUE-701 est inattendu")
 
-    expected_jobs = {"ci/source", "ci/console_platforms", "ci/plumber_policy"}
+    expected_jobs = {"ci/source", "ci/app_platforms", "ci/plumber_policy"}
     observed_jobs: set[str] = set()
     for issue in issues:
         if not isinstance(issue, dict) or issue.get("code") != "ISSUE-701":

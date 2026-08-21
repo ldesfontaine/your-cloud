@@ -39,9 +39,9 @@ ces actions ; il ne transforme pas chaque machine en serveur d'administration
 général et ne réimplémente pas les API d'OpenStack ou de K3s.
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### Une Console installée distincte d'un Controller privé
+### Une App installée distincte d'un Controller privé
 
-L'App désigne le produit, mais pas une autorité unique. La **Console** est une
+Your Cloud désigne le produit, mais pas une autorité unique. L'**App** est une
 application cliente installée et signée sur un appareil administrateur. Elle
 embarque son frontend et son client réseau sans héberger de serveur local ni
 télécharger son code depuis l'infrastructure. Le **Controller** est le backend
@@ -50,15 +50,15 @@ et rôles, ses décisions d'enrôlement, ses plans, son état attendu et son aud
 mais aucun frontend. Chaque Controller ne détient aucune autorité ni secret d'un
 autre.
 
-La Console, l'appareil d'administration et un éventuel fournisseur d'identité
+L'App, l'appareil d'administration et un éventuel fournisseur d'identité
 restent toutefois des points communs. L'isolation multi-Controller dépend de la
 distribution signée de l'application, des associations approuvées, des identités
 d'appareil et des sessions séparées ; elle doit être prouvée.
 
-Le trajet humain est `utilisateur -> Console -> Controller`. Le trajet
+Le trajet humain est `utilisateur -> App -> Controller`. Le trajet
 d'observation est `Daemon -> Relay -> Controller`. Le trajet d'action part du
 Controller vers l'autorité d'exécution adaptée, puis vers la machine. Le trafic
-des services publiés suit encore un quatrième chemin indépendant. La Console ne
+des services publiés suit encore un quatrième chemin indépendant. L'App ne
 contacte jamais directement le Relay ; le Daemon connaît seulement son endpoint
 Relay approuvé et ne connaît aucun Controller.
 
@@ -73,7 +73,7 @@ forte et autorise chaque demande pour l'infrastructure, la cible et l'action
 concernées.
 
 Dans le profil géré, cette liaison ne devient pas une configuration WireGuard à
-administrer à la main. La Console expose une opération bornée du type
+administrer à la main. L'App expose une opération bornée du type
 `connecter cette infrastructure` ; son cœur natif déverrouille uniquement la clé
 de pair associée, limite la liaison à l'API du Controller, puis la ferme et
 reverrouille la clé au timeout ou à la déconnexion explicite. La clé brute ne
@@ -93,7 +93,7 @@ ligne. Aucun
 choix n'autorise une route libre, un shell réseau ou une confiance implicite
 envers les autres machines.
 
-Pour `v0.1.0`, la Console protège ses clés d'appareil et humaines dans un
+Pour `v0.1.0`, l'App protège ses clés d'appareil et humaines dans un
 coffre Tauri Stronghold commun à Linux et Windows, déverrouillé par une phrase
 secrète locale dérivée avec Argon2id. Chaque Controller garde des clés et une
 autorisation distinctes. Le frontend voit brièvement la phrase saisie puis
@@ -101,14 +101,14 @@ l'efface ; il ne reçoit jamais la clé dérivée, une clé privée, le contenu 
 coffre ou une session. Le matériel de récupération reste conservé hors ligne.
 Dans `v0.1.0`, la phrase quotidienne contient six mots aléatoires et le code global
 de récupération contient 256 bits ; ce dernier dérive une clé différente par
-Controller et n'est jamais sauvegardé par la Console. L'appairage et la
+Controller et n'est jamais sauvegardé par l'App. L'appairage et la
 récupération passent par un listener TLS ouvert par l'autorité locale sur
 l'adresse privée exacte du Controller, puis réellement fermé. Un
 certificat d'appareil de 180 jours et une session de 30 minutes d'inactivité,
 huit heures au maximum, restent liés à un seul Controller ; leur rotation ou
 révocation ne donne jamais autorité sur une autre association.
 Dans `v0.0.3` seulement, chaque Controller possède exactement un humain et un
-appareil Console actifs ; cette cardinalité n'est pas étendue silencieusement
+appareil App actifs ; cette cardinalité n'est pas étendue silencieusement
 aux paliers restants de `v0.1.0`.
 Windows Hello, passkeys, clés FIDO2 et SSO/OIDC pourront être étudiés après
 `v0.1.0` ; aucun ne constitue une dépendance ou une autorisation implicite sur
@@ -123,7 +123,7 @@ d'identité selon son contrat. Ces pouvoirs devront être bornés ; l'absence de
 pouvoir d'usurpation exigera une authentification de bout en bout réellement
 prouvée. Elle ne devient pas le chemin requis.
 
-`v0.1.0` introduit d'abord une Console installable sur Linux et Windows depuis
+`v0.1.0` introduit d'abord une App installable sur Linux et Windows depuis
 le même frontend et un Controller backend dans l'environnement d'administration.
 Le téléphone reste une cible du même contrat visuel et réseau, mais son
 empaquetage, son stockage sécurisé, sa signature et sa distribution sont prouvés
@@ -131,10 +131,10 @@ dans un incrément ultérieur. La preuve `v0.0.3` s'exécute dans le LAB ou un r
 isolé : elle ne lance pas le produit sur le laptop de développement et
 n'implémente pas WireGuard par avance.
 
-Le frontend et le fonctionnement normal de la Console ne reçoivent jamais une
+Le frontend et le fonctionnement normal de l'App ne reçoivent jamais une
 clé de machine, un secret de runner ou une identité d'Agent. Seul l'Assistant
 temporaire décrit ci-dessous peut utiliser l'accès personnel en mémoire pendant
-l'amorçage. Une panne de la Console, du Controller, du Relay ou du chemin
+l'amorçage. Une panne de l'App, du Controller, du Relay ou du chemin
 d'administration ne doit pas interrompre, par elle-même, les services hébergés
 sur d'autres machines. La perte d'un hôte peut interrompre les services qui y
 cohabitent. Les services destinés à Internet restent accessibles par leur HTTPS
@@ -144,7 +144,7 @@ normal, sans imposer WireGuard à leurs utilisateurs.
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ### Amorcer une fois, remplacer sans nouvelle autorité
 
-L'utilisateur installe seulement la Console sur son appareil d'administration.
+L'utilisateur installe seulement l'App sur son appareil d'administration.
 Son **Assistant d'amorçage** natif et temporaire prend en charge les deux
 parcours explicites `Créer une infrastructure` et `Remplacer un Controller`.
 Il utilise un accès SSH personnel déjà possédé par l'utilisateur, de préférence
@@ -159,7 +159,7 @@ l'utilisateur, ni obtenir une primitive SSH ou de signature générale.
 
 Avant toute mutation, l'utilisateur déclare les endpoints un par un et
 l'Assistant réalise un audit en lecture seule. Il ne scanne ni le LAN, ni une
-plage réseau, ni un compte fournisseur. La Console recommande ensuite un
+plage réseau, ni un compte fournisseur. L'App recommande ensuite un
 placement et montre les comptes, artefacts, flux et privilèges exacts.
 L'utilisateur l'approuve avant que l'Assistant installe le premier Controller.
 Un compte non-root avec clé SSH et `sudo` protégé par mot de passe reste le
@@ -176,13 +176,13 @@ machines :
 2. une identité Your Cloud différente par machine, générée et détenue par le
    Controller.
 
-L'authentification Console–Controller autorise l'humain dans le produit, mais
+L'authentification App–Controller autorise l'humain dans le produit, mais
 ne constitue pas une troisième autorité SSH. Your Cloud ne retire jamais le
 compte, la clé ou le droit d'administration personnel. La clé publique Your
 Cloud d'une machine impose une commande forcée vers l'Auxiliaire et interdit
 shell, PTY, SFTP, transfert de port et transfert d'agent. Sa clé privée reste
 sur le Controller, dans un fichier possédé par `root` fourni au seul service
-Controller par les credentials systemd ; elle ne rejoint ni la Console, ni le
+Controller par les credentials systemd ; elle ne rejoint ni l'App, ni le
 frontend, ni l'Agent.
 
 Sur la cible, la clé publique appartient à un compte technique verrouillé,
@@ -200,14 +200,14 @@ budgets restent séparés. Une machine ou VM dédiée devient la recommandation
 pour une infrastructure plus grande ou plus sensible. Le VPS public portant un
 Relay ou des services exposés n'est pas proposé par défaut pour ce rôle.
 La cohabitation partage cependant la panne matérielle : perdre ou isoler cet
-hôte peut interrompre ses services locaux, ce que la Console doit annoncer
+hôte peut interrompre ses services locaux, ce que l'App doit annoncer
 avant le placement.
 
 Perdre le Controller ne retire pas l'accès personnel. Les services hébergés sur
 d'autres machines continuent ; ceux qui cohabitent sur l'hôte perdu ou isolé
 peuvent être interrompus. Après choix explicite de l'utilisateur, le même
 Assistant installe un nouveau Controller, crée une nouvelle association
-Console–Controller et tourne toutes les autorités que l'ancien pouvait
+App–Controller et tourne toutes les autorités que l'ancien pouvait
 exercer : identité lecteur Relay, filtre et manifeste associés, clés SSH par
 machine, clé publique d'approbation et sessions. Les Daemons, le Relay
 d'ingestion et les services compatibles des hôtes survivants restent en place.
@@ -219,13 +219,13 @@ Une suspicion de compromission impose d'abord l'isolement de l'ancien hôte et
 un nouveau Controller sur une base saine ; sinon le résultat reste
 `remplacement non sécurisé`. Sans sauvegarde de l'ancien inventaire,
 l'utilisateur redéclare ses endpoints. Le code de récupération
-Console–Controller répond à un autre incident : il réassocie une Console à un
+App–Controller répond à un autre incident : il réassocie une App à un
 Controller encore vivant, sans restaurer un Controller perdu.
 S'il remplace la clé humaine, le chemin d'action reste verrouillé jusqu'à ce que
 l'Assistant tourne les clés publiques d'approbation avec l'accès SSH personnel ;
 le Controller ne peut pas s'autoriser lui-même.
 
-L'installateur de la Console pour `v0.1.0` embarque l'Assistant, un unique paquet
+L'installateur de l'App pour `v0.1.0` embarque l'Assistant, un unique paquet
 serveur `.deb` Debian 13 `amd64`, ses définitions statiques et le manifeste signé qui
 lie sa version, sa cible, sa taille et son empreinte. L'Assistant vérifie ce lot
 avant tout privilège ; le paquet n'embarque ni secret, ni configuration propre à
@@ -308,7 +308,7 @@ Relay explicitement provisionnée peut lancer simultanément `your-cloud daemon`
 et `your-cloud relay` depuis les mêmes octets, sous deux comptes différents.
 Dans `v0.1.0`, `your-cloud auxiliary` devient un troisième processus ponctuel. Le
 Controller l'invoque par une identité SSH propre à la machine et une commande
-forcée pour un plan exact. Après confirmation native, le cœur de la Console
+forcée pour un plan exact. Après confirmation native, le cœur de l'App
 signe l'enveloppe canonique du plan et de son rollback avec la clé humaine de
 l'association ; le Controller ne fait que la transporter. Chaque machine garde
 la clé publique correspondante, une époque d'autorité et une séquence
@@ -353,7 +353,7 @@ Toutes les actions de l'interface ne traversent donc pas l'Agent :
 | Élément conservé en mode externe | Outil de l'utilisateur ; Your Cloud observe sans reprendre l'autorité |
 
 Pour une opération coordonnée sur plusieurs machines, le Controller construit un
-plan global puis une partie ciblée par machine ou plateforme. La Console le rend
+plan global puis une partie ciblée par machine ou plateforme. L'App le rend
 lisible et recueille son approbation. Son cœur natif signe seulement l'enveloppe
 exacte de chaque partie après ce consentement ; il n'expose aucune signature
 libre au frontend. Chaque autorité ne voit et ne peut appliquer que la partie
@@ -386,7 +386,7 @@ Quel que soit l'adaptateur, le parcours final conserve les mêmes garanties :
 9. une dérive reste visible et exige un nouveau plan ; après un échec contrôlé,
    le rollback approuvé est tenté tant que l'autorité garde la maîtrise ;
 10. le résultat direct puis l'observation indépendante rendent le succès,
-   l'échec ou l'état partiel visibles dans la Console ;
+   l'échec ou l'état partiel visibles dans l'App ;
 11. demande, approbation, identité, empreinte du plan et résultat forment une
    trace d'audit expurgée des secrets.
 
@@ -437,7 +437,7 @@ recommandés par le
 
 - l'observation seule est le profil initial le moins privilégié ;
 - activer une capacité d'action constitue une décision explicite par machine ;
-- la Console, le Controller, le Daemon, le Relay et l'autorité locale n'ont pas
+- l'App, le Controller, le Daemon, le Relay et l'autorité locale n'ont pas
   les mêmes droits, même lorsqu'ils appartiennent au même produit ;
 - un schéma positif d'opérations remplace les commandes libres ;
 - la validation porte sur le type et sur la portée réelle des paramètres, afin
@@ -462,7 +462,7 @@ passe ou contenu applicatif sensible.
 | Autorisation et refus par défaut | Décision par utilisateur, infrastructure, cible, action, version et durée | Mauvaise combinaison refusée avant toute mutation |
 | Validation des entrées | Schéma strict et contraintes sémantiques locales | Chemin, port, volume, capacité et destination hors liste refusés |
 | Journalisation et incident | Identifiant, acteur, empreinte, transitions et résultat sans secret | Reconstituer une action et une erreur sans exposer ses secrets |
-| Continuité NIS2 | Services indépendants des processus Console, Controller, Relay et du canal d'action ; domaine de panne d'une éventuelle cohabitation rendu visible | Une panne du contrôle retarde les actions sans arrêter les services des autres hôtes ; la perte d'un hôte peut interrompre ses services colocalisés |
+| Continuité NIS2 | Services indépendants des processus App, Controller, Relay et du canal d'action ; domaine de panne d'une éventuelle cohabitation rendu visible | Une panne du contrôle retarde les actions sans arrêter les services des autres hôtes ; la perte d'un hôte peut interrompre ses services colocalisés |
 | Chaîne d'approvisionnement et développement sûr | Artefacts épinglés et signés, SBOM, tests hostiles, mise à jour séparée | Refus d'un lot altéré et retour vers le dernier lot valide |
 | Cryptographie, accès et actifs | Identités bornées, communications chiffrées, inventaire et révocation | Pair, identité, cible ou plan inconnu refusé et révocable |
 
@@ -478,7 +478,7 @@ Cloud à NIS2.
 
 ### Risques résiduels à conserver visibles
 
-- La compromission d'une Console déverrouillée ou de sa clé humaine pourrait
+- La compromission d'une App déverrouillée ou de sa clé humaine pourrait
   produire des approbations valides. Un Controller compromis ne peut pas les
   forger seul, mais il expose ses clés SSH, peut transporter une enveloppe
   signée encore valide et peut viser une erreur de l'Auxiliaire.
@@ -641,7 +641,7 @@ aucune autorisation envers les autres appareils.
   générale : chaque pair, destination, port et protocole reste borné au besoin
   approuvé, et chaque donnée Your Cloud qui traverse ce réseau privé est
   protégée avant de quitter sa machine.
-- Un service déjà déployé ne s'arrête pas uniquement parce que la Console, le
+- Un service déjà déployé ne s'arrête pas uniquement parce que l'App, le
   Controller ou le Relay est indisponible.
 <!-- coherence: V1-OBSERVATION:start -->
 - Chaque Daemon enrôlé reçoit un endpoint Relay approuvé qui borne la route, le

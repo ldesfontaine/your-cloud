@@ -4,7 +4,7 @@
 # Everything installed here is synthetic and root-owned: one approval anchor
 # minted from a synthetic seed and naming this machine, one empty anti-replay
 # position, the product binary, the fixture that stands in for the Controller and
-# the Console, and — on the VPS alone — the certificate authority of the two
+# the App, and — on the VPS alone — the certificate authority of the two
 # declared names. No account, no sheet, no data, no archive, no entrypoint, no
 # route, no key of the passage, no interface and no table: those are what the
 # proof asks the product to create.

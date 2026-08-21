@@ -60,7 +60,7 @@ machine administrée                  machine d'observation
                                      `- états et autorités séparés
 
 machine de contrôle                  poste humain
-`- processus controller             `- Console Tauri installée
+`- processus controller             `- App Tauri installée
     `- API privée HTTPS :9443            `- aucun serveur local
 ```
 
@@ -240,11 +240,11 @@ fichiers qu'après son implémentation réelle.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-## Chemin Controller–Relay–Console
+## Chemin Controller–Relay–App
 
 La séparation des responsabilités et le sens de lecture ci-dessous sont des
 invariants du produit. Le Relay reçoit les observations des Daemons sur une
-frontière et rend un instantané au Controller sur une autre. La Console appelle
+frontière et rend un instantané au Controller sur une autre. L'App appelle
 le Controller ; elle n'appelle jamais directement le Relay.
 
 Le listener TLS `8443` est réservé aux Daemons : il fait confiance à
@@ -261,11 +261,11 @@ Daemon -- POST mTLS --> Relay
 
 Controller -- GET /v0/snapshot mTLS :8444 --> Relay
 Controller <-- dernier état validé, séquence et lacunes -- Relay
-Console installée -- API privée authentifiée --> Controller
-Console installée <-- synthèse bornée -- Controller
+App installée -- API privée authentifiée --> Controller
+App installée <-- synthèse bornée -- Controller
 ```
 
-La Console Tauri 2 appelle chaque Controller sur une origine HTTPS TLS 1.3
+L'App Tauri 2 appelle chaque Controller sur une origine HTTPS TLS 1.3
 exacte. Son frontend React, TypeScript et Vite embarqué n'obtient aucun client
 réseau général : l'enveloppe native ajoute l'identité d'appareil mTLS et la
 session humaine opaque. L'API REST JSON expose seulement l'initialisation et la
@@ -322,8 +322,8 @@ et observations et capture `snapshot_at` avant le tri. En-têtes de 8 Kio,
 réponse de 2 Mio, erreur de 1 Kio, délais de 3 et 6 secondes, quatre sockets, une
 requête simultanée et douze connexions et lectures par minute ferment la
 consommation. Une
-Console installée contacte ses Controllers approuvés, jamais le Relay. Un
-Controller porte une infrastructure ; une Console peut conserver plusieurs
+App installée contacte ses Controllers approuvés, jamais le Relay. Un
+Controller porte une infrastructure ; une App peut conserver plusieurs
 associations indépendantes.
 
 Une machine ne peut entrer dans l'inventaire que si cette lecture réussit dans
@@ -332,9 +332,9 @@ ce pouvoir. Une VM hostile située sur le même réseau LAB doit prouver d'abord
 refus IP, puis dans une phase isolée le refus mTLS et applicatif, avant de
 réaffirmer l'ingestion, la lecture saine et l'inventaire inchangé.
 
-La future liaison WireGuard Console–Controller, postérieure à `v0.1.0`, reste
+La future liaison WireGuard App–Controller, postérieure à `v0.1.0`, reste
 un chemin d'accès distinct
-de cette chaîne d'observation. La Console devra la présenter comme une opération
+de cette chaîne d'observation. L'App devra la présenter comme une opération
 de connexion bornée à l'infrastructure choisie, avec déverrouillage et fermeture
 explicites, sans transporter la clé par le Relay ni ajouter ce mécanisme à
 `v0.1.0`
@@ -344,7 +344,7 @@ ou à `v0.0.3`.
 |---|---|---|
 | Enrôlement machine | applique le registre d'autorisation local provisionné par root et refuse immédiatement | porte l'inventaire métier attendu sans pouvoir modifier le registre Relay |
 | Réception | authentifie le Daemon, valide le schéma et persiste avant accusé | relit sans faire confiance aveuglément à la donnée reçue |
-| Séquence et lacune | contrôle et conserve le dernier fait d'observation validé | interprète l'impact et fournit l'état métier à la Console |
+| Séquence et lacune | contrôle et conserve le dernier fait d'observation validé | interprète l'impact et fournit l'état métier à l'App |
 | Fraîcheur | fournit `received_at` et `snapshot_at` en UTC `Z` | calcule leur différence, poursuit sur son horloge monotone, refuse une dérive inter-hôtes supérieure à 30 s, rend `recent` jusqu'à 90 s incluses puis `old` |
 | Utilisateurs et rôles | aucun | authentifie l'humain et autorise la consultation ou l'action |
 | Plans et exécution | aucun | prépare le plan puis utilise un chemin d'action distinct |
@@ -397,11 +397,11 @@ observation disparue, séquence décroissante ou lacune supprimée refusent son
 remplacement sans toucher à l'inventaire.
 
 `GET /v0/machines` ne rend que les machines attendues sous 128 Kio. Les plages
-de lacunes complètes restent dans le cache ; la Console reçoit leur nombre, le
+de lacunes complètes restent dans le cache ; l'App reçoit leur nombre, le
 total supprimé et leurs deux bornes de séquence, sans troncature silencieuse.
 Les libellés sont des textes Unicode NFC bornés et validés par liste positive ;
 ils restent non autoritaires et l'identifiant de machine demeure visible.
-La Console n'invente aucune machine dédiée au Relay : son indisponibilité est
+L'App n'invente aucune machine dédiée au Relay : son indisponibilité est
 un état de transport de l'infrastructure. Un hôte qui exécute aussi le Daemon
 reste une machine normale de l'inventaire ; aucun badge de placement n'est rendu
 car cette API ne publie pas ce fait.
@@ -421,7 +421,7 @@ intégrité, authenticité et confidentialité de bout en bout restent donc troi
 questions distinctes, hors de `v0.0.2`.
 
 Le système visuel, les sept vues et les couches de preuve de l'incrément
-Console–Controller sont décidés. Le fonctionnel Linux a été implémenté et
+App–Controller sont décidés. Le fonctionnel Linux a été implémenté et
 prouvé sur `v1-full`, avec le Relay et un Daemon colocalisés sur
 `lab-machine-1`. Après une matrice historique, la porte native Linux/Windows
 finale `30710037004` a entièrement réussi sur le candidat produit exact
@@ -429,7 +429,7 @@ finale `30710037004` a entièrement réussi sur le candidat produit exact
 son intégration par fast-forward : `v0.0.3` est fermée pour ce candidat exact.
 Le transport conserve atomiquement son dernier snapshot comme `indisponible`
 après panne ou restart, reprend à la demande avec un backoff
-`1/2/4/8/16/30 s` et ne transmet jamais ses 2 Mio bruts à l'API Console bornée
+`1/2/4/8/16/30 s` et ne transmet jamais ses 2 Mio bruts à l'API App bornée
 à 128 Kio. Le Controller initial reste en lecture seule : aucun SSH, Ansible,
 plan appliqué, SSO obligatoire, session utilisateur publique ou canal d'action
 n'est ajouté au Relay.
@@ -499,8 +499,8 @@ en `v0.0.2`.
 | `cmd/your-cloud/relay.go` | assemblage, signaux, ingestion `:8443` et reader `:8444` | `run()` |
 | `cmd/your-cloud/controller.go` | initialisation, assemblage du reader Relay et API privée Controller | `run()` |
 | `cmd/your-cloud/diagnose.go` | lecture et rendu ponctuels | `run()` |
-| `console/src-tauri` | coffre, client réseau nommé et frontières natives de la Console | système d'exploitation et frontend embarqué |
-| `console/src/product` | vues et projection de l'infrastructure sans autorité réseau libre | frontend embarqué |
+| `app/src-tauri` | coffre, client réseau nommé et frontières natives de l'App | système d'exploitation et frontend embarqué |
+| `app/src/product` | vues et projection de l'infrastructure sans autorité réseau libre | frontend embarqué |
 | `internal/observation` | schéma, validation et trois collecteurs | Collector, Buffer, Relay |
 | `internal/buffer` | file locale bornée, séquences, lacunes et diagnostic | Daemon, Diagnose |
 | `internal/daemon/observer.go` | boucles Collector et Publisher | `runDaemon` |
@@ -700,7 +700,7 @@ n'est pas une panne du Relay. Le code le distingue donc des erreurs réseau.
 
 Les rapports LAB conservent les preuves exactes sans transformer cette carte en
 journal de développement : [chaîne Daemon–Relay](../lab/v0.0.2-observation.md)
-et [Console–Controller sous Linux](../lab/v0.0.3-console-controller-linux.md).
+et [App–Controller sous Linux](../lab/v0.0.3-console-controller-linux.md).
 Le [registre d'automatisation](../contribution/TESTS.md) distingue les contrôles
 rejouables des preuves encore manuelles. Une CI standard sans les VM du LAB ne
 remplace pas les scénarios multi-machines.
@@ -709,7 +709,7 @@ remplace pas les scénarios multi-machines.
 
 La chaîne couvre la collecte locale, le tampon durable, l'ingestion mTLS, le
 lecteur Relay privé, l'inventaire et la projection Controller ainsi que la
-Console installée. Elle n'accorde aucune capacité d'action, de déploiement
+App installée. Elle n'accorde aucune capacité d'action, de déploiement
 métier, de commande distante, de découverte LAN, de renouvellement automatique,
 de failover Relay ou d'exécution IaC. Ces absences sont des réservations de
 sécurité, pas des implémentations cachées derrière l'interface.

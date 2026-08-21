@@ -9,12 +9,12 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/observation"
 )
 
-const maxConsoleResponseBytes = 128 * 1024
+const maxAppResponseBytes = 128 * 1024
 
 // observationFreshnessLimit is the one ageing limit this product announces.
 //
 // A reading is presented as current up to and including this age and as old
-// beyond it, and the same limit governs every dated constat the Console shows:
+// beyond it, and the same limit governs every dated constat the App shows:
 // the machines projected from the Relay cache and the external elements read by
 // an adapter. A second threshold would put two meanings of "old" on the same
 // screen, and the human would have to know which one a line is speaking.
@@ -44,7 +44,7 @@ type ProjectedMachine struct {
 	EnrollmentStatus  *string               `json:"enrollment_status"`
 	ObservationStatus *string               `json:"observation_status"`
 	Observation       *ProjectedObservation `json:"observation"`
-	// CommandPosition is what the Console needs in order to sign the exact
+	// CommandPosition is what the App needs in order to sign the exact
 	// successor of this machine's sequence, and it is two read-only fields
 	// rather than one number because the second is what keeps the first
 	// honest.
@@ -57,14 +57,14 @@ type ProjectedMachine struct {
 // `LastReportedSequence` is the highest position a machine itself *reported* as
 // consumed — never one this Controller assumed, and never one it merely sent.
 // Zero means this Controller can attest nothing, which is not the same as a
-// machine that has consumed nothing, and the Console says so.
+// machine that has consumed nothing, and the App says so.
 //
 // `Certain` is false as soon as a dispatch of that machine was launched and not
 // reported: the machine may have consumed or not, and the product says that
 // rather than guessing. The reprise then costs at most one wasted human
 // approval — the human approves at the position this Controller knows, and if
 // the machine has already gone past it, it refuses by naming its own position
-// in its own sentence, which the Console shows without rewriting
+// in its own sentence, which the App shows without rewriting
 // (docs/architecture/TRAJET-DE-COMMANDE.md).
 type ProjectedCommandPosition struct {
 	LastReportedSequence uint64 `json:"last_reported_sequence"`
@@ -161,15 +161,15 @@ func ProjectMachines(inventory Inventory, cache *RelaySnapshot, status RelayStat
 	return view, nil
 }
 
-// ExternalElementsView is the declared inventory as the Console reads it.
+// ExternalElementsView is the declared inventory as the App reads it.
 //
 // It carries no capability field. The four things the product cannot do to an
 // external element — update it, restore it, delete it, guarantee its state — are
 // properties of what an external element is, identical for every line, and there
 // is no state in which they differ. Projecting them would suggest a Controller
-// could one day answer otherwise, and a Console that read them instead of
+// could one day answer otherwise, and an App that read them instead of
 // knowing them would offer a management action the day a compromised Controller
-// said yes. The Console announces those four absences from the context of this
+// said yes. The App announces those four absences from the context of this
 // route, as it does for every other user-facing sentence.
 type ExternalElementsView struct {
 	SchemaVersion    int                        `json:"schema_version"`
@@ -228,7 +228,7 @@ func ProjectExternalElements(inventory ExternalInventory, now time.Time) (Extern
 }
 
 // projectExternalElement is the one place a declaration becomes something the
-// Console reads, so a single declaration and a listing can never disagree about
+// App reads, so a single declaration and a listing can never disagree about
 // the same element.
 func projectExternalElement(element ExternalElement, now time.Time) (ProjectedExternalElement, error) {
 	projected := ProjectedExternalElement{
@@ -262,7 +262,7 @@ func projectExternalElement(element ExternalElement, now time.Time) (ProjectedEx
 
 func EncodeExternalElementsView(view ExternalElementsView) ([]byte, error) {
 	encoded, err := json.Marshal(view)
-	if err != nil || len(encoded) > maxConsoleResponseBytes {
+	if err != nil || len(encoded) > maxAppResponseBytes {
 		return nil, errors.New("external projection exceeds its response bound")
 	}
 	return encoded, nil
@@ -270,8 +270,8 @@ func EncodeExternalElementsView(view ExternalElementsView) ([]byte, error) {
 
 func EncodeMachinesView(view MachinesView) ([]byte, error) {
 	encoded, err := json.Marshal(view)
-	if err != nil || len(encoded) > maxConsoleResponseBytes {
-		return nil, errors.New("Console projection exceeds its response bound")
+	if err != nil || len(encoded) > maxAppResponseBytes {
+		return nil, errors.New("App projection exceeds its response bound")
 	}
 	return encoded, nil
 }

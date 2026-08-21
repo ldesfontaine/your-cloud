@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Tout ce que l'oracle du parcours de création exige, dans l'écran virtuel que
 # `run` a ouvert. Un seul pilote, et c'est le produit installé :
-# /usr/bin/your-cloud-console, le binaire que le .deb de cette passe a posé,
-# conduit par tauri-driver devant le même WebKitWebDriver qui peint la Console.
+# /usr/bin/your-cloud-app, le binaire que le .deb de cette passe a posé,
+# conduit par tauri-driver devant le même WebKitWebDriver qui peint l'App.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 stage=${1:?usage: inside <stage>}
 
-application=/usr/bin/your-cloud-console
+application=/usr/bin/your-cloud-app
 output="$here/output"
 driver_port=4444
 native_port=4445
@@ -38,12 +38,12 @@ wait_for_port() {
   return 1
 }
 
-# L'état de la Console : NEUF à chaque passe — chacune crée une infrastructure
-# depuis une Console froide, et un coffre survivant d'une passe précédente
-# serait une Console que cette passe n'a pas montée. Cela vaut pour l'asymétrie
+# L'état de l'App : NEUF à chaque passe — chacune crée une infrastructure
+# depuis une App froide, et un coffre survivant d'une passe précédente
+# serait une App que cette passe n'a pas montée. Cela vaut pour l'asymétrie
 # et l'hostile autant que pour le parcours nominal : leur premier écran est le
-# même, celui de l'accès local d'une Console qui n'a jamais servi.
-state_root=/root/your-cloud-lab-controller-install/console-state
+# même, celui de l'accès local d'une App qui n'a jamais servi.
+state_root=/root/your-cloud-lab-controller-install/app-state
 rm -rf "$state_root"
 export XDG_DATA_HOME="$state_root/data" XDG_CONFIG_HOME="$state_root/config" XDG_CACHE_HOME="$state_root/cache"
 install -d -m 0700 "$state_root" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
@@ -56,7 +56,7 @@ driver_pid=$!
 cleanup() {
   kill "$driver_pid" 2>/dev/null || true
   wait "$driver_pid" 2>/dev/null || true
-  pkill -x your-cloud-console 2>/dev/null || true
+  pkill -x your-cloud-app 2>/dev/null || true
   pkill -x your-cloud-native-bootstrap-assistant 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -66,7 +66,7 @@ wait_for_port "the native WebKitWebDriver" "$native_port"
 echo "  candidate $(dpkg-query -W -f '${Version}' your-cloud 2>/dev/null || echo '?')"
 
 set +e
-python3 -u -X faulthandler "$here/console-oracle.py" \
+python3 -u -X faulthandler "$here/app-oracle.py" \
   --base-url "http://127.0.0.1:$driver_port" \
   --application "$application" \
   --secrets "$state_root/vault-secrets" \

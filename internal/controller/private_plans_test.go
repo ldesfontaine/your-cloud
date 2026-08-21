@@ -44,7 +44,7 @@ func restorePlanBody(machineID, profile, slot string) string {
 }
 
 // TestControllerPrivatePlansFreezeThePairsTheyBuilt is the nominal proof of the
-// four routes of the private profile: the Console receives two complete documents
+// four routes of the private profile: the App receives two complete documents
 // and the two digests an envelope will name, and every one of them survives a
 // decode by the same rules the Auxiliary will apply.
 func TestControllerPrivatePlansFreezeThePairsTheyBuilt(t *testing.T) {
@@ -188,7 +188,7 @@ func TestControllerPrivatePlansFreezeThePairsTheyBuilt(t *testing.T) {
 //
 // A restore has one direction, so the request has no operation field; and the
 // document that undoes it is a restore of the reserved slot, built by the plan
-// package from the profile and the machine the request named. The Console
+// package from the profile and the machine the request named. The App
 // displays that document like any other — it is what the human approves beside
 // the restore itself.
 func TestControllerRestorePlansCarryTheReturnAsTheirRollback(t *testing.T) {

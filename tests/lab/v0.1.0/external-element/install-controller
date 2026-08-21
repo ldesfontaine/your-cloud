@@ -73,8 +73,8 @@ case "$phase" in
     note "Controller" "$controller_id"
     note "infrastructure" "$infrastructure_id"
 
-    # The run's PKI is generated here rather than on lab-console, and the reason
-    # is a fact of the LAB and not a decision of the architecture: lab-console
+    # The run's PKI is generated here rather than on lab-app, and the reason
+    # is a fact of the LAB and not a decision of the architecture: lab-app
     # carries no Go toolchain. It is generated *after* the identity above,
     # because a reader manifest naming another installation is refused, and
     # rightly. The four authorities live as long as this run; the generator never
@@ -86,15 +86,15 @@ case "$phase" in
     note "the run's PKI" "four authorities, no private authority byte kept"
 
     # The synthetic client is built here for the same reason and runs nowhere but
-    # lab-console: what stands in for a Console belongs on the human's machine,
+    # lab-app: what stands in for an App belongs on the human's machine,
     # and a Go binary crosses between two machines of the same LAB unchanged.
-    (cd "$sources" && go build -o "$state/lab-external-console" ./labconsole)
-    note "the synthetic Console client" "$(sha256sum "$state/lab-external-console" | cut -d' ' -f1)"
+    (cd "$sources" && go build -o "$state/lab-external-app" ./labapp)
+    note "the synthetic App client" "$(sha256sum "$state/lab-external-app" | cut -d' ' -f1)"
 
     printf 'CONTROLLER_ID=%s\n' "$controller_id"
     printf 'INFRASTRUCTURE_ID=%s\n' "$infrastructure_id"
     printf 'PKI=%s\n' "$state/pki"
-    printf 'CLIENT=%s\n' "$state/lab-external-console"
+    printf 'CLIENT=%s\n' "$state/lab-external-app"
     ;;
 
   serve)

@@ -15,7 +15,7 @@
 #   le sol du pilote            Xvfb, D-Bus et le WebKitWebDriver dont l'oracle
 #                               a besoin, et le produit non — nommés à part
 #                               pour cette raison ;
-#   l'humain                    un vrai compte non privilégié. La Console d'un
+#   l'humain                    un vrai compte non privilégié. L'App d'un
 #                               humain écrit sous son `$HOME` ; mesurer sous
 #                               `/root` répondrait à une autre question que
 #                               « que reste-t-il des données de l'humain ».
@@ -44,7 +44,7 @@ chown -R root:root /opt/clean-removal
 # root dans une zone que le recensement ignore de toute façon.
 install -d -m 0777 /opt/clean-removal/output
 chmod 0755 /opt/clean-removal/inside /opt/clean-removal/run \
-  /opt/clean-removal/console-oracle.py /opt/clean-removal/tauri-driver
+  /opt/clean-removal/app-oracle.py /opt/clean-removal/tauri-driver
 
 echo "== ce que la machine porte maintenant"
 printf '  %-34s %s\n' "WebKitWebDriver" "$(command -v WebKitWebDriver || echo absent)"

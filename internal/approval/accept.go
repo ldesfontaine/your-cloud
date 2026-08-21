@@ -85,7 +85,7 @@ func accept(
 	envelope := &signed.Envelope
 
 	// The anchor decides the infrastructure, the machine, the active epoch and
-	// the key. A Console recovered with a new human key therefore fails right
+	// the key. An App recovered with a new human key therefore fails right
 	// here, and stays failing until the Assistant rotates this file over the
 	// personal SSH access: the Controller cannot perform that rotation, so it
 	// cannot lift the lock on its own.

@@ -231,7 +231,7 @@ func TestAcceptMutatingSpendsItsSequenceLikeEveryOtherApproval(t *testing.T) {
 }
 
 // TestANewHumanKeyLeavesTheActionLockedUntilTheAnchorIsRotated is the recovery
-// rule: replacing the Console's human key restores nothing on a machine until
+// rule: replacing the App's human key restores nothing on a machine until
 // the Assistant rotates that machine's anchor over the personal SSH access.
 //
 // The Controller is never given that power here: what lifts the lock is a new
@@ -244,7 +244,7 @@ func TestANewHumanKeyLeavesTheActionLockedUntilTheAnchorIsRotated(t *testing.T) 
 		t.Fatalf("the association must work before the recovery: %v", err)
 	}
 
-	// The Console is recovered on another device and its human key changes.
+	// The App is recovered on another device and its human key changes.
 	recoveredSeed := make([]byte, ed25519.SeedSize)
 	for index := range recoveredSeed {
 		recoveredSeed[index] = 5
@@ -267,7 +267,7 @@ func TestANewHumanKeyLeavesTheActionLockedUntilTheAnchorIsRotated(t *testing.T) 
 	afterRecovery.Sequence = 2
 	afterRecovery.ApprovalPublicKey = recoveredPublic
 	if _, err := Accept(directory, anchor, signWith(afterRecovery), nowInsideWindow); err == nil {
-		t.Fatal("a recovered Console acted before its anchor was rotated")
+		t.Fatal("a recovered App acted before its anchor was rotated")
 	}
 
 	// Keeping the old declared key while signing with the new one does not help
@@ -275,7 +275,7 @@ func TestANewHumanKeyLeavesTheActionLockedUntilTheAnchorIsRotated(t *testing.T) 
 	pretending := vectorEnvelope()
 	pretending.Sequence = 2
 	if _, err := Accept(directory, anchor, signWith(pretending), nowInsideWindow); err == nil {
-		t.Fatal("a recovered Console acted by keeping the previous declared key")
+		t.Fatal("a recovered App acted by keeping the previous declared key")
 	}
 
 	// The Assistant rotates the anchor, machine by machine, over the personal

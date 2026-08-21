@@ -31,19 +31,19 @@ declare -A IMG_SHA512=(
 )
 
 declare -A TEMPLATE_VCPUS=(
-  [console]=2 [machine]=1 [coordinateur]=1 [passerelle]=1
+  [app]=2 [machine]=1 [coordinateur]=1 [passerelle]=1
 )
 declare -A TEMPLATE_RAM=(
-  [console]=2048 [machine]=1024 [coordinateur]=1024 [passerelle]=512
+  [app]=2048 [machine]=1024 [coordinateur]=1024 [passerelle]=512
 )
 declare -A TEMPLATE_DISK=(
-  [console]=20G [machine]=10G [coordinateur]=10G [passerelle]=5G
+  [app]=20G [machine]=10G [coordinateur]=10G [passerelle]=5G
 )
 declare -A TEMPLATE_IMAGE=(
-  [console]=debian-13 [machine]=debian-13
+  [app]=debian-13 [machine]=debian-13
   [coordinateur]=debian-13 [passerelle]=debian-13
 )
-TEMPLATES=(console machine coordinateur passerelle)
+TEMPLATES=(app machine coordinateur passerelle)
 TOPOLOGIES=(quick v1-full)
 
 die() { echo "ERREUR : $*" >&2; exit 1; }
@@ -241,9 +241,9 @@ wait_ssh() {
 ensure_clean_snapshot() {
   local name="$1" ip
   snapshot_exists "$name" && return 0
-  ip=$(wait_ip "$name") || die "pas d'IP après 120 s ; labctl console $name"
+  ip=$(wait_ip "$name") || die "pas d'IP après 120 s ; labctl app $name"
   guard_forbidden_ip "$name"
-  wait_ssh "$ip" || die "SSH injoignable ; labctl console $name"
+  wait_ssh "$ip" || die "SSH injoignable ; labctl app $name"
   timeout 120 ssh "${SSH_OPTS[@]}" "root@$ip" \
     'cloud-init status --wait >/dev/null 2>&1' || true
   "${VIRSH[@]}" snapshot-create-as "$name" clean \
@@ -399,7 +399,7 @@ create_domain() {
   if ! virt-install --connect qemu:///system --name "$name" \
     --memory "${TEMPLATE_RAM[$template]}" --vcpus "${TEMPLATE_VCPUS[$template]}" \
     --disk "vol=$POOL/$disk_volume" --disk "vol=$POOL/$seed_volume,readonly=on,bus=virtio" \
-    --import --osinfo debian13 "${network_args[@]}" --noautoconsole >/dev/null; then
+    --import --osinfo debian13 "${network_args[@]}" --noautoapp >/dev/null; then
     volume_delete "$disk_volume" || true
     volume_delete "$seed_volume" || true
     die "échec de création de '$name'"
@@ -445,13 +445,13 @@ topology_domains() {
       # as this one while adding a network to create, inspect, guard and
       # destroy. What the proof needs is a client outside the machine, and the
       # host and `lab-machine-1` are both outside it on this network.
-      printf '%s\n' 'lab-console|console|lab-quick' 'lab-machine-1|machine|lab-quick' \
+      printf '%s\n' 'lab-app|app|lab-quick' 'lab-machine-1|machine|lab-quick' \
         'lab-vps|machine|lab-quick'
       ;;
     v1-full)
       printf '%s\n' \
-        'lab-console|console|lab-operator' \
-        'lab-console-recovery|console|lab-operator' \
+        'lab-app|app|lab-operator' \
+        'lab-app-recovery|app|lab-operator' \
         'lab-coordinateur|coordinateur|lab-public' \
         'lab-gateway|passerelle|lab-operator,lab-public,lab-site-private' \
         'lab-machine-1|machine|lab-site-private' \
@@ -655,13 +655,13 @@ EOF
 /usr/sbin/sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
 GATEWAY_POLICY
 
-  local console ipv6_console_address
-  for console in lab-console lab-console-recovery; do
-    case "$console" in
-      lab-console) ipv6_console_address="fd66:241::193/64" ;;
-      lab-console-recovery) ipv6_console_address="fd66:241::140/64" ;;
+  local app ipv6_app_address
+  for app in lab-app lab-app-recovery; do
+    case "$app" in
+      lab-app) ipv6_app_address="fd66:241::193/64" ;;
+      lab-app-recovery) ipv6_app_address="fd66:241::140/64" ;;
     esac
-    lab_ssh "$console" bash -s -- "$gateway_operator" "$ipv6_console_address" "fd66:241::1" <<'CLIENT_ROUTE'
+    lab_ssh "$app" bash -s -- "$gateway_operator" "$ipv6_app_address" "fd66:241::1" <<'CLIENT_ROUTE'
 set -euo pipefail
 gateway="$1"
 ipv6_address="$2"
@@ -908,7 +908,7 @@ recover_known_domain() {
   virt-install --connect qemu:///system --name "$name" \
     --memory "${TEMPLATE_RAM[$template]}" --vcpus "${TEMPLATE_VCPUS[$template]}" \
     --disk "vol=$POOL/$name.qcow2" --disk "vol=$POOL/$name-seed.iso,readonly=on,bus=virtio" \
-    --import --osinfo debian13 "${network_args[@]}" --noautoconsole >/dev/null \
+    --import --osinfo debian13 "${network_args[@]}" --noautoapp >/dev/null \
     || die "restauration de définition impossible pour '$name'"
   set_domain_metadata "$name" "$template" "$topology" \
     || die "métadonnées de garde impossibles après restauration de '$name'"
@@ -990,11 +990,11 @@ cmd_copy_from() {
   scp "${SSH_OPTS[@]:1}" -r -- "root@$ip:$remote" "$destination"
 }
 
-cmd_console() {
-  local name="${1:?usage: labctl console <vm>}"
+cmd_app() {
+  local name="${1:?usage: labctl app <vm>}"
   require_managed_domain "$name"
-  echo "Sortie de la console : Ctrl+]"
-  "${VIRSH[@]}" console "$name"
+  echo "Sortie de la app : Ctrl+]"
+  "${VIRSH[@]}" app "$name"
 }
 
 usage() {
@@ -1015,7 +1015,7 @@ labctl v6 — LAB your-cloud borné
   labctl ssh     <vm> [commande...]
   labctl copy-to <vm> <source> <chemin-distant>
   labctl copy-from <vm> <chemin-distant> <destination>
-  labctl console <vm>
+  labctl app <vm>
 
 Gabarits :
 $(template_table)
@@ -1038,7 +1038,7 @@ case "$command" in
   ssh) cmd_ssh "$@" ;;
   copy-to) cmd_copy_to "$@" ;;
   copy-from) cmd_copy_from "$@" ;;
-  console) cmd_console "$@" ;;
+  app) cmd_app "$@" ;;
   help|-h|--help|'') usage ;;
   *) die "commande inconnue '$command' ; labctl help" ;;
 esac

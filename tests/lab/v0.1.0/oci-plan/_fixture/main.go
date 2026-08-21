@@ -1,6 +1,6 @@
 // Synthetic LAB fixture. It stands in for the two authorities this palier
 // separates and holds neither of them for real: the Controller, which freezes a
-// plan and its rollback, and the Console, which shows them to a human and signs
+// plan and its rollback, and the App, which shows them to a human and signs
 // the envelope naming their two digests.
 //
 // Two halves, two different sources on purpose:
@@ -13,7 +13,7 @@
 //     fixture produces is not verified by the same lines that produced it.
 //
 // The seed is synthetic and the key material lives only as long as the run.
-// Interoperability with the real Console is proven by the pinned cross-language
+// Interoperability with the real App is proven by the pinned cross-language
 // vector, never by this program.
 package main
 
@@ -44,7 +44,7 @@ const (
 	hostileSmuggledVolume  = "smuggled-volume"
 	// hostileApprovedMismatch is the one hostile case a human really signed: a
 	// Controller froze a plan beside a rollback that undoes another instance,
-	// and the Console signed both digests. Every check upstream of the pair
+	// and the App signed both digests. Every check upstream of the pair
 	// passes, and the refusal has to come from the pair itself.
 	hostileApprovedMismatch = "mismatched-rollback"
 )

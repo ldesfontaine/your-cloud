@@ -20,7 +20,7 @@ descend à l'endroit le moins cher et le plus reproductible. La décision
 
 | Étage | Preuves | Coût |
 |---|---|---|
-| poste de développement | contrôles statiques : `tools/check-docs`, contrat des sources Console, `cargo fmt --check`, garde de politique du workflow | secondes, aucune minute facturée |
+| poste de développement | contrôles statiques : `tools/check-docs`, contrat des sources App, `cargo fmt --check`, garde de politique du workflow | secondes, aucune minute facturée |
 | LAB | tout le fonctionnel Linux : compilation, tests du helper, paquet `.deb`, garde ELF, installation, smoke, scénarios multi-VM | aucune minute facturée ; le LAB est ici plus capable que la CI |
 | CI hébergée | ce que ni le poste ni le LAB ne produisent : Windows, et l'attestation du candidat de palier — matrice complète, signature, artefacts | environ 98 minutes facturées par matrice |
 
@@ -98,8 +98,8 @@ desserré ici :
 
 | Élément | État | Autorité |
 |---|---|---|
-| porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974`. Le contrat des sources Console y est exécuté depuis #60, afin qu'une violation échoue en secondes plutôt qu'après la matrice native | états des jobs `Contrôles génériques` et `Politique Plumber` |
-| matrice Console Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
+| porte rapide de pull request | workflow configuré pour exécuter automatiquement les contrôles génériques et Plumber, sans matrice native ; contrôles du candidat et contrôle avant intégration verts dans `30709932309` et `30710949974`. Le contrat des sources App y est exécuté depuis #60, afin qu'une violation échoue en secondes plutôt qu'après la matrice native | états des jobs `Contrôles génériques` et `Politique Plumber` |
+| matrice App Linux/Windows | déclenchement manuel configuré sur `ubuntu-24.04` et `windows-2025` pour un candidat exact ; porte finale entièrement verte dans `30710037004` sur `3b8f81f` | codes de sortie des tests, builds, installations et lancements natifs |
 | bornage IPC #43 | porte rapide `30753208857` puis matrice manuelle `30753216798` entièrement vertes sur le candidat produit exact `f3fef79` ; Linux et Windows exécutent le helper compagnon, Windows ajoute son Job Object, son paquet, son gate PE et le dispatch Tauri vivant | états des jobs, journaux et artefact expurgé liés depuis le rapport #43 |
 | consentement et mémoire secrète #45 | preuve fonctionnelle acquise dans `30770893733` sur `b76ded8` ; `30775430141` valide le garde raster Linux, puis `30777209723` valide la correction `EBWebView` et tout le job Windows mais échoue sous Linux sur le réglage de timeout WebDriver, avant l'appel async mutant ; le candidat ne rejoue que ce réglage idempotent et doit être rejoué sur son SHA exact | états des quatre jobs, ordre bloquant du test WER, validation machine des rasters, attribution du listener et inspection des artefacts expurgés |
 | analyse Plumber | binaire épinglé exécuté dans le LAB ; action GitHub et garde indépendant exécutés avec succès sur la révision de référence | sortie de Plumber puis garde indépendant |
@@ -143,7 +143,7 @@ identifiants forgés, la concurrence, les champs inconnus ou sensibles et les
 rejeux sont refusés avec des erreurs publiques réduites à leur code. Aucun
 succès métier n'est inventé et aucun listener TCP produit ne subsiste.
 
-L'artefact `console-windows-webview2-smoke` d'identifiant `8835381252` contient
+L'artefact `app-windows-webview2-smoke` d'identifiant `8835381252` contient
 uniquement un JSON et neuf PNG. Son digest vaut
 `sha256:2e9db85120dbc86a5b7dd278630a4bbe064637173b35c15d92c8d68298345cdb`
 et le JSON vaut
@@ -382,7 +382,7 @@ Les checks CI peuvent en revanche rester obligatoires avant fusion.
 Le même workflow expose deux modes explicites. Une pull request exécute
 automatiquement les contrôles génériques et la politique Plumber. Un
 `workflow_dispatch` sur la référence candidate lance d'abord ces deux gardes en
-parallèle ; la matrice Console Linux/Windows ne démarre qu'après leur réussite.
+parallèle ; la matrice App Linux/Windows ne démarre qu'après leur réussite.
 Une erreur rapide bloque ainsi les runners natifs avant qu'ils consomment du
 temps. Les deux plateformes sont ensuite des variantes parallèles du même
 contrat natif ; elles ne forment pas deux chaînes de déploiement.
@@ -419,7 +419,7 @@ hostiles avant activation.
 Le job `Contrôles génériques` fait d'abord analyser le script Windows par le
 parseur PowerShell de l'image Linux, sans exécuter la preuve native, puis isole
 et exerce le contrat de son agrégateur de nettoyage avec une liste vide et une
-erreur synthétique. Il exécute ensuite le contrat des sources Console avec le
+erreur synthétique. Il exécute ensuite le contrat des sources App avec le
 Node.js déjà présent sur le runner : le script n'importe que des modules Node
 natifs et un module local, donc ni installation, ni dépendance frontend ne sont
 nécessaires. Ce placement est délibéré. Ce contrat était auparavant exercé
@@ -431,7 +431,7 @@ formatage, syntaxe, schémas structurés, documentation, tests Go, `go vet` et
 build statique, ainsi que le garde de politique du workflow. Le binaire
 temporaire est vérifié puis supprimé ; il n'est ni déployé ni publié.
 
-Le job matriciel `Console`, exécuté seulement sur déclenchement manuel, fixe
+Le job matriciel `App`, exécuté seulement sur déclenchement manuel, fixe
 Node.js `24.18.0` LTS et Rust `1.94.1`, désactive le cache automatique et lance
 au plus deux variantes en parallèle avec `fail-fast: false`. Les deux variantes
 exécutent le même verrou npm, l'audit des dépendances frontend, le contrat
@@ -445,7 +445,7 @@ processus. La variante Windows exécute en plus les dialogues Win32, les tests
 d'ACL et du Job Object, y compris les branches hostiles de création,
 d'affectation et de récolte. Elle construit le `.msi` sous MSVC/WiX, vérifie que
 son image administrative possède exactement l'ensemble des deux exécutables
-installables, signe l'exécutable Console, le helper et l'installateur, puis les
+installables, signe l'exécutable App, le helper et l'installateur, puis les
 vérifie, installe et lance. Son gate PE inspecte les imports normaux et différés
 du helper installé exact. Enfin, le pilote WebView2 appelle réellement les trois
 commandes Tauri d'amorçage et refuse tout listener du processus ou de ses
@@ -514,7 +514,7 @@ compte et profil éphémères, des fichiers temporaires, des processus, du port 
 debugger WebView2 et des données applicatives. La signature publique de
 distribution et la preuve visuelle WebView2 restent des portes distinctes.
 Les processus à retirer sont attribués positivement au SID du compte éphémère
-ou aux chemins exacts de la Console et de ses pilotes ; une WebView2 étrangère
+ou aux chemins exacts de l'App et de ses pilotes ; une WebView2 étrangère
 n'est jamais ciblée d'après son seul chemin. Avant chaque arrêt, le PID, l'heure
 de création et l'attribution sont relus, puis un handle lié à cette instance est
 utilisé ; aucun nouvel arrêt n'est engagé après l'échéance globale de quinze
@@ -564,7 +564,7 @@ attribué. Ce run reste diagnostique et ne ferme pas `v0.0.3`.
 La porte finale, le run `30710037004` sur `3b8f81f`, a ensuite réussi les deux
 gardes, Linux et Windows. Le MSI a été construit, signé, installé et lancé ; le
 coffre réel, le smoke WebView2, l'attribution des processus et le nettoyage ont
-réussi. L'artefact expurgé `console-windows-webview2-smoke` contient uniquement
+réussi. L'artefact expurgé `app-windows-webview2-smoke` contient uniquement
 le rapport JSON et neuf PNG, avec le digest
 `sha256:6a5256654742f4950cf9e7108542efb27014a8b5c78c5d6971c033b534642f3d`.
 L'issue `#9` relie cette porte au candidat intégré par fast-forward et conserve
@@ -649,7 +649,7 @@ une fausse automatisation. La preuve reste lancée volontairement avec
 
 `tests/lab/v0.0.1/prove-generic-ci` ne constitue pas ce contrôleur futur. Il
 sert seulement à reproduire le mode non privilégié de la CI générique dans
-`lab-console`, sans accès aux machines produit, à exécuter Plumber avec le
+`lab-app`, sans accès aux machines produit, à exécuter Plumber avec le
 SHA-256 publié, puis à vérifier son nettoyage. Cette vérification LAB ancre le
 transit au checksum connu ; l'action GitHub épinglée ajoute la vérification de
 l'attestation SLSA, indisponible sur le runner LAB actuel faute de CLI `gh`.

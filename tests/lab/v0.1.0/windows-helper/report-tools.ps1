@@ -56,7 +56,7 @@ if (Test-Path $vswhere) {
 }
 if ($null -eq $vcvars) { $failures += "no MSVC x64 build environment on this machine" }
 
-# The Evergreen runtime the Console's window needs. It is reported here so a
+# The Evergreen runtime the App's window needs. It is reported here so a
 # machine that lost it says so before a graphical case blames the helper.
 $webview2Key = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 $webview2 = if (Test-Path $webview2Key) { (Get-ItemProperty $webview2Key).pv } else { $null }

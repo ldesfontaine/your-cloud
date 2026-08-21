@@ -11,7 +11,7 @@ appelant, le bouton « Signer et lancer » de `plans-view.tsx`, et le commentair
 posé à côté dit pourquoi — une soumission qui suivrait la fermeture de la
 fenêtre ferait de la fenêtre le déclencheur d'un effet, quand le contrat en fait
 un recueil de consentement. Entre la confirmation et la signature, un humain
-revient à la Console, lit ce qu'elle lui dit, et clique.
+revient à l'App, lit ce qu'elle lui dit, et clique.
 
 Ce qui est affiché n'est pas une imitation : ce sont les lignes que
 `PresentedPublicationPlan::confirmation_lines()` produit, extraites du produit
@@ -74,10 +74,10 @@ def altered(line: str) -> str:
     return f"{head} {digest[:position]}{replacement}{digest[position + 1:]}"
 
 
-# Le panneau que la Console rend une fois la fenêtre refermée sur une
-# confirmation, copié de `console/src/product/plans-view.tsx`. C'est lui que
+# Le panneau que l'App rend une fois la fenêtre refermée sur une
+# confirmation, copié de `app/src/product/plans-view.tsx`. C'est lui que
 # l'humain lit avant de cliquer, et donc lui qui occupe le second intervalle.
-CONSOLE_AFTER_CONFIRMATION = (
+APP_AFTER_CONFIRMATION = (
     "Approuvé dans la fenêtre native",
     "Rien n’est encore parti. Signer scelle ces deux empreintes sous votre clé "
     "et remet l’approbation au Controller, qui dépense la position de cette "
@@ -96,7 +96,7 @@ def reading(
 
     print("\n" * 3)
     input("Prêt ? Entrée pour afficher le plan. ")
-    print("\n=== La Console affiche, à côté de la fenêtre, les deux empreintes du plan ===")
+    print("\n=== L'App affiche, à côté de la fenêtre, les deux empreintes du plan ===")
     for index in digests(lines):
         print(f"  {reference[index]}")
     print("\n=== La fenêtre d'approbation ===")
@@ -107,7 +107,7 @@ def reading(
     input("Entrée quand vous avez fini de lire et de comparer. ")
     answer = ""
     while answer not in {"o", "n"}:
-        answer = input("Les deux empreintes de la fenêtre sont-elles celles de la Console ? [o/n] ").strip().lower()
+        answer = input("Les deux empreintes de la fenêtre sont-elles celles de l'App ? [o/n] ").strip().lower()
     deliberating = time.monotonic() - started
     caught = (answer == "n") if tampered else (answer == "o")
 
@@ -118,9 +118,9 @@ def reading(
     if answer != "o":
         return deliberating, None, caught
 
-    print("\n=== La fenêtre s'est refermée. Vous revenez à la Console ===")
+    print("\n=== La fenêtre s'est refermée. Vous revenez à l'App ===")
     signing_started = time.monotonic()
-    badge, prose, button = CONSOLE_AFTER_CONFIRMATION
+    badge, prose, button = APP_AFTER_CONFIRMATION
     print(f"  [{badge}]")
     print(f"  {prose}")
     print(f"  {button}")
@@ -180,7 +180,7 @@ def main() -> int:
     print("une borne calée sur le lecteur moyen coupe le lecteur attentif.")
     print()
     print("Et la seconde se pose au-dessus de ce maximum AUGMENTÉ d'une marge : cette")
-    print("feuille ne fait pas revenir de la fenêtre native à la Console, donc ce qu'elle")
+    print("feuille ne fait pas revenir de la fenêtre native à l'App, donc ce qu'elle")
     print("donne du second intervalle est un plancher. Une borne trop courte refuserait le")
     print("geste d'un humain qui a lu, compris et accepté.")
     return 0

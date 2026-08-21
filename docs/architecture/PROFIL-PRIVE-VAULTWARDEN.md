@@ -118,7 +118,7 @@ d'un autre service.
   rollback est un plan que le Controller ne peut pas geler, et le contrat
   préfère le dire : le rollback signé d'un `discard_snapshot` est un
   document `snapshot_service` du même emplacement, qui recrée une archive
-  de l'état **courant**, pas de l'archive détruite — la Console l'affiche
+  de l'état **courant**, pas de l'archive détruite — l'App l'affiche
   en ces termes.
 - La sauvegarde **hors machine** reste hors `v0.1.0` : l'utilisateur
   l'organise avec ses propres outils, et une version ultérieure décidera si
@@ -184,7 +184,7 @@ Décisions attachées à ces routes :
   canoniques exacts**, accompagnés de leurs digests, dans la même vue que les
   routes des paliers précédents ; son `schema_version` vaut `2` et dit sous quel
   contrat les deux documents ont été écrits.
-- La Console ne choisit **ni l'infrastructure, ni l'image, ni le digest, ni le
+- L'App ne choisit **ni l'infrastructure, ni l'image, ni le digest, ni le
   volume persistant, ni les lignes d'environnement, ni la table de sortie, ni
   l'adresse du pair du tunnel** : l'infrastructure est celle dont ce Controller
   est l'autorité, et le reste est une constante que le profil ou le passage
@@ -210,7 +210,7 @@ Ce que le schéma fixe autour de ces routes :
 - L'Auxiliaire **lit ces quatre formes de document et n'en exécute aucune** :
   chacune est refusée en la nommant, avant tout effet et avant toute lecture de
   la machine, jusqu'aux paliers qui les appliquent. La fenêtre est délibérée et
-  un test la tient sur des paires réelles, gelées comme la Console les remettra.
+  un test la tient sur des paires réelles, gelées comme l'App les remettra.
 
 ## Addendum `#102` : ce que poser ce profil sur une machine a exigé de décider
 

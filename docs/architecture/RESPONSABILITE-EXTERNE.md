@@ -92,7 +92,7 @@ invérifiable   la lecture n'a pas pu conclure, et la raison est nommée
 
 ## Ce que l'App annonce ne pas pouvoir faire
 
-Pour tout élément externe, la Console affiche explicitement l'absence de ces
+Pour tout élément externe, l'App affiche explicitement l'absence de ces
 quatre capacités, plutôt que d'offrir des commandes qui échoueraient :
 
 ```text
@@ -144,7 +144,7 @@ Décisions attachées à ces routes :
   `404 resource_not_found` — tous dans la liste fermée existante.
 - **L'inventaire déclaré est durable et tenu dans son propre document**, à côté
   de l'inventaire géré et jamais dedans : la révision de l'inventaire géré est ce
-  contre quoi une Console cache ses machines, et une déclaration n'a pas à la
+  contre quoi une App cache ses machines, et une déclaration n'a pas à la
   déplacer. Il porte sa propre révision, est borné à 128 déclarations et refuse
   de s'ouvrir sur un document corrompu plutôt que de fabriquer un inventaire vide
   qui effacerait en silence ce qu'un humain a saisi.
@@ -159,9 +159,9 @@ Décisions attachées à ces routes :
   jour, restaurer, supprimer, garantir l'état — sont des propriétés de ce qu'est
   un élément externe, identiques pour toutes les lignes, et il n'existe aucun
   état où elles diffèrent. Les projeter suggérerait qu'un Controller pourrait un
-  jour répondre autrement, et une Console qui les lirait au lieu de les savoir
+  jour répondre autrement, et une App qui les lirait au lieu de les savoir
   offrirait une action de gestion le jour où un Controller compromis dirait oui.
-  La Console les annonce depuis le contexte de la route, comme toute phrase
+  L'App les annonce depuis le contexte de la route, comme toute phrase
   destinée à l'humain.
 
 ## Le seuil d'ancienneté : celui qui existe déjà, et pas un second

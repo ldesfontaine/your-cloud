@@ -182,7 +182,7 @@ func snapshotService(executor Executor, subject instance) (*Application, bool, e
 //
 // Its own undoing is a `snapshot_service` of the same slot, which recreates an
 // archive of the *current* data rather than of the archive that was destroyed.
-// The contract says so in those words, the Console displays it in those words,
+// The contract says so in those words, the App displays it in those words,
 // and nothing here pretends otherwise: destroying an archive has no honest
 // inverse, and this Auxiliary does not invent one.
 func discardSnapshot(executor Executor, subject instance) (*Application, bool, error) {

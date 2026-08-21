@@ -14,7 +14,7 @@ accompagne cette source Markdown.
 
 ## Résultat recherché
 
-L'utilisateur installe uniquement la Console sur son appareil
+L'utilisateur installe uniquement l'App sur son appareil
 d'administration. Depuis cette interface, il déclare les machines Linux déjà
 installées, prête temporairement un accès SSH existant, fait auditer leur
 compatibilité, approuve le placement proposé, puis laisse Your Cloud installer
@@ -23,29 +23,29 @@ le premier Controller et enrôler les machines.
 Le même parcours sert plus tard à remplacer explicitement un Controller perdu.
 Il ne dépend donc ni du Controller à créer, ni du Controller disparu. Une fois
 l'opération terminée, le Controller est autonome : éteindre le laptop ou fermer
-la Console n'arrête ni l'administration future ni les services déployés.
+l'App n'arrête ni l'administration future ni les services déployés.
 
 Ce contrat ne crée aucune troisième autorité SSH ou autorité de secours. Il
 distingue deux accès SSH et une authentification produit séparée :
 
 1. l'accès d'administration personnel que l'utilisateur possède déjà ;
 2. l'identité d'administration Your Cloud propre à chaque machine ;
-3. l'authentification Console–Controller, qui autorise l'humain et son appareil
+3. l'authentification App–Controller, qui autorise l'humain et son appareil
    dans le produit mais ne constitue pas un accès SSH aux machines.
 
 ## Assistant natif temporaire
 
-L'**Assistant d'amorçage** appartient à l'installation signée de la Console,
+L'**Assistant d'amorçage** appartient à l'installation signée de l'App,
 mais reste distinct du frontend. Il est lancé seulement pour `Créer une
 infrastructure` ou `Remplacer un Controller`, ne fournit aucun service réseau
 permanent et ne conserve aucune clé SSH personnelle après l'opération.
 
 ### Processus et canal natif
 
-La Console lance le binaire compagnon distinct
+L'App lance le binaire compagnon distinct
 `your-cloud-native-bootstrap-assistant` avec l'unique garde fixe
 `--native-bootstrap-assistant`. Il est versionné, livré et signé avec la
-Console, mais son graphe de production ne dépend ni de la Console, ni de Tauri,
+App, mais son graphe de production ne dépend ni de l'App, ni de Tauri,
 Wry, Tao, WebKitGTK ou JavaScriptCoreGTK. Chaque consentement crée un nouveau
 processus helper éphémère ; aucun helper, état secret ou enfant n'est réutilisé
 entre deux opérations. Le cœur résout seulement ce nom fixe depuis
@@ -53,7 +53,7 @@ l'installation vérifiée et n'enregistre aucun plugin ou appel shell général
 auprès du frontend.
 
 Ce découpage est désormais obligatoire. Le gate ELF exécuté dans le LAB le 2
-août 2026 a montré que le binaire Console déclare directement
+août 2026 a montré que le binaire App déclare directement
 `libwebkit2gtk-4.1.so.0` et `libjavascriptcoregtk-4.1.so.0` dans `DT_NEEDED` :
 un branchement avant `main` dans ce même exécutable ne peut donc pas constituer
 une absence de WebKit. La mesure, ses préconditions et ses limites sont
@@ -62,7 +62,7 @@ conservées dans le
 
 ### Socle IPC et cycle de vie Windows acquis
 
-Le palier #43 livre désormais le helper distinct avec la Console et borne son
+Le palier #43 livre désormais le helper distinct avec l'App et borne son
 lancement natif sous Windows. Le candidat MSI inspecté place les deux
 exécutables installables dans une même image administrative et les signe avec
 la même identité Authenticode synthétique. Le parent crée le helper suspendu, ne
@@ -74,7 +74,7 @@ Le Job suit les descendants du helper. Une session native n'est considérée
 nettoyée qu'après la fin de la racine et la preuve que le Job est vide. Une
 annulation ou une sortie en échec arrête la racine et ses descendants, puis en
 vérifie l'absence. Si ce nettoyage ne peut pas être prouvé, l'état natif devient
-définitivement indisponible pour le processus Console courant et tout nouveau
+définitivement indisponible pour le processus App courant et tout nouveau
 lancement est refusé : l'interface ne peut pas continuer sur une incertitude de
 confinement.
 
@@ -201,9 +201,9 @@ Ces versions préliminaires restent confinées au sous-arbre du helper. La
 vérification du lockfile montre qu'un seul paquet est réellement remplacé dans
 tout le workspace : `zeroize`, porté de `1.8.2` à `1.9.0` parce que
 `ssh-key 0.7.0-rc.11` l'exige. Tous les autres coexistent en deux versions, si
-bien que la Console conserve intacte la crypto de son coffre déjà prouvée —
+bien que l'App conserve intacte la crypto de son coffre déjà prouvée —
 notamment `argon2 0.5.3`, `ed25519-dalek 2.2.0`, `sha2 0.10.9` et `rand 0.8.5`.
-Le helper compile sa propre pile ; il ne déplace pas celle de la Console. La clé d'hôte est
+Le helper compile sa propre pile ; il ne déplace pas celle de l'App. La clé d'hôte est
 comparée exactement à celle du périmètre approuvé : le client ne décide jamais
 la confiance au premier contact (`TOFU`) et n'écrit pas implicitement dans
 `known_hosts`. Il n'expose ni shell, ni PTY, ni redirection, ni SFTP, X11,
@@ -213,10 +213,10 @@ L'Assistant préfère un agent SSH déjà déverrouillé et lui demande de signe
 extraire la clé privée. Sous Linux, il accepte seulement le chemin absolu lu une
 fois depuis `SSH_AUTH_SOCK`, vérifié comme socket Unix appartenant à
 l'utilisateur courant. Le helper est lancé avec un environnement vidé, si bien
-que cette variable n'existe pour lui que si la Console la lui transmet. Elle la
+que cette variable n'existe pour lui que si l'App la lui transmet. Elle la
 transmet **seulement** pour l'étape d'accès personnel : un agent est un oracle
 de signature, et une fenêtre qui demande un mot de passe `sudo`, une passphrase
-ou une confirmation `root` n'en a aucun usage. La Console ne juge pas la valeur,
+ou une confirmation `root` n'en a aucun usage. L'App ne juge pas la valeur,
 elle ne fait que la porter ; l'admissibilité — chemin absolu et borné, socket
 réel appartenant à l'utilisateur, répertoire parent que personne d'autre ne peut
 réarranger — est décidée par le helper, seul à observer le système de fichiers
@@ -306,7 +306,7 @@ Le format, le chiffrement, le KDF et le nombre de rounds sont lus **avant**
 toute dérivation. Une enveloppe hors contrat est donc refusée sans demander de
 passphrase et sans dépenser de temps. Le nombre de rounds accepté est borné à
 2048 : la [calibration LAB](../lab/v0.1.0-personal-access-bounds.md) mesure
-environ 4,6 ms par round sur l'hôte Console de référence, soit 9,4 s à cette
+environ 4,6 ms par round sur l'hôte App de référence, soit 9,4 s à cette
 borne contre les 300 s de l'échéance, tout en restant très au-dessus du défaut
 OpenSSH de 16. Cette borne est un garde-fou : la garantie reste l'échéance
 monotone appliquée pendant la dérivation. Aucun minimum de politique n'est
@@ -360,7 +360,7 @@ L'utilisateur peut fournir :
 - si l'environnement l'exige, un accès SSH `root`, prêté explicitement pour
   cette opération précise.
 
-L'accès `root` n'est jamais tenté implicitement. La Console nomme les machines,
+L'accès `root` n'est jamais tenté implicitement. L'App nomme les machines,
 les actions et la durée avant de le demander. Chaque nouvelle utilisation
 exige un nouveau consentement et une nouvelle mise à disposition de l'accès.
 
@@ -406,13 +406,13 @@ exécutables afin de séparer réellement le secret du processus WebView et de
 donner au helper seulement la capacité SSH exacte approuvée. Les deux binaires
 ont chacun leur empreinte, leur graphe, leur SBOM et leur vérification de
 signature ; sous Windows, le helper doit porter la même identité Authenticode
-que la Console. La vérification du verrou de dépendances, des licences, des
+que l'App. La vérification du verrou de dépendances, des licences, des
 imports natifs et du fonctionnement hors ligne appartient à la preuve de chaîne
 d'approvisionnement ; ce design ne suffit pas à déclarer une conformité OWASP
 ou NIS2.
 
 Un second `WebviewWindow` reste un WebView ; une fenêtre Tauri/Tao brute ne
-fournit pas le widget secret et conserve le secret dans le processus Console ;
+fournit pas le widget secret et conserve le secret dans le processus App ;
 Slint ajoute un second event loop et une surface de dépendances, licence et
 paquet disproportionnée ; l'exécutable `ssh` externe laisse varier version,
 configuration et commandes ; `libssh2` ajoute une chaîne C/OpenSSL. Ces options
@@ -454,7 +454,7 @@ minimum :
 - une installation Your Cloud existante et ses rôles actifs ;
 - les incompatibilités et les faits qu'il n'a pas pu vérifier.
 
-La Console propose ensuite :
+L'App propose ensuite :
 
 - un Controller sur une machine privée, de confiance et normalement allumée ;
 - un Relay seulement sur une machine explicitement déclarée candidate ;
@@ -465,7 +465,7 @@ La Console propose ensuite :
 Pour une petite infrastructure, le Controller peut cohabiter avec d'autres
 rôles sur une machine privée si ses processus, comptes, secrets, fichiers et
 budgets restent séparés. Une machine ou VM dédiée est recommandée lorsque la
-taille ou le risque le justifie. La Console ne propose pas par défaut le
+taille ou le risque le justifie. L'App ne propose pas par défaut le
 Controller sur le VPS public qui porte le Relay et les services exposés.
 
 Cette cohabitation partage néanmoins le domaine de panne matériel. La perte ou
@@ -514,9 +514,9 @@ Après approbation, l'Assistant :
 
 1. revérifie les cibles, clés d'hôte et préconditions observées ;
 2. installe le lot serveur et le Controller sur la machine privée choisie ;
-3. associe la Console à ce Controller par le mécanisme Console–Controller ;
+3. associe l'App à ce Controller par le mécanisme App–Controller ;
 4. fait générer sur le Controller une identité SSH différente par cible et
-   obtient de la Console la clé publique qui vérifiera les approbations ;
+   obtient de l'App la clé publique qui vérifiera les approbations ;
 5. vérifie depuis le Controller que chaque endpoint SSH déclaré est joignable
    et présente la clé d'hôte déjà confirmée ; si cette précondition échoue,
    aucune autre machine n'est modifiée ;
@@ -559,7 +559,7 @@ règle `sudo` générale n'est créée.
 
 Les clés privées opérationnelles restent sur le Controller. Leurs sources sont
 des fichiers root-owned fournis en lecture au seul service Controller par les
-credentials systemd ; elles ne sont copiées ni dans la Console, ni dans le
+credentials systemd ; elles ne sont copiées ni dans l'App, ni dans le
 frontend, ni dans l'Agent. Le service et `root` peuvent nécessairement les lire
 à l'exécution : cette protection réduit l'exposition aux autres comptes, mais
 ne protège pas contre une compromission complète du Controller.
@@ -569,7 +569,7 @@ des permissions restrictives, par exemple `0600`. Au démarrage, systemd expose
 le credential dans le répertoire privé du service au lieu de placer la clé dans
 la ligne de commande ou une variable d'environnement ; cette copie de runtime
 disparaît avec le service. La clé opérationnelle n'attend pas une passphrase
-humaine, car le Controller doit rester autonome lorsque la Console est fermée.
+humaine, car le Controller doit rester autonome lorsque l'App est fermée.
 Sa protection repose donc sur ce stockage borné, le compte du service, les
 permissions, la rotation et la sécurité de la machine Controller.
 
@@ -577,7 +577,7 @@ permissions, la rotation et la sécurité de la machine Controller.
 
 Le Controller construit et transporte le plan, mais ne peut pas fabriquer
 l'approbation humaine. Après déverrouillage et confirmation native du contenu
-affiché, le cœur de la Console signe une enveloppe canonique avec la clé humaine
+affiché, le cœur de l'App signe une enveloppe canonique avec la clé humaine
 Ed25519 de son association au Controller. Il n'expose au frontend aucune
 opération de signature libre.
 
@@ -586,7 +586,7 @@ d'autorité, le successeur exact de la séquence propre à cette machine, le
 condensat du plan et de son rollback, les privilèges, l'heure d'émission et
 l'expiration. L'Assistant installe seulement la clé publique d'approbation,
 liée à cette infrastructure et à cette machine, dans un fichier root-owned que
-l'Auxiliaire peut lire. La clé privée reste dans le coffre natif de la Console.
+l'Auxiliaire peut lire. La clé privée reste dans le coffre natif de l'App.
 
 Avant la première mutation, l'Auxiliaire vérifie localement la signature, tous
 les liens de l'enveloppe et les contraintes de l'opération, puis consomme
@@ -602,10 +602,10 @@ Le remplacement crée une nouvelle époque et, si l'association change, une
 nouvelle clé publique d'approbation. Activer cette époque sur une machine
 invalide l'ancienne au lieu de maintenir deux signataires. Ce contrôle empêche
 un Controller compromis de forger seul une nouvelle approbation ; il ne protège
-pas une Console déverrouillée compromise ni une cible dont `root` est
+pas une App déverrouillée compromise ni une cible dont `root` est
 compromis.
 
-La même règle ferme le cycle d'une Console récupérée sur un autre appareil. Une
+La même règle ferme le cycle d'une App récupérée sur un autre appareil. Une
 rotation du seul certificat d'appareil qui conserve la clé humaine ne change
 pas les ancres des machines. Si la récupération remplace la clé humaine, elle
 rétablit l'API du Controller mais le chemin d'action reste verrouillé.
@@ -618,7 +618,7 @@ pas une autorité d'action hors ligne.
 
 Une indisponibilité ne déclenche jamais un remplacement automatique : une panne
 réseau, une machine arrêtée et une perte définitive ne sont pas équivalentes.
-La Console informe l'utilisateur, puis celui-ci choisit explicitement
+L'App informe l'utilisateur, puis celui-ci choisit explicitement
 `Remplacer un Controller`.
 
 Avant toute mutation, l'utilisateur qualifie l'incident. Une perte matérielle
@@ -636,7 +636,7 @@ L'Assistant redemande l'accès SSH personnel et :
    l'`infrastructure_id` sur les états indépendants disponibles ;
 3. installe le nouveau Controller avec un nouveau `controller_id` ; il ne
    conserve l'`infrastructure_id` que si les machines et le Relay concordent ;
-4. crée une nouvelle association Console–Controller, épingle la nouvelle
+4. crée une nouvelle association App–Controller, épingle la nouvelle
    autorité TLS et démarre sans importer aucun appareil, certificat ou session
    de l'ancienne association ;
 5. reprovisionne l'identité cliente Controller–Relay, l'adresse source et le
@@ -650,7 +650,7 @@ L'Assistant redemande l'accès SSH personnel et :
    et marqueur géré ;
 8. vérifie qu'aucun secret, certificat, session, filtre réseau ou manifeste que
    l'ancien Controller pouvait utiliser ne lui donne encore d'autorité ;
-9. archive l'ancienne association dans la Console ; si l'ancien Controller est
+9. archive l'ancienne association dans l'App ; si l'ancien Controller est
    encore sain et joignable, révoque explicitement son appareil et ses sessions
    avant son arrêt, puis laisse intacts les comptes, clés et accès personnels
    de l'utilisateur.
@@ -676,15 +676,15 @@ La création suit la même règle. Avant l'enrôlement d'une cible, un échec pe
 retirer seulement les éléments nouvellement installés dont l'absence est
 prouvée sans danger. Après un premier transfert d'autorité, tout arrêt rend un
 état partiel machine par machine ; aucun rollback global aveugle n'est tenté.
-Le succès final exige le nouveau Controller joignable, la Console associée, le
+Le succès final exige le nouveau Controller joignable, l'App associée, le
 lecteur Relay limité au nouveau Controller, chaque cible en `nouveau seul` et,
 en cas d'incident hostile, l'ancien hôte isolé.
 
 Si l'inventaire de l'ancien Controller est perdu, l'utilisateur redéclare les
 endpoints. Un futur plan de sauvegarde pourra réduire ce travail, mais
 l'amorçage ne dépend pas d'une nouvelle autorité de récupération. Le code de
-récupération de la Console conserve un autre sens : il associe une nouvelle
-Console à un Controller encore vivant ; il ne restaure ni l'inventaire, ni les
+récupération de l'App conserve un autre sens : il associe une nouvelle
+App à un Controller encore vivant ; il ne restaure ni l'inventaire, ni les
 identités SSH, ni un Controller détruit. Lorsqu'il remplace la clé humaine, les
 actions restent verrouillées jusqu'à la rotation personnelle décrite plus haut.
 
@@ -720,9 +720,9 @@ différent de celui qui a été prouvé.
 Conséquence directe sur ce que le projet publie : **aucun artefact de daemon
 séparé, et aucune signature de binaire serveur par une porte d'intégration
 continue.** L'intégration continue atteste une révision ; elle ne signe pas. Le
-paquet de la Console est la distribution.
+paquet de l'App est la distribution.
 
-L'installateur de la Console pour `v0.1.0` contient l'Assistant et un unique
+L'installateur de l'App pour `v0.1.0` contient l'Assistant et un unique
 paquet serveur `.deb` pour Debian 13 `amd64`. Ce paquet livre le binaire Go `your-cloud` et ses
 définitions d'installation statiques. Il ne porte ni configuration propre à une
 machine, ni secret, ni identité, ni activation de rôle, ni transfert d'autorité :
@@ -741,7 +741,7 @@ active ni ne les démarre. Les chemins historiques `/usr/local/lib/your-cloud`
 et `/etc/systemd/system` des preuves antérieures restent des faits de ces
 paliers, pas les chemins du paquet de `v0.1.0`.
 
-Le manifeste signé du lot Console relie la version, la cible, la taille et le
+Le manifeste signé du lot App relie la version, la cible, la taille et le
 SHA-256 exact du `.deb`. L'Assistant vérifie cette signature et ces valeurs avant
 toute opération privilégiée : un paquet `.deb` isolé n'est pas traité comme une
 preuve d'authenticité.
@@ -749,7 +749,7 @@ preuve d'authenticité.
 L'Assistant **trouve** le lot comme il atteste son parent : par sa propre
 position. Le chemin des trois fichiers embarqués est dérivé de
 `/proc/self/exe` — le binaire installé sous `/usr/bin` remonte à son préfixe et
-descend vers l'arborescence que le paquet de la Console livre — jamais d'un
+descend vers l'arborescence que le paquet de l'App livre — jamais d'un
 argument, d'une variable d'environnement ni d'un chemin qu'un parent aurait
 choisi. Un binaire recopié hors de sa position installée ne résout rien et
 refuse par son nom ; c'est le refus d'être enrobé, prolongé au lot. La
@@ -798,7 +798,7 @@ La première version ne fournit :
 - ni bascule ou réplication automatique du Controller ;
 - ni troisième autorité SSH ou autorité de secours hors ligne ;
 - ni inventaire retrouvé par scan réseau ;
-- ni conservation de la clé SSH personnelle par la Console ;
+- ni conservation de la clé SSH personnelle par l'App ;
 - ni reprise autonome d'une action interrompue ;
 - ni transaction atomique de remplacement sur toute la flotte ;
 - ni shell d'administration général par l'Auxiliaire ;
@@ -849,7 +849,7 @@ LAB :
 - dépendances, licences, verrou, SBOM, imports PE et chargement éventuel de
   WebKit audités pour les deux paquets natifs et leur fonctionnement hors ligne ;
 - installation du Controller, fermeture de l'Assistant puis fonctionnement
-  lorsque la Console et le laptop sont arrêtés ;
+  lorsque l'App et le laptop sont arrêtés ;
 - refus avant mutation lorsqu'une cible n'est pas joignable en SSH depuis le
   Controller choisi ;
 - artefact installé avant la commande forcée, entrée Auxiliaire de bootstrap en
@@ -861,10 +861,10 @@ LAB :
 - refus de la clé d'une machine sur une autre ;
 - plan signé par le cœur natif, Controller incapable de le modifier ou d'en
   forger un nouveau, puis refus du rejeu avant et après redémarrage ;
-- récupération d'une Console avec nouvelle clé humaine laissant les actions
+- récupération d'une App avec nouvelle clé humaine laissant les actions
   verrouillées jusqu'à rotation des ancres par l'accès personnel ;
 - maintien de l'accès personnel après création et remplacement ;
-- remplacement explicite du Controller, nouvelle association Console,
+- remplacement explicite du Controller, nouvelle association App,
   nouvelle identité lecteur Relay, rotation de toutes les autorités exposées,
   vérification des nouvelles clés puis retrait des seules anciennes identités
   Your Cloud ;
@@ -875,7 +875,7 @@ LAB :
 - réutilisation d'un Agent compatible et refus d'un état altéré ou ambigu ;
 - budgets respectés sur une petite machine, cohabitation isolée et comportement
   mesuré avec 1, 2 puis 64 machines ;
-- aucune interruption due à la seule perte de la Console ou du processus
+- aucune interruption due à la seule perte de l'App ou du processus
   Controller pour les services hébergés sur d'autres machines ; un service
   colocalisé est annoncé comme interruptible si l'hôte est perdu ou isolé.
 

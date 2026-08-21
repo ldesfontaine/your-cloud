@@ -11,7 +11,7 @@ sont pas de même nature, et c'est la première chose que ce protocole établit 
 **Les deux intervalles sont humains, et le second l'est parce que le contrat le
 veut.** Le sondage du frontend s'arrête à l'état `answered` et ne soumet rien :
 `submit_plan_decision` n'a qu'un appelant, le bouton **« Signer et lancer »** de
-`console/src/product/plans-view.tsx`. C'est une décision de contrat, écrite à
+`app/src/product/plans-view.tsx`. C'est une décision de contrat, écrite à
 côté de l'appel — une soumission qui suivrait la fermeture de la fenêtre ferait
 de la fenêtre le déclencheur d'un effet, quand le contrat en fait un recueil de
 consentement, et `TRAJET-DE-COMMANDE.md` le dit aussi : « aucun déclencheur
@@ -19,7 +19,7 @@ automatique n'est posé ; le contrat n'en a aucun ».
 
 La conséquence est une contrainte sur le chiffre, pas une nuance de vocabulaire :
 **une borne calée à l'échelle d'un enchaînement de messages rendrait tout humain
-réel expiré à son propre clic.** Après la fenêtre, l'humain revient à la Console,
+réel expiré à son propre clic.** Après la fenêtre, l'humain revient à l'App,
 lit le paragraphe qui lui dit que rien n'est encore parti, et décide. Cette borne
 doit être humaine et généreuse.
 
@@ -37,11 +37,11 @@ tests/lab/v0.1.2/consent-window-timing/mesurer private_service
 Trois lectures chronométrées, environ cinq minutes en tout. Chaque lecture mesure
 **deux intervalles**, l'un après l'autre :
 
-1. **délibérer.** La feuille affiche les deux empreintes *telles que la Console
+1. **délibérer.** La feuille affiche les deux empreintes *telles que l'App
    les montre à côté de la fenêtre*, puis le plan *tel que la fenêtre le rend*.
    Le chronomètre part à votre Entrée et s'arrête quand vous avez répondu si les
    deux empreintes correspondent — c'est ce que la fenêtre native recueille ;
-2. **signer.** La feuille affiche alors le panneau que la Console rend une fois
+2. **signer.** La feuille affiche alors le panneau que l'App rend une fois
    la fenêtre refermée sur une confirmation, avec son bouton. Le second
    chronomètre s'arrête à votre « clic ».
 
@@ -71,7 +71,7 @@ courante coupe la fenêtre la plus large.
 
 `copie.tsv` porte les lignes que
 `PresentedPublicationPlan::confirmation_lines()` produit sur les vecteurs
-épinglés de `console/src-tauri/src/publication_plan.rs`, extraites du produit
+épinglés de `app/src-tauri/src/publication_plan.rs`, extraites du produit
 lui-même. Ce ne sont pas des phrases réécrites pour l'occasion.
 
 Le panneau du second intervalle est lui aussi la copie du produit : ce sont les
@@ -84,7 +84,7 @@ Trois limites, portées ici plutôt qu'en note de bas de page :
   texte et de comparer ces empreintes, pas l'ergonomie de la fenêtre. Le sens de
   lecture, la police et l'espacement changeraient le chiffre à la marge ;
 - **le second intervalle est mesuré sans le changement de fenêtre.** Un humain
-  réel doit revenir de la fenêtre native à la Console — le geste que cette
+  réel doit revenir de la fenêtre native à l'App — le geste que cette
   feuille ne reproduit pas est justement celui qui allonge cet intervalle. Ce
   qu'elle en donne est donc un **plancher**, et la borne se pose au-dessus, avec
   de la marge ;
@@ -145,7 +145,7 @@ vérifié, et c'est l'une d'elles qui portait l'altération.
    plafond est **généreux plutôt que supposé** : ≈ 14× la délibération réelle
    mesurée, ≈ 34× le plancher de signature.
 6. **La marge du changement de fenêtre n'est pas mesurée.** Cette feuille ne fait
-   pas revenir de la fenêtre native à la Console, donc 8,7 s est un plancher et
+   pas revenir de la fenêtre native à l'App, donc 8,7 s est un plancher et
    non l'intervalle complet. C'est l'ampleur du rapport — 34× — qui autorise à
    trancher sans avoir mesuré ce retour ; à un rapport de 2× ou 3×, il aurait
    fallu le mesurer.

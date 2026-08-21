@@ -50,7 +50,7 @@ const ExternalReasonPortIsManaged = "port_is_managed"
 // being logged in either — a fact about a machine is a fact whoever is watching.
 //
 // It is idempotent. A snapshot the Controller has already absorbed changes
-// nothing, bumps no revision and rewrites no file: a Console that refreshes
+// nothing, bumps no revision and rewrites no file: an App that refreshes
 // twice must not make the inventory look like it moved.
 func (store *ExternalStore) AbsorbSnapshot(snapshot *RelaySnapshot) error {
 	if snapshot == nil {

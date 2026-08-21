@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+app="$root/app"
+launcher_pid=
+driver_pid=
+driver_pgid=
+package_name=
+hostile_stdout=
+hostile_stderr=
+temporary_root=
+# La cible synthétique que la preuve d'invite déclare. Elle doit **résoudre**,
+# et rien d'autre : depuis `#52`, l'assistant résout le nom une seule fois et
+# gèle ses adresses AVANT d'afficher le consentement, pour que la fenêtre
+# montre des faits vérifiés plutôt qu'une intention. Un nom qui ne résout pas
+# termine donc la session sans fenêtre — et c'est correct.
+#
+# L'adresse est de TEST-NET-1 (RFC 5737) et non une boucle locale, parce que le
+# gel refuse explicitement le loopback et toute adresse de la machine elle-même
+# (`Loopback`, `LocalInterface`). Aucun écouteur n'est monté et aucun ne doit
+# l'être : la préparation ne compose jamais la cible.
+synthetic_target_name=controller.example.test
+synthetic_target_address=192.0.2.10
+synthetic_target_mounted=false
+termination_poll_attempts=40
+termination_poll_interval=0.05
+
+validate_process_id() {
+  local process_id=${1-}
+  local label=${2-process}
+  if [[ ! "$process_id" =~ ^[1-9][0-9]*$ ]] || (( process_id <= 1 )); then
+    echo "$label is not a validated numeric process identifier greater than 1" >&2
+    return 1
+  fi
+}
+
+child_is_stopped_or_zombie() {
+  local process_id=$1
+  validate_process_id "$process_id" "child PID" || return 1
+  local process_state
+  process_state=$(ps -o stat= -p "$process_id" 2>/dev/null || true)
+  process_state=${process_state//[[:space:]]/}
+  if [[ -z "$process_state" ]]; then
+    ! kill -0 "$process_id" 2>/dev/null
+    return
+  fi
+  [[ "$process_state" == Z* ]]
+}
+
+wait_for_child_stop_bounded() {
+  local process_id=$1
+  local attempt
+  for ((attempt = 0; attempt < termination_poll_attempts; attempt += 1)); do
+    if child_is_stopped_or_zombie "$process_id"; then
+      return 0
+    fi
+    sleep "$termination_poll_interval"
+  done
+  return 1
+}
+
+reap_stopped_child() {
+  local process_id=$1
+  child_is_stopped_or_zombie "$process_id" || {
+    echo "refusing to wait for a child that is not absent or a zombie: $process_id" >&2
+    return 1
+  }
+  local wait_status=0
+  if wait "$process_id"; then
+    wait_status=0
+  else
+    wait_status=$?
+  fi
+  if [[ "$wait_status" -eq 127 ]] || kill -0 "$process_id" 2>/dev/null; then
+    echo "child PID was not reaped after its stopped state was proven: $process_id" >&2
+    return 1
+  fi
+}
+
+terminate_child_pid() {
+  local process_id=$1
+  validate_process_id "$process_id" "child PID" || return 1
+
+  if ! child_is_stopped_or_zombie "$process_id"; then
+    if ! kill -TERM "$process_id" 2>/dev/null && ! child_is_stopped_or_zombie "$process_id"; then
+      echo "failed to send TERM to child PID: $process_id" >&2
+      return 1
+    fi
+    if ! wait_for_child_stop_bounded "$process_id"; then
+      if ! kill -KILL "$process_id" 2>/dev/null && ! child_is_stopped_or_zombie "$process_id"; then
+        echo "failed to send KILL to child PID: $process_id" >&2
+        return 1
+      fi
+      if ! wait_for_child_stop_bounded "$process_id"; then
+        echo "child PID remained alive after bounded TERM and KILL: $process_id" >&2
+        return 1
+      fi
+    fi
+  fi
+
+  reap_stopped_child "$process_id"
+}
+
+terminate_driver_group() {
+  local process_id=$1
+  local process_group_id=$2
+  validate_process_id "$process_id" "tauri-driver PID" || return 1
+  validate_process_id "$process_group_id" "tauri-driver PGID" || return 1
+  if [[ "$process_id" != "$process_group_id" ]]; then
+    echo "tauri-driver PID and validated PGID differ" >&2
+    return 1
+  fi
+
+  local child_reaped=false
+  local group_disappeared=false
+  local attempt
+  if ! kill -TERM -- "-$process_group_id" 2>/dev/null \
+    && kill -0 -- "-$process_group_id" 2>/dev/null; then
+    echo "failed to send TERM to validated tauri-driver process group" >&2
+    return 1
+  fi
+  for ((attempt = 0; attempt < termination_poll_attempts; attempt += 1)); do
+    if [[ "$child_reaped" == false ]] && child_is_stopped_or_zombie "$process_id"; then
+      # Once absent/zombie, wait cannot block; reaping the leader lets PGID disappearance
+      # remain independently observable for any descendant still in the setsid group.
+      reap_stopped_child "$process_id" || return 1
+      child_reaped=true
+    fi
+    if ! kill -0 -- "-$process_group_id" 2>/dev/null; then
+      group_disappeared=true
+      break
+    fi
+    sleep "$termination_poll_interval"
+  done
+
+  if [[ "$group_disappeared" == false ]]; then
+    if ! kill -KILL -- "-$process_group_id" 2>/dev/null \
+      && kill -0 -- "-$process_group_id" 2>/dev/null; then
+      echo "failed to send KILL to validated tauri-driver process group" >&2
+      return 1
+    fi
+    for ((attempt = 0; attempt < termination_poll_attempts; attempt += 1)); do
+      if [[ "$child_reaped" == false ]] && child_is_stopped_or_zombie "$process_id"; then
+        reap_stopped_child "$process_id" || return 1
+        child_reaped=true
+      fi
+      if ! kill -0 -- "-$process_group_id" 2>/dev/null; then
+        group_disappeared=true
+        break
+      fi
+      sleep "$termination_poll_interval"
+    done
+  fi
+
+  if [[ "$child_reaped" == false ]]; then
+    wait_for_child_stop_bounded "$process_id" || {
+      echo "tauri-driver child did not reach a reap-safe state" >&2
+      return 1
+    }
+    reap_stopped_child "$process_id" || return 1
+  fi
+  if [[ "$group_disappeared" != true ]] \
+    || kill -0 -- "-$process_group_id" 2>/dev/null; then
+    echo "tauri-driver process group did not disappear after bounded TERM and KILL" >&2
+    return 1
+  fi
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "$launcher_pid" ]]; then
+    terminate_child_pid "$launcher_pid" || status=1
+    launcher_pid=
+  fi
+  if [[ -n "$driver_pid" ]]; then
+    if [[ -n "$driver_pgid" ]]; then
+      terminate_driver_group "$driver_pid" "$driver_pgid" || status=1
+    else
+      terminate_child_pid "$driver_pid" || status=1
+    fi
+    driver_pid=
+    driver_pgid=
+  fi
+  if [[ -n "$hostile_stdout" ]]; then
+    rm -f -- "$hostile_stdout" || status=1
+  fi
+  if [[ -n "$hostile_stderr" ]]; then
+    rm -f -- "$hostile_stderr" || status=1
+  fi
+  if [[ -n "$temporary_root" ]]; then
+    rm -rf -- "$temporary_root" || status=1
+    if [[ -e "$temporary_root" ]]; then
+      status=1
+    fi
+  fi
+  if [[ -n "$package_name" ]] && dpkg-query -W "$package_name" >/dev/null 2>&1; then
+    sudo dpkg --remove "$package_name" >/dev/null || status=1
+  fi
+  if [[ "$synthetic_target_mounted" == true ]]; then
+    sudo sed -i "/[[:space:]]$synthetic_target_name\$/d" /etc/hosts || status=1
+    synthetic_target_mounted=false
+  fi
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+port_is_open() {
+  (exec 9<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+cd "$app"
+npm run tauri -- build --bundles deb
+
+shopt -s nullglob
+packages=(src-tauri/target/release/bundle/deb/*.deb)
+[[ ${#packages[@]} -eq 1 ]] || {
+  echo "expected exactly one Linux package, found ${#packages[@]}" >&2
+  exit 1
+}
+package=${packages[0]}
+package_name=$(dpkg-deb --field "$package" Package)
+[[ "$package_name" == "your-cloud" ]] || {
+  echo "unexpected Linux package name" >&2
+  exit 1
+}
+
+sha256sum "$package"
+sudo dpkg --install "$package"
+[[ -x /usr/bin/your-cloud-app ]] || {
+  echo "installed App executable is absent" >&2
+  exit 1
+}
+[[ -x /usr/bin/your-cloud-native-bootstrap-assistant ]] || {
+  echo "installed native helper executable is absent" >&2
+  exit 1
+}
+
+hostile_stdout=$(mktemp)
+hostile_stderr=$(mktemp)
+set +e
+/usr/bin/your-cloud-native-bootstrap-assistant \
+  --native-bootstrap-assistant </dev/null >"$hostile_stdout" 2>"$hostile_stderr"
+hostile_status=$?
+set -e
+[[ "$hostile_status" -eq 70 ]] || {
+  echo "installed native helper accepted a direct non-App parent" >&2
+  exit 1
+}
+[[ ! -s "$hostile_stdout" && ! -s "$hostile_stderr" ]] || {
+  echo "refused native helper invocation emitted public output" >&2
+  exit 1
+}
+rm -f -- "$hostile_stdout" "$hostile_stderr"
+hostile_stdout=
+hostile_stderr=
+
+: "${DISPLAY:?app-linux-ci must run inside an isolated X display}"
+: "${RUNNER_TEMP:?app-linux-ci requires the runner temporary directory}"
+
+# La cible synthétique est montée, puis **constatée** : une précondition qu'on
+# affirme sans la vérifier est exactement le défaut que cette preuve a laissé
+# passer pendant des semaines.
+sudo sed -i "/[[:space:]]$synthetic_target_name\$/d" /etc/hosts
+printf '%s %s\n' "$synthetic_target_address" "$synthetic_target_name" \
+  | sudo tee -a /etc/hosts >/dev/null
+synthetic_target_mounted=true
+resolved_target=$(getent hosts "$synthetic_target_name" | awk '{print $1; exit}')
+[[ "$resolved_target" == "$synthetic_target_address" ]] || {
+  echo "the synthetic target $synthetic_target_name resolved to '${resolved_target:-rien}' rather than $synthetic_target_address" >&2
+  exit 1
+}
+printf 'PASS: synthetic target %s resolves to %s, and nothing listens for it\n' \
+  "$synthetic_target_name" "$synthetic_target_address"
+temporary_root=$(mktemp -d)
+proof_root="$RUNNER_TEMP/your-cloud-linux-webkitgtk-smoke"
+rm -rf -- "$proof_root"
+export XDG_DATA_HOME="$temporary_root/data"
+export XDG_CONFIG_HOME="$temporary_root/config"
+export XDG_CACHE_HOME="$temporary_root/cache"
+export NO_AT_BRIDGE=1
+mkdir -p -- "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+
+driver_stdout="$temporary_root/tauri-driver.stdout.log"
+driver_stderr="$temporary_root/tauri-driver.stderr.log"
+setsid tauri-driver \
+  --native-driver /usr/bin/WebKitWebDriver \
+  --port 4444 \
+  --native-port 4445 \
+  >"$driver_stdout" 2>"$driver_stderr" &
+driver_pid=$!
+validate_process_id "$driver_pid" "tauri-driver PID"
+driver_group_validated=false
+for ((attempt = 0; attempt < termination_poll_attempts; attempt += 1)); do
+  observed_driver_pgid=$(ps -o pgid= -p "$driver_pid" 2>/dev/null || true)
+  observed_driver_pgid=${observed_driver_pgid//[[:space:]]/}
+  if [[ "$observed_driver_pgid" == "$driver_pid" ]]; then
+    driver_pgid=$observed_driver_pgid
+    driver_group_validated=true
+    break
+  fi
+  if child_is_stopped_or_zombie "$driver_pid"; then
+    break
+  fi
+  sleep "$termination_poll_interval"
+done
+[[ "$driver_group_validated" == true ]] || {
+  echo "tauri-driver did not become the validated leader of its setsid process group" >&2
+  exit 1
+}
+driver_ready=false
+for _ in {1..120}; do
+  if ! kill -0 "$driver_pid" 2>/dev/null; then
+    echo "tauri-driver exited before accepting Linux WebDriver sessions" >&2
+    exit 1
+  fi
+  if port_is_open 4444 && port_is_open 4445; then
+    driver_ready=true
+    break
+  fi
+  sleep 0.25
+done
+[[ "$driver_ready" == true ]] || {
+  echo "tauri-driver did not become ready within 30 seconds" >&2
+  exit 1
+}
+
+python3 "$root/tests/checks/app-windows-ui-proof.py" \
+  --platform linux \
+  --application /usr/bin/your-cloud-app \
+  --session-ready-marker "$temporary_root/webdriver-session-ready" \
+  --output "$proof_root"
+expected_proof_files=(
+  linux-local-access-1280x800.png
+  linux-local-access-640x560.png
+  linux-local-access-640x560-text-200.png
+  linux-infrastructures-1280x800.png
+  linux-infrastructures-640x560.png
+  linux-infrastructures-640x560-text-200.png
+  linux-association-1280x800.png
+  linux-association-640x560.png
+  linux-association-640x560-text-200.png
+  linux-native-personal-consent.png
+  linux-webkitgtk-smoke.json
+)
+for proof_file in "${expected_proof_files[@]}"; do
+  [[ -s "$proof_root/$proof_file" ]] || {
+    echo "installed Linux proof artifact is incomplete" >&2
+    exit 1
+  }
+done
+proof_entry_count=$(find "$proof_root" -mindepth 1 -maxdepth 1 | wc -l)
+proof_file_count=$(find "$proof_root" -mindepth 1 -maxdepth 1 -type f | wc -l)
+[[ "$proof_entry_count" -eq "${#expected_proof_files[@]}" \
+  && "$proof_file_count" -eq "${#expected_proof_files[@]}" ]] || {
+  echo "installed Linux proof artifact contains an unexpected entry" >&2
+  exit 1
+}
+
+terminate_driver_group "$driver_pid" "$driver_pgid"
+driver_pid=
+driver_pgid=
+proof_cleanup=false
+for _ in {1..40}; do
+  if ! pgrep -f '^/usr/bin/your-cloud-app$' >/dev/null \
+    && ! pgrep -f '^/usr/bin/your-cloud-native-bootstrap-assistant( |$)' >/dev/null \
+    && ! pgrep -f '^/usr/bin/WebKitWebDriver( |$)' >/dev/null \
+    && ! port_is_open 4444 \
+    && ! port_is_open 4445; then
+    proof_cleanup=true
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$proof_cleanup" != true ]]; then
+  echo "Linux WebDriver, App, helper or loopback listeners remained after cleanup" >&2
+  exit 1
+fi
+
+/usr/bin/your-cloud-app &
+launcher_pid=$!
+sleep 8
+kill -0 "$launcher_pid" 2>/dev/null || {
+  terminate_child_pid "$launcher_pid" || true
+  launcher_pid=
+  echo "installed App exited during the Linux smoke test" >&2
+  exit 1
+}
+
+app_pid=$(pgrep -f '^/usr/bin/your-cloud-app$' | head -n 1 || true)
+[[ "$app_pid" =~ ^[0-9]+$ ]] || {
+  echo "installed App process was not found" >&2
+  exit 1
+}
+if sudo lsof -nP -a -p "$app_pid" -iTCP -sTCP:LISTEN | grep -q .; then
+  echo "installed App opened a TCP listener" >&2
+  exit 1
+fi
+
+printf 'PASS: Linux .deb installed, launched and opened no TCP listener\n'
+printf 'PASS: installed Linux helper refused a direct non-App parent without output\n'

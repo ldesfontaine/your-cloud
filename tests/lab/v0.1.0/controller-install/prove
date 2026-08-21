@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Drive the Controller installation proof: build the bundle, mount the
-# perimeter, judge, install, stop the Console for real, check the Controller,
+# perimeter, judge, install, stop the App for real, check the Controller,
 # roll back, remove.
 #
-# The two VM play the two sides the architecture names: lab-console holds the
-# Console and the Assistant, lab-machine-1 is the private machine the placement
-# of #36 approved and the one endpoint the preflight declares is lab-console
+# The two VM play the two sides the architecture names: lab-app holds the
+# App and the Assistant, lab-machine-1 is the private machine the placement
+# of #36 approved and the one endpoint the preflight declares is lab-app
 # itself — reachable *from the Controller*, which is the whole point of the
 # step.
 set -euo pipefail
@@ -19,7 +19,7 @@ usage: prove [bundle | setup | judge | install | preflight | shutdown | rollback
   judge     run every bundle, preflight and rollback case against the gates
   install   install the Controller, after the gate has judged the bundle
   preflight reach the declared endpoint from the Controller and judge it
-  shutdown  really stop the Assistant and the Console, then check the Controller
+  shutdown  really stop the Assistant and the App, then check the Controller
   rollback  prove a failure at each step leaves a reconstructible machine
   remove    remove the perimeter from both VM and prove its absence
   all       the eight above in order, removing even when a step fails (default)
@@ -38,18 +38,18 @@ esac
 root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
 labctl="$root/tools/labctl"
 harness="$root/tests/lab/v0.1.0/controller-install"
-console_vm=lab-console
+app_vm=lab-app
 controller_vm=lab-machine-1
 expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-controller-install
-console_state=/root/lab-controller-install
+app_state=/root/lab-controller-install
 controller_unit=your-cloud-controller.service
-# The release identity has one source: console/package.json. A number copied
+# The release identity has one source: app/package.json. A number copied
 # here would be the copy someone forgets, and the bundle this harness builds
 # would then prove an identity the candidate does not carry.
-version=$(sed -n 's/^  "version": "\([0-9.]*\)",$/\1/p' "$root/console/package.json" | head -1)
+version=$(sed -n 's/^  "version": "\([0-9.]*\)",$/\1/p' "$root/app/package.json" | head -1)
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-  || { echo "FAILED: cannot read the release version from console/package.json" >&2; exit 1; }
+  || { echo "FAILED: cannot read the release version from app/package.json" >&2; exit 1; }
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
@@ -108,10 +108,10 @@ LC_ALL=C.UTF-8 go build -C /root/bundlebuild/src/tests/lab/v0.1.0/controller-ins
 }
 
 setup() {
-  local console_address controller_address console_host_key
-  console_address=$(inventory "$console_vm")
+  local app_address controller_address app_host_key
+  app_address=$(inventory "$app_vm")
   controller_address=$(inventory "$controller_vm")
-  echo "perimeter: Console $console_vm, Controller $controller_vm"
+  echo "perimeter: App $app_vm, Controller $controller_vm"
 
   [[ -d "$workdir/bundle" ]] || fail "no bundle in this run; call bundle first"
 
@@ -128,33 +128,33 @@ setup() {
   # The declared endpoint the Controller will have to reach, and the host key
   # already confirmed for it — read through the managed channel, never from a
   # first answer on the wire.
-  "$labctl" copy-from "$console_vm" /etc/ssh/ssh_host_ed25519_key.pub \
-    "$workdir/console-host-key.pub" >/dev/null
-  console_host_key=$(ssh-keygen -l -f "$workdir/console-host-key.pub" | awk '{print $2}')
+  "$labctl" copy-from "$app_vm" /etc/ssh/ssh_host_ed25519_key.pub \
+    "$workdir/app-host-key.pub" >/dev/null
+  app_host_key=$(ssh-keygen -l -f "$workdir/app-host-key.pub" | awk '{print $2}')
 
   # The Assistant side.
-  "$labctl" ssh "$console_vm" -- "rm -rf $console_state && install -d -m 0700 $console_state $console_state/keys $console_state/bundle"
-  "$labctl" copy-to "$console_vm" "$workdir/keys/seed" "$console_state/keys/seed" >/dev/null
-  "$labctl" ssh "$console_vm" -- "chmod 0600 $console_state/keys/seed"
-  "$labctl" copy-to "$console_vm" "$workdir/lab-bundle-signer" "$console_state/signer" >/dev/null
+  "$labctl" ssh "$app_vm" -- "rm -rf $app_state && install -d -m 0700 $app_state $app_state/keys $app_state/bundle"
+  "$labctl" copy-to "$app_vm" "$workdir/keys/seed" "$app_state/keys/seed" >/dev/null
+  "$labctl" ssh "$app_vm" -- "chmod 0600 $app_state/keys/seed"
+  "$labctl" copy-to "$app_vm" "$workdir/lab-bundle-signer" "$app_state/signer" >/dev/null
   for file in "your-cloud-server_${version}_amd64.deb" bundle-manifest.json bundle-manifest.sig anchor; do
-    "$labctl" copy-to "$console_vm" "$workdir/bundle/$file" "$console_state/bundle/$file" >/dev/null
+    "$labctl" copy-to "$app_vm" "$workdir/bundle/$file" "$app_state/bundle/$file" >/dev/null
   done
-  "$labctl" ssh "$console_vm" -- "chmod 0700 $console_state/signer"
+  "$labctl" ssh "$app_vm" -- "chmod 0700 $app_state/signer"
 
-  # The fixture is built from the sources this run synchronised, in lab-console,
+  # The fixture is built from the sources this run synchronised, in lab-app,
   # exactly like the personal access suite. It is never downloaded and never
   # committed.
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 . /root/.cargo/env
 cd /root/work/src-tauri
 export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8
 cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
   --features controller-install-contract-test --bin your-cloud-controller-install-fixture >/dev/null 2>&1
-install -m 0700 target/debug/your-cloud-controller-install-fixture $console_state/fixture"
+install -m 0700 target/debug/your-cloud-controller-install-fixture $app_state/fixture"
 
-  install_script "$console_vm" judge
+  install_script "$app_vm" judge
   install_script "$controller_vm" install-controller
   install_script "$controller_vm" remove
 
@@ -182,48 +182,48 @@ install -m 0700 target/debug/your-cloud-controller-install-fixture $console_stat
   done
 
   {
-    echo "export YOUR_CLOUD_LAB_CONTROLLER_STATE=$console_state"
-    echo "export YOUR_CLOUD_LAB_CONTROLLER_TARGET_NAME=$console_vm"
-    echo "export YOUR_CLOUD_LAB_CONTROLLER_TARGET_KEY=$console_host_key"
+    echo "export YOUR_CLOUD_LAB_CONTROLLER_STATE=$app_state"
+    echo "export YOUR_CLOUD_LAB_CONTROLLER_TARGET_NAME=$app_vm"
+    echo "export YOUR_CLOUD_LAB_CONTROLLER_TARGET_KEY=$app_host_key"
     echo "export YOUR_CLOUD_LAB_CONTROLLER_ADDRESS=$controller_address"
-    echo "export YOUR_CLOUD_LAB_CONSOLE_ADDRESS=$console_address"
+    echo "export YOUR_CLOUD_LAB_APP_ADDRESS=$app_address"
     echo "export YOUR_CLOUD_LAB_BUNDLE_VERSION=$version"
   } >"$workdir/perimeter.env"
-  "$labctl" copy-to "$console_vm" "$workdir/perimeter.env" "$console_state/perimeter.env" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/perimeter.env" "$app_state/perimeter.env" >/dev/null
   cp "$workdir/perimeter.env" "$workdir/perimeter.env.local"
-  echo "perimeter mounted; declared endpoint $console_vm with $console_host_key"
+  echo "perimeter mounted; declared endpoint $app_vm with $app_host_key"
 }
 
 judge() {
-  "$labctl" ssh "$console_vm" -- \
-    ". $console_state/perimeter.env && $remote_harness/judge"
+  "$labctl" ssh "$app_vm" -- \
+    ". $app_state/perimeter.env && $remote_harness/judge"
 }
 
-# The gate runs first, on the Console, against the very artefact that is about
+# The gate runs first, on the App, against the very artefact that is about
 # to travel. Only if it answers VERIFIED does the .deb reach the machine.
 install_controller() {
-  local verdict controller_address console_address
+  local verdict controller_address app_address
   controller_address=$(inventory "$controller_vm")
-  console_address=$(inventory "$console_vm")
-  verdict=$("$labctl" ssh "$console_vm" -- \
-    "$console_state/fixture verify-bundle $console_state/bundle/anchor \
-     $console_state/bundle/bundle-manifest.json $console_state/bundle/bundle-manifest.sig \
-     $version $console_state/bundle/your-cloud-server_${version}_amd64.deb")
+  app_address=$(inventory "$app_vm")
+  verdict=$("$labctl" ssh "$app_vm" -- \
+    "$app_state/fixture verify-bundle $app_state/bundle/anchor \
+     $app_state/bundle/bundle-manifest.json $app_state/bundle/bundle-manifest.sig \
+     $version $app_state/bundle/your-cloud-server_${version}_amd64.deb")
   case "$verdict" in
     VERIFIED*) echo "gate: $verdict" ;;
     *) fail "the gate refused the bundle before installation: $verdict" ;;
   esac
 
-  # The artefact travels only now, and it travels through the Console.
-  "$labctl" ssh "$console_vm" -- "install -d -m 0700 $console_state/outbound"
-  "$labctl" copy-from "$console_vm" \
-    "$console_state/bundle/your-cloud-server_${version}_amd64.deb" \
+  # The artefact travels only now, and it travels through the App.
+  "$labctl" ssh "$app_vm" -- "install -d -m 0700 $app_state/outbound"
+  "$labctl" copy-from "$app_vm" \
+    "$app_state/bundle/your-cloud-server_${version}_amd64.deb" \
     "$workdir/outbound.deb" >/dev/null
   "$labctl" copy-to "$controller_vm" "$workdir/outbound.deb" \
     /root/controller-install-bundle >/dev/null
 
   "$labctl" ssh "$controller_vm" -- "$remote_harness/install-controller \
-    /root/controller-install-bundle ${controller_address}:9443 ${console_address}/32 ${console_address}:8444"
+    /root/controller-install-bundle ${controller_address}:9443 ${app_address}/32 ${app_address}:8444"
 
   # What the package owns, read back off the machine rather than off the file
   # that was sent.
@@ -243,23 +243,23 @@ systemctl show your-cloud-controller.service -p User -p DynamicUser -p TasksMax 
 ps -o user=,args= -C your-cloud | head -3'
 }
 
-# The real thing the issue asks for: the Assistant stops, the Console stops, the
+# The real thing the issue asks for: the Assistant stops, the App stops, the
 # laptop closes, and the Controller is checked *afterwards* through the LAB
-# channel rather than through anything the Console holds open.
+# channel rather than through anything the App holds open.
 # The observing half of the preflight, run from the machine that now holds the
 # Controller. `judge` exercises the decision on written observations; this
 # exercises it on what the Controller machine really saw on the wire, which is
 # the difference between "the endpoint is reachable" and "the endpoint is
 # reachable from here".
 real_preflight() {
-  local console_address console_host_key observed unreachable
-  console_address=$(inventory "$console_vm")
-  console_host_key=$(awk -F= '/TARGET_KEY/ {print $2}' "$workdir/perimeter.env")
+  local app_address app_host_key observed unreachable
+  app_address=$(inventory "$app_vm")
+  app_host_key=$(awk -F= '/TARGET_KEY/ {print $2}' "$workdir/perimeter.env")
 
   observed=$("$labctl" ssh "$controller_vm" -- \
-    "ssh-keyscan -T 5 -t ssh-ed25519 $console_address 2>/dev/null | ssh-keygen -lf - | awk '{print \$2}'")
+    "ssh-keyscan -T 5 -t ssh-ed25519 $app_address 2>/dev/null | ssh-keygen -lf - | awk '{print \$2}'")
   [[ -n "$observed" ]] || fail "the Controller machine observed no host key at all"
-  echo "the Controller reached $console_vm and was presented $observed"
+  echo "the Controller reached $app_vm and was presented $observed"
 
   # An address in the RFC 5737 documentation range: routed nowhere, so the
   # Controller really fails to reach it rather than being told not to try.
@@ -268,24 +268,24 @@ real_preflight() {
   [[ -z "$unreachable" ]] || fail "192.0.2.1 answered a host key; the LAB is not what it claims"
 
   {
-    printf '%s\t%s\t%s\n' "$console_vm" "$console_host_key" "$observed"
+    printf '%s\t%s\t%s\n' "$app_vm" "$app_host_key" "$observed"
   } >"$workdir/preflight-real"
-  "$labctl" copy-to "$console_vm" "$workdir/preflight-real" \
-    "$console_state/preflight-real" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/preflight-real" \
+    "$app_state/preflight-real" >/dev/null
   local verdict
-  verdict=$("$labctl" ssh "$console_vm" -- \
-    "$console_state/fixture preflight $console_state/preflight-real") \
+  verdict=$("$labctl" ssh "$app_vm" -- \
+    "$app_state/fixture preflight $app_state/preflight-real") \
     || fail "the real observation did not clear the preflight: $verdict"
   echo "gate on the real observation: $verdict"
 
   # The same collection against an endpoint the Controller genuinely cannot
   # reach, fed to the same gate.
-  printf 'unreachable-endpoint\t%s\tUNREACHABLE\n' "$console_host_key" \
+  printf 'unreachable-endpoint\t%s\tUNREACHABLE\n' "$app_host_key" \
     >"$workdir/preflight-real-hostile"
-  "$labctl" copy-to "$console_vm" "$workdir/preflight-real-hostile" \
-    "$console_state/preflight-real-hostile" >/dev/null
-  verdict=$("$labctl" ssh "$console_vm" -- \
-    "$console_state/fixture preflight $console_state/preflight-real-hostile" || true)
+  "$labctl" copy-to "$app_vm" "$workdir/preflight-real-hostile" \
+    "$app_state/preflight-real-hostile" >/dev/null
+  verdict=$("$labctl" ssh "$app_vm" -- \
+    "$app_state/fixture preflight $app_state/preflight-real-hostile" || true)
   case "$verdict" in
     *Unreachable*) echo "gate on the unreachable endpoint: $verdict" ;;
     *) fail "an endpoint the Controller could not reach was cleared: $verdict" ;;
@@ -301,7 +301,7 @@ controller_state() {
   "$labctl" ssh "$controller_vm" -- "systemctl show $controller_unit -p ActiveState --value"
 }
 
-shutdown_console() {
+shutdown_app() {
   local pid_before pid_after state_after swap_before
   pid_before=$(controller_pid)
   echo "Controller before the shutdown: pid=$pid_before state=$(controller_state)"
@@ -311,12 +311,12 @@ shutdown_console() {
   # palier need it: a harness that stops a machine owes it the state it found,
   # and losing it here would redden a later suite for a reason that has nothing
   # to do with the code it tests.
-  swap_before=$("$labctl" ssh "$console_vm" -- \
+  swap_before=$("$labctl" ssh "$app_vm" -- \
     "swapon --show=NAME --noheadings 2>/dev/null | tr '\n' ' '" || true)
   [[ -z "${swap_before// /}" ]] || echo "swap to restore afterwards: $swap_before"
 
-  echo "stopping the Assistant process in $console_vm"
-  "$labctl" ssh "$console_vm" -- '
+  echo "stopping the Assistant process in $app_vm"
+  "$labctl" ssh "$app_vm" -- '
 set -e
 pkill -f your-cloud-native-bootstrap-assistant || true
 pkill -f your-cloud-controller-install-fixture || true
@@ -327,62 +327,62 @@ if pgrep -f your-cloud-native-bootstrap-assistant >/dev/null; then
 fi
 echo "no Assistant process remains"'
 
-  echo "stopping $console_vm itself — the Console and the laptop"
-  "$labctl" stop "$console_vm"
+  echo "stopping $app_vm itself — the App and the laptop"
+  "$labctl" stop "$app_vm"
   local state
-  state=$("$labctl" list --format=tsv | awk -v vm="$console_vm" -F'\t' '$1 == vm {print $2}')
-  [[ "$state" == "shut off" ]] || fail "$console_vm is $state, not shut off"
-  echo "$console_vm is really shut off"
+  state=$("$labctl" list --format=tsv | awk -v vm="$app_vm" -F'\t' '$1 == vm {print $2}')
+  [[ "$state" == "shut off" ]] || fail "$app_vm is $state, not shut off"
+  echo "$app_vm is really shut off"
 
   # Checked from the piloting laptop through the LAB control channel. Nothing
-  # the Console owns is involved in this answer.
+  # the App owns is involved in this answer.
   pid_after=$(controller_pid)
   state_after=$(controller_state)
   echo "Controller after the shutdown: pid=$pid_after state=$state_after"
   [[ "$state_after" == active ]] \
-    || fail "the Controller is not active after the Console stopped: $state_after"
+    || fail "the Controller is not active after the App stopped: $state_after"
   # The same process, not a replacement one: a unit that had died and been
   # restarted by systemd would also read `active`, and would prove nothing.
   [[ "$pid_before" == "$pid_after" ]] \
     || fail "the Controller restarted rather than survived: pid $pid_before then $pid_after"
   "$labctl" ssh "$controller_vm" -- "ss -ltn | grep -q ':9443' && echo 'the Controller still listens on 9443'"
 
-  echo "restarting $console_vm"
-  "$labctl" start "$console_vm"
+  echo "restarting $app_vm"
+  "$labctl" start "$app_vm"
   for _ in $(seq 1 60); do
-    if "$labctl" ssh "$console_vm" -- true >/dev/null 2>&1; then break; fi
+    if "$labctl" ssh "$app_vm" -- true >/dev/null 2>&1; then break; fi
     sleep 2
   done
-  "$labctl" ssh "$console_vm" -- true || fail "$console_vm did not come back"
-  inventory "$console_vm" >/dev/null
+  "$labctl" ssh "$app_vm" -- true || fail "$app_vm did not come back"
+  inventory "$app_vm" >/dev/null
 
   local area
   for area in $swap_before; do
-    "$labctl" ssh "$console_vm" -- "swapon $area" \
-      || fail "$console_vm came back without the swap it had at $area"
+    "$labctl" ssh "$app_vm" -- "swapon $area" \
+      || fail "$app_vm came back without the swap it had at $area"
   done
   if [[ -n "${swap_before// /}" ]]; then
-    "$labctl" ssh "$console_vm" -- "swapon --show=NAME --noheadings | grep -q ." \
-      || fail "$console_vm came back without any swap"
-    echo "swap restored in $console_vm"
+    "$labctl" ssh "$app_vm" -- "swapon --show=NAME --noheadings | grep -q ." \
+      || fail "$app_vm came back without any swap"
+    echo "swap restored in $app_vm"
   fi
-  echo "PASS: the Controller survived the Assistant, the Console and the laptop"
+  echo "PASS: the Controller survived the Assistant, the App and the laptop"
 }
 
 # A failure at each step, on the machine, with the ledger the step really
 # produced. It runs after `remove`, on a machine the teardown proved clean, so
 # each stop point starts from the same initial state.
 rollback() {
-  local step output controller_address console_address
+  local step output controller_address app_address
   # The addresses come from the inventory, never from this file.
   controller_address=$(inventory "$controller_vm")
-  console_address=$(inventory "$console_vm")
+  app_address=$(inventory "$app_vm")
   for step in package configuration state credentials; do
     "$labctl" ssh "$controller_vm" -- "$remote_harness/remove" >/dev/null 2>&1 || true
     output=$("$labctl" ssh "$controller_vm" -- \
       "YOUR_CLOUD_FAIL_AT=$step $remote_harness/install-controller \
        /root/controller-install-bundle ${controller_address}:9443 \
-       ${console_address}/32 ${console_address}:8444" \
+       ${app_address}/32 ${app_address}:8444" \
       2>&1 || true)
     case "$output" in
       *"STOPPED_AT=$step"*) ;;
@@ -393,10 +393,10 @@ rollback() {
     echo "--- stopped at $step, the ledger it produced ---"
     cat "$workdir/ledger-$step"
     # The Assistant's own unwind decides what that ledger allows.
-    "$labctl" copy-to "$console_vm" "$workdir/ledger-$step" \
-      "$console_state/ledger-$step" >/dev/null
-    output=$("$labctl" ssh "$console_vm" -- \
-      "$console_state/fixture unwind $console_state/ledger-$step" || true)
+    "$labctl" copy-to "$app_vm" "$workdir/ledger-$step" \
+      "$app_state/ledger-$step" >/dev/null
+    output=$("$labctl" ssh "$app_vm" -- \
+      "$app_state/fixture unwind $app_state/ledger-$step" || true)
     echo "unwind: $output"
     case "$output" in
       COMPLETE*) ;;
@@ -421,9 +421,9 @@ if [ -d /root/controller-install-credentials ]; then
 fi
 rm -rf $remote_harness /root/bundlebuild /root/bundle-src.tgz \
   /root/controller-install-bundle /root/controller-install-credentials" || status=1
-  "$labctl" ssh "$console_vm" -- "
-if [ -d $console_state/keys ]; then find $console_state/keys -type f -exec shred -u {} + 2>/dev/null || true; fi
-rm -rf $console_state $remote_harness" || status=1
+  "$labctl" ssh "$app_vm" -- "
+if [ -d $app_state/keys ]; then find $app_state/keys -type f -exec shred -u {} + 2>/dev/null || true; fi
+rm -rf $app_state $remote_harness" || status=1
   # Absence is asserted, never assumed: a teardown that only issued the commands
   # would leave the next run to discover what it failed to take away.
   for path in "$remote_harness" /root/bundlebuild /root/controller-install-bundle \
@@ -431,8 +431,8 @@ rm -rf $console_state $remote_harness" || status=1
     "$labctl" ssh "$controller_vm" -- "test ! -e $path" \
       || { echo "FAILED: $path is still present in $controller_vm" >&2; status=1; }
   done
-  "$labctl" ssh "$console_vm" -- "test ! -e $console_state" \
-    || { echo 'FAILED: the Console state is still present' >&2; status=1; }
+  "$labctl" ssh "$app_vm" -- "test ! -e $app_state" \
+    || { echo 'FAILED: the App state is still present' >&2; status=1; }
   [[ $status -eq 0 ]] || fail "the perimeter removal is not proven"
   echo "perimeter removed from both machines"
 }
@@ -443,7 +443,7 @@ case "$command" in
   judge) judge ;;
   install) install_controller ;;
   preflight) real_preflight ;;
-  shutdown) shutdown_console ;;
+  shutdown) shutdown_app ;;
   rollback) rollback ;;
   remove) remove ;;
   all)
@@ -453,7 +453,7 @@ case "$command" in
     judge || status=$?
     if [[ $status -eq 0 ]]; then install_controller || status=$?; fi
     if [[ $status -eq 0 ]]; then real_preflight || status=$?; fi
-    if [[ $status -eq 0 ]]; then shutdown_console || status=$?; fi
+    if [[ $status -eq 0 ]]; then shutdown_app || status=$?; fi
     if [[ $status -eq 0 ]]; then rollback || status=$?; fi
     remove
     [[ $status -eq 0 ]] || fail "the Controller installation proof failed with $status"

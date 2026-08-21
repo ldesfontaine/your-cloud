@@ -49,7 +49,7 @@ dernier.
 
 ## Contrat d'une opération
 
-| Phase | Ce que la Console doit rendre visible | Comportement sûr en cas d'échec |
+| Phase | Ce que l'App doit rendre visible | Comportement sûr en cas d'échec |
 |---|---|---|
 | Inventaire | cible, propriétaire, état observé et âge de la preuve | refuser une cible ou une autorité ambiguë |
 | Plan | changements, privilèges, flux, interruption et conséquences | aucune mutation avant approbation liée au plan exact |
@@ -57,12 +57,12 @@ dernier.
 | Préparation | identités, secrets, destination et règles encore fermées | retirer les éléments temporaires sans exposer le service |
 | Déploiement | version, digest, volumes, état local et tests | conserver la route actuelle et ne rien publier |
 | Ouverture ou bascule | source, destination, flux exact et détenteur des écritures | appliquer une bascule atomique ou annoncer un résultat inconnu |
-| Observation | santé du service, refus hostiles et fraîcheur de chaque preuve | ne pas confondre panne de la Console, du Controller, du Relay et du service |
+| Observation | santé du service, refus hostiles et fraîcheur de chaque preuve | ne pas confondre panne de l'App, du Controller, du Relay et du service |
 | Retrait | ancienne instance, règles, secrets et date de fin de rétention | conserver ce qui est encore nécessaire au retour |
 
 Un rollback n'est jamais une promesse vague. Le plan nomme les opérations
 exactes de retour, les borne aux ressources gérées par Your Cloud et soumet ce
-contenu à la même approbation. Le cœur natif de la Console signe l'enveloppe
+contenu à la même approbation. Le cœur natif de l'App signe l'enveloppe
 canonique après confirmation ; le Controller la transporte et l'Auxiliaire
 revérifie localement la clé publique, l'époque et la séquence root-owned. Après
 un échec contrôlé, l'Auxiliaire tente ce rollback tant qu'il garde la maîtrise ;
@@ -72,7 +72,7 @@ effectif rendent `changed=false` sans réécriture ni redémarrage. Une dérive
 exige un nouveau plan.
 
 Une coupure au milieu d'une mutation ne déclenche aucun rejeu aveugle. Le
-Controller marque `résultat inconnu`, la Console l'affiche, puis le Controller
+Controller marque `résultat inconnu`, l'App l'affiche, puis le Controller
 observe le système par un chemin indépendant et propose seulement les actions
 compatibles avec l'état réellement constaté. `v0.1.0` ne promet ni rollback, ni
 continuation autonome lorsque l'Auxiliaire n'est plus joignable. La séquence
@@ -164,7 +164,7 @@ après la première écriture sur la destination
 ```
 
 Après de nouvelles écritures, remettre simplement l'ancienne route peut perdre
-des données ou créer deux sources d'autorité. La Console doit donc nommer le
+des données ou créer deux sources d'autorité. L'App doit donc nommer le
 détenteur actuel des écritures, la fraîcheur de la synchronisation et un retour
 `disponible`, `conditionnel` ou `indisponible`.
 
@@ -181,7 +181,7 @@ Si le Controller perd sa connexion après avoir demandé une nouvelle route :
 6. conserver la chronologie et les preuves avant toute nouvelle opération.
 
 Le service déjà en fonctionnement ne dépend pas de la disponibilité de la
-Console, du Controller ou du Relay. Une panne du plan de contrôle arrête les
+App, du Controller ou du Relay. Une panne du plan de contrôle arrête les
 nouvelles actions, pas les charges utiles déjà déployées.
 
 ## Lecture OWASP et NIS2

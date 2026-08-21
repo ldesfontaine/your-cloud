@@ -18,9 +18,9 @@ export LC_ALL=C.UTF-8
 
 usage() {
   cat >&2 <<'EOF'
-usage: provision-lab [lab-console | lab-machine-1 | lab-vps | all]
+usage: provision-lab [lab-app | lab-machine-1 | lab-vps | all]
 
-  lab-console    swap, GTK build dependencies, the pinned Rust, Node and
+  lab-app        swap, GTK build dependencies, the pinned Rust, Node and
                  tauri-driver toolchains, and the warmed cargo and npm caches
   lab-machine-1  the pinned Go toolchain and the rootless container ground
   lab-vps        the same ground plus slirp4netns, for the public profile
@@ -36,7 +36,7 @@ EOF
 target=${1:-all}
 [[ $# -le 1 ]] || usage
 case "$target" in
-  lab-console | lab-machine-1 | lab-vps | all) ;;
+  lab-app | lab-machine-1 | lab-vps | all) ;;
   *) usage ;;
 esac
 
@@ -84,23 +84,23 @@ guard() {
 
 remote() { "$labctl" ssh "$1" -- "$2"; }
 
-provision_console() {
-  step "lab-console — swap, GTK build dependencies, Rust $rust_version, Node $node_version"
-  guard lab-console
+provision_app() {
+  step "lab-app — swap, GTK build dependencies, Rust $rust_version, Node $node_version"
+  guard lab-app
 
   # The crate depends on `gtk`, whose compilation is killed by the OOM reaper
   # with this machine's memory. The swapfile is deliberately left out of
   # `/etc/fstab`: `tests/lab/v0.1.0/prove` re-enables it after every start, and
   # that path stays exercised rather than becoming dead code.
-  if remote lab-console "test -f /swapfile"; then
+  if remote lab-app "test -f /swapfile"; then
     note swapfile "already present"
   else
-    remote lab-console "fallocate -l $swap_bytes /swapfile && chmod 600 /swapfile \
+    remote lab-app "fallocate -l $swap_bytes /swapfile && chmod 600 /swapfile \
       && mkswap /swapfile >/dev/null"
     note swapfile "created ($swap_bytes)"
   fi
-  if [[ -z "$(remote lab-console 'swapon --noheadings --show' || true)" ]]; then
-    remote lab-console "swapon /swapfile"
+  if [[ -z "$(remote lab-app 'swapon --noheadings --show' || true)" ]]; then
+    remote lab-app "swapon /swapfile"
     note swap "enabled"
   else
     note swap "already enabled"
@@ -110,12 +110,12 @@ provision_console() {
   # provisioned before the list grew passes the old guard and would silently
   # keep its old surface, which is exactly the drift this file exists to
   # prevent.
-  if remote lab-console "test -x /usr/bin/patchelf"; then
+  if remote lab-app "test -x /usr/bin/patchelf"; then
     note "build dependencies" "already installed"
   else
-    # The WebKit and rsvg lines are what the console crate itself links
+    # The WebKit and rsvg lines are what the app crate itself links
     # against; without them only the Assistant crate compiles here, and the
-    # console crate's own tests have no ground to run on.
+    # app crate's own tests have no ground to run on.
     #
     # The display server and its two probes are here for a reason that took a
     # destroyed topology to see. An earlier reading of this file kept them out,
@@ -127,14 +127,14 @@ provision_console() {
     # first run from nothing stopped on `xvfb-run: command not found`.
     #
     # `webkit2gtk-driver` is the same WebDriver the hosted gate installs, and it
-    # brings the engine the Linux Console actually paints with. The reflow proof
+    # brings the engine the Linux App actually paints with. The reflow proof
     # measures the frontend's geometry in that engine rather than in a second
     # one, because a layout that reflows in Chromium and not in WebKitGTK would
     # be a green that says nothing about the product.
     # `patchelf` is what the Tauri bundler runs on the binary it packages: the
     # reflow proof now builds the installable `.deb` on this machine, and a
     # bundling step that cannot rewrite the loader path stops the build.
-    remote lab-console "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    remote lab-app "DEBIAN_FRONTEND=noninteractive apt-get update -qq \
       && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         build-essential pkg-config libgtk-3-dev gdb \
         libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
@@ -151,7 +151,7 @@ provision_console() {
   # because that proof probes and photographs it, `WebKitWebDriver` because the
   # reflow proof drives the frontend in the engine the product ships with.
   for tool in gdb xvfb-run xdotool import WebKitWebDriver patchelf; do
-    remote lab-console "command -v $tool >/dev/null" \
+    remote lab-app "command -v $tool >/dev/null" \
       || fail "$tool is absent after installation"
   done
 
@@ -160,10 +160,10 @@ provision_console() {
   # installable `.deb` on this machine, and that build begins with the
   # frontend: no Node, no candidate. Installed like Go: unpacked under
   # /usr/local, then linked where a plain ssh command looks.
-  if remote lab-console "/usr/local/node/bin/node --version 2>/dev/null | grep -qx 'v$node_version'"; then
+  if remote lab-app "/usr/local/node/bin/node --version 2>/dev/null | grep -qx 'v$node_version'"; then
     note "Node $node_version" "already installed"
   else
-    remote lab-console "curl -fsSL -o /tmp/node.txz \
+    remote lab-app "curl -fsSL -o /tmp/node.txz \
         https://nodejs.org/dist/v$node_version/node-v$node_version-linux-x64.tar.xz \
       && rm -rf /usr/local/node /tmp/node-unpack \
       && install -d /tmp/node-unpack \
@@ -172,23 +172,23 @@ provision_console() {
       && rm -rf /tmp/node.txz /tmp/node-unpack"
     note "Node $node_version" "installed"
   fi
-  remote lab-console "ln -sfn /usr/local/node/bin/node /usr/local/bin/node \
+  remote lab-app "ln -sfn /usr/local/node/bin/node /usr/local/bin/node \
     && ln -sfn /usr/local/node/bin/npm /usr/local/bin/npm \
     && ln -sfn /usr/local/node/bin/npx /usr/local/bin/npx"
-  remote lab-console "command -v node >/dev/null && command -v npm >/dev/null" \
+  remote lab-app "command -v node >/dev/null && command -v npm >/dev/null" \
     || fail "node is absent from the PATH of a plain command"
-  note observed "$(remote lab-console 'node --version') / npm $(remote lab-console 'npm --version')"
+  note observed "$(remote lab-app 'node --version') / npm $(remote lab-app 'npm --version')"
 
-  if remote lab-console ". /root/.cargo/env 2>/dev/null && cargo +$rust_version --version >/dev/null 2>&1"; then
+  if remote lab-app ". /root/.cargo/env 2>/dev/null && cargo +$rust_version --version >/dev/null 2>&1"; then
     note "Rust $rust_version" "already installed"
   else
-    remote lab-console "curl -fsSL https://sh.rustup.rs -o /root/rustup.sh \
+    remote lab-app "curl -fsSL https://sh.rustup.rs -o /root/rustup.sh \
       && sh /root/rustup.sh -y --profile minimal --default-toolchain $rust_version \
         --no-modify-path >/dev/null \
       && rm -f /root/rustup.sh"
     note "Rust $rust_version" "installed"
   fi
-  note observed "$(remote lab-console ". /root/.cargo/env && cargo +$rust_version --version")"
+  note observed "$(remote lab-app ". /root/.cargo/env && cargo +$rust_version --version")"
 
   # The WebDriver bridge the installed-candidate measurement drives the `.deb`
   # with, pinned to the exact version the hosted gate installs. It is a cargo
@@ -198,29 +198,29 @@ provision_console() {
   # `/root/.cargo/env` that nothing had written yet.
   # `tauri-driver` answers no `--version`; the version cargo installed is read
   # from cargo's own ledger instead.
-  if remote lab-console ". /root/.cargo/env \
+  if remote lab-app ". /root/.cargo/env \
       && cargo install --list 2>/dev/null | grep -q '^tauri-driver v$tauri_driver_version:'"; then
     note "tauri-driver $tauri_driver_version" "already installed"
   else
-    remote lab-console ". /root/.cargo/env \
+    remote lab-app ". /root/.cargo/env \
       && cargo +$rust_version install tauri-driver --version $tauri_driver_version --locked --quiet"
     note "tauri-driver $tauri_driver_version" "installed"
   fi
-  note observed "$(remote lab-console ". /root/.cargo/env && cargo install --list | grep '^tauri-driver '")"
+  note observed "$(remote lab-app ". /root/.cargo/env && cargo install --list | grep '^tauri-driver '")"
 
-  # Go, on the machine that builds the Console — and it is not a leftover of the
+  # Go, on the machine that builds the App — and it is not a leftover of the
   # server machines' recipe.
   #
-  # The Console's package embeds the server bundle, and that bundle holds a
+  # The App's package embeds the server bundle, and that bundle holds a
   # static Go binary this machine has to produce: without the toolchain here,
-  # the Console cannot be built at all, and what it would produce instead is a
+  # the App cannot be built at all, and what it would produce instead is a
   # package that promises a lot it does not carry.
-  ensure_go lab-console
+  ensure_go lab-app
 
   # The registry of crates the proofs build against, warmed here and not by the
   # proofs themselves.
   #
-  # Every harness that compiles the console builds with `--offline`, so that the
+  # Every harness that compiles the app builds with `--offline`, so that the
   # build proves it pulls nothing from a network at the moment it runs. That
   # flag is worth having and it says nothing about where the crates came from:
   # they have to be on the machine already. Until the first complete proof, they
@@ -247,19 +247,19 @@ provision_console() {
   # failure rather than a silence.
   local warm=/root/cargo-warm archive
   archive=$(mktemp -t provision-lab-workspace-XXXXXX.tgz)
-  tar czf "$archive" -C "$root/console" --exclude=target --exclude=node_modules src-tauri
-  remote lab-console "rm -rf $warm && install -d -m 0700 $warm"
-  "$labctl" copy-to lab-console "$archive" /root/cargo-warm-workspace.tgz >/dev/null
+  tar czf "$archive" -C "$root/app" --exclude=target --exclude=node_modules src-tauri
+  remote lab-app "rm -rf $warm && install -d -m 0700 $warm"
+  "$labctl" copy-to lab-app "$archive" /root/cargo-warm-workspace.tgz >/dev/null
   rm -f "$archive"
-  remote lab-console "tar xzf /root/cargo-warm-workspace.tgz -C $warm \
+  remote lab-app "tar xzf /root/cargo-warm-workspace.tgz -C $warm \
     && rm -f /root/cargo-warm-workspace.tgz"
-  remote lab-console ". /root/.cargo/env \
+  remote lab-app ". /root/.cargo/env \
     && cd $warm/src-tauri \
     && cargo +$rust_version fetch --locked" >/dev/null \
     || fail "the crate registry could not be warmed from the versioned lock"
-  remote lab-console "rm -rf $warm"
+  remote lab-app "rm -rf $warm"
   note "crate registry" "warmed from the versioned lock"
-  note observed "$(remote lab-console "ls /root/.cargo/registry/cache/*/ | wc -l") crates cached"
+  note observed "$(remote lab-app "ls /root/.cargo/registry/cache/*/ | wc -l") crates cached"
 
   # The npm cache the frontend build reads, warmed here for the reason the
   # crate registry is: every harness that builds the candidate runs
@@ -273,15 +273,15 @@ provision_console() {
   # install that failed must fail this step rather than leave a directory that
   # answers a later guard.
   local npm_warm=/root/npm-warm
-  remote lab-console "rm -rf $npm_warm && install -d -m 0700 $npm_warm"
-  "$labctl" copy-to lab-console "$root/console/package.json" "$npm_warm/package.json" >/dev/null
-  "$labctl" copy-to lab-console "$root/console/package-lock.json" "$npm_warm/package-lock.json" >/dev/null
-  remote lab-console "cd $npm_warm \
+  remote lab-app "rm -rf $npm_warm && install -d -m 0700 $npm_warm"
+  "$labctl" copy-to lab-app "$root/app/package.json" "$npm_warm/package.json" >/dev/null
+  "$labctl" copy-to lab-app "$root/app/package-lock.json" "$npm_warm/package-lock.json" >/dev/null
+  remote lab-app "cd $npm_warm \
     && npm ci --no-audit --no-fund --loglevel=error" >/dev/null \
     || fail "the npm cache could not be warmed from the versioned lock"
-  remote lab-console "rm -rf $npm_warm"
+  remote lab-app "rm -rf $npm_warm"
   note "npm cache" "warmed from the versioned lock"
-  note observed "$(remote lab-console "du -sh /root/.npm/_cacache 2>/dev/null | cut -f1") npm cache"
+  note observed "$(remote lab-app "du -sh /root/.npm/_cacache 2>/dev/null | cut -f1") npm cache"
 }
 
 # ensure_go places the pinned toolchain a proof compiles the product with. It is
@@ -449,14 +449,14 @@ provision_vps() {
 
 provisioned=()
 case "$target" in
-  lab-console) provision_console; provisioned=(lab-console) ;;
+  lab-app) provision_app; provisioned=(lab-app) ;;
   lab-machine-1) provision_machine; provisioned=(lab-machine-1) ;;
   lab-vps) provision_vps; provisioned=(lab-vps) ;;
   all)
-    provision_console
+    provision_app
     provision_machine
     provision_vps
-    provisioned=(lab-console lab-machine-1 lab-vps)
+    provisioned=(lab-app lab-machine-1 lab-vps)
     ;;
 esac
 
@@ -464,7 +464,7 @@ esac
 # rather than the versions this recipe pins.
 #
 # It used to print the pinned four whatever happened, and that line was read for
-# months as an inventory. It was not one: `lab-console` never received Go — only
+# months as an inventory. It was not one: `lab-app` never received Go — only
 # the two container machines call `ensure_go` — and the summary said `go=1.26.5`
 # on a machine where `/usr/local/go` did not exist. The lie cost a session: a
 # harness that needed Go there found `command not found` after the line that had

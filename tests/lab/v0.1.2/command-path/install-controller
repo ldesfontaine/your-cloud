@@ -148,11 +148,11 @@ case "$phase" in
     allowed_source=${3:?usage: install-controller serve <credentials> <allowed-source> <listen-address> <relay-host-address>}
     listen_address=${4:?usage: install-controller serve <credentials> <allowed-source> <listen-address> <relay-host-address>}
     relay_host_address=${5:?usage: install-controller serve <credentials> <allowed-source> <listen-address> <relay-host-address>}
-    # `open` until a Console has associated, `closed` afterwards. This is not a
+    # `open` until an App has associated, `closed` afterwards. This is not a
     # convenience: a Controller that already holds an active device **refuses**
     # to open a second enrolment window — « Controller identity state conflicts
     # with requested window » — and exits 2. That refusal is right, a second
-    # window being a second Console, and this harness serves the two shapes the
+    # window being a second App, and this harness serves the two shapes the
     # product really has rather than restarting into a failure.
     window=${6:-open}
 
@@ -223,7 +223,7 @@ case "$phase" in
     # the Relay snapshot and refuses a machine it cannot see reported `active`
     # (`503 relay_unavailable`, else `422 machine_not_active`, `http.go:454`),
     # and `POST /v0/plan-approvals` refuses a machine that is not in the
-    # inventory. A Controller without a Relay can serve, associate a Console,
+    # inventory. A Controller without a Relay can serve, associate an App,
     # and never command anything.
     #
     # The source address the reader listener of the Relay is pinned to. The

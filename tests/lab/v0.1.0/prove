@@ -85,9 +85,9 @@ usage: prove [guard | run [passe...] | close | all [passe...] | complete]
   machine lives outside labctl and outside this topology. It is reported as not
   run, never as passed.
 
-  `console-reflow` is never part of any sequence here either, `complete`
+  `app-reflow` is never part of any sequence here either, `complete`
   included, and for a different reason. It measures the frontend's geometry
-  (#56) in WebKitGTK on lab-console, not a product behaviour on a mounted
+  (#56) in WebKitGTK on lab-app, not a product behaviour on a mounted
   perimeter, and its own issue stays open until the same measurement is made
   under WebView2 on a machine this file does not know. A green run of it closes
   nothing here, so it is run by its own entry point and never reported as a pass
@@ -183,11 +183,11 @@ declare -A pass_issue=(
   [external-element]="#18 #109"
 )
 declare -A vm_template=(
-  [lab-console]=console
+  [lab-app]=app
   [lab-machine-1]=machine
   [lab-vps]=machine
 )
-vm_names=(lab-console lab-machine-1)
+vm_names=(lab-app lab-machine-1)
 
 # `complete` is the only mode that speaks to lab-vps, that creates a topology
 # and that produces artifacts. Everything else about it is the same code, which
@@ -196,7 +196,7 @@ vm_names=(lab-console lab-machine-1)
 complete_mode=0
 if [[ "$command" == complete ]]; then
   complete_mode=1
-  vm_names=(lab-console lab-machine-1 lab-vps)
+  vm_names=(lab-app lab-machine-1 lab-vps)
   pass_names=("${bootstrap_passes[@]}" "${palier_passes[@]}")
 fi
 
@@ -319,7 +319,7 @@ lab_ssh() { bounded_labctl 300s ssh "$@"; }
 
 # A machine that was just started has no swap: the LAB's swapfile is deliberately
 # absent from `/etc/fstab`, so it survives `labctl stop` on disk but not in use.
-# Several passes compile the Console crate, and that compilation is killed by the
+# Several passes compile the App crate, and that compilation is killed by the
 # OOM reaper without it — a failure that would be read as a product red.
 #
 # This is a provisioning fact of the LAB, not a behaviour of the product. It is
@@ -414,8 +414,8 @@ write_result() {
       printf '    {"pass": "oci-plan", "reason": "it renders the controlled OCI plan palier (#14, proof #86), not the bootstrap and replacement this sequence proves"},\n'
       printf '    {"pass": "public-profile", "reason": "it renders the public BentoPDF profile palier (#15, proof #92) on lab-vps, not the bootstrap and replacement this sequence proves"},\n'
       printf '    {"pass": "private-passage", "reason": "it renders the private WireGuard passage palier (#16, proofs #96 and #97, machine proof #98) across lab-machine-1 and lab-vps, not the bootstrap and replacement this sequence proves"},\n'
-      printf '    {"pass": "private-service", "reason": "it renders the private Vaultwarden profile palier (#17, proof #104) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"},\n'
-      printf '    {"pass": "external-element", "reason": "it renders the external responsibility palier (#18, proof #109) across lab-machine-1, lab-vps and lab-console, not the bootstrap and replacement this sequence proves"}\n'
+      printf '    {"pass": "private-service", "reason": "it renders the private Vaultwarden profile palier (#17, proof #104) across lab-machine-1, lab-vps and lab-app, not the bootstrap and replacement this sequence proves"},\n'
+      printf '    {"pass": "external-element", "reason": "it renders the external responsibility palier (#18, proof #109) across lab-machine-1, lab-vps and lab-app, not the bootstrap and replacement this sequence proves"}\n'
     fi
     printf '  ],\n'
     printf '  "passes": [\n'
@@ -500,7 +500,7 @@ do_rebuild() {
   announce "Rebuilding the topology '$topology' from nothing"
   printf 'This is what the contract of #19 calls a clean base: destroy, create,\n'
   printf 'provision. It costs twenty to thirty minutes, most of it the Rust\n'
-  printf 'toolchain on lab-console, and it happens exactly once.\n'
+  printf 'toolchain on lab-app, and it happens exactly once.\n'
 
   rebuild_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   local rebuild_began
@@ -643,7 +643,7 @@ do_guard() {
 # ---------------------------------------------------------------------------
 
 assert_vm_back() {
-  # Two passes really power off lab-console. Whatever a pass did to a machine,
+  # Two passes really power off lab-app. Whatever a pass did to a machine,
   # the next one starts from a machine that is up and answering, or not at all.
   local vm state waited address back
   local -a machines=()
@@ -784,7 +784,7 @@ do_run() {
   announce "private-passage is not run here either"
   printf 'It renders the private WireGuard passage palier (#16, proofs #96 and #97,\n'
   printf 'machine proof #98). It needs both lab-machine-1 and lab-vps at once, power\n'
-  printf 'cycles both of them, and borrows lab-console as a hostile observer, so it\n'
+  printf 'cycles both of them, and borrows lab-app as a hostile observer, so it\n'
   printf 'shares machines with these passes and never runs beside them. A verdict of\n'
   printf 'its own belongs to its own palier and is recorded as not run here.\n'
 
@@ -792,7 +792,7 @@ do_run() {
   printf 'It renders the private Vaultwarden profile palier (#17, proof #104): the\n'
   printf 'whole reference scenario at once — a data-bearing service on lab-machine-1,\n'
   printf 'an entrypoint serving two declared names on lab-vps, the passage between\n'
-  printf 'them, the archives and lab-console as both hostile observer and synthetic\n'
+  printf 'them, the archives and lab-app as both hostile observer and synthetic\n'
   printf 'neighbour. It needs the three machines of this topology and power cycles two\n'
   printf 'of them, so it never runs beside these passes. A verdict of its own belongs\n'
   printf 'to its own palier and is recorded as not run here.\n'
@@ -802,7 +802,7 @@ do_run() {
   printf 'Your Cloud never installed, declared, read, contradicted, aged and\n'
   printf 'withdrawn without ever being adopted. It stands up a whole observation\n'
   printf 'chain — a Daemon and a Relay on lab-machine-1, a Controller on lab-vps and\n'
-  printf 'a synthetic Console client on lab-console — so it holds the three machines\n'
+  printf 'a synthetic App client on lab-app — so it holds the three machines\n'
   printf 'of this topology and never runs beside these passes. A verdict of its own\n'
   printf 'belongs to its own palier and is recorded as not run here.\n'
 }
@@ -856,7 +856,7 @@ do_close() {
   # calling the LAB clean.
   for item in "${assert_clean_residue[@]}"; do
     case "${item#*:}" in
-      lab-console | lab-machine-1 | lab-vps | "lab-$topology")
+      lab-app | lab-machine-1 | lab-vps | "lab-$topology")
         close_status=failed
         echo "the topology this run owns survived its own destruction: $item" >&2
         return 1
@@ -1035,8 +1035,8 @@ THE CLEAN BASE — 'clean' meaning destroyed, created, provisioned
   The three machines this run then held, as the guard read them just after the
   provisioning and before the first pass:
 
-    lab-console      ${vm_address[lab-console]:-unread}
-                     the operator's machine. It builds the Console crate, plays
+    lab-app      ${vm_address[lab-app]:-unread}
+                     the operator's machine. It builds the App crate, plays
                      the Controller of the bootstrap passes, and stands in as
                      hostile observer and synthetic neighbour for the harnesses
                      that need a third party with root;
@@ -1141,7 +1141,7 @@ EOF
     sha256sum -c proof-checksum.txt   this report is this run's
 
   What this artifact set carries no byte of: the distributable loads. The
-  Debian 13 amd64 server .deb and the Console installers are built elsewhere
+  Debian 13 amd64 server .deb and the App installers are built elsewhere
   and linked by their own signed manifest.
 
 THE CLOSURE
@@ -1169,11 +1169,11 @@ THE BLOCKING RULE, WITHOUT AN IMPLICIT EXCEPTION
 
   Already known, and carried by name:
 
-    1. the Console is not exercised by the LAB harnesses. Its surface is proven
+    1. the App is not exercised by the LAB harnesses. Its surface is proven
        by its own suite, and the native consent window is not wired to any run
        above;
     2. the signatures of these proofs go through synthetic fixtures; the
-       Console signs nothing in these runs;
+       App signs nothing in these runs;
     3. the TLS of these proofs is a synthetic authority of the run;
     4. none of these executions has seen a hosted gate;
     5. arm64 is not proven;

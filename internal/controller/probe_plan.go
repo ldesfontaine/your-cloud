@@ -7,7 +7,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
-// probePlanRequest is everything the Console may choose about a probe plan.
+// probePlanRequest is everything the App may choose about a probe plan.
 //
 // It cannot choose the infrastructure, the image or the digest: the
 // infrastructure is the one this Controller is the authority for, and the image
@@ -21,16 +21,16 @@ type probePlanRequest struct {
 	LocalPort     int    `json:"local_port"`
 }
 
-// ProbePlanView is the frozen pair the Console signs over.
+// ProbePlanView is the frozen pair the App signs over.
 //
 // The two documents travel as their exact canonical bytes rather than as nested
-// objects, so that the Console does not have to own a canonical encoder to
+// objects, so that the App does not have to own a canonical encoder to
 // obtain the bytes the digests were taken over. What it displays, what it
 // hashes and what the Auxiliary later receives are then the same bytes rather
 // than three encodings that happen to agree.
 //
 // The digests are carried beside the documents for the envelope to name; they
-// are not an authority. A Console that trusted them rather than recomputing
+// are not an authority. An App that trusted them rather than recomputing
 // them from the documents it displays would be trusting the Controller to
 // describe what the human is approving.
 type ProbePlanView struct {

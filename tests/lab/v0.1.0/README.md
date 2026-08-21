@@ -76,12 +76,12 @@ L'ordre est celui des dépendances de #13 : `personal-access` (#51, #52),
 - **Démarrer une VM arrêtée est la seule mutation** que l'orchestrateur fait
   hors d'un passage, et c'est elle qui rend la topologie sienne à fermer. Il
   remonte alors le swapfile, que `labctl start` laisse présent mais inutilisé :
-  plusieurs passages compilent le crate de la Console, et cette compilation est
+  plusieurs passages compilent le crate de l'App, et cette compilation est
   tuée par l'OOM sans lui. C'est un fait de provisionnement du LAB, pas un
   comportement du produit — un passage qui meurt d'un swapfile absent n'a
   mesuré que le swapfile.
 - **La fermeture coûte un reprovisionnement.** `topology destroy` emporte la
-  chaîne d'outils, les paquets et le cache de compilation de `lab-console` ;
+  chaîne d'outils, les paquets et le cache de compilation de `lab-app` ;
   seul `labctl stop` les conserve. Une passe complète est donc jouable une
   fois, puis le LAB doit être reprovisionné avant la suivante — par
   [`tools/provision-lab`](../../../tools/provision-lab), qui lit les versions
@@ -155,7 +155,7 @@ les adresses de la machine locale. Ce harnais monte ce périmètre sur les deux 
   argument, elle fait les cinq dans l'ordre et démonte le périmètre même
   lorsqu'une étape échoue.
 - [`install-client`](personal-access/install-client) monte le côté client dans
-  `lab-console` : trois identités Ed25519 synthétiques créées au montage, deux
+  `lab-app` : trois identités Ed25519 synthétiques créées au montage, deux
   confiées à un vrai `ssh-agent` puis détruites du disque, le scalaire privé de
   l'identité autorisée extrait comme canari, les noms synthétiques du résolveur
   et le pont d'observation du serveur. La clé d'hôte du serveur est épinglée à
@@ -166,21 +166,21 @@ les adresses de la machine locale. Ce harnais monte ce périmètre sur les deux 
   décident seules combien d'octets reviennent, l'identité d'observation, un
   journal verbeux et trois `sshd` supplémentaires qui ne négocient chacun qu'un
   jeu hors des listes positives du client.
-- [`check`](personal-access/check) prouve que le crate de la Console compile
+- [`check`](personal-access/check) prouve que le crate de l'App compile
   encore contre les sources que `sync` vient de déposer. Il construit d'abord,
   depuis ces mêmes sources, le binaire externe que `tauri.conf.json` déclare —
   jamais téléchargé, jamais versionné — puis lance `cargo check` sur
-  `your-cloud-console`. Il ne dépend d'aucun périmètre monté : c'est la seule
-  garde qui dit qu'un changement de protocole n'a pas cassé la Console, et elle
+  `your-cloud-app`. Il ne dépend d'aucun périmètre monté : c'est la seule
+  garde qui dit qu'un changement de protocole n'a pas cassé l'App, et elle
   doit pouvoir être rejouée sans payer la suite.
-- [`run`](personal-access/run) exécute la suite dans `lab-console` contre le
+- [`run`](personal-access/run) exécute la suite dans `lab-app` contre le
   périmètre monté, en repartant d'un répertoire de travail vide, d'aucune
   confiance enregistrée et d'aucune sonde héritée d'une exécution précédente.
   Elle l'exécute **deux fois**. D'abord sans le moindre affichage : le client,
   l'agent et le transport ne doivent rien à une session graphique, et c'est de
   ne pas en avoir qui le dit. Ensuite sous un `Xvfb` isolé, avec `--ignored`,
   pour les seuls cas dont l'affichage est l'objet : un helper lancé par le
-  superviseur de la Console elle-même, observé par la fenêtre qu'il ouvre.
+  superviseur de l'App elle-même, observé par la fenêtre qu'il ouvre.
   `LC_ALL` y est fixé parce que GTK écrit sur la sortie d'erreur sous une
   locale absente.
 - [`remove-client`](personal-access/remove-client) et
@@ -199,14 +199,14 @@ tests/lab/v0.1.0/personal-access/prove run [filtre]
 tests/lab/v0.1.0/personal-access/prove remove
 ```
 
-`setup` écrit dans `lab-console` la description du périmètre sous forme des
+`setup` écrit dans `lab-app` la description du périmètre sous forme des
 vingt-quatre variables `YOUR_CLOUD_LAB_*` que la suite lit ; un périmètre qui
 n'en décrit pas exactement vingt-quatre est refusé avant toute exécution.
-`sync` copie `console/src-tauri` **et** `console/package.json` dans
-`lab-console`, **sans** détruire le cache de compilation : reconstruire ce
+`sync` copie `app/src-tauri` **et** `app/package.json` dans
+`lab-app`, **sans** détruire le cache de compilation : reconstruire ce
 workspace depuis rien coûte beaucoup plus que la copie qu'il remplacerait.
 `package.json` fait partie du voyage parce que `tauri.conf.json` y lit sa
-version ; sans lui le script de construction de la Console refuse le workspace,
+version ; sans lui le script de construction de l'App refuse le workspace,
 et `check` ne serait rejouable qu'à la main. `check` et `run` peuvent être
 rejoués autant de fois que voulu, `check` après un simple `sync`, `run` entre un
 `setup` et un `remove`.
@@ -222,7 +222,7 @@ rejoués autant de fois que voulu, `check` après un simple `sync`, `run` entre 
 - Les comptes, clés et agents sont synthétiques, créés puis retirés par le
   harnais. Aucun groupe nommé, aucune élévation, aucune identité réelle.
 - Le binaire externe que `check` construit ne vit que dans la copie de travail
-  de `lab-console`, sous `src-tauri/binaries/`, que Git ignore. Il est
+  de `lab-app`, sous `src-tauri/binaries/`, que Git ignore. Il est
   reconstruit à chaque `check` depuis les sources synchronisées : rien n'est
   téléchargé, rien n'est figé dans le dépôt.
 - Le canari est le scalaire privé de l'identité autorisée. Il n'existe que le
@@ -235,9 +235,9 @@ rejoués autant de fois que voulu, `check` après un simple `sync`, `run` entre 
 ## [`controller-install/`](controller-install/) — installation réelle d'un Controller
 
 C'est le premier harnais du palier qui **mute** une machine du LAB. Il joue les
-deux côtés que l'architecture nomme : `lab-console` porte la Console et
+deux côtés que l'architecture nomme : `lab-app` porte l'App et
 l'Assistant, `lab-machine-1` est la machine privée que le placement de #36 a
-approuvée, et l'unique endpoint déclaré du prévol est `lab-console` elle-même —
+approuvée, et l'unique endpoint déclaré du prévol est `lab-app` elle-même —
 joignable *depuis le Controller*, ce qui est tout l'objet de l'étape.
 
 - [`prove`](controller-install/prove) est l'entrée unique, exécutée depuis le
@@ -249,7 +249,7 @@ joignable *depuis le Controller*, ce qui est tout l'objet de l'étape.
 - `bundle` construit le `.deb` et son manifeste dans `lab-machine-1`, seule VM
   du LAB qui porte Go, puis les rapatrie. Rien n'est téléchargé et rien n'est
   versionné : l'artefact d'une preuve est produit par la preuve.
-- [`judge`](controller-install/judge) exécute dans `lab-console` la matrice
+- [`judge`](controller-install/judge) exécute dans `lab-app` la matrice
   complète des refus et de leurs contrôles positifs. Chaque verdict sort du
   module `installation` compilé, à travers le binaire de fixture : un harnais
   qui comparerait les empreintes lui-même resterait vert contre un produit ayant
@@ -260,7 +260,7 @@ joignable *depuis le Controller*, ce qui est tout l'objet de l'étape.
   à une étape nommée : c'est ce qui donne au rollback un registre réel plutôt
   qu'une liste écrite à la main.
 - `shutdown` tue les processus de l'Assistant, vérifie qu'aucun ne survit, puis
-  **arrête réellement** `lab-console` par le contrôleur du LAB et interroge le
+  **arrête réellement** `lab-app` par le contrôleur du LAB et interroge le
   Controller depuis le poste de pilotage. Le PID est comparé avant et après :
   une unité morte puis relancée par systemd rendrait elle aussi `active`.
 - [`remove`](controller-install/remove) rend `lab-machine-1` à son état initial
@@ -296,9 +296,9 @@ tests/lab/v0.1.0/controller-install/prove remove
 ## [`machine-identity/`](machine-identity/) — identité SSH bornée par machine
 
 C'est le harnais du moment où l'accès personnel de l'utilisateur cesse d'être le
-chemin d'administration. Il joue trois rôles avec deux VM : `lab-console` est le
+chemin d'administration. Il joue trois rôles avec deux VM : `lab-app` est le
 **Controller** — il détient les clés privées opérationnelles, décide tout et est
-le seul côté qui ouvre une session avec une identité bornée — et `lab-console`
+le seul côté qui ouvre une session avec une identité bornée — et `lab-app`
 comme `lab-machine-1` sont les deux **machines enrôlées**. Deux est le minimum :
 la propriété que ce palier existe pour établir est que l'identité d'une machine
 est **refusée sur l'autre**.
@@ -327,7 +327,7 @@ est **refusée sur l'autre**.
   étape ; `YOUR_CLOUD_CUT_AT` l'exécute sans l'observer, et les deux ne sont pas
   le même fait : le premier se défait complètement, le second rend un déroulé
   qui refuse de se dire complet et nomme ce qui reste.
-- [`judge`](machine-identity/judge) exécute dans `lab-console` la matrice des
+- [`judge`](machine-identity/judge) exécute dans `lab-app` la matrice des
   refus et de leurs contrôles positifs. Chaque verdict sort du module
   `machine_identity` compilé, à travers le binaire de fixture, et porte sur les
   fichiers que les machines détiennent réellement.
@@ -382,7 +382,7 @@ tests/lab/v0.1.0/machine-identity/prove remove
 ## [`controller-replacement/`](controller-replacement/) — remplacement explicite d'un Controller
 
 C'est le seul harnais du palier dont le sujet est ce qui se passe **quand on ne
-sait pas**. Il joue les deux rôles que l'incident sépare : `lab-console` porte
+sait pas**. Il joue les deux rôles que l'incident sépare : `lab-app` porte
 l'ancien Controller — celui qu'on remplace, et donc celui que le harnais
 **arrête réellement** — et `lab-machine-1` porte le nouveau, le Relay et une
 cible. Les deux machines sont aussi des cibles : « chaque cible rend l'un des
@@ -397,7 +397,7 @@ quatre états » ne veut rien dire sur une seule.
   refusent, parce qu'elles ont besoin du périmètre et des identités forgées par
   le même passage.
 - `incident` est la phase qui coûte du temps, et c'est voulu. Elle arrête
-  vraiment `lab-console` par le contrôleur du LAB, prend une sonde
+  vraiment `lab-app` par le contrôleur du LAB, prend une sonde
   immédiatement, puis attend réellement la borne que le produit fixe avant d'en
   reprendre une. La panne de cette preuve n'est pas simulée, et les secondes qui
   sont jugées sont celles qui se sont écoulées.
@@ -453,10 +453,10 @@ tests/lab/v0.1.0/controller-replacement/prove remove
   `machine-identity/` qui prouve la commande.
 - Il n'y a pas de troisième VM. Le nouveau Controller, le Relay et une cible
   partagent `lab-machine-1`, et il n'existe pas de machine hostile distincte.
-- `incident` immobilise `lab-console` pendant plus de cinq minutes. C'est le
+- `incident` immobilise `lab-app` pendant plus de cinq minutes. C'est le
   prix de la seule borne qui empêche une bascule sur une panne trop jeune.
 - Les deux VM restent démarrées ; ce harnais ne crée ni ne détruit de topologie.
-  Le swap de `lab-console` ne survit pas à l'arrêt qu'il provoque : `prove` le
+  Le swap de `lab-app` ne survit pas à l'arrêt qu'il provoque : `prove` le
   réactive au redémarrage, avant toute compilation.
 - La présence de ces sources ne constitue pas une preuve. Seule une exécution
   identifiée en est une.
@@ -466,7 +466,7 @@ tests/lab/v0.1.0/controller-replacement/prove remove
 Ce harnais rend le palier du **plan OCI contrôlé** (#14, preuve #86) et non
 celui que l'orchestrateur ci-dessus enchaîne. Il n'a qu'une machine,
 `lab-machine-1`, et c'est honnête plutôt que commode : le Controller et la
-Console y sont une fixture synthétique — la fenêtre de la Console n'est pas
+App y sont une fixture synthétique — la fenêtre de l'App n'est pas
 câblée à cette preuve — tandis que l'Auxiliaire est le vrai binaire du produit,
 construit depuis les sources synchronisées, exécuté en root contre un vrai
 systemd, un vrai Podman rootless et un vrai registre. Ce qui est prouvé est donc
@@ -525,7 +525,7 @@ tests/lab/v0.1.0/oci-plan/prove remove
 - Aucune adresse de LAB, aucune matière de clé et aucun secret ne vit dans ces
   fichiers. L'ancre est frappée d'une graine synthétique au montage et détruite
   au démontage ; les adresses viennent de `labctl`.
-- **La Console n'est pas câblée.** La confirmation native et la signature
+- **L'App n'est pas câblée.** La confirmation native et la signature
   humaine sont jouées par la fixture. Ce harnais ne dit donc rien de ce qu'une
   fenêtre affiche ni de ce qu'un humain confirme.
 - **Une déviation de provisionnement est écrite dans `install` et nommée
@@ -543,7 +543,7 @@ tests/lab/v0.1.0/oci-plan/prove remove
   identifiée en est une, et le rapport de la première est
   [`docs/lab/v0.1.0-oci-plan.md`](../../../docs/lab/v0.1.0-oci-plan.md).
 
-## [`console-reflow/`](console-reflow/) — reflow sans coupe au zoom texte 200 %
+## [`app-reflow/`](app-reflow/) — reflow sans coupe au zoom texte 200 %
 
 Ce harnais ne monte aucun périmètre et ne prouve aucun comportement produit : il
 mesure une géométrie. Il répond à #56 pour sa moitié Linux, et à elle seule,
@@ -552,31 +552,31 @@ questions différentes : la feuille de style reflue-t-elle sous un contenu
 hostile (pilote `fixture`), et le processus réellement installé dispose-t-il la
 même géométrie (pilote `installed`).
 
-- [`prove`](console-reflow/prove) est l'entrée unique, exécutée depuis le poste
+- [`prove`](app-reflow/prove) est l'entrée unique, exécutée depuis le poste
   de pilotage. Elle commence par la garde d'inventaire obligatoire, construit le
-  bundle de fixture depuis l'arbre de travail, le pose sur `lab-console`,
-  mesure le pilote `fixture`, synchronise les sources Console, fait construire
+  bundle de fixture depuis l'arbre de travail, le pose sur `lab-app`,
+  mesure le pilote `fixture`, synchronise les sources App, fait construire
   et installer le `.deb` sur la machine, mesure le pilote `installed`, rapatrie
   les captures et les deux résultats structurés, puis retire le harnais et
   désinstalle le candidat — que le run soit vert ou rouge.
-- [`run`](console-reflow/run) ouvre l'écran virtuel avec l'invocation `xvfb-run`
+- [`run`](app-reflow/run) ouvre l'écran virtuel avec l'invocation `xvfb-run`
   exacte de la porte hébergée, `-noreset` compris, conserve les erreurs du
   serveur X dans le résultat, et passe la main.
-- [`inside`](console-reflow/inside) porte les deux pilotes : pour `fixture`, le
+- [`inside`](app-reflow/inside) porte les deux pilotes : pour `fixture`, le
   bundle servi en boucle locale plutôt que depuis `file://` — la page porte la
   CSP du produit et une origine `file://` en relâcherait la moitié en silence —
   et `WebKitWebDriver` ; pour `installed`, `tauri-driver` proxifiant le même
   `WebKitWebDriver` vers le binaire installé, sous des racines XDG privées
   vidées entre deux combinaisons.
-- [`build`](console-reflow/build) construit le candidat sur la machine —
+- [`build`](app-reflow/build) construit le candidat sur la machine —
   `npm ci --offline` puis `tauri build` sous `CARGO_NET_OFFLINE`, un seul job —
   et l'installe. Le sol (Node, `patchelf`, `tauri-driver`, les caches npm et
   cargo) vient de `tools/provision-lab` ; le build prouve qu'il ne tire rien du
-  réseau au moment où il court. L'arbre `/root/your-cloud-console-build`
+  réseau au moment où il court. L'arbre `/root/your-cloud-app-build`
   persiste entre deux runs, nommé par `remove` : un build froid coûte plus d'une
   demi-heure, un build chaud quelques minutes, et la synchronisation ré-estampille
   les sources pour que le cache ne ressuscite jamais un candidat périmé.
-- [`reflow-oracle.py`](console-reflow/reflow-oracle.py) porte les deux oracles
+- [`reflow-oracle.py`](app-reflow/reflow-oracle.py) porte les deux oracles
   et les deux pilotes.
 
 **Ce qui est mesuré par le pilote `fixture`.** Le bundle frontend livré, un
@@ -622,15 +622,15 @@ WebKitGTK/Xvfb.
 
 ```text
 tools/labctl topology create quick
-tools/provision-lab lab-console
-tests/lab/v0.1.0/console-reflow/prove            # tout, du bundle au candidat installé
-tests/lab/v0.1.0/console-reflow/prove setup
-tests/lab/v0.1.0/console-reflow/prove run
-tests/lab/v0.1.0/console-reflow/prove sync
-tests/lab/v0.1.0/console-reflow/prove build
-tests/lab/v0.1.0/console-reflow/prove run-installed
-tests/lab/v0.1.0/console-reflow/prove collect
-tests/lab/v0.1.0/console-reflow/prove remove
+tools/provision-lab lab-app
+tests/lab/v0.1.0/app-reflow/prove            # tout, du bundle au candidat installé
+tests/lab/v0.1.0/app-reflow/prove setup
+tests/lab/v0.1.0/app-reflow/prove run
+tests/lab/v0.1.0/app-reflow/prove sync
+tests/lab/v0.1.0/app-reflow/prove build
+tests/lab/v0.1.0/app-reflow/prove run-installed
+tests/lab/v0.1.0/app-reflow/prove collect
+tests/lab/v0.1.0/app-reflow/prove remove
 ```
 
 ### Limites et hygiène
@@ -674,8 +674,8 @@ exactes de la porte native hébergée.
   provisionnement de cette machine est manuel et hors `labctl`, et un harnais
   qui la réparerait en silence cacherait le jour où elle dérive du runner
   hébergé qu'elle pré-valide.
-- [`sync.ps1`](windows-helper/sync.ps1) dépose `console/src-tauri` **et**
-  `console/package.json` dans la machine **sans** détruire le cache de
+- [`sync.ps1`](windows-helper/sync.ps1) dépose `app/src-tauri` **et**
+  `app/package.json` dans la machine **sans** détruire le cache de
   compilation. `package.json` fait partie du voyage parce que `tauri.conf.json`
   y lit sa version. Chaque fichier extrait reçoit l'heure de l'extraction et
   non celle du poste de pilotage : Cargo décide de la fraîcheur sur les dates

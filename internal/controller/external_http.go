@@ -9,7 +9,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/machineid"
 )
 
-// The two requests below are everything the Console may choose about the
+// The two requests below are everything the App may choose about the
 // declared inventory, one closed schema per act.
 //
 // Neither of them produces a plan, and neither could. There is no operation
@@ -45,7 +45,7 @@ type externalWithdrawalRequest struct {
 	ElementID     string `json:"element_id"`
 }
 
-// ExternalDeclarationView is what the Console receives for one declaration,
+// ExternalDeclarationView is what the App receives for one declaration,
 // carrying the same projected shape a listing carries so that what a human sees
 // after declaring and what they see afterwards are the same object.
 type ExternalDeclarationView struct {
@@ -55,7 +55,7 @@ type ExternalDeclarationView struct {
 }
 
 // ExternalWithdrawalView states which declaration is gone and nothing more. The
-// sentence about the thing that keeps existing is the Console's, from the
+// sentence about the thing that keeps existing is the App's, from the
 // context of this route: a Controller that could send a user-facing text could
 // send a reassuring one.
 type ExternalWithdrawalView struct {
@@ -162,7 +162,7 @@ func (handler *ControllerHandler) serveExternalElements(response http.ResponseWr
 //
 // An unknown identifier receives `404 resource_not_found` rather than a silent
 // success: a withdrawal that pretended to have removed something it never held
-// would let a Console report a retreat that did not happen.
+// would let an App report a retreat that did not happen.
 func (handler *ControllerHandler) serveExternalElementWithdrawals(response http.ResponseWriter, request *http.Request, certificate *x509.Certificate) {
 	context, ok := handler.authenticateSession(response, request, certificate)
 	if !ok {

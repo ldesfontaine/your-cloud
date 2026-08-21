@@ -22,17 +22,17 @@ import (
 // wider, not because requests in general are.
 const maxServiceDefinitionRequestBytes = int64(2*servicedefinition.MaxDefinitionBytes + 512)
 
-// serviceDefinitionRequest is everything the Console may choose about a freeze,
+// serviceDefinitionRequest is everything the App may choose about a freeze,
 // and it is the one transport form a definition has: its exact canonical bytes as
 // a JSON string, beside the digest they hash to.
 //
 // The bytes arrive as a string rather than as a nested object on purpose. What is
-// frozen must be a document the Console can hash itself, display whole and hand
+// frozen must be a document the App can hash itself, display whole and hand
 // to a signature later; a nested object would be re-encoded by every transport it
 // crossed, and the human would be approving a shape rather than bytes.
 //
 // The digest is not an authority and is never stored as received: it is the
-// Console's own answer, computed by its own encoder, and this Controller refuses
+// App's own answer, computed by its own encoder, and this Controller refuses
 // the submission when its own answer differs. That is the cross-check between the
 // two implementations of one canonical encoding, done at the moment a definition
 // enters the product rather than the day a plan pins it — and it is the reason
@@ -49,7 +49,7 @@ type serviceDefinitionRequest struct {
 	DefinitionSHA256   string `json:"definition_sha256"`
 }
 
-// ServiceDefinitionView is what the Console receives for one freeze: the
+// ServiceDefinitionView is what the App receives for one freeze: the
 // definition exactly as a listing carries it, and the revision of the inventory
 // it now belongs to.
 type ServiceDefinitionView struct {
@@ -85,7 +85,7 @@ func (handler *ControllerHandler) serveServiceDefinitions(response http.Response
 		}
 		// The listing carries every frozen definition, and a listing that cannot be
 		// encoded whole is an error rather than a shorter listing: the contract says
-		// this reading omits none, and a Console silently missing one revision would
+		// this reading omits none, and an App silently missing one revision would
 		// let a human believe a definition was never frozen.
 		view, err := ProjectServiceDefinitions(handler.definitions.Snapshot())
 		if err != nil {
@@ -133,7 +133,7 @@ func (handler *ControllerHandler) serveServiceDefinitions(response http.Response
 	}
 	// A first freeze created a revision; a repeated one found the revision it
 	// already held and moved nothing. The two are told apart by the status alone —
-	// the body is identical, because the definition is identical — so a Console
+	// the body is identical, because the definition is identical — so an App
 	// that submits the same bytes twice reads the same answer twice and learns that
 	// nothing was duplicated.
 	status := http.StatusOK

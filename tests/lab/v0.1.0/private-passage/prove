@@ -10,7 +10,7 @@
 #                  the listener, and it must gain no inbound port at all;
 #   lab-vps        the public machine, the **listener**. It answers on the
 #                  tunnel's UDP port and reaches exactly one service through it;
-#   lab-console    a third machine with root, used as a hostile observer only. It
+#   lab-app    a third machine with root, used as a hostile observer only. It
 #                  is given, by hand, the routes an attacker would give itself,
 #                  and both attempts must fail. Nothing of the product is ever
 #                  installed on it and every route it is given is taken back.
@@ -20,8 +20,8 @@
 # constat that is about what those machines expose.
 #
 # One VM plays every authority this palier separates, and that is honest rather
-# than convenient: the Controller and the Console are a synthetic fixture — the
-# Console window is not wired to this proof — while the Auxiliary is the real
+# than convenient: the Controller and the App are a synthetic fixture — the
+# App window is not wired to this proof — while the Auxiliary is the real
 # product binary, built from the synchronised sources, running as root against a
 # real systemd, a real systemd-networkd, a real kernel WireGuard and a real
 # nftables.
@@ -54,7 +54,7 @@ This harness belongs to the palier of the private WireGuard passage (#16, proofs
 #96 and #97, machine proof #98) and is deliberately not one of the passes of
 tests/lab/v0.1.0/prove, whose sequence is the bootstrap and replacement palier
 (#13, proof #41). It mounts and removes its own perimeter on lab-machine-1 and
-lab-vps, borrows lab-console as a hostile observer without installing anything on
+lab-vps, borrows lab-app as a hostile observer without installing anything on
 it, and creates no topology.
 EOF
   exit 2
@@ -72,7 +72,7 @@ labctl="$root/tools/labctl"
 harness="$root/tests/lab/v0.1.0/private-passage"
 initiator_vm=lab-machine-1
 listener_vm=lab-vps
-hostile_vm=lab-console
+hostile_vm=lab-app
 expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-private-passage
 remote_sources=/root/lab-private-passage-sources
@@ -186,7 +186,7 @@ mount_perimeter() {
   done
 
   # The product sources this run proves, and the synthetic fixture that stands in
-  # for the Controller and the Console. The fixture is placed *inside* the module
+  # for the Controller and the App. The fixture is placed *inside* the module
   # because it asks internal/plan for the canonical plan documents; it exists
   # only in this copy and is never a package of the product.
   "$labctl" copy-to "$vm" "$workdir/sources.tgz" /root/lab-private-passage-sources.tgz >/dev/null
@@ -385,7 +385,7 @@ publish() {
 what this proof does not claim, whatever its outcome:
 
   - the topology is flat, and the reference scenario is not. `quick` puts
-    lab-console, lab-vps and lab-machine-1 on one subnet, so a hostile host can
+    lab-app, lab-vps and lab-machine-1 on one subnet, so a hostile host can
     reach lab-machine-1's own address directly — it could before this proof
     mounted anything and it can afterwards. That is a property of the LAB and
     not of the product: the reference topology puts the machine of the LAN
@@ -406,9 +406,9 @@ what this proof does not claim, whatever its outcome:
     not a method. A proof that wanted the second layer on purpose would need a
     way to reach the initiator through the tunnel without the listener's table,
     and this harness has none.
-  - the Console window is not wired to this run. The Controller and the Console
+  - the App window is not wired to this run. The Controller and the App
     are a fixture: what the machines are proven to do is what they do with
-    documents they did not write, and interoperability with the real Console is
+    documents they did not write, and interoperability with the real App is
     held by the pinned cross-language vector and not by this proof.
   - no NAT is traversed. The initiator's keepalive is written and observed, but
     the property it exists for — holding a mapping open through a NAT — is not

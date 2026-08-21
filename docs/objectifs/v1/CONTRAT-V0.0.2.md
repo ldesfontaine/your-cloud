@@ -24,7 +24,7 @@ du Daemon et de son tampon sans ouvrir d'API réseau.
 ## Placement LAB
 
 ```text
-lab-console
+lab-app
 |- construit et teste l'exécutable unique
 |- crée deux autorités de certification synthétiques séparées
 `- conserve seul leurs clés privées pendant la preuve
@@ -37,7 +37,7 @@ lab-coordinateur / VPS simulé / seule candidate Relay
 `- Daemon non-root -- HTTPS mTLS local --> Relay
 ```
 
-Les clés privées des autorités ne quittent pas `lab-console`. Chaque Daemon
+Les clés privées des autorités ne quittent pas `lab-app`. Chaque Daemon
 reçoit uniquement sa clé client, son certificat et le certificat public de
 l'autorité Relay. Le Relay reçoit uniquement sa clé serveur, son certificat,
 le certificat public de l'autorité Daemon et son registre d'enrôlement. Les
@@ -181,7 +181,7 @@ diagnostic.
 
 La preuve LAB doit au minimum :
 
-1. construire et tester un seul exécutable dans `lab-console`, puis comparer
+1. construire et tester un seul exécutable dans `lab-app`, puis comparer
    son SHA-256 sur les deux machines ;
 2. montrer les trois collecteurs et leurs mesures de coût, taille et cadence ;
 3. établir deux connexions mTLS valides sans listener Daemon ;

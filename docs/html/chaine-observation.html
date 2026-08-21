@@ -14,7 +14,7 @@
     <header>
       <p class="eyebrow">Your Cloud · architecture vivante</p>
       <h1>La carte technique de l'observation.</h1>
-      <p class="lead">Du lancement systemd jusqu'à la Console installée : processus, appels, données, crypto, pannes et limites de capacité.</p>
+      <p class="lead">Du lancement systemd jusqu'à l'App installée : processus, appels, données, crypto, pannes et limites de capacité.</p>
       <p class="status">● carte des capacités et frontières</p>
     </header>
 
@@ -23,7 +23,7 @@
       <div class="grid">
         <article class="card"><span class="tag">processus permanent</span><h3>Daemon</h3><p>Collecte localement, persiste puis livre. Il n'écoute aucun port.</p></article>
         <article class="card"><span class="tag">processus permanent</span><h3>Relay</h3><p>Authentifie, refuse ou persiste. Il ne renvoie aucun ordre.</p></article>
-        <article class="card"><span class="tag">processus permanent</span><h3>Controller</h3><p>Lit le Relay, porte l'inventaire métier et sert l'API privée de la Console.</p></article>
+        <article class="card"><span class="tag">processus permanent</span><h3>Controller</h3><p>Lit le Relay, porte l'inventaire métier et sert l'API privée de l'App.</p></article>
         <article class="card"><span class="tag">commande administrative ponctuelle</span><h3>Diagnose</h3><p>Lancé localement par root, lit l'état protégé, écrit sur stdout puis termine sans réseau.</p></article>
       </div>
     </section>
@@ -36,7 +36,7 @@
         <div class="arrow">mTLS<br>→ :8443</div>
         <article class="machine"><p class="eyebrow">machine d'observation</p><h3>Daemon + Relay</h3><div class="process"><strong>Daemon</strong><br>identité et état propres</div><div class="process relay"><strong>Relay</strong><br>ingestion :8443 · lecture :8444</div></article>
       </div>
-      <p class="note">Le Controller vit sur une machine de contrôle séparée et la Console sur le poste humain. Même artefact Go, mais processus, comptes, credentials et états distincts : partager les octets ne partage pas l'autorité.</p>
+      <p class="note">Le Controller vit sur une machine de contrôle séparée et l'App sur le poste humain. Même artefact Go, mais processus, comptes, credentials et états distincts : partager les octets ne partage pas l'autorité.</p>
     </section>
 
     <section>
@@ -67,31 +67,31 @@
 
     <!-- coherence: V1-APP-ACCESS:start -->
     <section>
-      <h2>Chemin Controller–Relay–Console</h2>
-      <p class="note">Le Relay reçoit les observations des Daemons sur une frontière et rend un instantané au Controller sur une autre. La Console appelle le Controller ; elle n'appelle jamais directement le Relay.</p>
+      <h2>Chemin Controller–Relay–App</h2>
+      <p class="note">Le Relay reçoit les observations des Daemons sur une frontière et rend un instantané au Controller sur une autre. L'App appelle le Controller ; elle n'appelle jamais directement le Relay.</p>
       <p class="note">Le listener TLS <code>8443</code> reste réservé à l'autorité cliente et à l'enrôlement des Daemons. Le lecteur Controller utilise un second listener sur l'adresse privée exacte et <code>8444</code>.</p>
       <div class="flow"><div class="step">Daemon</div><div class="step">POST mTLS</div><div class="step">Relay</div><div class="step">validation</div><div class="step">dernier état</div><div class="step">accusé durable</div></div>
-      <div class="flow"><div class="step">Controller</div><div class="step">GET mTLS :8444</div><div class="step">Relay</div><div class="step">instantané validé</div><div class="step">Controller</div><div class="step">API privée</div><div class="step">Console installée</div></div>
+      <div class="flow"><div class="step">Controller</div><div class="step">GET mTLS :8444</div><div class="step">Relay</div><div class="step">instantané validé</div><div class="step">Controller</div><div class="step">API privée</div><div class="step">App installée</div></div>
       <p class="note"><code>8444</code> n'est pas localhost : le filtre <code>nftables</code> refuse par défaut et n'autorise que l'interface et l'IP privée provisionnées du Controller. Les autres paquets sont supprimés par <code>drop</code> sans réponse ; même la source admise est limitée à quatre nouveaux TCP en rafale puis douze par minute. Deux CA Ed25519 reader distinctes de l'ingestion, le nom et l'URI SAN exacts et un manifeste revérifié par requête restent obligatoires derrière ce filtre.</p>
       <p class="note">Le Controller génère ses <code>controller_id</code> et <code>infrastructure_id</code> immuables avant appairage. Le registre Daemon migre explicitement vers un schéma 2 de zéro à 64 machines qui importe l'UUID d'infrastructure. Registre, manifeste, certificats, origine, Controller et réponse doivent tous porter la même valeur. Une migration invalide garde <code>8444</code> fermé sans retirer l'ingestion saine <code>8443</code>.</p>
-      <p class="note">La Console embarque React, TypeScript et Vite. Son enveloppe native appelle une origine HTTPS TLS 1.3 exacte, ajoute l'identité d'appareil mTLS et la session humaine opaque et n'expose aucun client réseau général au frontend. Six mots français aléatoires déverrouillent le coffre Tauri Stronghold commun à Linux et Windows ; il conserve des clés distinctes par Controller. L'autorité locale ouvre le listener TLS <code>9444</code> sur l'adresse privée exacte du Controller, pendant dix minutes au plus et sans route métier, puis le ferme réellement. Le certificat P-256 de 180 jours se remplace en deux phases ; la session liée expire après 30 minutes d'inactivité ou huit heures absolues. Un code global de 256 bits hors ligne dérive une clé différente par Controller. Un seul humain et un seul appareil sont actifs par Controller dans ce palier. Le frontend ne reçoit aucune clé ni session. Les quatre routes métier bornées confirment et lisent l'unique infrastructure, lisent ses machines et rattachent de manière idempotente une machine déjà enrôlée.</p>
+      <p class="note">L'App embarque React, TypeScript et Vite. Son enveloppe native appelle une origine HTTPS TLS 1.3 exacte, ajoute l'identité d'appareil mTLS et la session humaine opaque et n'expose aucun client réseau général au frontend. Six mots français aléatoires déverrouillent le coffre Tauri Stronghold commun à Linux et Windows ; il conserve des clés distinctes par Controller. L'autorité locale ouvre le listener TLS <code>9444</code> sur l'adresse privée exacte du Controller, pendant dix minutes au plus et sans route métier, puis le ferme réellement. Le certificat P-256 de 180 jours se remplace en deux phases ; la session liée expire après 30 minutes d'inactivité ou huit heures absolues. Un code global de 256 bits hors ligne dérive une clé différente par Controller. Un seul humain et un seul appareil sont actifs par Controller dans ce palier. Le frontend ne reçoit aucune clé ni session. Les quatre routes métier bornées confirment et lisent l'unique infrastructure, lisent ses machines et rattachent de manière idempotente une machine déjà enrôlée.</p>
       <table><thead><tr><th>Sujet</th><th>Relay</th><th>Controller</th></tr></thead><tbody>
         <tr><td>Enrôlement machine</td><td>applique le registre local provisionné par root</td><td>porte l'inventaire métier attendu sans modifier le registre Relay</td></tr>
-        <tr><td>Séquences et lacunes</td><td>contrôle et persiste le dernier fait d'observation validé</td><td>interprète l'impact et fournit l'état métier à la Console</td></tr>
+        <tr><td>Séquences et lacunes</td><td>contrôle et persiste le dernier fait d'observation validé</td><td>interprète l'impact et fournit l'état métier à l'App</td></tr>
         <tr><td>Fraîcheur</td><td><code>received_at</code> et <code>snapshot_at</code> en UTC <code>Z</code></td><td>calcule leur différence, poursuit sur l'horloge monotone, exige <code>snapshot_at</code> dans <code>[fin - 30 s, départ + 30 s]</code>, puis rend récent jusqu'à 90 s incluses</td></tr>
         <tr><td>Humains et actions</td><td>aucun utilisateur, plan ou ordre</td><td>authentification, autorisation et chemin d'action distinct</td></tr>
       </tbody></table>
       <p class="note">Le premier Controller reste en lecture seule : l'enrôlement machine demeure provisionné manuellement. Les certificats reader de 180 jours tournent manuellement, listener fermé ; chaque bundle local est publié atomiquement puis les deux hôtes sont recoupés avant réouverture, sans deux lecteurs actifs. Leur manifeste cryptographique ne se déduit pas de l'inventaire métier.</p>
       <p class="note">L'accusé actuel signifie seulement que la séquence exacte est durable sur le Relay ; il ne prouve pas la lecture du Controller. Le Relay garde le dernier état, pas un historique complet. Si 10, 11 et 12 arrivent entre deux lectures, le Controller peut ne voir que 12 : ce remplacement n'est pas une <code>Lacune d'observation</code> du tampon Daemon.</p>
       <p class="note">Une architecture ultérieure peut faire cohabiter Relay et Controller, mais leur root et le filtre IP seraient alors communs. La frontière actuelle conserve deux IPv4 privées distinctes et ne revendique pas de mode loopback.</p>
-      <p class="note">Le Controller reste un backend sans frontend. La Console embarque son interface signée, n'ouvre aucun serveur local et ne télécharge jamais de code depuis un Controller.</p>
-      <p class="note">La navigation est centrée sur l'infrastructure choisie : « Synthèse », « Parc » et « Observations ». Le Controller reste une liaison contextuelle, l'identité locale reste sous « Profil et sessions » et la Console n'invente aucune machine Relay dédiée. « Relay indisponible » décrit le transport ; un hôte qui exécute aussi le Daemon reste une machine normale et aucun badge de placement absent de l'API n'est fabriqué.</p>
-      <p class="note">Le fonctionnel Linux de la Console et du Controller est implémenté et prouvé dans le LAB. Après une matrice historique, la porte native Linux/Windows finale <code>30710037004</code> a entièrement réussi sur le candidat produit exact <code>3b8f81f</code>, sans topologie multi-VM simulée. L'issue #9 relie le SHA, le run et son intégration par fast-forward : <code>v0.0.3</code> est fermée pour ce candidat exact.</p>
+      <p class="note">Le Controller reste un backend sans frontend. L'App embarque son interface signée, n'ouvre aucun serveur local et ne télécharge jamais de code depuis un Controller.</p>
+      <p class="note">La navigation est centrée sur l'infrastructure choisie : « Synthèse », « Parc » et « Observations ». Le Controller reste une liaison contextuelle, l'identité locale reste sous « Profil et sessions » et l'App n'invente aucune machine Relay dédiée. « Relay indisponible » décrit le transport ; un hôte qui exécute aussi le Daemon reste une machine normale et aucun badge de placement absent de l'API n'est fabriqué.</p>
+      <p class="note">Le fonctionnel Linux de l'App et du Controller est implémenté et prouvé dans le LAB. Après une matrice historique, la porte native Linux/Windows finale <code>30710037004</code> a entièrement réussi sur le candidat produit exact <code>3b8f81f</code>, sans topologie multi-VM simulée. L'issue #9 relie le SHA, le run et son intégration par fast-forward : <code>v0.0.3</code> est fermée pour ce candidat exact.</p>
       <p class="note">Chaque Controller garde des identifiants de Controller et d'infrastructure immuables. Seul un <code>GET /v0/snapshot</code> réussi dans la même opération et un enrôlement actif autorisent un rattachement ; le cache ne suffit jamais. Une VM hostile teste d'abord le refus IP puis, dans une phase isolée, mTLS, certificats et identifiants croisés.</p>
-      <p class="note">Une liaison WireGuard Console–Controller reste distincte de la chaîne d'observation. Elle devra être bornée à l'infrastructure choisie, avec déverrouillage et fermeture explicites, sans transporter la clé par le Relay.</p>
+      <p class="note">Une liaison WireGuard App–Controller reste distincte de la chaîne d'observation. Elle devra être bornée à l'infrastructure choisie, avec déverrouillage et fermeture explicites, sans transporter la clé par le Relay.</p>
       <p class="note">Seul <code>GET /v0/snapshot</code> sans corps ni query rend une copie atomique triée de zéro à 64 machines. En-têtes 8 Kio, réponse 2 Mio, erreur 1 Kio, délais 3/6 s, quatre sockets, une requête concurrente et douze connexions et lectures par minute sont fermés. Le cache reste <code>indisponible</code> après panne ou restart et reprend avec un backoff borné. Une signature de bout en bout pourrait détecter une altération, mais ne cacherait pas les données à un Relay root compromis.</p>
       <p class="note">Le Controller non-root sépare <code>inventory.json</code>, autorité métier sous 64 Kio, de <code>relay-cache.json</code>, snapshot P5 sous 2 Mio. Un nouveau rattachement persiste le cache frais avant l'inventaire ; un renommage reste local. Omission, réactivation, observation disparue, séquence décroissante ou lacune supprimée refusent le remplacement du cache sans effacer l'inventaire.</p>
-      <p class="note">La projection Console rend seulement les machines attendues sous 128 Kio. Transport, enrôlement, fraîcheur et continuité restent séparés : une panne ne devient ni ancienne ni absente. Une observation fiable est récente jusqu'à 90 secondes incluses ; un écart absolu déclaré/reçu supérieur à 30 secondes est seulement signalé. Toutes les lacunes contribuent à un résumé exact et aucune plage n'est tronquée silencieusement.</p>
+      <p class="note">La projection App rend seulement les machines attendues sous 128 Kio. Transport, enrôlement, fraîcheur et continuité restent séparés : une panne ne devient ni ancienne ni absente. Une observation fiable est récente jusqu'à 90 secondes incluses ; un écart absolu déclaré/reçu supérieur à 30 secondes est seulement signalé. Toutes les lacunes contribuent à un résumé exact et aucune plage n'est tronquée silencieusement.</p>
       <p class="note">Le cœur courant contient un seul chemin Daemon–Relay. Les anciennes preuves de présence restent consultables sans maintenir leur sender ou leur serveur dans <code>internal/</code>. L’inventaire, la projection et la fraîcheur appartiennent au Controller.</p>
     </section>
     <!-- coherence: V1-APP-ACCESS:end -->
@@ -118,8 +118,8 @@
         <tr><td><code>internal/enrollment</code></td><td>identité, empreinte et révocation</td><td>handshake, requête, reload</td></tr>
         <tr><td><code>internal/relay</code></td><td>ingestion POST, instantané GET, accusé et stockage durable</td><td>sur <code>:8443</code> et <code>:8444</code></td></tr>
         <tr><td><code>internal/readeridentity</code></td><td>manifeste et autorisation du lecteur Controller</td><td>démarrage, requête et reload</td></tr>
-        <tr><td><code>console/src-tauri</code></td><td>coffre et client réseau natif nommé</td><td>lancement et opérations Console</td></tr>
-        <tr><td><code>console/src/product</code></td><td>vues et projection sans autorité réseau libre</td><td>rendu du frontend embarqué</td></tr>
+        <tr><td><code>app/src-tauri</code></td><td>coffre et client réseau natif nommé</td><td>lancement et opérations App</td></tr>
+        <tr><td><code>app/src/product</code></td><td>vues et projection sans autorité réseau libre</td><td>rendu du frontend embarqué</td></tr>
         <tr><td><code>credentials / securefile / strictjson</code></td><td>lectures et décodages défensifs communs</td><td>aux frontières fichier/réseau</td></tr>
       </tbody></table>
     </section>
@@ -194,7 +194,7 @@
     </section>
     <!-- coherence: V1-OBSERVATION:end -->
 
-    <footer><p>Source canonique : <a href="../architecture/CHAINE-D-OBSERVATION.md">CHAINE-D-OBSERVATION.md</a> · Preuves : <a href="../lab/v0.0.2-observation.md">Daemon–Relay</a> et <a href="../lab/v0.0.3-console-controller-linux.md">Console–Controller Linux</a> · Automatisation : <a href="../contribution/TESTS.md">registre des tests</a>.</p><p><a href="index.html">← Documentation visuelle</a></p></footer>
+    <footer><p>Source canonique : <a href="../architecture/CHAINE-D-OBSERVATION.md">CHAINE-D-OBSERVATION.md</a> · Preuves : <a href="../lab/v0.0.2-observation.md">Daemon–Relay</a> et <a href="../lab/v0.0.3-console-controller-linux.md">App–Controller Linux</a> · Automatisation : <a href="../contribution/TESTS.md">registre des tests</a>.</p><p><a href="index.html">← Documentation visuelle</a></p></footer>
   </main>
 </body>
 </html>

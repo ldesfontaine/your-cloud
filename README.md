@@ -30,7 +30,7 @@ vraies machines — les [rapports de preuve](docs/lab/README.md) le documentent.
   Traefik.
 - **Passage privé WireGuard** — permet de relier deux machines par un lien
   chiffré sans rien publier.
-- **Commandes depuis la Console** — permet d'approuver un plan dans une fenêtre
+- **Commandes depuis l'App** — permet d'approuver un plan dans une fenêtre
   native, de le signer, de le lancer par SSH et de lire le rapport de la
   machine.
 - **Instantanés et restauration** — permet de sauvegarder et de restaurer les
@@ -148,7 +148,7 @@ Recopiez la partie qui commence par `SHA256:`.
 
 ## Limites
 
-- La Console Windows observe et lit un plan ; approuver se fait depuis Linux.
+- L'App Windows observe et lit un plan ; approuver se fait depuis Linux.
 - Les sauvegardes restent locales et à la demande — aucune copie hors machine.
 - DNS et certificats TLS publics restent manuels.
 - Debian 13 sur `amd64` seulement.

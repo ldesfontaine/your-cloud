@@ -22,9 +22,9 @@ remote_tests="$remote_target_source/tests/lab/v0.0.1/remote"
 remote_target_transfer="$remote_target_source/tests/lab/v0.0.1/transfer-artifact"
 remote_clock_state=/run/your-cloud-v0.0.1-proof-clock-state
 remote_artifact=/tmp/your-cloud-v0.0.1-artifact
-remote_console_artifact="$remote_source/dist/your-cloud"
-remote_console_source_check="$remote_source/tests/checks/source-v0.0.1"
-remote_console_transfer="$remote_source/tests/lab/v0.0.1/transfer-artifact"
+remote_app_artifact="$remote_source/dist/your-cloud"
+remote_app_source_check="$remote_source/tests/checks/source-v0.0.1"
+remote_app_transfer="$remote_source/tests/lab/v0.0.1/transfer-artifact"
 remote_transfer_helper=/tmp/your-cloud-v0.0.1-artifact-transfer
 transfer_source_ipv6=fd66:241::193
 host_key_refusal_status=42
@@ -49,7 +49,7 @@ lock_acquired=0
 lock_marker_verified=0
 emitter_clock_dirty=0
 relay_clock_dirty=0
-console_transfer_prepared=0
+app_transfer_prepared=0
 source_id=
 source_sha=
 artifact_sha=
@@ -68,7 +68,7 @@ failure_state=not-mutated
 success_state=not-reached
 declare -a step_results=()
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
-console_transfer_state="/tmp/your-cloud-v0.0.1-transfer-$run_id"
+app_transfer_state="/tmp/your-cloud-v0.0.1-transfer-$run_id"
 target_transfer_state="/run/your-cloud-v0.0.1-transfer-$run_id"
 result_dir="$root/tests/artifacts/proofs/v0.0.1/$run_id"
 result_file="$result_dir/result.json"
@@ -179,7 +179,7 @@ write_result() {
     printf '  "source_lot_sha256": '; json_value "$source_sha"; printf ',\n'
     printf '  "artifact_sha256": '; json_value "$artifact_sha"; printf ',\n'
     printf '  "topology": "v1-full",\n'
-    printf '  "targets": ["lab-console", "lab-coordinateur", "lab-machine-1", "lab-machine-2"],\n'
+    printf '  "targets": ["lab-app", "lab-coordinateur", "lab-machine-1", "lab-machine-2"],\n'
     printf '  "relay_window": {"started_at": '; json_value "$relay_started_at"
     printf ', "finished_at": '; json_value "$relay_finished_at"; printf '},\n'
     printf '  "cleanup": {"status": "%s", "failure_state": "%s", "success_state": "%s", "clock_restored": %s},\n' \
@@ -209,12 +209,12 @@ write_result() {
 
 finish() {
   local status=$? cleanup_failed=0 render_failed=0 target failed_category=$current_step_category
-  local transfer_cleanup_ok console_transfer_cleanup_ok=1 absent_cleanup_failed=0 reference_epoch
+  local transfer_cleanup_ok app_transfer_cleanup_ok=1 absent_cleanup_failed=0 reference_epoch
   local lock_owner lock_owner_ok=1 lock_removal_ok=1
   trap - EXIT
   set +e
   if [[ $lock_acquired -eq 1 && $lock_marker_verified -eq 1 ]]; then
-    lock_owner=$(lab_ssh lab-console /bin/cat "$remote_lock/owner") \
+    lock_owner=$(lab_ssh lab-app /bin/cat "$remote_lock/owner") \
       || lock_owner_ok=0
     if [[ $lock_owner_ok -eq 1 && "$lock_owner" != "$run_id" ]]; then
       lock_owner_ok=0
@@ -252,7 +252,7 @@ finish() {
   fi
   if [[ $emitter_clock_dirty -eq 1 ]]; then
     if remote lab-machine-1 "$remote_tests/control-lab-clock" restore-if-active \
-      && reference_epoch=$(remote lab-console date -u +%s) \
+      && reference_epoch=$(remote lab-app date -u +%s) \
       && [[ "$reference_epoch" =~ ^[0-9]{10}$ ]] \
       && remote lab-machine-1 "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"; then
       emitter_clock_dirty=0
@@ -262,7 +262,7 @@ finish() {
   fi
   if [[ $relay_clock_dirty -eq 1 ]]; then
     if remote lab-coordinateur "$remote_tests/control-lab-clock" restore-if-active \
-      && reference_epoch=$(remote lab-console date -u +%s) \
+      && reference_epoch=$(remote lab-app date -u +%s) \
       && [[ "$reference_epoch" =~ ^[0-9]{10}$ ]] \
       && remote lab-coordinateur "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"; then
       relay_clock_dirty=0
@@ -312,22 +312,22 @@ finish() {
       lab_ssh "$target" /bin/rm -rf "$remote_layout" "$remote_artifact" \
         || cleanup_failed=1
     done
-    if [[ $console_transfer_prepared -eq 1 ]]; then
-      if lab_ssh lab-console test -f "$remote_console_transfer"; then
-        lab_ssh lab-console /bin/bash "$remote_console_transfer" console-cleanup "$console_transfer_state" || {
+    if [[ $app_transfer_prepared -eq 1 ]]; then
+      if lab_ssh lab-app test -f "$remote_app_transfer"; then
+        lab_ssh lab-app /bin/bash "$remote_app_transfer" app-cleanup "$app_transfer_state" || {
           cleanup_failed=1
-          console_transfer_cleanup_ok=0
+          app_transfer_cleanup_ok=0
         }
       else
         cleanup_failed=1
-        console_transfer_cleanup_ok=0
+        app_transfer_cleanup_ok=0
       fi
-    elif ! lab_ssh lab-console test ! -e "$console_transfer_state"; then
+    elif ! lab_ssh lab-app test ! -e "$app_transfer_state"; then
       cleanup_failed=1
-      console_transfer_cleanup_ok=0
+      app_transfer_cleanup_ok=0
     fi
-    if [[ $console_transfer_cleanup_ok -eq 1 ]]; then
-      lab_ssh lab-console /bin/rm -rf "$remote_source" "$remote_archive" || cleanup_failed=1
+    if [[ $app_transfer_cleanup_ok -eq 1 ]]; then
+      lab_ssh lab-app /bin/rm -rf "$remote_source" "$remote_archive" || cleanup_failed=1
     fi
   fi
   if [[ $lab_guard_passed -eq 1 ]]; then
@@ -342,7 +342,7 @@ finish() {
   fi
   if [[ $lock_acquired -eq 1 ]]; then
     if [[ $lock_marker_verified -eq 1 ]]; then
-      lock_owner=$(lab_ssh lab-console /bin/cat "$remote_lock/owner") \
+      lock_owner=$(lab_ssh lab-app /bin/cat "$remote_lock/owner") \
         || lock_owner_ok=0
       if [[ $lock_owner_ok -eq 1 && "$lock_owner" != "$run_id" ]]; then
         lock_owner_ok=0
@@ -350,8 +350,8 @@ finish() {
       fi
     fi
     if [[ $lock_owner_ok -eq 1 ]]; then
-      lab_ssh lab-console /bin/rm -rf "$remote_lock" || lock_removal_ok=0
-      lab_ssh lab-console test ! -e "$remote_lock" || lock_removal_ok=0
+      lab_ssh lab-app /bin/rm -rf "$remote_lock" || lock_removal_ok=0
+      lab_ssh lab-app test ! -e "$remote_lock" || lock_removal_ok=0
       if [[ $lock_removal_ok -eq 1 ]]; then
         lock_acquired=0
       else
@@ -424,7 +424,7 @@ require_vm() {
 }
 
 require_vm lab-gateway passerelle
-require_vm lab-console console
+require_vm lab-app app
 require_vm lab-coordinateur coordinateur
 require_vm lab-machine-1 machine
 require_vm lab-machine-2 machine
@@ -449,15 +449,15 @@ printf 'source_revision=%s\n' "$source_id"
 step package infrastructure "Lock the LAB workspace and package the complete non-sensitive source lot"
 printf '%s\n' "$run_id" >"$lock_marker"
 chmod 0600 "$lock_marker"
-if ! lab_ssh lab-console mkdir -m 0700 "$remote_lock"; then
+if ! lab_ssh lab-app mkdir -m 0700 "$remote_lock"; then
   fail "exclusive v0.0.1 LAB proof lock already exists; inspect it instead of stealing it"
 fi
 lock_acquired=1
-lab_copy_to lab-console "$lock_marker" "$remote_lock/owner"
-lab_ssh lab-console chmod 0600 "$remote_lock/owner"
-assert_remote_root_guard lab-console "$remote_lock" directory
-assert_remote_root_guard lab-console "$remote_lock/owner" file
-lock_owner=$(remote lab-console /bin/cat "$remote_lock/owner") \
+lab_copy_to lab-app "$lock_marker" "$remote_lock/owner"
+lab_ssh lab-app chmod 0600 "$remote_lock/owner"
+assert_remote_root_guard lab-app "$remote_lock" directory
+assert_remote_root_guard lab-app "$remote_lock/owner" file
+lock_owner=$(remote lab-app /bin/cat "$remote_lock/owner") \
   || fail "cannot read the exclusive LAB proof lock owner"
 [[ "$lock_owner" == "$run_id" ]] \
   || fail "exclusive LAB proof lock owner differs from this run"
@@ -511,39 +511,39 @@ for snapshot_file in \
     || fail "source snapshot lacks a regular P2 controller file"
 done
 
-lab_ssh lab-console /bin/rm -rf "$remote_source" "$remote_archive"
-lab_copy_to lab-console "$archive" "$remote_archive"
-assert_remote_root_guard lab-console "$remote_archive" file
-remote_source_size=$(remote lab-console stat -c %s "$remote_archive") \
+lab_ssh lab-app /bin/rm -rf "$remote_source" "$remote_archive"
+lab_copy_to lab-app "$archive" "$remote_archive"
+assert_remote_root_guard lab-app "$remote_archive" file
+remote_source_size=$(remote lab-app stat -c %s "$remote_archive") \
   || fail "cannot read the source archive size after transfer"
 [[ "$remote_source_size" == "$source_size" ]] \
   || fail "source archive size changed while entering the LAB"
-remote_source_sha=$(remote lab-console sha256sum "$remote_archive") \
+remote_source_sha=$(remote lab-app sha256sum "$remote_archive") \
   || fail "cannot hash the source archive after transfer"
 remote_source_sha=${remote_source_sha%% *}
 [[ "$remote_source_sha" == "$source_sha" ]] \
   || fail "source archive changed while entering the LAB"
-lab_ssh lab-console install -d -o root -g root -m 0755 "$remote_source"
-lab_ssh lab-console tar --extract --gzip --file "$remote_archive" \
+lab_ssh lab-app install -d -o root -g root -m 0755 "$remote_source"
+lab_ssh lab-app tar --extract --gzip --file "$remote_archive" \
   --directory "$remote_source" --no-same-owner --no-same-permissions
-assert_remote_root_guard lab-console "$remote_source" directory
-assert_remote_root_guard lab-console "$remote_source/tools" directory
-assert_remote_root_guard lab-console "$remote_source/tests" directory
-assert_remote_root_guard lab-console "$remote_console_source_check" file
-assert_remote_root_guard lab-console "$remote_console_transfer" file
+assert_remote_root_guard lab-app "$remote_source" directory
+assert_remote_root_guard lab-app "$remote_source/tools" directory
+assert_remote_root_guard lab-app "$remote_source/tests" directory
+assert_remote_root_guard lab-app "$remote_app_source_check" file
+assert_remote_root_guard lab-app "$remote_app_transfer" file
 
-step source-gate assertion "Single source-side gate and build in lab-console"
-lab_ssh lab-console "$remote_console_source_check" lab
-assert_remote_root_guard lab-console "$remote_source" directory
-assert_remote_root_guard lab-console "$remote_source/tools" directory
-assert_remote_root_guard lab-console "$remote_source/tests" directory
-assert_remote_root_guard lab-console "$remote_console_transfer" file
-assert_remote_root_guard lab-console "$remote_source/dist" directory
-assert_remote_root_guard lab-console "$remote_console_artifact" file
-console_transfer_prepared=1
-transfer_metadata=$(remote lab-console /bin/bash "$remote_console_transfer" console-prepare "$console_transfer_state" "$remote_console_artifact" "$transfer_source_ipv6")
+step source-gate assertion "Single source-side gate and build in lab-app"
+lab_ssh lab-app "$remote_app_source_check" lab
+assert_remote_root_guard lab-app "$remote_source" directory
+assert_remote_root_guard lab-app "$remote_source/tools" directory
+assert_remote_root_guard lab-app "$remote_source/tests" directory
+assert_remote_root_guard lab-app "$remote_app_transfer" file
+assert_remote_root_guard lab-app "$remote_source/dist" directory
+assert_remote_root_guard lab-app "$remote_app_artifact" file
+app_transfer_prepared=1
+transfer_metadata=$(remote lab-app /bin/bash "$remote_app_transfer" app-prepare "$app_transfer_state" "$remote_app_artifact" "$transfer_source_ipv6")
 IFS=$'\t' read -r artifact_sha artifact_size transfer_client_key_type transfer_client_key_blob transfer_extra <<<"$transfer_metadata"
-[[ -z "$transfer_extra" && "$artifact_sha" =~ ^[0-9a-f]{64}$ && "$artifact_size" =~ ^[0-9]+$ && "$artifact_size" -gt 0 && "$artifact_size" -le $((64 * 1024 * 1024)) && "$transfer_client_key_type" == ssh-ed25519 && "$transfer_client_key_blob" =~ ^[A-Za-z0-9+/]+={0,3}$ && ${#transfer_client_key_blob} -le 256 ]] || fail "lab-console returned invalid or unbounded artifact transfer metadata"
+[[ -z "$transfer_extra" && "$artifact_sha" =~ ^[0-9a-f]{64}$ && "$artifact_size" =~ ^[0-9]+$ && "$artifact_size" -gt 0 && "$artifact_size" -le $((64 * 1024 * 1024)) && "$transfer_client_key_type" == ssh-ed25519 && "$transfer_client_key_blob" =~ ^[A-Za-z0-9+/]+={0,3}$ && ${#transfer_client_key_blob} -le 256 ]] || fail "lab-app returned invalid or unbounded artifact transfer metadata"
 printf 'artifact_sha256=%s\n' "$artifact_sha"
 printf 'artifact_size=%s\n' "$artifact_size"
 
@@ -609,22 +609,22 @@ done
 
 hostile_transfer_target=lab-coordinateur
 hostile_transfer_address=${transfer_target_ipv6[$hostile_transfer_target]}
-lab_ssh lab-console /bin/bash "$remote_console_transfer" console-pin-wrong-host-for-test "$console_transfer_state" "$hostile_transfer_target" "$hostile_transfer_address" "${transfer_host_key_type[$hostile_transfer_target]}" "${transfer_host_key_blob[$hostile_transfer_target]}"
+lab_ssh lab-app /bin/bash "$remote_app_transfer" app-pin-wrong-host-for-test "$app_transfer_state" "$hostile_transfer_target" "$hostile_transfer_address" "${transfer_host_key_type[$hostile_transfer_target]}" "${transfer_host_key_blob[$hostile_transfer_target]}"
 expect_remote_refusal "$host_key_refusal_status" 'artifact transfer refused: direct SSH rejected the deliberately incorrect pinned host key' \
-  lab-console /bin/bash "$remote_console_transfer" \
-  console-prove-host-key-refusal "$console_transfer_state" "$remote_console_artifact" \
+  lab-app /bin/bash "$remote_app_transfer" \
+  app-prove-host-key-refusal "$app_transfer_state" "$remote_app_artifact" \
   "$transfer_source_ipv6" "$hostile_transfer_target" "$hostile_transfer_address" \
   "$artifact_sha" "$artifact_size"
 lab_ssh "$hostile_transfer_target" /bin/bash "$remote_transfer_helper" target-assert-empty "$target_transfer_state"
 
 for target in "${targets[@]}"; do
   target_address=${transfer_target_ipv6[$target]}
-  lab_ssh lab-console /bin/bash "$remote_console_transfer" console-pin-host "$console_transfer_state" "$target" "$target_address" "${transfer_host_key_type[$target]}" "${transfer_host_key_blob[$target]}"
-  lab_ssh lab-console /bin/bash "$remote_console_transfer" console-send "$console_transfer_state" "$remote_console_artifact" "$transfer_source_ipv6" "$target" "$target_address" "$artifact_sha" "$artifact_size"
+  lab_ssh lab-app /bin/bash "$remote_app_transfer" app-pin-host "$app_transfer_state" "$target" "$target_address" "${transfer_host_key_type[$target]}" "${transfer_host_key_blob[$target]}"
+  lab_ssh lab-app /bin/bash "$remote_app_transfer" app-send "$app_transfer_state" "$remote_app_artifact" "$transfer_source_ipv6" "$target" "$target_address" "$artifact_sha" "$artifact_size"
   lab_ssh "$target" /bin/bash "$remote_transfer_helper" target-finalize "$target_transfer_state" "$artifact_sha" "$artifact_size"
   lab_ssh "$target" /bin/bash "$remote_transfer_helper" target-cleanup "$target_transfer_state"
 done
-lab_ssh lab-console /bin/bash "$remote_console_transfer" console-cleanup "$console_transfer_state"
+lab_ssh lab-app /bin/bash "$remote_app_transfer" app-cleanup "$app_transfer_state"
 
 mutated=1
 step absent-start cleanup "Known absent starting state"
@@ -701,9 +701,9 @@ lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
   lab-coordinateur=recent lab-machine-1=recent
 
 step controlled-clock-skew assertion "Skew emitter and Relay wall clocks while keeping freshness reception-owned"
-reference_epoch=$(remote lab-console date -u +%s) \
+reference_epoch=$(remote lab-app date -u +%s) \
   || fail "cannot read independent clock reference before emitter skew"
-[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-app returned an invalid reference epoch"
 emitter_apply_status=0
 if remote lab-machine-1 "$remote_tests/control-lab-clock" apply \
   "$((reference_epoch - 172800))" "$reference_epoch"; then
@@ -726,22 +726,22 @@ fi
 lab_ssh lab-machine-1 systemctl restart your-cloud-daemon.service
 lab_ssh lab-coordinateur "$remote_tests/assert-relay-clock-skew"
 lab_ssh lab-machine-1 "$remote_tests/control-lab-clock" restore
-reference_epoch=$(remote lab-console date -u +%s) \
+reference_epoch=$(remote lab-app date -u +%s) \
   || fail "cannot read independent clock reference after emitter restoration"
-[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-app returned an invalid reference epoch"
 lab_ssh lab-machine-1 "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"
 emitter_clock_dirty=0
 lab_ssh lab-machine-1 systemctl restart your-cloud-daemon.service
 lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \
   lab-coordinateur=recent lab-machine-1=recent
 relay_clock_dirty=1
-reference_epoch=$(remote lab-console date -u +%s) \
+reference_epoch=$(remote lab-app date -u +%s) \
   || fail "cannot read independent clock reference before Relay jump"
-[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-app returned an invalid reference epoch"
 lab_ssh lab-coordinateur "$remote_tests/prove-relay-clock-jump" "$reference_epoch"
-reference_epoch=$(remote lab-console date -u +%s) \
+reference_epoch=$(remote lab-app date -u +%s) \
   || fail "cannot read independent clock reference after Relay restoration"
-[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-console returned an invalid reference epoch"
+[[ "$reference_epoch" =~ ^[0-9]{10}$ ]] || fail "lab-app returned an invalid reference epoch"
 lab_ssh lab-coordinateur "$remote_tests/control-lab-clock" verify-restored "$reference_epoch"
 relay_clock_dirty=0
 lab_ssh lab-coordinateur "$remote_tests/assert-relay-state" \

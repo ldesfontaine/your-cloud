@@ -35,7 +35,7 @@
 #     passage;
 #   - **the fixture's `-anchor`** — it mints an anchor for a *synthetic* key,
 #     and this proof's anchor must carry the **real** approval key of the real
-#     Console. That key is read from the Controller's own device record after
+#     App. That key is read from the Controller's own device record after
 #     the association, which is why this phase runs after it.
 #
 # What is **kept**, because each is a component of the product on this path:
@@ -219,7 +219,7 @@ UNIT
     usermod --shell /bin/sh --home /nonexistent "$account"
 
     # 3. anchor — which key may approve on this machine, under which epoch. It
-    #    carries the **real** approval key of the real Console, read from the
+    #    carries the **real** approval key of the real App, read from the
     #    Controller's own device record; no synthetic seed appears anywhere on
     #    this path.
     install -d -m 0755 -o root -g root /etc/your-cloud

@@ -156,7 +156,7 @@ func TestOnlyTheReportPackageDefinesTheReport(t *testing.T) {
 }
 
 // TestTheCommandPositionIsUncertainAfterALaunchNobodyReported is decision 3
-// made executable on the reading side: the Console learns the successor it must
+// made executable on the reading side: the App learns the successor it must
 // sign, and it learns just as plainly when this Controller cannot vouch for it.
 func TestTheCommandPositionIsUncertainAfterALaunchNobodyReported(t *testing.T) {
 	directory := newDispatchDirectory(t)

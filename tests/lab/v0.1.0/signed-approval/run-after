@@ -66,13 +66,13 @@ refuses "sequence 4 replayed immediately" \
   "is not the exact successor of 4" "$state/after-next-4.json"
 
 echo
-echo "== a Console recovered with a new human key stays locked =="
+echo "== an App recovered with a new human key stays locked =="
 if output=$(lab-approval-signer -epoch 1 -sequence 5 -seed 5 | your-cloud auxiliary approve 2>&1); then
-  fail "recovered Console before rotation" "accepted: $output"
+  fail "recovered App before rotation" "accepted: $output"
 else
   case "$output" in
-    *"does not anchor"*) report "recovered Console before rotation" "refused" ;;
-    *) fail "recovered Console before rotation" "refused for another reason: $output" ;;
+    *"does not anchor"*) report "recovered App before rotation" "refused" ;;
+    *) fail "recovered App before rotation" "refused for another reason: $output" ;;
   esac
 fi
 

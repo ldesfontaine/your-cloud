@@ -7,7 +7,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
-// The request below is everything the Console may choose about a plan of the
+// The request below is everything the App may choose about a plan of the
 // third door, and it is one route rather than two: the two operations of this
 // door carry one closed field list, exactly as the two operations of every other
 // service group do, so the direction is a field of the request and not a route of
@@ -25,7 +25,7 @@ import (
 // The two definition fields are spelled as the plan spells them rather than as
 // the freezing route spells them. Every other field of a plan request is the
 // value the plan document will carry under the plan document's own name, and
-// these two are no different: what the Console pastes here is what it will read
+// these two are no different: what the App pastes here is what it will read
 // back inside the document it displays.
 
 // userServicePlanRequest names one instance of one frozen definition: which

@@ -4,7 +4,7 @@
 # Everything installed here is synthetic and root-owned: one approval anchor
 # minted from a synthetic seed and naming this machine, one empty anti-replay
 # position, the product binary and the fixture that stands in for the Controller
-# and the Console. No key of the passage, no interface, no table, no unit and no
+# and the App. No key of the passage, no interface, no table, no unit and no
 # managed service: those are what the proof asks the product to create.
 #
 # The perimeter always starts from a machine that holds none of them, because a

@@ -12,8 +12,8 @@
 #   lab-vps        the Controller. It holds the declared inventory, mints the
 #                  element identifiers and the dates, reads the Relay and decides
 #                  the age of every constat;
-#   lab-console    the human's side. It holds the run's PKI and the synthetic
-#                  client that stands in for the Console, because the Console of
+#   lab-app    the human's side. It holds the run's PKI and the synthetic
+#                  client that stands in for the App, because the App of
 #                  `#108` reads and withdraws and has no declaration form at all.
 #
 # What is real here and what is not, stated once. The Controller, the Relay, the
@@ -21,7 +21,7 @@
 # built from the synchronised sources and running against real systemd, a real
 # kernel and a real rootless Podman. Three things are synthetic and each is named
 # where it is used: the run's PKI, the approval envelope that places the managed
-# probe, and the client that speaks the Controller's API. The Console window is
+# probe, and the client that speaks the Controller's API. The App window is
 # not wired to this proof at all — it is a Rust and TypeScript surface proven by
 # its own suite.
 set -euo pipefail
@@ -44,7 +44,7 @@ usage: prove [setup | chain | run | remove | all]
 This harness belongs to the palier of external responsibility (#18, proof #109)
 and is deliberately not one of the passes of tests/lab/v0.1.0/prove, whose
 sequence is the bootstrap and replacement palier (#13, proof #41). It mounts and
-removes its own perimeter on lab-machine-1, lab-vps and lab-console, and creates
+removes its own perimeter on lab-machine-1, lab-vps and lab-app, and creates
 no topology.
 EOF
   exit 2
@@ -62,7 +62,7 @@ labctl="$root/tools/labctl"
 harness="$root/tests/lab/v0.1.0/external-element"
 observed_vm=lab-machine-1
 controller_vm=lab-vps
-client_vm=lab-console
+client_vm=lab-app
 expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-external-element
 remote_sources=/root/lab-external-element-sources
@@ -178,7 +178,7 @@ ask() {
 }
 
 # ---------------------------------------------------------------------------
-# The Controller's own API, spoken from lab-console by the synthetic client.
+# The Controller's own API, spoken from lab-app by the synthetic client.
 #
 # `api` prints the status line and the body exactly as the Controller answered,
 # and never fails on a refusal: half of what this palier proves is what the
@@ -187,7 +187,7 @@ ask() {
 
 api() {
   local method=$1 path=$2 body=${3:-} remote
-  remote="lab-external-console $remote_state call $method $path"
+  remote="lab-external-app $remote_state call $method $path"
   if [[ $# -ge 3 ]]; then
     remote="$remote $(printf '%q' "$body")"
   fi
@@ -275,11 +275,11 @@ mount_perimeter() {
     "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
     "$labctl" ssh "$vm" -- "chmod 0700 $remote_harness/$script"
   done
-  # lab-console receives the scripts and nothing else: it carries no Go
+  # lab-app receives the scripts and nothing else: it carries no Go
   # toolchain, and the one program it runs arrives already built.
   [[ "$mode" == sources ]] || return 0
   "$labctl" copy-to "$vm" "$workdir/sources.tgz" /root/lab-external-element-sources.tgz >/dev/null
-  "$labctl" copy-to "$vm" "$harness/_fixture/main.go" /root/lab-external-console-main.go >/dev/null
+  "$labctl" copy-to "$vm" "$harness/_fixture/main.go" /root/lab-external-app-main.go >/dev/null
   "$labctl" copy-to "$vm" "$root/tests/lab/v0.1.0/oci-plan/_fixture/main.go" /root/lab-external-probe-main.go >/dev/null
   "$labctl" copy-to "$vm" "$root/tests/lab/v0.0.3/generate-runtime-pki.go" /root/lab-external-pki-main.go >/dev/null
   # The three programs that are not the product live inside the module because
@@ -288,8 +288,8 @@ mount_perimeter() {
   "$labctl" ssh "$vm" -- \
     "rm -rf $remote_sources && install -d -m 0700 $remote_sources \
      && tar xzf /root/lab-external-element-sources.tgz -C $remote_sources \
-     && install -d -m 0700 $remote_sources/labconsole $remote_sources/labprobe $remote_sources/labpki \
-     && mv /root/lab-external-console-main.go $remote_sources/labconsole/main.go \
+     && install -d -m 0700 $remote_sources/labapp $remote_sources/labprobe $remote_sources/labpki \
+     && mv /root/lab-external-app-main.go $remote_sources/labapp/main.go \
      && mv /root/lab-external-probe-main.go $remote_sources/labprobe/main.go \
      && mv /root/lab-external-pki-main.go $remote_sources/labpki/main.go \
      && rm -f /root/lab-external-element-sources.tgz"
@@ -309,7 +309,7 @@ setup() {
   # The Controller mints its identity first, because the run's PKI is generated
   # *for* those two identifiers: a reader manifest naming another installation is
   # refused, and rightly. The same phase builds the synthetic client, because
-  # lab-console carries no Go toolchain — a fact of this LAB, not a decision of
+  # lab-app carries no Go toolchain — a fact of this LAB, not a decision of
   # the architecture, and the reason a finished binary crosses instead of a
   # source tree.
   local controller_id infrastructure_id
@@ -337,10 +337,10 @@ setup() {
 
   # The client crosses to the machine it belongs on, and the sources it was built
   # from stay behind.
-  "$labctl" copy-from "$controller_vm" "$remote_state/lab-external-console" "$workdir/lab-external-console" >/dev/null
-  "$labctl" copy-to "$client_vm" "$workdir/lab-external-console" "/root/lab-external-console" >/dev/null
-  ask "$client_vm" CLIENT_READY "install-client /root/lab-external-console" >/dev/null || return 1
-  "$labctl" ssh "$client_vm" -- "rm -f /root/lab-external-console"
+  "$labctl" copy-from "$controller_vm" "$remote_state/lab-external-app" "$workdir/lab-external-app" >/dev/null
+  "$labctl" copy-to "$client_vm" "$workdir/lab-external-app" "/root/lab-external-app" >/dev/null
+  ask "$client_vm" CLIENT_READY "install-client /root/lab-external-app" >/dev/null || return 1
+  "$labctl" ssh "$client_vm" -- "rm -f /root/lab-external-app"
 
   "$labctl" ssh "$controller_vm" -- \
     "export PATH=\$PATH:/usr/local/go/bin && $remote_harness/install-controller serve \
@@ -353,12 +353,12 @@ setup() {
      $remote_sources $remote_state/credentials $controller_address" || return 1
 
   # One device, one human key, one session. This is the whole of what the
-  # synthetic Console does, and it is the debt `#108` named: the real Console has
+  # synthetic App does, and it is the debt `#108` named: the real App has
   # no declaration form, so a proof of this palier declares through the API.
   "$labctl" ssh "$client_vm" -- \
-    "lab-external-console $remote_state pair $remote_state/window.json \
+    "lab-external-app $remote_state pair $remote_state/window.json \
      $controller_address:9443 $controller_address:9444" || return 1
-  "$labctl" ssh "$client_vm" -- "lab-external-console $remote_state session" || return 1
+  "$labctl" ssh "$client_vm" -- "lab-external-app $remote_state session" || return 1
 
   on "$controller_vm" audit before
   on "$observed_vm" audit before
@@ -768,7 +768,7 @@ publish() {
     printf 'revision: %s\n' "$(revision)"
     printf 'observed machine: %s (topology quick) — Daemon, Relay, target sheet, posed services, managed probe\n' "$observed_vm"
     printf 'Controller: %s (topology quick) — declared inventory, identifiers, dates and ages\n' "$controller_vm"
-    printf 'the human side: %s (topology quick) — run PKI and the synthetic Console client\n' "$client_vm"
+    printf 'the human side: %s (topology quick) — run PKI and the synthetic App client\n' "$client_vm"
     if [[ $status -eq 0 ]] && ! grep -q '^!! PRODUCT DEFECT' "$log"; then
       printf 'outcome: passed\n'
     elif [[ $status -eq 0 ]]; then
@@ -792,11 +792,11 @@ publish() {
     cat <<'DEBTS'
 what this proof does not claim, whatever its outcome:
 
-  - the Console is not exercised by this harness. `#108` closed with the debt
-    that the Console has no declaration form — it reads the declared inventory and
+  - the App is not exercised by this harness. `#108` closed with the debt
+    that the App has no declaration form — it reads the declared inventory and
     withdraws a declaration, and nothing else — so this proof declares through the
-    Controller's own route, with a synthetic client that stands in for a Console
-    and renders nothing. What a human would see is proven by the Console's own
+    Controller's own route, with a synthetic client that stands in for an App
+    and renders nothing. What a human would see is proven by the App's own
     Rust and TypeScript suite and never by this run.
   - the run's PKI is synthetic, and so is the approval envelope that places the
     managed probe. Four short-lived authorities are generated for this run alone,

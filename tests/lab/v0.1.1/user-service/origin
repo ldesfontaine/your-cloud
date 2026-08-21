@@ -13,7 +13,7 @@
 #
 # Nothing of the product is installed here. What runs is the harness's own fixture
 # binary — built from the synchronised sources on the machine of the LAN, because
-# lab-console carries no Go toolchain — serving the read half of the OCI
+# lab-app carries no Go toolchain — serving the read half of the OCI
 # distribution API over the run's own TLS, out of a static tree. It is started and
 # stopped by this script and its directory is removed with it.
 set -euo pipefail

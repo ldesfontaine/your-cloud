@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render, serve and capture one P1 result entirely inside lab-console.
+# Render, serve and capture one P1 result entirely inside lab-app.
 set -euo pipefail
 umask 077
 
@@ -9,13 +9,13 @@ usage() {
   exit 2
 }
 
-[[ $(hostname) == lab-console && $(id -u) -eq 0 ]] \
-  || { echo "render worker must run as root in lab-console" >&2; exit 1; }
+[[ $(hostname) == lab-app && $(id -u) -eq 0 ]] \
+  || { echo "render worker must run as root in lab-app" >&2; exit 1; }
 for command in chromium curl id pgrep ps python3 setsid setpriv sha256sum ss timeout; do
-  command -v "$command" >/dev/null || { echo "$command is required in lab-console" >&2; exit 1; }
+  command -v "$command" >/dev/null || { echo "$command is required in lab-app" >&2; exit 1; }
 done
 [[ $(id -u nobody) == 65534 && $(id -g nobody) == 65534 ]] \
-  || { echo "uid and gid 65534 must resolve to nobody in lab-console" >&2; exit 1; }
+  || { echo "uid and gid 65534 must resolve to nobody in lab-app" >&2; exit 1; }
 
 script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 port=18080
