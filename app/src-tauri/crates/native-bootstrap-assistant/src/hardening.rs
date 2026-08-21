@@ -45,7 +45,7 @@ fn stable_parent(parent_before: libc::pid_t, parent_after: libc::pid_t) -> bool 
 pub(crate) fn apply() -> Result<(), HardeningError> {
     use windows_sys::Win32::{
         Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE},
-        System::App::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
+        System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
     };
 
     // The parent supplies exactly these anonymous-pipe endpoints. Removing their
