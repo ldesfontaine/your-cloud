@@ -91,7 +91,6 @@ ci-dessous sert seulement à reconnaître son sujet.
 | `V1-OBSERVATION` | Collecteurs nommés, sortie mTLS, Relay sans ordre, tampon borné et lacunes visibles | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
 | `V1-APP-ACCESS` | App cliente installée et signée, Controller backend sans frontend, accès privé par appareil et services publiés indépendants | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
 | `V1-NETWORK` | Machines enrôlées, flux bornés, WireGuard, mTLS, HTTPS et zone d'exposition sans fausse DMZ | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
-| `OWNERSHIP-MODES` | Modes géré/externe, déclaré/vérifié, aucune adoption ou découverte réseau implicite | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 | `SERVICE-LIFECYCLE` | Réseau préparé fermé, service vérifié avant publication, bascule observable et retour honnête | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 <!-- coherence-registry:end -->
 

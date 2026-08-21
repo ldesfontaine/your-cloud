@@ -545,32 +545,16 @@ contrat local borné et une justification propre. Le Daemon entier ne devient
 pas root pour faciliter une nouvelle métrique.
 <!-- coherence: V1-OBSERVATION:end -->
 
-<!-- coherence: OWNERSHIP-MODES:start -->
 ## Gestion explicite, jamais découverte du LAN
-
-```text
-élément déclaré par l'utilisateur
-|- mode externe -> état déclaré -> vérification en lecture seule éventuelle
-`- mode géré ----> plan -> approbation -> application -> vérification
-
-future observation locale sur une machine enrôlée
-`- élément détecté -> ignorer | garder externe | demander une adoption
-```
-
-Un élément externe reste sous l'autorité de l'utilisateur. Une observation peut
-faire passer son état de déclaré à vérifié, mais ne donne à Your Cloud aucun
-droit de modification. Une future adoption exige un audit et un nouveau plan
-approuvé ; elle n'est jamais déclenchée par la seule découverte.
 
 Un profil de service disponible dans l'App ne crée aucune ressource. Son
 instance n'existe qu'après une déclaration, un placement, un plan et une
 approbation explicites ; les profils nommés dans le LAB ne deviennent pas une
 topologie imposée aux utilisateurs.
 
-La découverte future reste limitée à des adaptateurs en lecture seule sur les
-machines déjà enrôlées. Ni le Daemon, ni le Relay, ni l'App ne scannent le LAN,
-et la présence d'un appareil sur le même réseau ne lui donne aucune confiance.
-<!-- coherence: OWNERSHIP-MODES:end -->
+L'inventaire reste limité aux machines déjà enrôlées. Ni le Daemon, ni le Relay,
+ni l'App ne scannent le LAN, et la présence d'un appareil sur le même réseau ne
+lui donne aucune confiance.
 
 ## Pourquoi Traefik utilise le file provider
 
@@ -618,7 +602,7 @@ Ce flux n'existe que sur une machine hôte équipée de systemd et de cgroup v2.
 Your Cloud vérifie ces capacités avant toute mutation. Si elles manquent, le
 déploiement OCI géré est refusé clairement ; Quadlet ne crée ni unité OpenRC,
 ni script runit, ni solution de repli implicite. Un service que l'utilisateur
-gère autrement peut rester en mode externe. Cette limite ne décide pas encore
+gère autrement reste sous son autorité. Cette limite ne décide pas encore
 à elle seule des systèmes capables d'exécuter le Daemon d'observation.
 
 OWASP ne recommande pas Quadlet par son nom. Quadlet nous permet d'exprimer et

@@ -16,7 +16,7 @@ tunnel vers le VPS, et le seul flux applicatif autorisé va du VPS vers le
 service approuvé du LAN. WireGuard, ce VPS et cette topologie sont le
 scénario LAB qui rend la preuve reproductible — jamais un prérequis produit.
 Une infrastructure peut employer un autre placement, garder son passage en
-mode externe ou ne rien publier de privé.
+sous sa propre autorité, ou ne rien publier de privé.
 
 ## Deux machines, quatre plans, aucune clé en voyage
 

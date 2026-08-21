@@ -35,8 +35,6 @@ vraies machines — les [rapports de preuve](docs/lab/README.md) le documentent.
   machine.
 - **Instantanés et restauration** — permet de sauvegarder et de restaurer les
   volumes d'un service sur sa machine.
-- **Mode externe** — permet de déclarer un service existant sans le confier à
-  Your Cloud.
 
 ## Installer (Linux)
 

@@ -61,7 +61,7 @@ dernier.
 | Retrait | ancienne instance, règles, secrets et date de fin de rétention | conserver ce qui est encore nécessaire au retour |
 
 Un rollback n'est jamais une promesse vague. Le plan nomme les opérations
-exactes de retour, les borne aux ressources gérées par Your Cloud et soumet ce
+exactes de retour, les borne aux ressources que Your Cloud a posées et soumet ce
 contenu à la même approbation. Le cœur natif de l'App signe l'enveloppe
 canonique après confirmation ; le Controller la transporte et l'Auxiliaire
 revérifie localement la clé publique, l'époque et la séquence root-owned. Après

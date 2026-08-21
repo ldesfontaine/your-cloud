@@ -20,7 +20,7 @@ Conséquence structurante : **une déclaration externe ne produit aucun plan.**
 Aucune opération n'est ajoutée à aucun schéma, aucune enveloppe n'est signée,
 aucun Auxiliaire ne mute quoi que ce soit. Ce que ce palier ajoute est un
 inventaire, une lecture et un affichage. Si un jour un élément externe doit
-devenir géré, ce sera une **adoption** — un audit puis un plan approuvé — et
+devenir piloté, ce sera une **reprise** — un audit puis un plan approuvé — et
 c'est un palier qui n'existe pas encore.
 
 ## Ce qu'une déclaration porte, et ce qu'elle ne porte pas
