@@ -81,7 +81,7 @@ impl UnbufferedStandardInput {
         use windows_sys::Win32::{
             Foundation::INVALID_HANDLE_VALUE,
             System::{
-                App::{GetStdHandle, STD_INPUT_HANDLE},
+                Console::{GetStdHandle, STD_INPUT_HANDLE},
                 Threading::GetCurrentProcess,
             },
         };
