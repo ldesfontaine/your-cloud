@@ -28,7 +28,49 @@ parallèle ni abandonner ses pratiques externes.
 infrastructure de bout en bout : observation, déploiement de services,
 exposition contrôlée, opérations courantes, puis intégrations plus avancées.
 Cette destination n'est pas une promesse de tout construire avant de livrer une
-première version utile.
+première version utile. L'ordre dans lequel elle est atteinte se lit dans la
+[direction](DIRECTION.md).
+
+### L'accès nominal est distant
+
+Piloter son infrastructure depuis chez soi n'est pas le cas courant : c'est le
+repli. Le cas courant est **à distance** — l'app monte son tunnel vers le réseau
+d'accès de l'infrastructure choisie, et le Controller n'écoute que sur son
+adresse de ce réseau. Le LAN direct reste servi quand l'administrateur est sur
+place, sans que rien d'autre ne change : le transport varie, les adresses non.
+
+Une conséquence est assumée plutôt que masquée : si le point de rendez-vous
+public est mort et que l'administrateur n'est pas au LAN, **la maintenance
+attend**. Le pilotage n'est jamais accessible par un navigateur, et aucune porte
+de secours n'est ouverte pour l'éviter.
+
+### Deux publics, deux canaux
+
+Le produit sert deux populations qui ne passent pas par la même porte, et cette
+séparation est structurelle :
+
+- **l'administrateur pilote par l'app**, sur le canal d'accès du produit. Ce
+  canal ne sert qu'à lui ;
+- **les autres humains utilisent les services par le web**, derrière un portail
+  d'authentification quand le service est privé. Ils n'installent rien et ne
+  voient jamais l'infrastructure.
+
+Une clé d'app compromise ne donne donc aucune route vers les services, et un
+service compromis n'a aucune route vers le Controller. La séparation n'est pas
+une convention d'usage : c'est une frontière que le réseau applique.
+
+### Sans terminal, jamais silencieux
+
+Deux exigences qui tiennent ensemble et qu'on ne relâche pas l'une pour l'autre.
+
+**Sans terminal** : l'utilisateur ne tape aucune commande sur ses machines. Ce
+que le produit sait faire, il le fait depuis ses écrans — préparer un compte,
+poser un réseau, déployer un service.
+
+**Jamais silencieux** : aucune action ne s'exécute sans une approbation qui la
+nomme, et chaque approbation peut déplier **les commandes réellement jouées**.
+Épargner un terminal à l'utilisateur ne signifie pas lui cacher ce qui se passe
+sur ses machines — c'est l'inverse.
 
 <!-- coherence: AGENT-AUTHORITY:start -->
 ## Cible d'action à long terme

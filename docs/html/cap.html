@@ -16,6 +16,12 @@
     <p class="lead">Your Cloud réunit machines, état et services dans une interface cohérente, guidée pour les débutants et transparente pour les utilisateurs expérimentés.</p>
     <h2>La destination</h2>
     <p>Un utilisateur représente son infrastructure, rattache des machines Linux, comprend visuellement leur état, puis déploie et gère progressivement des services sans perdre la visibilité sur les opérations réellement exécutées.</p>
+    <h2>L'accès nominal est distant</h2>
+    <p>Piloter depuis chez soi est le repli, pas le cas courant. L'app monte son tunnel vers le réseau d'accès de l'infrastructure choisie, et le Controller n'écoute que sur son adresse de ce réseau. Le LAN direct reste servi sur place : le transport varie, les adresses non. Conséquence assumée — point de rendez-vous public mort et administrateur hors LAN, la maintenance attend. Le pilotage n'est jamais accessible par un navigateur.</p>
+    <h2>Deux publics, deux canaux</h2>
+    <p>L'administrateur pilote par l'app, sur un canal qui ne sert qu'à lui. Les autres humains utilisent les services par le web, derrière un portail quand le service est privé — ils n'installent rien et ne voient jamais l'infrastructure. Une clé d'app compromise ne donne aucune route vers les services ; un service compromis n'en a aucune vers le Controller. C'est une frontière que le réseau applique, pas une convention d'usage.</p>
+    <h2>Sans terminal, jamais silencieux</h2>
+    <p>L'utilisateur ne tape aucune commande sur ses machines : ce que le produit sait faire, il le fait depuis ses écrans. Et aucune action ne s'exécute sans une approbation qui la nomme, dépliable jusqu'aux commandes réellement jouées. Épargner un terminal ne signifie pas cacher ce qui se passe — c'est l'inverse.</p>
     <!-- coherence: V1-APP-ACCESS:start -->
     <h2>Une App installée distincte d'un Controller privé</h2>
     <p>Your Cloud est le produit. L'<strong>App</strong> est une application cliente installée et signée qui embarque son frontend sans serveur local ; le <strong>Controller</strong> est le backend sans frontend et l'autorité d'une seule infrastructure. Une App peut être associée à plusieurs Controllers indépendants sans conserver leurs secrets de machine. Seul l'Assistant temporaire décrit plus bas utilise en mémoire l'accès personnel pendant l'amorçage. La distribution signée, les identités d'appareil et les sessions séparées devront prouver cette isolation.</p>
@@ -85,10 +91,9 @@
     <h2>Une vraie DMZ</h2>
     <p>Le VPS public du scénario de référence de <code>v0.1.0</code> est une zone d'exposition durcie, pas automatiquement une DMZ. Une DMZ réelle possède un segment dédié et des frontières filtrantes indépendantes vers Internet et vers les zones privées, tandis que l'administration reste séparée. Your Cloud pourra représenter et vérifier ces frontières sans déduire une DMZ de la seule présence d'une adresse publique.</p>
     <!-- coherence: V1-NETWORK:end -->
-    <h2>Gestion choisie, jamais imposée</h2>
-    <p>Your Cloud peut déployer et configurer le passage lui-même. L'utilisateur peut aussi conserver ses outils : le service apparaît alors comme externe, avec une séparation visible entre l'état déclaré et l'état réellement vérifié.</p>
+    <h2>Rien n'est imposé, rien n'est deviné</h2>
     <p>Your Cloud n'impose ni topologie type, ni catalogue à installer. Un profil de service décrit seulement un parcours pris en charge : sa présence dans l'App ne crée aucune ressource sans déclaration, placement, plan et approbation explicites. Les services nommés dans une preuve LAB rendent ce scénario reproductible ; ils ne deviennent pas des prérequis de l'infrastructure réelle.</p>
-    <h2>Découverte locale</h2>
+    <h2>Un inventaire local, jamais un scan</h2>
     <p>Sur une machine enrôlée, Your Cloud peut relever en lecture seule les services, conteneurs, ports et passages qu'il sait interpréter. Il ne scanne pas le LAN : les autres appareils ne sont ni inventoriés ni considérés fiables par leur seule présence réseau.</p>
     <!-- coherence: V1-OBSERVATION:start -->
     <h2>Observation choisie, jamais une commande distante</h2>

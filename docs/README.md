@@ -10,6 +10,7 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 |---|---|
 | Comprendre les termes du produit | [`CONTEXT.md`](../CONTEXT.md) |
 | Comprendre la destination à long terme | [`projet/CAP.md`](projet/CAP.md) |
+| Savoir dans quel ordre le produit avance | [`projet/DIRECTION.md`](projet/DIRECTION.md) |
 | Relire ce qui devait être vrai pour `v0.1.0` — **objectif atteint** | [`objectifs/v1/README.md`](objectifs/v1/README.md) |
 | Relire l'ordre des preuves qui a mené à `v0.1.0` — **objectif atteint** | [`objectifs/v1/ROADMAP.md`](objectifs/v1/ROADMAP.md) |
 | Relire le contrat de l'App cliente et du Controller de lecture `v0.0.3` — **archive datée** | [`objectifs/v1/CONTRAT-V0.0.3.md`](objectifs/v1/CONTRAT-V0.0.3.md) |
@@ -35,7 +36,7 @@ destination à long terme se lit dans [`projet/CAP.md`](projet/CAP.md).
 
 ```text
 docs/
-|- projet/          cap et cohérence des sources
+|- projet/          cap, direction et cohérence des sources
 |- objectifs/
 |  `- v1/           objectif ATTEINT : ligne d'arrivée et roadmap de v0.1.0
 |- architecture/    placements, autorités et futurs sujets techniques
