@@ -277,7 +277,6 @@ par afficher un transport provisoire : l'identité de la source, l'âge de la
 donnée et les lacunes éventuelles sont déjà définis et vérifiables.
 <!-- coherence: V1-OBSERVATION:end -->
 
-<!-- coherence: V1-APP-ACCESS:start -->
 ### Incrément fermé — preuves attribuées au candidat exact : `v0.0.3` — App cliente et Controller de lecture
 
 **Résultat :** installer une App signée fonctionnelle sur Linux et Windows,
@@ -417,7 +416,6 @@ depuis l'App par une opération nommée, bornée au Controller, avec
 déverrouillage, timeout et déconnexion explicite sans exposer la clé au
 frontend ; son mécanisme reste ouvert. Les services publics gardent leur accès
 HTTPS normal.
-<!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ### Palier ouvert — amorçage réutilisable

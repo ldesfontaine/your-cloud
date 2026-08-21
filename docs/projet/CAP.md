@@ -62,17 +62,21 @@ des services publiés suit encore un quatrième chemin indépendant. L'App ne
 contacte jamais directement le Relay ; le Daemon connaît seulement son endpoint
 Relay approuvé et ne connaît aucun Controller.
 
-Par défaut à long terme, l'API du Controller reste privée derrière WireGuard.
-Une clé privée de pair distincte et révocable est
-attribuée à chaque appareil d'administration ; un routage fractionné limite le
-tunnel aux seules adresses d'administration. Le réseau d'administration refuse
+L'API du Controller est privée derrière WireGuard, et c'est le **nominal** :
+le Controller n'écoute que sur son adresse du réseau d'accès, jamais nu sur
+Internet. **L'App est un pair de ce réseau** — sa clé privée naît dans son
+coffre à la création de l'infrastructure, distincte et révocable par appareil
+d'administration ; un routage fractionné limite le tunnel aux seules adresses
+d'administration. Le réseau d'administration refuse
 aussi par défaut toute destination et tout port non nécessaires. WireGuard
 authentifie la possession de cette clé, pas l'intégrité de l'appareil ni
 l'identité de l'humain : le Controller exige encore une authentification humaine
 forte et autorise chaque demande pour l'infrastructure, la cible et l'action
-concernées.
+concernées. **Cette clé est un moyen de transport, jamais une identité
+d'action** : l'App ne gagne par elle aucun pouvoir d'exécuter seule une
+opération d'infrastructure.
 
-Dans le profil géré, cette liaison ne devient pas une configuration WireGuard à
+Cette liaison ne devient pas une configuration WireGuard à
 administrer à la main. L'App expose une opération bornée du type
 `connecter cette infrastructure` ; son cœur natif déverrouille uniquement la clé
 de pair associée, limite la liaison à l'API du Controller, puis la ferme et

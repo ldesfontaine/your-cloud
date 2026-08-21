@@ -22,7 +22,6 @@
       <article class="node private"><h3>Machine du LAN</h3><ul><li>Aucun port Internet entrant</li><li>Même exécutable, Daemon seulement</li><li>Relay refusé sans provisionnement</li><li>Service B</li></ul></article>
     </div>
     <div class="open"><p><strong>Portée :</strong> cette topologie déterministe sert à prouver les capacités génériques d'observer des machines existantes, de déployer un service web OCI public et de publier un service privé persistant. BentoPDF et Vaultwarden sont des profils de référence optionnels, jamais des composants ni des installations par défaut. Toute instance exige une déclaration, un placement, un plan et une approbation explicites ; une infrastructure réelle peut ne sélectionner aucun de ces profils, et un service placé autrement reste externe tant qu'un parcours géré dédié n'est pas pris en charge.</p></div>
-    <!-- coherence: V1-APP-ACCESS:start -->
     <h2>Trois accès à ne pas confondre</h2>
     <table><thead><tr><th>Ce que l'utilisateur ouvre</th><th>Chemin décidé pour v0.1.0</th><th>Exposition</th></tr></thead><tbody>
       <tr><td><code>https://pdf.&lt;domaine&gt;</code></td><td>DNS → IP du VPS:443 → Traefik → profil BentoPDF de référence</td><td>Public</td></tr>
@@ -39,7 +38,6 @@
     <p>Le choix entre tunnel système et pile WireGuard intégrée reste à prouver dans un palier postérieur à <code>v0.1.0</code>. Un coffre portable de liaison, distinct du coffre Stronghold de <code>v0.1.0</code>, reste une option : il devra employer une dérivation mémoire-dure et un chiffrement authentifié, tout en rendant visible le risque d'essais hors ligne. Aucun de ces mécanismes n'appartient à <code>v0.1.0</code> ni à <code>v0.0.3</code>.</p>
     <p>La possession de la clé du pair ne prouve ni l'intégrité de l'appareil ni l'identité humaine. Pour <code>v0.1.0</code>, le Controller exige la signature humaine issue du coffre déverrouillé par phrase locale. Windows Hello, passkeys, FIDO2 et SSO/OIDC restent postérieurs à <code>v0.1.0</code>. Les services publiés gardent leur accès HTTPS normal sans VPN.</p>
     <p>Un futur mode navigateur exigera son propre frontend distribué et éventuellement une passerelle publique. Il reste hors de <code>v0.1.0</code> et ne transforme aucun Controller en hébergeur du code de l'App.</p>
-    <!-- coherence: V1-APP-ACCESS:end -->
     <!-- coherence: BOOTSTRAP-RECOVERY:start -->
     <h2>Amorçage et remplacement du Controller</h2>
     <p>L'utilisateur installe seulement l'App. Son Assistant natif et temporaire propose « Créer une infrastructure » et « Remplacer un Controller », utilise pendant l'opération l'accès SSH personnel déjà fonctionnel, puis s'arrête sans devenir une dépendance du Controller. Passphrase, mot de passe <code>sudo</code> et consentement <code>root</code> passent par une fenêtre du cœur natif hors WebView qui répète cibles, actions et expiration ; le frontend ne peut ni fournir le secret, ni valider l'étape, ni appeler librement SSH, <code>ssh-agent</code> ou une signature.</p>
