@@ -399,7 +399,7 @@ create_domain() {
   if ! virt-install --connect qemu:///system --name "$name" \
     --memory "${TEMPLATE_RAM[$template]}" --vcpus "${TEMPLATE_VCPUS[$template]}" \
     --disk "vol=$POOL/$disk_volume" --disk "vol=$POOL/$seed_volume,readonly=on,bus=virtio" \
-    --import --osinfo debian13 "${network_args[@]}" --noautoapp >/dev/null; then
+    --import --osinfo debian13 "${network_args[@]}" --noautoconsole >/dev/null; then
     volume_delete "$disk_volume" || true
     volume_delete "$seed_volume" || true
     die "échec de création de '$name'"
@@ -908,7 +908,7 @@ recover_known_domain() {
   virt-install --connect qemu:///system --name "$name" \
     --memory "${TEMPLATE_RAM[$template]}" --vcpus "${TEMPLATE_VCPUS[$template]}" \
     --disk "vol=$POOL/$name.qcow2" --disk "vol=$POOL/$name-seed.iso,readonly=on,bus=virtio" \
-    --import --osinfo debian13 "${network_args[@]}" --noautoapp >/dev/null \
+    --import --osinfo debian13 "${network_args[@]}" --noautoconsole >/dev/null \
     || die "restauration de définition impossible pour '$name'"
   set_domain_metadata "$name" "$template" "$topology" \
     || die "métadonnées de garde impossibles après restauration de '$name'"
