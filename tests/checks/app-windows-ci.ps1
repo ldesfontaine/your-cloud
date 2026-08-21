@@ -1349,7 +1349,7 @@ try {
     # consentement n'est donc atteignable qu'avec un agent qui tient quelque
     # chose — exactement comme la preuve Linux monte le sien.
     #
-    # Il est monté DANS LE CONTEXTE DU COMPTE QUI EXÉCUTE LA APP : l'agent
+    # Il est monté DANS LE CONTEXTE DU COMPTE QUI EXÉCUTE L'APP : l'agent
     # OpenSSH chiffre ses clés par utilisateur, et une identité ajoutée sous un
     # autre compte ne serait pas la sienne. Le profil vient d'être ouvert par
     # une ouverture de session avec mot de passe, ce que `ssh-add` exige.
