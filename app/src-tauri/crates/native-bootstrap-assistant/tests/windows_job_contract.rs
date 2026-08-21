@@ -19,7 +19,7 @@ use windows_sys::Win32::{
     Foundation::{GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE},
     Security::SECURITY_ATTRIBUTES,
     System::{
-        App::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
+        Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
         Pipes::CreatePipe,
     },
 };
