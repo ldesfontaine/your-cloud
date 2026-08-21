@@ -100,7 +100,6 @@ Dans le LAB, des noms synthétiques remplaceront les vrais noms DNS et pointeron
 vers le VPS simulé. La preuve extérieure vérifiera les deux noms, `443`, la
 redirection éventuelle depuis `80` et le refus des ports internes.
 
-<!-- coherence: V1-APP-ACCESS:start -->
 ### App Your Cloud : App et Controller
 
 L'**App** désigne le produit formé de deux rôles qui ne partagent pas la même
@@ -274,7 +273,6 @@ frontend distribué et, si nécessaire, une passerelle publique. Il reste hors d
 facultatif et sans autorité d'administration ni secret de machine. Ses pouvoirs
 résiduels sur le routage, la disponibilité, TLS, l'intégrité du code livré et la
 transmission d'identité devront être bornés.
-<!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ## Amorçage et remplacement du Controller

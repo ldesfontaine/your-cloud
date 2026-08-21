@@ -27,12 +27,13 @@ Produit formé par une App et un ou plusieurs Controllers, sans confondre leur i
 
 **App**:
 Application cliente installée et signée sur un appareil administrateur. Elle embarque l'interface, conserve les associations approuvées vers des Controllers et recueille les demandes sans être la source de leur inventaire ni conserver de secret de machine. Elle n'héberge aucun serveur local et ne télécharge pas son code depuis un Controller.
-Dans le profil géré, elle présente une opération de connexion privée nommée pour
-chaque infrastructure sans exposer à l'administrateur une configuration réseau
-libre.
+Elle est un pair du réseau d'accès de chaque infrastructure : sa clé naît dans
+son coffre, et se connecter à une infrastructure monte le tunnel sans exposer à
+l'administrateur une configuration réseau libre. Cette clé transporte ; elle
+n'autorise rien par elle-même.
 
 **Controller**:
-Backend privé d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination. Il expose une API authentifiée mais n'héberge aucun frontend.
+Backend privé d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination. Il expose une API authentifiée sur sa seule adresse du réseau d'accès, jamais nu sur Internet, et n'héberge aucun frontend.
 <!-- coherence: V1-APP-ACCESS:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
