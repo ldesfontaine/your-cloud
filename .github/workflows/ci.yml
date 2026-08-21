@@ -426,7 +426,7 @@ jobs:
       # continue-on-error n'affaiblit pour autant ce job de sécurité.
       - name: Analyser la politique CI/CD
         id: plumber
-        uses: getplumber/plumber@e81ed4965fd92e0d2b63e95d399ed0419f5de2fa # v0.4.36
+        uses: getplumber/plumber@031bc86d1e5f661626e2000f4f8779912d608d5f # v0.4.39
         with:
           version: v0.4.8
           verify-attestation: "true"
