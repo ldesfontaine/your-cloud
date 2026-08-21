@@ -4,7 +4,7 @@
 # Everything installed here is synthetic and root-owned: one approval anchor
 # minted from a synthetic seed and naming this machine, one empty anti-replay
 # position, the product binary, the fixture that stands in for the Controller and
-# the Console, and — on the machine of the LAN alone — the certificate authority
+# the App, and — on the machine of the LAN alone — the certificate authority
 # of this run, the synthetic application's binary and the image built from it. No
 # account, no sheet, no volume, no archive, no secret, no entry, no route, no key
 # of the passage, no interface and no table: those are what the proof asks the

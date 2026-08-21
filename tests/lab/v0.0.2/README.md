@@ -1,12 +1,12 @@
 # Preuve LAB de `v0.0.2`
 
 Ce dossier contient les auxiliaires de preuve de l'observation authentifiée et
-bornée. `pki/` génère dans `lab-console` deux autorités et des feuilles
+bornée. `pki/` génère dans `lab-app` deux autorités et des feuilles
 synthétiques propres à un run. Les clés d'autorité restent dans cette VM et ne
 font partie d'aucun rapport.
 
 Le fichier `pki/main.go` porte la directive de construction `ignore` : il ne
-devient donc jamais un second artefact du produit. Dans `lab-console`, la
+devient donc jamais un second artefact du produit. Dans `lab-app`, la
 preuve l'appelle explicitement avec :
 
 ```text

@@ -4,7 +4,7 @@
 //   - the Controller, which freezes a plan and its rollback — here for three
 //     schemas at once, because a passage bounds a service the older schemas
 //     deploy;
-//   - the Console, which shows the pair to a human and signs the envelope naming
+//   - the App, which shows the pair to a human and signs the envelope naming
 //     their two digests.
 //
 // The two halves are built from two different sources on purpose, exactly as
@@ -25,7 +25,7 @@
 // private half of a passage key is born on its machine and never leaves it.
 //
 // The seed is synthetic and the key material lives only as long as the run.
-// Interoperability with the real Console is proven by the pinned cross-language
+// Interoperability with the real App is proven by the pinned cross-language
 // vector, never by this program.
 package main
 
@@ -134,7 +134,7 @@ func main() {
 		planDocument = strings.Replace(planDocument, *machine, alterLast(*machine), 1)
 	case hostileApprovedMismatch:
 		// The one hostile case a human really signed: a Controller froze a plan
-		// beside a rollback that undoes another instance, and the Console signed
+		// beside a rollback that undoes another instance, and the App signed
 		// both digests. Every check upstream of the pair passes, and the refusal
 		// has to come from the pair itself.
 		other, err := freezePair(*operation, *infrastructure, *machine, *profile, *port+1,

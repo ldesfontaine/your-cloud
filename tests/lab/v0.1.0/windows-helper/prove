@@ -7,7 +7,7 @@ usage() {
 usage: prove [tools | sync | run [suite...] | all [suite...]]
 
   tools   report the pinned toolchain the evaluation machine holds
-  sync    copy the Console native sources into the machine, keeping its cache
+  sync    copy the App native sources into the machine, keeping its cache
   run     run the Windows contract suites against the synchronised sources
   all     the three above in order (default)
 
@@ -128,17 +128,17 @@ tools() {
 
 sync() {
   # `package.json` travels with `src-tauri` because `tauri.conf.json` reads its
-  # version from `../package.json`: without it the Console build script refuses
+  # version from `../package.json`: without it the App build script refuses
   # the workspace.
   #
   # The build cache of the machine is deliberately preserved: rebuilding this
   # workspace from nothing costs far more than the copy it would replace.
-  tar -C "$root/console" --exclude=target -czf "$workdir/console.tgz" \
+  tar -C "$root/app" --exclude=target -czf "$workdir/app.tgz" \
     src-tauri package.json
-  send "$workdir/console.tgz" "$remote_harness\\console.tgz"
+  send "$workdir/app.tgz" "$remote_harness\\app.tgz"
   send "$harness/sync.ps1" "$remote_harness\\sync.ps1"
   remote "powershell -NoProfile -ExecutionPolicy Bypass -File $remote_harness\\sync.ps1" \
-    "-Archive $remote_harness\\console.tgz -Destination $remote_sources"
+    "-Archive $remote_harness\\app.tgz -Destination $remote_sources"
 }
 
 # The perimeter of the suites that need one, taken from this shell and from

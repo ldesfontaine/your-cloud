@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pilot P2 while keeping generation, server and browser inside lab-console.
+# Pilot P2 while keeping generation, server and browser inside lab-app.
 set -euo pipefail
 
 [[ $# -eq 2 ]] || { echo "usage: render <result.json> <archive-dir>" >&2; exit 2; }
@@ -35,7 +35,7 @@ bounded_local() {
 bounded_lab_ssh() {
   local local_seconds=$1 remote_seconds=$2
   shift 2
-  bounded_local "$local_seconds" "$labctl" ssh lab-console \
+  bounded_local "$local_seconds" "$labctl" ssh lab-app \
     timeout --signal=TERM --kill-after=3s "${remote_seconds}s" "$@"
 }
 
@@ -50,7 +50,7 @@ remote_sha256() {
 copy_verified() {
   local remote_path=$1 local_path=$2 expected actual
   expected=$(remote_sha256 "$remote_path") || return
-  bounded_local 60 "$labctl" copy-from lab-console "$remote_path" "$local_path" || return
+  bounded_local 60 "$labctl" copy-from lab-app "$remote_path" "$local_path" || return
   [[ -f "$local_path" && ! -L "$local_path" ]] || return 1
   actual=$(sha256sum "$local_path"); actual=${actual%% *}
   [[ "$actual" == "$expected" ]]
@@ -123,14 +123,14 @@ trap finish EXIT
 
 inventory=$(bounded_local 30 "$labctl" list --format=tsv) \
   || { echo "P2 LAB inventory guard failed" >&2; exit 1; }
-row=$(awk -F '\t' '$1 == "lab-console" {print}' <<<"$inventory")
-[[ $(wc -l <<<"$row") -eq 1 ]] || { echo "lab-console inventory row is missing or duplicated" >&2; exit 1; }
+row=$(awk -F '\t' '$1 == "lab-app" {print}' <<<"$inventory")
+[[ $(wc -l <<<"$row") -eq 1 ]] || { echo "lab-app inventory row is missing or duplicated" >&2; exit 1; }
 IFS=$'\t' read -r _ state ips template topology origin <<<"$row"
-[[ "$state" == running && "$ips" != - && "$template" == console \
+[[ "$state" == running && "$ips" != - && "$template" == app \
   && "$topology" == v1-full && "$origin" == your-cloud/labctl ]] \
-  || { echo "lab-console is outside the approved P2 inventory" >&2; exit 1; }
+  || { echo "lab-app is outside the approved P2 inventory" >&2; exit 1; }
 [[ ",$ips," != *",192.168.122.123,"* && ",$ips," != *",10.66.66.1,"* ]] \
-  || { echo "lab-console resolves to a forbidden address" >&2; exit 1; }
+  || { echo "lab-app resolves to a forbidden address" >&2; exit 1; }
 guard_passed=1
 
 if ! bounded_lab_ssh 15 10 /bin/mkdir "$lock_dir"; then
@@ -146,17 +146,17 @@ remote_created=1
 result_sha=$(sha256sum "$result"); result_sha=${result_sha%% *}
 [[ "$result_sha" =~ ^[0-9a-f]{64}$ ]] \
   || { echo "P1 result SHA-256 is invalid" >&2; exit 1; }
-bounded_local 60 "$labctl" copy-to lab-console \
+bounded_local 60 "$labctl" copy-to lab-app \
   "$report_dir/renderer.py" "$remote_renderer"
-bounded_local 60 "$labctl" copy-to lab-console \
+bounded_local 60 "$labctl" copy-to lab-app \
   "$report_dir/worker" "$remote_worker"
-bounded_local 60 "$labctl" copy-to lab-console "$result" "$remote/result.json"
+bounded_local 60 "$labctl" copy-to lab-app "$result" "$remote/result.json"
 bounded_lab_ssh 15 10 chmod 0755 \
   "$remote_renderer" "$remote_worker"
 bounded_lab_ssh 15 10 test -x /usr/bin/pgrep \
   || { echo "pgrep is required for the independent browser-process check" >&2; exit 1; }
 [[ $(remote_sha256 "$remote/result.json") == "$result_sha" ]] \
-  || { echo "P1 result changed while entering lab-console" >&2; exit 1; }
+  || { echo "P1 result changed while entering lab-app" >&2; exit 1; }
 
 if bounded_lab_ssh 110 100 "$remote_worker" \
   "$remote/result.json" "$failure_output" "$failure_runtime" simulate-capture-failure; then

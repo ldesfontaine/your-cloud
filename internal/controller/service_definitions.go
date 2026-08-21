@@ -47,7 +47,7 @@ var errServiceDefinitionRefused = errors.New("the submitted definition is outsid
 //
 // It is a separate document in a separate file with a revision of its own, for
 // the reason the declared inventory is: freezing a definition must not disturb
-// the revision a Console caches its machines against, and a corrupt document
+// the revision an App caches its machines against, and a corrupt document
 // here must not take the managed inventory down with it.
 //
 // Nothing in it describes an effect. There is no machine, no account, no host
@@ -83,7 +83,7 @@ type FrozenServiceDefinition struct {
 	FrozenAt string `json:"frozen_at"`
 }
 
-// ServiceDefinitionsView is what the Console receives when it reads the frozen
+// ServiceDefinitionsView is what the App receives when it reads the frozen
 // definitions: every one of them, as its exact canonical bytes and its digest.
 type ServiceDefinitionsView struct {
 	SchemaVersion      int                      `json:"schema_version"`
@@ -93,7 +93,7 @@ type ServiceDefinitionsView struct {
 	Definitions        []ServiceDefinitionEntry `json:"definitions"`
 }
 
-// ServiceDefinitionEntry is one frozen definition as the Console reads it. It is
+// ServiceDefinitionEntry is one frozen definition as the App reads it. It is
 // the same shape whether it arrives alone as the answer to a freeze or inside a
 // listing, so that what a human sees after freezing and what they see afterwards
 // are the same object.
@@ -322,7 +322,7 @@ func (store *ServiceDefinitionStore) commit(candidate ServiceDefinitionInventory
 	return nil
 }
 
-// ProjectServiceDefinitions renders the frozen definitions for the Console.
+// ProjectServiceDefinitions renders the frozen definitions for the App.
 //
 // It projects nothing and computes nothing: the bytes and the digest of a
 // revision are what was frozen, and this reading hands them over unchanged. The
@@ -337,7 +337,7 @@ func ProjectServiceDefinitions(inventory ServiceDefinitionInventory) (ServiceDef
 }
 
 // serviceDefinitionsView is the one place a frozen definition becomes something
-// the Console reads, so that a single freeze and a listing can never disagree
+// the App reads, so that a single freeze and a listing can never disagree
 // about the same revision. It assumes a validated inventory, which is why it is
 // private: the exported reading above validates, and the commit path has already
 // validated the candidate it hands over.
@@ -366,7 +366,7 @@ func serviceDefinitionEntry(definition FrozenServiceDefinition) ServiceDefinitio
 
 func EncodeServiceDefinitionsView(view ServiceDefinitionsView) ([]byte, error) {
 	encoded, err := json.Marshal(view)
-	if err != nil || len(encoded) > maxConsoleResponseBytes {
+	if err != nil || len(encoded) > maxAppResponseBytes {
 		return nil, errors.New("frozen service definitions exceed their response bound")
 	}
 	return encoded, nil
@@ -376,7 +376,7 @@ func EncodeServiceDefinitionsView(view ServiceDefinitionsView) ([]byte, error) {
 // contract, entry by entry, at every read of the file and at every commit.
 //
 // Every entry is verified rather than trusted: the bytes are held against the
-// digest beside them by the same function the Console and the Auxiliary use, and
+// digest beside them by the same function the App and the Auxiliary use, and
 // the bytes are required to be the canonical spelling of what they parse to. That
 // is what makes "re-reading a digest returns exactly the bytes frozen under it" a
 // property of the document rather than a promise of the code that wrote it, and
@@ -413,7 +413,7 @@ func validateServiceDefinitionInventory(state ServiceDefinitionInventory) error 
 		}
 		// Sorted on the pair a revision is unique on, so that uniqueness is a
 		// property of the document rather than a check somebody has to remember to
-		// run. The slug leads because that is how the Console groups revisions; the
+		// run. The slug leads because that is how the App groups revisions; the
 		// digest decides between the revisions of one slug, and no two entries may
 		// share it — two entries under one digest would be one revision the
 		// inventory counts twice.

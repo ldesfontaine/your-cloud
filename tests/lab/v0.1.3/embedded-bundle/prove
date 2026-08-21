@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Drive the embedded-bundle proof: a freshly built Console `.deb`, installed,
+# Drive the embedded-bundle proof: a freshly built App `.deb`, installed,
 # and the installed Assistant — the product binary, no fixture — finding,
 # verifying and refusing the server bundle it carries.
 #
 # What this closes are the two declared limits of
 # `docs/lab/v0.1.0-controller-install.md`: the anchor is now sealed in the
 # Assistant that the installed package carries, and the bundle is now embarked
-# by the Console's own packaging rather than deposited by a harness. The
+# by the App's own packaging rather than deposited by a harness. The
 # fixture of #38 judged real bytes with the real gates; what it could not say
 # was « the installed product finds its own bundle from its own attested
 # position ». This proof says exactly that, four verdicts, each by its name:
@@ -29,9 +29,9 @@ usage() {
   cat >&2 <<'EOF'
 usage: prove [sync | build | verify | remove | all]
 
-  sync    copy the repository sources (console, packaging, tools, Go tree)
-          into lab-console
-  build   build the Console .deb from those sources — which rebuilds and
+  sync    copy the repository sources (app, packaging, tools, Go tree)
+          into lab-app
+  build   build the App .deb from those sources — which rebuilds and
           re-verifies the embedded server bundle — and install it
   verify  the four verdicts of the installed Assistant, each by its name
   remove  uninstall the candidate and prove the carried tree is gone
@@ -48,7 +48,7 @@ esac
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
 labctl=$root/tools/labctl
-console_vm=lab-console
+app_vm=lab-app
 remote_root=/root/your-cloud-embedded-bundle
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -58,7 +58,7 @@ announce() { printf '\n== %s\n' "$*"; }
 
 # The three carried files, exactly where `installation::embedded` derives them
 # from the attested position of the installed Assistant.
-carried_dir=/usr/lib/your-cloud-console/server-bundle
+carried_dir=/usr/lib/your-cloud-app/server-bundle
 assistant=/usr/bin/your-cloud-native-bootstrap-assistant
 mode_argument=--verify-embedded-server-bundle
 
@@ -70,27 +70,27 @@ manifest_committed=$root/packaging/server-bundle/manifest/bundle-manifest.json
 assistant_says() {
   # The mode prints one line and exits; a refusal exits non-zero and that is
   # the vocabulary working, not an error of this harness.
-  "$labctl" ssh "$console_vm" -- "$1 $mode_argument 2>/dev/null || true"
+  "$labctl" ssh "$app_vm" -- "$1 $mode_argument 2>/dev/null || true"
 }
 
 sync() {
-  announce "syncing the repository sources to $console_vm"
-  # The whole repository shape travels, not just the console tree: the bundle
+  announce "syncing the repository sources to $app_vm"
+  # The whole repository shape travels, not just the app tree: the bundle
   # preparation resolves `packaging/`, `tools/` and the Go sources relative to
   # the repository root, and a sync that reshaped the tree would prove a build
   # nobody ships. `-m` re-stamps every file so warm caches can never mistake
   # an older synced file for an already-built one.
   tar czf "$workdir/sources.tgz" -C "$root" \
-    --exclude=console/node_modules \
-    --exclude=console/dist \
-    --exclude=console/dist-reflow \
-    --exclude=console/src-tauri/target \
-    --exclude=console/src-tauri/binaries \
-    --exclude=console/src-tauri/server-bundle \
-    console packaging tools go.mod go.sum cmd internal
-  "$labctl" ssh "$console_vm" -- "install -d -m 0700 $remote_root"
-  "$labctl" copy-to "$console_vm" "$workdir/sources.tgz" "$remote_root/sources.tgz" >/dev/null
-  "$labctl" ssh "$console_vm" -- "
+    --exclude=app/node_modules \
+    --exclude=app/dist \
+    --exclude=app/dist-reflow \
+    --exclude=app/src-tauri/target \
+    --exclude=app/src-tauri/binaries \
+    --exclude=app/src-tauri/server-bundle \
+    app packaging tools go.mod go.sum cmd internal
+  "$labctl" ssh "$app_vm" -- "install -d -m 0700 $remote_root"
+  "$labctl" copy-to "$app_vm" "$workdir/sources.tgz" "$remote_root/sources.tgz" >/dev/null
+  "$labctl" ssh "$app_vm" -- "
 set -e
 find $remote_root -mindepth 1 -maxdepth 1 ! -name sources.tgz ! -name target-cache -exec rm -rf {} +
 tar xzmf $remote_root/sources.tgz -C $remote_root
@@ -98,15 +98,15 @@ rm -f $remote_root/sources.tgz
 # The warm cargo cache of previous runs, if any, moves back into position so
 # the rebuild pays only for what changed.
 if [ -d $remote_root/target-cache ]; then
-  mv $remote_root/target-cache $remote_root/console/src-tauri/target
+  mv $remote_root/target-cache $remote_root/app/src-tauri/target
 fi"
   echo "SYNC_OK"
 }
 
 build() {
-  announce "building the Console .deb on $console_vm (offline, one job) and installing it"
-  "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
-  "$labctl" ssh "$console_vm" -- "
+  announce "building the App .deb on $app_vm (offline, one job) and installing it"
+  "$labctl" ssh "$app_vm" -- "swapon /swapfile 2>/dev/null || true"
+  "$labctl" ssh "$app_vm" -- "
 set -e
 export LC_ALL=C.UTF-8
 . /root/.cargo/env
@@ -114,7 +114,7 @@ export PATH=/usr/local/go/bin:\$PATH
 export YOUR_CLOUD_EXECUTION_ENV=lab
 export CARGO_NET_OFFLINE=true
 export CARGO_BUILD_JOBS=1
-cd $remote_root/console
+cd $remote_root/app
 
 available=\$(df --output=avail -k / | tail -1)
 [ \"\$available\" -ge 4194304 ] || { echo \"FAILED: \$((available / 1024)) MiB free; the build needs 4 GiB\" >&2; exit 1; }
@@ -131,12 +131,12 @@ package=\$(dpkg-deb --field \"\$deb\" Package)
 printf 'candidate: %s sha256=%s\n' \"\$deb\" \"\$(sha256sum \"\$deb\" | cut -d' ' -f1)\"
 dpkg --install \"\$deb\" >/dev/null
 
-for path in /usr/bin/your-cloud-console $assistant; do
+for path in /usr/bin/your-cloud-app $assistant; do
   [ -x \"\$path\" ] || { echo \"FAILED: \$path is absent after installation\" >&2; exit 1; }
 done"
 
   announce "what the package owns under $carried_dir — measured, not assumed"
-  "$labctl" ssh "$console_vm" -- "dpkg -L your-cloud | grep '^$carried_dir' | sort" \
+  "$labctl" ssh "$app_vm" -- "dpkg -L your-cloud | grep '^$carried_dir' | sort" \
     | tee "$workdir/carried-listing"
   for file in bundle-manifest.json bundle-manifest.sig your-cloud-server.deb; do
     grep -qx "$carried_dir/$file" "$workdir/carried-listing" \
@@ -164,7 +164,7 @@ verify() {
   # The alteration rewrites the bound version inside the installed manifest:
   # the very field a downgrade would touch. The signature covers the exact
   # bytes, so nothing below the signature check ever reads the altered field.
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 cp $carried_dir/bundle-manifest.json /root/manifest.orig
 python3 - <<'PY'
@@ -177,10 +177,10 @@ PY"
   [[ "$verdict" == "REFUSED SignatureNotByAnchor" ]] \
     || fail "an altered manifest must refuse SignatureNotByAnchor, the Assistant said « $verdict »"
   echo "  $verdict"
-  "$labctl" ssh "$console_vm" -- "mv /root/manifest.orig $carried_dir/bundle-manifest.json"
+  "$labctl" ssh "$app_vm" -- "mv /root/manifest.orig $carried_dir/bundle-manifest.json"
 
   announce "one altered artefact byte, same length — the digest refusal, by its name"
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 cp $carried_dir/your-cloud-server.deb /root/artifact.orig
 python3 - <<'PY'
@@ -193,7 +193,7 @@ PY"
   [[ "$verdict" == "REFUSED DigestMismatch" ]] \
     || fail "an altered artefact must refuse DigestMismatch, the Assistant said « $verdict »"
   echo "  $verdict"
-  "$labctl" ssh "$console_vm" -- "mv /root/artifact.orig $carried_dir/your-cloud-server.deb"
+  "$labctl" ssh "$app_vm" -- "mv /root/artifact.orig $carried_dir/your-cloud-server.deb"
 
   announce "the restored bundle verifies again — the alterations, not the restore, were the cause"
   verdict=$(assistant_says "$assistant")
@@ -202,30 +202,30 @@ PY"
   echo "  $verdict"
 
   announce "the same binary, copied outside its position — the position refusal, by its name"
-  "$labctl" ssh "$console_vm" -- "cp $assistant /root/copied-assistant"
+  "$labctl" ssh "$app_vm" -- "cp $assistant /root/copied-assistant"
   verdict=$(assistant_says "/root/copied-assistant")
   [[ "$verdict" == "REFUSED OutsideAttestedPosition" ]] \
     || fail "a copied binary must refuse OutsideAttestedPosition, it said « $verdict »"
   echo "  $verdict"
-  "$labctl" ssh "$console_vm" -- "rm -f /root/copied-assistant"
+  "$labctl" ssh "$app_vm" -- "rm -f /root/copied-assistant"
 
   echo "VERIFY_EMBEDDED_OK"
 }
 
 remove() {
   announce "removing the candidate and proving the carried tree is gone"
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
 rm -f /root/copied-assistant /root/manifest.orig /root/artifact.orig
 if dpkg-query -W your-cloud >/dev/null 2>&1; then
   dpkg --remove your-cloud >/dev/null
 fi
-for path in /usr/bin/your-cloud-console $assistant $carried_dir; do
+for path in /usr/bin/your-cloud-app $assistant $carried_dir; do
   [ ! -e \"\$path\" ] || { echo \"FAILED: \$path still present after removal\" >&2; exit 1; }
 done
 # The build tree goes, the warm cargo cache stays for the next run.
-if [ -d $remote_root/console/src-tauri/target ]; then
-  mv $remote_root/console/src-tauri/target $remote_root/target-cache
+if [ -d $remote_root/app/src-tauri/target ]; then
+  mv $remote_root/app/src-tauri/target $remote_root/target-cache
 fi
 find $remote_root -mindepth 1 -maxdepth 1 ! -name target-cache -exec rm -rf {} +"
   echo "REMOVE_EMBEDDED_OK"

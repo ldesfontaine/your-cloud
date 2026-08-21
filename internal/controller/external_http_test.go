@@ -42,7 +42,7 @@ func declareExternalElement(t *testing.T, fixture controllerHTTPFixture, body st
 // TestControllerExternalElementsDeclareListAndWithdraw is the nominal proof of
 // the three routes: a thing nobody installed enters the inventory, is read back
 // as the human wrote it, and leaves it again — and at no point does a plan, a
-// digest or an envelope appear anywhere in what the Console receives.
+// digest or an envelope appear anywhere in what the App receives.
 func TestControllerExternalElementsDeclareListAndWithdraw(t *testing.T) {
 	fixture := newControllerHTTPFixture(t)
 	attachProbeMachine(t, fixture, "lab-machine-1")
@@ -430,7 +430,7 @@ func TestControllerExternalElementsProduceNoPlanInEitherDirection(t *testing.T) 
 }
 
 // TestControllerExternalListingAbsorbsWhatTheMachinesRead is the transport of
-// `#107` end to end, through the Console's own route.
+// `#107` end to end, through the App's own route.
 //
 // The machine reads its declared loopback port, the reading rides the
 // observation chain, the Relay carries it and the Controller joins it onto the
@@ -473,7 +473,7 @@ func TestControllerExternalListingAbsorbsWhatTheMachinesRead(t *testing.T) {
 		t.Fatalf("absorbing one reading moved the revision to %d", view.ExternalRevision)
 	}
 
-	// Reading the same listing again changes nothing at all: a Console that
+	// Reading the same listing again changes nothing at all: an App that
 	// refreshes must not make the inventory look like it moved.
 	if again := listExternalElements(t, fixture, bearer); again.ExternalRevision != view.ExternalRevision {
 		t.Fatalf("a second listing moved the revision to %d", again.ExternalRevision)

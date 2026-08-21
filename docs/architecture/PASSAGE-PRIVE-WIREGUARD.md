@@ -154,14 +154,14 @@ Décisions attachées à ces routes :
   canoniques exacts**, accompagnés de leurs digests, dans la même vue que les
   routes du profil public ; son `schema_version` vaut `3` et dit sous quel
   contrat les deux documents ont été écrits.
-- La Console ne choisit **ni l'infrastructure, ni le sous-réseau, ni les adresses
+- L'App ne choisit **ni l'infrastructure, ni le sous-réseau, ni les adresses
   du tunnel, ni le nom d'interface, ni le port d'écoute, ni le keepalive** :
   l'infrastructure est celle dont ce Controller est l'autorité, et le reste est
   une constante que le rôle décide. Aucune de ces valeurs n'est un champ, donc
   aucune requête ne peut élargir le passage.
 - **La clé publique du pair est la seule valeur que personne n'a choisie** :
   c'est une observation que la préparation de l'autre machine a rapportée. La
-  Console la porte dans la requête, et elle est tenue exactement par la
+  App la porte dans la requête, et elle est tenue exactement par la
   validation du document — 44 caractères de base64 standard canonique décodant 32
   octets, ré-encodage identique. Une clé que la route accepterait et que le
   paquet `plan` refuserait serait un refus arrivé une couche trop tard.
@@ -194,7 +194,7 @@ constat :
    `service_port` de `10.66.66.2` répond ;
 3. depuis le VPS, par le tunnel : SSH refusé, tout autre port refusé, toute
    adresse du sous-réseau LAN réel refusée — seul le couple approuvé passe ;
-4. depuis la machine hostile (le pilote ou `lab-console`) : la machine du
+4. depuis la machine hostile (le pilote ou `lab-app`) : la machine du
    LAN n'expose **aucun** port entrant ; le VPS n'expose que 443, 80 et
    l'UDP du tunnel ;
 5. idempotence : rejouer les quatre plans rend `changed=false` sans

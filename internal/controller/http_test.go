@@ -43,7 +43,7 @@ type controllerHTTPFixture struct {
 	handler     *ControllerHandler
 	authority   *AuthorityStore
 	certificate *x509.Certificate
-	identity    testConsoleIdentity
+	identity    testAppIdentity
 	sessions    *SessionManager
 	inventory   *InventoryStore
 	external    *ExternalStore

@@ -15,7 +15,7 @@
 // plan means is re-derived on the machine that will act on it, from that
 // machine's own anchors, exactly as for the envelope that names its digest.
 //
-// The transcript below is the counterpart of the one written on the Console
+// The transcript below is the counterpart of the one written on the App
 // side. The two are held against one another by deterministic vectors on both
 // sides rather than by reading, because a canonical encoding that exists in two
 // implementations is only canonical while the two agree byte for byte.

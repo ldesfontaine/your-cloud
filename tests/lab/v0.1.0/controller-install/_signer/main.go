@@ -1,7 +1,7 @@
 // Command lab-bundle-signer produces the synthetic anchor of the LAB and the
 // detached Ed25519 signature over the exact bytes of a bundle manifest.
 //
-// It stands in for whatever seals the anchor into the Console installer, and it
+// It stands in for whatever seals the anchor into the App installer, and it
 // proves nothing about that mechanism: the identity here is generated at mount
 // time, it is thrown away at teardown, and no public claim rests on it. What it
 // does let the LAB show is the half that matters — that the Assistant refuses a

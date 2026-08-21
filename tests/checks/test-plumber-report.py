@@ -81,7 +81,7 @@ class PlumberReportTests(unittest.TestCase):
                 "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
                 "jobName": job,
             }
-            for job in ("ci/plumber_policy", "ci/console_platforms", "ci/source")
+            for job in ("ci/plumber_policy", "ci/app_platforms", "ci/source")
         ]
         return report
 

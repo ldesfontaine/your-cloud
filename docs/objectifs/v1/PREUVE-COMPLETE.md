@@ -121,12 +121,12 @@ validateur du commerce applique sans rien de nous, des consommateurs qui le
 lisent déjà, et un document licite sans horodatage — là où un SPDX minimal
 impose une date de création, donc deux exécutions qui ne rendent pas les mêmes
 octets. Ses composants sont résolus depuis les verrous versionnés — `go.mod` et
-`go.sum`, `console/src-tauri/Cargo.lock`, `console/package-lock.json` — et
+`go.sum`, `app/src-tauri/Cargo.lock`, `app/package-lock.json` — et
 depuis les images OCI épinglées, relues dans `internal/plan` plutôt que
 redites ici. Aucun registre n'est interrogé à la production.
 
 Ce que cet outil ne couvre pas, et le manifeste l'écrit : les charges
-distribuables. Le `.deb` serveur Debian 13 `amd64` et les installateurs Console
+distribuables. Le `.deb` serveur Debian 13 `amd64` et les installateurs App
 sont construits ailleurs et liés par leur propre manifeste signé ; ce jeu
 d'artefacts n'en porte aucun octet.
 
@@ -156,8 +156,8 @@ fichiers, aucune des deux ne prétendant à l'autre.
 
 Le tag `v0.1.0` est le dernier geste, jamais un geste préparatoire, et il est
 préparé ici pour n'être improvisé nulle part (`#55`). L'identité de release a
-une source unique — `console/package.json` — que le contrat des sources
-Console fait rayonner sur les manifestes, les verrous, la constante
+une source unique — `app/package.json` — que le contrat des sources
+App fait rayonner sur les manifestes, les verrous, la constante
 d'observation du Daemon et les artefacts ; le tag ne fait que la relier au
 SHA que la matrice hébergée a attesté.
 
@@ -168,7 +168,7 @@ Préconditions, toutes vérifiées sur le même SHA candidat :
    passage du dépôt en public il **enregistre** la consommation au lieu de la
    borner ([contrat de CI](../../contribution/CI.md)) ;
 2. la preuve complète est verte sur ce SHA, arbre propre, et ses artefacts
-   portent `release.version` égal à la version de `console/package.json` ;
+   portent `release.version` égal à la version de `app/package.json` ;
 3. les issues de palier requises sont fermées, et le suivi le montre.
 
 Le geste, alors :
@@ -198,10 +198,10 @@ preuve, et cette forme est lisible dans le rapport.
 
 Sont déjà connues, et le rapport les portera :
 
-- la Console n'est pas exercée par les harnais LAB ; sa surface est prouvée
+- l'App n'est pas exercée par les harnais LAB ; sa surface est prouvée
   par sa propre suite, et la fenêtre native de consentement n'est pas câblée ;
 - les signatures des preuves passent par des fixtures synthétiques, la
-  Console ne signant pas dans ces exécutions ;
+  App ne signant pas dans ces exécutions ;
 - le TLS des preuves est une autorité synthétique du run ;
 - aucune de ces exécutions n'a vu de porte hébergée ;
 - `arm64` n'est pas prouvé ;

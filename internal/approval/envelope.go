@@ -8,7 +8,7 @@
 // anchor, and spent once in the machine's own root-owned anti-replay state.
 //
 // The transcript below is the counterpart of the one written in
-// console/src-tauri/crates/bootstrap-protocol/src/approval.rs. The two are held
+// app/src-tauri/crates/bootstrap-protocol/src/approval.rs. The two are held
 // against one another by deterministic vectors on both sides rather than by
 // reading, because a canonical encoding that exists in two implementations is
 // only canonical while the two agree byte for byte.
@@ -208,7 +208,7 @@ var (
 	canonicalMachine = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,62}$`)
 )
 
-// Envelope is exactly what the Console signed. Every field below is inside the
+// Envelope is exactly what the App signed. Every field below is inside the
 // transcript, and no field of an approval lives outside it.
 type Envelope struct {
 	SchemaVersion     int      `json:"schema_version"`
@@ -334,7 +334,7 @@ func (envelope *Envelope) IsMutating() bool {
 	return false
 }
 
-// SigningTranscript rebuilds the exact bytes the Console signed.
+// SigningTranscript rebuilds the exact bytes the App signed.
 //
 // It is built from the parsed fields and never from the received document, so
 // a Controller that reindents or reorders the JSON transports the same

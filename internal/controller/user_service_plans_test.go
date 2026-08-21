@@ -33,7 +33,7 @@ func userServicePlanBody(machineID, operation, slug, digest, imageDigest string,
 }
 
 // TestControllerUserServicePlansFreezeThePairTheyBuilt is the nominal proof of
-// the third door's route: the Console receives two complete documents and the two
+// the third door's route: the App receives two complete documents and the two
 // digests an envelope will name, every field the definition decides was read out
 // of the definition rather than out of the request, and both documents survive a
 // decode by the same rules the Auxiliary will apply.

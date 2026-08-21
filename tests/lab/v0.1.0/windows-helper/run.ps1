@@ -120,7 +120,7 @@ $catalogue = @(
         arguments = @(
             "-p", $assistant, "--features", "native-prompt-contract-test",
             "--test", "parent-contract",
-            "console_parent_closes_one_job_before_reusing_the_boundary",
+            "app_parent_closes_one_job_before_reusing_the_boundary",
             "--", "--exact", "--test-threads=1"
         )
     },

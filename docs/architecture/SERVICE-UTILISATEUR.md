@@ -7,7 +7,7 @@
 > implémentations prévues le suivront depuis `#116` (document Go et miroir
 > Rust), `#117` (gel et service par le Controller), `#118` (la paire de plans),
 > `#119` (dérivation et pose par l'Auxiliaire) et `#120` (vue Services de la
-> Console) ; la preuve LAB de la milestone reste `#121`.
+> App) ; la preuve LAB de la milestone reste `#121`.
 
 ## Ce que ce palier ajoute, et ce qu'il n'ajoute pas
 
@@ -49,7 +49,7 @@ domaine séparé propre — `your-cloud/service-definition.v1\0` — tenu entre 
 Rust par des vecteurs déterministes croisés. Elle est bornée à **8192 octets**
 avant analyse : une définition porte des listes qu'aucun plan n'a jamais
 portées, et la borne, double de celle des plans, reste assez petite pour que la
-Console affiche toujours le document entier. La borne est propre pour qu'aucun
+App affiche toujours le document entier. La borne est propre pour qu'aucun
 des deux documents ne grandisse un jour parce que l'autre l'a fait.
 
 Sa propriété structurante tient en une phrase : **une définition n'a aucun
@@ -199,7 +199,7 @@ plan de déploiement approuvé, jamais une conséquence du gel.
 
 ## Le trajet du document
 
-1. **La Console rédige, le Controller gèle.** `POST /v0/service-definitions`
+1. **L'App rédige, le Controller gèle.** `POST /v0/service-definitions`
    valide le document, le canonise, le hache et le gèle ; `GET` rend les
    définitions gelées, octets canoniques et digests. Geler n'a aucun effet —
    c'est la propriété structurante, tenue par une route qui ne sait pas muter.
@@ -207,7 +207,7 @@ plan de déploiement approuvé, jamais une conséquence du gel.
    paire plan/rollback d'un `deploy_user_service` ou d'un
    `remove_user_service` ; un `definition_digest` que le Controller n'a pas
    gelé est refusé à la construction. La paire est affichée, approuvée et
-   signée par la Console comme toutes les autres — aucun nouveau chemin
+   signée par l'App comme toutes les autres — aucun nouveau chemin
    d'autorité.
 3. **Les octets voyagent à côté du plan signé.** L'Auxiliaire reçoit la
    définition avec la paire signée, **rehache et revalide avant toute lecture
@@ -303,7 +303,7 @@ Décisions attachées à ces routes :
 - L'état du Controller suit le patron des éléments externes : un fichier
   root-owned à écriture atomique, où les révisions s'ajoutent et où rien ne
   s'efface.
-- La Console ne choisit **ni l'infrastructure, ni le compte, ni le foyer, ni
+- L'App ne choisit **ni l'infrastructure, ni le compte, ni le foyer, ni
   un chemin hôte, ni une valeur de secret, ni la table de sortie** : tout ce
   qui touche la machine est dérivé du slug par l'Auxiliaire, et aucune requête
   ne peut le déplacer. Elle rédige la définition — c'est le seul document de ce
@@ -321,7 +321,7 @@ d'être rencontrées :
 
 - **Un conteneur par service.** Une définition décrit un processus servi par
   une image ; ni side-car, ni composition multi-services. Un collage
-  `docker-compose.yml` dans la Console ne préremplit que depuis un service, et
+  `docker-compose.yml` dans l'App ne préremplit que depuis un service, et
   le dit.
 - **Aucune sortie réseau, sans exception déclarable à ce palier.** Le compte
   rejoint la table de sortie commune, et il n'existe aucun champ pour y percer
@@ -410,7 +410,7 @@ tient cette propriété.
   d'archive ne portent pas. C'est dit ici pour qu'un lecteur ne cherche pas
   une garantie sous-arbre par sous-arbre que rien ne promet.
 
-## Addendum `#120` : ce qu'écrire une définition dans la Console a exigé de décider
+## Addendum `#120` : ce qu'écrire une définition dans l'App a exigé de décider
 
 Le contrat dit ce qu'une définition est. Offrir de l'écrire à un humain a
 demandé des décisions qu'il ne nommait pas, et elles sont ici.
@@ -422,7 +422,7 @@ demandé des décisions qu'il ne nommait pas, et elles sont ici.
   trame de consentement de l'assistant n'est pas sur ce chemin, et que la dette
   connue « trame 4096 < définition 8192 » ne le touche pas. Ce que la borne du
   document a réellement coûté est ailleurs : la requête de gel est la seule de
-  la Console dont la borne n'est pas les quatre kilobytes communs, et elle est
+  l'App dont la borne n'est pas les quatre kilobytes communs, et elle est
   dérivée de la borne du document — `2 × 8192 + 512` — exactement comme celle du
   Controller.
 - **Le formulaire ne borne rien lui-même.** Les grammaires, les cardinaux, les
@@ -431,7 +431,7 @@ demandé des décisions qu'il ne nommait pas, et elles sont ici.
   *où* et *pourquoi*, le miroir gagne une énumération fermée de refus nommés par
   champ, construite sur les mêmes prédicats que la validation ; un test tient
   l'équivalence — une définition n'a aucun refus exactement quand elle décode —
-  sur chaque sujet du module. La Console ne rend jamais un code au visage d'un
+  sur chaque sujet du module. L'App ne rend jamais un code au visage d'un
   humain : une phrase par nom, et le contrat de source rougit si un nom perd la
   sienne.
 - **Le panneau de conséquences est la seule porte du gel.** Il suit le patron
@@ -454,7 +454,7 @@ demandé des décisions qu'il ne nommait pas, et elles sont ici.
   conteneur par service » l'exige. Il est écrit en Rust plutôt qu'en JavaScript
   pour la même raison que le reste : ce qui est testé dans le LAB est ce qui
   tourne.
-- **La Console rehache chaque révision avant de l'afficher.** Le Controller
+- **L'App rehache chaque révision avant de l'afficher.** Le Controller
   garde des octets et une empreinte ; il n'est pas l'autorité sur ce que dit une
   définition. Chaque entrée d'une liste est vérifiée par la fonction du miroir
   que l'Auxiliaire utilisera le jour où un plan épingle ce digest, et une liste
@@ -470,7 +470,7 @@ demandé des décisions qu'il ne nommait pas, et elles sont ici.
   étiquette, et aucune ligne n'est ajoutée ni retirée.
 - **`RequireDefinitionAgreement` n'est pas encore miroité, et la condition est
   désormais nommée.** C'était la seconde dette de `#118`, conditionnée à ce que
-  la Console tienne une définition à côté d'un plan. Cette vue ne la tient pas :
+  l'App tienne une définition à côté d'un plan. Cette vue ne la tient pas :
   elle écrit et gèle des définitions, et n'affiche aucun plan. Le contrôle croisé
   reste où il peut être fait — construction par le Controller, revérification par
   le Controller à la soumission depuis `v0.1.2`, revérification par l'Auxiliaire,

@@ -4,12 +4,12 @@
 #
 # This script never runs on lab-vps and never on lab-machine-1. It runs on the
 # pilot's own host and, for the one constat that needs root on a third machine,
-# drives lab-console — the two hostile observers the palier names. It speaks to
+# drives lab-app — the two hostile observers the palier names. It speaks to
 # the two machines only over the addresses and ports any other host of that
 # network would use.
 #
 # **The honesty this proof owes its reader is written here rather than in a
-# footnote.** The `quick` topology is one flat network: lab-console and the pilot
+# footnote.** The `quick` topology is one flat network: lab-app and the pilot
 # sit on the same subnet as lab-machine-1, so they can reach lab-machine-1's own
 # address directly, and they could before this passage existed. That is a
 # property of the LAB scenario and not a failure of the product — the reference
@@ -157,14 +157,14 @@ case "$stage" in
     # carrying `10.66.66.1`. On such a host a probe towards `10.66.66.2` never
     # leaves the machine, so `unreachable` would be a statement about the pilot's
     # own routing table and not about the passage. It is therefore read, named and
-    # deferred rather than dressed up as a constat: `lab-console`, which holds no
+    # deferred rather than dressed up as a constat: `lab-app`, which holds no
     # address of that subnet, makes this observation in stage D below.
     own=$(ip -4 -brief address show | awk '$3 ~ /^10\.66\.66\./ || $4 ~ /^10\.66\.66\./ {print $1"="$3}' | paste -sd' ' -)
     if [[ -n "$own" ]]; then
       report "this host holds an address of the reserved subnet" \
         "$own — a probe from here towards 10.66.66.0/24 never leaves this machine"
       report "so the two tunnel addresses are not probed from here" \
-        "the observation is made by lab-console in stage D, which holds none"
+        "the observation is made by lab-app in stage D, which holds none"
     else
       expect "the listener's tunnel address, from here" "$(reach 10.66.66.1 "$bounded_port")" unreachable
       expect "the initiator's tunnel address, from here" "$(reach 10.66.66.2 "$bounded_port")" unreachable
@@ -173,33 +173,33 @@ case "$stage" in
     fi
 
     step "D. from a third machine with root, neither machine relays anything"
-    # lab-console is the hostile observer the palier names. It is given, by hand,
+    # lab-app is the hostile observer the palier names. It is given, by hand,
     # exactly what an attacker would give itself: a route towards the tunnel
     # address through each of the two machines in turn. Both attempts must fail,
     # and the routes are taken away again whatever happens.
     # The observer is held against the same rule before it is believed: a
-    # lab-console that itself carried an address of the reserved subnet could not
+    # lab-app that itself carried an address of the reserved subnet could not
     # make this observation either.
-    console_own=$("$labctl" ssh lab-console -- \
+    app_own=$("$labctl" ssh lab-app -- \
       "ip -4 -brief address show | grep -c 10[.]66[.]66[.] || true" 2>/dev/null | tr -d '\r' | head -1)
-    expect "addresses of the reserved subnet lab-console holds of its own" "${console_own:-unknown}" 0
+    expect "addresses of the reserved subnet lab-app holds of its own" "${app_own:-unknown}" 0
 
     for relay in "$initiator" "$listener"; do
-      "$labctl" ssh lab-console -- \
+      "$labctl" ssh lab-app -- \
         "ip route replace 10.66.66.2/32 via $relay 2>/dev/null; \
          ip route replace 10.66.66.1/32 via $relay 2>/dev/null" >/dev/null 2>&1 || true
       for target in 10.66.66.1 10.66.66.2; do
-        observed=$("$labctl" ssh lab-console -- \
+        observed=$("$labctl" ssh lab-app -- \
           "timeout 5 bash -c 'exec 3<>/dev/tcp/$target/$bounded_port' 2>/dev/null \
            && echo reachable || echo unreachable" 2>/dev/null | tr -d '\r')
-        expect "lab-console -> $target:$bounded_port, routed through $relay" "$observed" unreachable
+        expect "lab-app -> $target:$bounded_port, routed through $relay" "$observed" unreachable
       done
-      "$labctl" ssh lab-console -- \
+      "$labctl" ssh lab-app -- \
         "ip route del 10.66.66.2/32 via $relay 2>/dev/null; \
          ip route del 10.66.66.1/32 via $relay 2>/dev/null" >/dev/null 2>&1 || true
     done
-    expect "the routes lab-console is left holding towards the reserved subnet" \
-      "$("$labctl" ssh lab-console -- 'ip route show | grep -c 10[.]66[.]66[.] || true' 2>/dev/null | tr -d '\r' | head -1)" 0
+    expect "the routes lab-app is left holding towards the reserved subnet" \
+      "$("$labctl" ssh lab-app -- 'ip route show | grep -c 10[.]66[.]66[.] || true' 2>/dev/null | tr -d '\r' | head -1)" 0
 
     verdict "the machine of the LAN exposes not one port it did not expose before, the listener adds exactly the tunnel's UDP, and no third machine can route itself into the passage through either of them"
     ;;

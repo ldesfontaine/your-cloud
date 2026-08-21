@@ -23,15 +23,15 @@ const (
 	vectorIssuedAt = 1780000000
 	vectorExpires  = 1780000300
 
-	// Public key of the all-`0x01` synthetic seed. The Console pins the same
-	// string in console/src-tauri/src/approval.rs.
+	// Public key of the all-`0x01` synthetic seed. The App pins the same
+	// string in app/src-tauri/src/approval.rs.
 	vectorPublicKey = "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
 
-	// Signature the Console produced over the vector envelope. The two sides
+	// Signature the App produced over the vector envelope. The two sides
 	// are only interoperable while this exact string verifies here.
 	vectorSignature = "rmoKkEc47JjAkPMXv_0q_Qgust3FNKoOlwDc8eajMpsWl6LqB6phBnPkR-CaMNpkm4X0oH_Gg-6CrVczUL6zCg"
 
-	// The whole transcript, byte for byte, as the Console's own pinned vector
+	// The whole transcript, byte for byte, as the App's own pinned vector
 	// spells it in crates/bootstrap-protocol/src/approval.rs.
 	vectorTranscriptHex = "796f75722d636c6f75642f617070726f76616c2d656e76656c6f70652e7631000100" +
 		"00002438663134653435662d636565612d343136372d613862312d31663762643061" +
@@ -94,14 +94,14 @@ func signVector(t *testing.T, envelope Envelope) string {
 	)
 }
 
-// TestDeterministicTranscriptVectorMatchesTheConsole is the interoperability
+// TestDeterministicTranscriptVectorMatchesTheApp is the interoperability
 // proof of the palier.
 //
-// The Console pins this exact transcript and this exact signature from its own
+// The App pins this exact transcript and this exact signature from its own
 // encoder. If either implementation of the canonical encoding drifts by a
 // single byte, this test fails here instead of producing approvals the other
 // side silently refuses on a real machine.
-func TestDeterministicTranscriptVectorMatchesTheConsole(t *testing.T) {
+func TestDeterministicTranscriptVectorMatchesTheApp(t *testing.T) {
 	t.Parallel()
 	envelope := vectorEnvelope()
 	transcript, err := envelope.SigningTranscript()
@@ -116,7 +116,7 @@ func TestDeterministicTranscriptVectorMatchesTheConsole(t *testing.T) {
 		t.Fatalf("transcript length drifted: %d", len(transcript))
 	}
 	if !bytes.Equal(transcript, expected) {
-		t.Fatalf("transcript drifted from the Console vector:\n%s", hex.EncodeToString(transcript))
+		t.Fatalf("transcript drifted from the App vector:\n%s", hex.EncodeToString(transcript))
 	}
 	if !strings.HasPrefix(string(transcript), TranscriptDomain) {
 		t.Fatal("transcript does not start with its own domain separator")
@@ -131,13 +131,13 @@ func TestDeterministicTranscriptVectorMatchesTheConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := signed.VerifySignature(public); err != nil {
-		t.Fatalf("the Console's own signature was refused: %v", err)
+		t.Fatalf("the App's own signature was refused: %v", err)
 	}
 }
 
 // TestChangingAnySingleFieldBreaksTheSignature is the central property.
 //
-// Each iteration takes the Console's genuine signature and moves exactly one
+// Each iteration takes the App's genuine signature and moves exactly one
 // field of the envelope. Every one of them must stop verifying: a field that
 // survived would be a field the Controller owns, since the Controller is the
 // only thing between the two.

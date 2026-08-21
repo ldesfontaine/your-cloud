@@ -41,7 +41,7 @@ func (haltedDispatcher) Dispatch(DispatchRecord, []byte) DispatchConclusion {
 }
 
 // signedApprovalFor signs one envelope with the fixture's human key — the key
-// the Console's native core signs with — and returns the exact bytes a
+// the App's native core signs with — and returns the exact bytes a
 // submission carries.
 func signedApprovalFor(t *testing.T, fixture controllerHTTPFixture, envelope approval.Envelope) []byte {
 	t.Helper()
@@ -62,7 +62,7 @@ func signedApprovalFor(t *testing.T, fixture controllerHTTPFixture, envelope app
 	return encoded
 }
 
-// frozenProbePair asks the route the Console would ask and returns the exact
+// frozenProbePair asks the route the App would ask and returns the exact
 // pair a human would then approve: documents and digests together.
 func frozenProbePair(t *testing.T, fixture controllerHTTPFixture, machineID string) ProbePlanView {
 	t.Helper()

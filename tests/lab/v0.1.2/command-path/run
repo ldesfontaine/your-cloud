@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open the virtual screen the Console really paints on, then hand over to
+# Open the virtual screen the App really paints on, then hand over to
 # `inside`.
 #
 # `-noreset` is not decoration. Without it the X server regenerates between two
@@ -9,7 +9,7 @@
 #
 # The screen matters more here than in any earlier proof: the native approval
 # window is a **second client** of this same server, and the only reason this
-# harness can answer it at all is that both the Console and its helper paint on
+# harness can answer it at all is that both the App and its helper paint on
 # one display that outlives either of them.
 set -euo pipefail
 export LC_ALL=C.UTF-8

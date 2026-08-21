@@ -38,7 +38,7 @@ func initiatorPeerPlanBody(machineID, operation, key, host string, port int) str
 }
 
 // TestControllerLinkPlansFreezeThePairsTheyBuilt is the nominal proof of the
-// three routes of the private passage: the Console receives two complete
+// three routes of the private passage: the App receives two complete
 // documents and the two digests an envelope will name, and every one of them
 // survives a decode by the same rules the Auxiliary will apply.
 func TestControllerLinkPlansFreezeThePairsTheyBuilt(t *testing.T) {
@@ -129,7 +129,7 @@ func TestControllerLinkPlansFreezeThePairsTheyBuilt(t *testing.T) {
 			t.Fatalf("%s: the rollback does not undo the exact instance", name)
 		}
 
-		// The digests are the Console's to recompute; they must be the ones the
+		// The digests are the App's to recompute; they must be the ones the
 		// transported documents produce and not a claim beside them.
 		planDigest, err := document.SHA256()
 		if err != nil {

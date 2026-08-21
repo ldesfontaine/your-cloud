@@ -7,8 +7,8 @@ usage() {
 usage: prove [setup | sync | check | run [filtre...] | remove | all [filtre...]]
 
   setup   mount the two-VM perimeter and write its description
-  sync    copy the Console sources into lab-console, keeping its build cache
-  check   prove the Console crate still compiles against those sources
+  sync    copy the App sources into lab-app, keeping its build cache
+  check   prove the App crate still compiles against those sources
   run     run the personal access contract suite against the mounted perimeter
   remove  remove the perimeter from both VM and prove its absence
   all     the five above in order, removing even when a step fails (default)
@@ -27,7 +27,7 @@ esac
 root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
 labctl="$root/tools/labctl"
 harness="$root/tests/lab/v0.1.0/personal-access"
-console_vm=lab-console
+app_vm=lab-app
 server_vm=lab-machine-1
 expected_origin=your-cloud/labctl
 remote_harness=/root/your-cloud-lab-personal-access
@@ -91,12 +91,12 @@ copy_harness() {
 }
 
 setup() {
-  local console_address server_address host_key_fingerprint declared
-  console_address=$(inventory "$console_vm")
+  local app_address server_address host_key_fingerprint declared
+  app_address=$(inventory "$app_vm")
   server_address=$(inventory "$server_vm")
-  echo "perimeter: client $console_vm, server $server_vm"
+  echo "perimeter: client $app_vm, server $server_vm"
 
-  copy_harness "$console_vm" install-client remove-client check run
+  copy_harness "$app_vm" install-client remove-client check run
   copy_harness "$server_vm" install-server remove-server
 
   # The server's real host key, read through the managed channel. It anchors
@@ -105,15 +105,15 @@ setup() {
   "$labctl" copy-from "$server_vm" /etc/ssh/ssh_host_ed25519_key.pub \
     "$workdir/server-host-key.pub" >/dev/null
   host_key_fingerprint=$(ssh-keygen -l -f "$workdir/server-host-key.pub" | awk '{print $2}')
-  "$labctl" copy-to "$console_vm" "$workdir/server-host-key.pub" \
+  "$labctl" copy-to "$app_vm" "$workdir/server-host-key.pub" \
     "$remote_harness/server-host-key.pub" >/dev/null
 
-  "$labctl" ssh "$console_vm" -- "$remote_harness/install-client" \
-    "$server_address" "$console_address" "$remote_harness/server-host-key.pub" \
+  "$labctl" ssh "$app_vm" -- "$remote_harness/install-client" \
+    "$server_address" "$app_address" "$remote_harness/server-host-key.pub" \
     >"$workdir/client.env"
 
   for key in authorized observer; do
-    "$labctl" copy-from "$console_vm" "$remote_state/keys/$key.pub" \
+    "$labctl" copy-from "$app_vm" "$remote_state/keys/$key.pub" \
       "$workdir/$key.pub" >/dev/null
     "$labctl" copy-to "$server_vm" "$workdir/$key.pub" \
       "$remote_harness/$key.pub" >/dev/null
@@ -121,7 +121,7 @@ setup() {
   # The two public keys of the encrypted files, so the fallback of #53
   # authenticates against the same synthetic accounts as the agent path.
   for key in ed25519 rsa3072; do
-    "$labctl" copy-from "$console_vm" "$remote_state/keys/files/$key.pub" \
+    "$labctl" copy-from "$app_vm" "$remote_state/keys/files/$key.pub" \
       "$workdir/file-$key.pub" >/dev/null
     "$labctl" copy-to "$server_vm" "$workdir/file-$key.pub" \
       "$remote_harness/file-$key.pub" >/dev/null
@@ -146,9 +146,9 @@ setup() {
   [[ -n "$sudo_password" ]] || fail "the server never generated a synthetic sudo password"
   printf '%s' "$sudo_password" >"$workdir/sudo-password"
   chmod 0600 "$workdir/sudo-password"
-  "$labctl" copy-to "$console_vm" "$workdir/sudo-password" \
+  "$labctl" copy-to "$app_vm" "$workdir/sudo-password" \
     "$remote_state/needle/sudo-password" >/dev/null
-  "$labctl" ssh "$console_vm" -- "chmod 0600 $remote_state/needle/sudo-password"
+  "$labctl" ssh "$app_vm" -- "chmod 0600 $remote_state/needle/sudo-password"
 
   {
     echo "TARGET=$server_address"
@@ -167,27 +167,27 @@ setup() {
     [[ -n "$value" ]] || fail "the mounted perimeter never described $name"
     printf 'export YOUR_CLOUD_LAB_%s=%s\n' "$name" "$value" >>"$workdir/perimeter.env"
   done
-  "$labctl" copy-to "$console_vm" "$workdir/perimeter.env" \
+  "$labctl" copy-to "$app_vm" "$workdir/perimeter.env" \
     "$remote_state/perimeter.env" >/dev/null
   echo "perimeter described by ${#required_names[@]} names"
 }
 
 sync() {
   # `package.json` travels with `src-tauri` because `tauri.conf.json` reads its
-  # version from `../package.json`: without it the Console build script refuses
-  # the workspace, and the guard that says the Console still compiles could only
+  # version from `../package.json`: without it the App build script refuses
+  # the workspace, and the guard that says the App still compiles could only
   # ever be replayed by hand.
   #
-  # The build cache of lab-console is deliberately preserved: rebuilding this
+  # The build cache of lab-app is deliberately preserved: rebuilding this
   # workspace from nothing costs far more than the copy it would replace.
-  tar -C "$root/console" --exclude=target -czf "$workdir/console.tgz" \
+  tar -C "$root/app" --exclude=target -czf "$workdir/app.tgz" \
     src-tauri package.json
   # The staging directory belongs to the perimeter, but synchronising sources
   # needs no perimeter: create it rather than depend on a previous `setup`.
-  "$labctl" ssh "$console_vm" -- "install -d -m 0700 $remote_harness"
-  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" \
-    "$remote_harness/console.tgz" >/dev/null
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "install -d -m 0700 $remote_harness"
+  "$labctl" copy-to "$app_vm" "$workdir/app.tgz" \
+    "$remote_harness/app.tgz" >/dev/null
+  "$labctl" ssh "$app_vm" -- "
 set -e
 install -d $remote_sources
 rm -f $remote_sources/package.json
@@ -200,31 +200,31 @@ fi
 # binary: the pass would be green about code that was never compiled. The cost
 # is a full rebuild after each synchronisation, which is the price of a run
 # that provably tests what was just sent.
-tar -C $remote_sources -xzmf $remote_harness/console.tgz
-rm -f $remote_harness/console.tgz"
-  echo "sources synchronised into $console_vm:$remote_sources"
+tar -C $remote_sources -xzmf $remote_harness/app.tgz
+rm -f $remote_harness/app.tgz"
+  echo "sources synchronised into $app_vm:$remote_sources"
 }
 
-# The Console crate compiles against the sources this run synchronised. It is
+# The App crate compiles against the sources this run synchronised. It is
 # its own subcommand rather than a step of `run`: it owes nothing to the mounted
 # perimeter, it fails for its own reason, and either one must stay replayable
 # without paying for the other. `all` runs it first, so a protocol change that
-# breaks the Console is seen before the suite is paid for.
+# breaks the App is seen before the suite is paid for.
 check() {
-  install_script "$console_vm" check
-  "$labctl" ssh "$console_vm" -- "$remote_harness/check"
+  install_script "$app_vm" check
+  "$labctl" ssh "$app_vm" -- "$remote_harness/check"
 }
 
 run_suite() {
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run" "$@"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run" "$@"
 }
 
 remove() {
   local status=0
   "$labctl" ssh "$server_vm" -- "$remote_harness/remove-server" || status=1
-  "$labctl" ssh "$console_vm" -- "$remote_harness/remove-client" || status=1
+  "$labctl" ssh "$app_vm" -- "$remote_harness/remove-client" || status=1
   "$labctl" ssh "$server_vm" -- "rm -rf $remote_harness" || status=1
-  "$labctl" ssh "$console_vm" -- "rm -rf $remote_harness" || status=1
+  "$labctl" ssh "$app_vm" -- "rm -rf $remote_harness" || status=1
   [[ $status -eq 0 ]] || fail "the perimeter removal is not proven"
   echo "perimeter removed from both machines"
 }

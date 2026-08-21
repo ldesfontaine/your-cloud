@@ -22,7 +22,7 @@ distincts. `lab-machine-1` représente la machine du LAN et exécute seulement l
 Daemon. Le gateway autorise sa sortie vers le réseau public synthétique et
 n'ajoute aucune redirection entrante vers le site privé.
 
-Le build et les tests ont lieu dans `lab-console`. Le laptop sert seulement à
+Le build et les tests ont lieu dans `lab-app`. Le laptop sert seulement à
 éditer, inspecter Git et piloter `labctl`.
 
 ## Transport minimal confiné
@@ -139,7 +139,7 @@ conformité OWASP/NIS2, ni transport utilisable hors du LAB.
 
 ## Preuves de sortie
 
-1. construire l'exécutable unique et exécuter tous les tests dans `lab-console` ;
+1. construire l'exécutable unique et exécuter tous les tests dans `lab-app` ;
 2. prouver son empreinte identique sur les deux machines ;
 3. lancer Daemon et Relay en parallèle sur le VPS sous deux comptes distincts,
    puis le Daemon seul sur la machine du LAN et montrer deux états `recent` ;

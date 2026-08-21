@@ -1,6 +1,6 @@
 # La copie exacte que la fenêtre native rend, extraite du produit lui-même.
 # Source : PresentedPublicationPlan::confirmation_lines() sur les vecteurs
-# épinglés de console/src-tauri/src/publication_plan.rs, révision b2a8452.
+# épinglés de app/src-tauri/src/publication_plan.rs, révision b2a8452.
 # Une copie qui change rend cette feuille périmée : elle se régénère.
 #
 # famille	ligne

@@ -63,7 +63,7 @@ rm -f /etc/your-cloud/relay.crt /etc/your-cloud/relay.key /etc/your-cloud/daemon
   /etc/your-cloud/relay-candidate.json /etc/your-cloud/daemon.crt /etc/your-cloud/daemon.key \
   /etc/your-cloud/relay-ca.crt "$anchor"
 rm -rf /var/lib/your-cloud-auxiliary
-rm -f /usr/local/bin/lab-external-probe-fixture /usr/local/bin/lab-external-console "$artifact"
+rm -f /usr/local/bin/lab-external-probe-fixture /usr/local/bin/lab-external-app "$artifact"
 rmdir /usr/local/lib/your-cloud /etc/your-cloud 2>/dev/null || true
 
 interface=$(ip -4 route show default | awk '{print $5; exit}')

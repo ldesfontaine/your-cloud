@@ -31,7 +31,7 @@ EXPECTED_TOP_LEVEL = {
     "steps",
 }
 EXPECTED_STEP = {"id", "category", "title", "status"}
-EXPECTED_TARGETS = ["lab-console", "lab-coordinateur", "lab-machine-1", "lab-machine-2"]
+EXPECTED_TARGETS = ["lab-app", "lab-coordinateur", "lab-machine-1", "lab-machine-2"]
 ALLOWED_CATEGORIES = {"infrastructure", "assertion", "expected_refusal", "cleanup"}
 EXPECTED_STEPS = (
     ("inventory", "infrastructure", "Read-only LAB inventory guard"),
@@ -40,7 +40,7 @@ EXPECTED_STEPS = (
         "infrastructure",
         "Lock the LAB workspace and package the complete non-sensitive source lot",
     ),
-    ("source-gate", "assertion", "Single source-side gate and build in lab-console"),
+    ("source-gate", "assertion", "Single source-side gate and build in lab-app"),
     (
         "prepare-targets",
         "infrastructure",
@@ -479,8 +479,8 @@ td code {{ display:block; color:var(--muted); font-size:.78rem; }}
 
 
 def main() -> int:
-    if socket.gethostname() != "lab-console" or os.geteuid() != 0:
-        print("renderer must run as root in lab-console", file=sys.stderr)
+    if socket.gethostname() != "lab-app" or os.geteuid() != 0:
+        print("renderer must run as root in lab-app", file=sys.stderr)
         return 1
     if len(sys.argv) == 3 and sys.argv[1] == "--p1-fingerprints":
         source = Path(sys.argv[2])

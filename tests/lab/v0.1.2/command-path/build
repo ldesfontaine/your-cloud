@@ -8,16 +8,16 @@
 #
 # `npm run tauri build` runs `tsc --noEmit` before `vite build`, so a type this
 # harness got wrong reddens here rather than at the pilot: this is the only
-# type check of the Console this project has, the workstation carrying no
+# type check of the App this project has, the workstation carrying no
 # `node_modules`.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
-sources=/root/your-cloud-console-build
+sources=/root/your-cloud-app-build
 
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
-[[ -f "$sources/package.json" ]] || fail "the console sources are not synced; run the sync phase first"
+[[ -f "$sources/package.json" ]] || fail "the app sources are not synced; run the sync phase first"
 
 # The disk guard, and it is not decoration: on 12 August 2026 a release build
 # succeeded and `dpkg --install` then died on « No space left on device »,
@@ -66,7 +66,7 @@ version=$(dpkg-deb --field "$deb" Version)
 echo "  installing $deb"
 dpkg --install "$deb" >/dev/null
 
-for binary in /usr/bin/your-cloud-console /usr/bin/your-cloud-native-bootstrap-assistant; do
+for binary in /usr/bin/your-cloud-app /usr/bin/your-cloud-native-bootstrap-assistant; do
   [[ -x "$binary" ]] || fail "$binary is absent after installation"
 done
 

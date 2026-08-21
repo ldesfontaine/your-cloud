@@ -2,7 +2,7 @@
 # Run every bundle, preflight and rollback case against the Assistant's own
 # gates, each refusal beside its positive control.
 #
-# It runs in lab-console, which is where the Assistant lives. Every verdict here
+# It runs in lab-app, which is where the Assistant lives. Every verdict here
 # comes out of the compiled `installation` module through the fixture binary —
 # nothing in this file compares a digest itself, because a harness that judged
 # on its own behalf would stay green against a product that had stopped
@@ -109,7 +109,7 @@ refuses "a bundle the anchor signed for another version" "UnexpectedVersion" \
   verify-bundle "$anchor" "$work/otherversion.json" "$work/otherversion.sig" "$version" "$artifact"
 
 # Signed by the anchor, but not a server bundle manifest at all.
-sign_as_anchor foreign "$(sed 's/your-cloud-server-bundle/your-cloud-console-linux-candidate/' "$manifest")"
+sign_as_anchor foreign "$(sed 's/your-cloud-server-bundle/your-cloud-app-linux-candidate/' "$manifest")"
 refuses "a manifest the anchor signed for another kind" "ForeignKind" \
   verify-bundle "$anchor" "$work/foreign.json" "$work/foreign.sig" "$version" "$artifact"
 

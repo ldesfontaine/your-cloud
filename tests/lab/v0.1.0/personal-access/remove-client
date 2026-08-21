@@ -60,7 +60,7 @@ fi
 # OpenSSH keys, so the literal lives in its source and in its binary.
 residual=$(grep -rl 'BEGIN OPENSSH PRIVATE KEY' /root \
   --exclude-dir=.cargo --exclude-dir=.rustup --exclude-dir=work \
-  --exclude-dir=your-cloud-console-build \
+  --exclude-dir=your-cloud-app-build \
   --exclude-dir=your-cloud-lab-personal-access 2>/dev/null || true)
 if [[ -n "$residual" ]]; then
   echo "private key material left under /root: $residual" >&2

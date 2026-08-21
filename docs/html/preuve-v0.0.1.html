@@ -36,13 +36,13 @@
       <article class="card"><strong>20 étapes structurées</strong><p>Révision, empreintes, topologie, cibles, fenêtre Relay et nettoyage sont écrits dans <code>result.json</code> par une liste de champs fixe et expurgée.</p></article>
       <article class="card"><strong>start-limit-hit → récupération</strong><p>Manifeste <code>0666</code>, refus avant <code>reset-failed</code>, puis retour du Relay ; le Daemon colocalisé reste indépendant.</p></article>
       <article class="card"><strong>2 processus hors unité refusés</strong><p><code>disable-relay</code> et <code>remove-agent</code> conservent les fichiers tant qu'un Relay ou Daemon synthétique demeure.</p></article>
-      <article class="card"><strong>nobody · 127.0.0.1:18080</strong><p>Le rapport généré est servi et capturé seulement dans <code>lab-console</code>. Un échec injecté prouve aussi l'arrêt du serveur.</p></article>
+      <article class="card"><strong>nobody · 127.0.0.1:18080</strong><p>Le rapport généré est servi et capturé seulement dans <code>lab-app</code>. Un échec injecté prouve aussi l'arrêt du serveur.</p></article>
     </div>
     <p class="limit"><strong>Autorité :</strong> la page et la capture P2 prouvent leur rendu, jamais le produit. Les codes de sortie et assertions machine de <code>result.json</code> restent le critère de réussite.</p>
     <p class="limit"><strong>Référence historique post-réorganisation :</strong> lot source <code>ae7ba5d3…b833923</code> · artefact <code>4d58798e…f0d41</code> · résultat P1 <code>7f0d62b5…23f1c1</code> · résultat P2 <code>1107e4a1…f9171</code> · capture <code>2f223461…1fad05</code>. Les assertions machine restent l'autorité de ces empreintes ; ce lot précède les derniers changements d'orchestration et de CI.</p>
 
     <h2>Chaîne de build historique et résultat nominal</h2>
-    <div class="capture"><pre>lab-console · Go 1.24.4 · linux/amd64
+    <div class="capture"><pre>lab-app · Go 1.24.4 · linux/amd64
 gofmt       PASS
 bash -n     PASS
 check-docs  PASS · 6 décisions · 52 blocs · 72 liens

@@ -3,7 +3,7 @@
 #
 # Everything installed here is synthetic and root-owned: one approval anchor
 # built from a synthetic seed, one empty anti-replay directory, the product
-# binary and the fixture that stands in for the Console core. No real key, no
+# binary and the fixture that stands in for the App core. No real key, no
 # real infrastructure and no service are created.
 set -euo pipefail
 

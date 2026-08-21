@@ -12,8 +12,8 @@
 # used by this proof at all and is left exactly as it was.
 #
 # One VM plays every authority this palier separates, and that is honest rather
-# than convenient: the Controller, the Console and the certificate authority of
-# the declared names are a synthetic fixture — the Console window is not wired
+# than convenient: the Controller, the App and the certificate authority of
+# the declared names are a synthetic fixture — the App window is not wired
 # to this proof — while the Auxiliary is the real product binary, built from the
 # synchronised sources, running as root against a real systemd, a real rootless
 # Podman, a real registry and a real Traefik.
@@ -127,7 +127,7 @@ setup() {
   done
 
   # The product sources this run proves, and the synthetic fixture that stands
-  # in for the Controller, the Console and the certificate authority. The
+  # in for the Controller, the App and the certificate authority. The
   # fixture is placed *inside* the module because it asks internal/plan for the
   # canonical plan documents; it exists only in this copy and is never a package
   # of the product.
@@ -258,9 +258,9 @@ what this proof does not claim, whatever its outcome:
     resolvable name belong to the real infrastructure; what is proven here is
     the route and TLS mechanism, which does not change when the certificate
     changes source.
-  - the Console window is not wired to this run. The Controller and the Console
+  - the App window is not wired to this run. The Controller and the App
     are a fixture: what the machine is proven to do is what it does with
-    documents it did not write, and interoperability with the real Console is
+    documents it did not write, and interoperability with the real App is
     held by the pinned cross-language vector and not by this proof.
   - the hosted gate does not run this harness. It needs libvirt, a LAB and
     fifteen minutes; the quota debt of the September candidate covers it.

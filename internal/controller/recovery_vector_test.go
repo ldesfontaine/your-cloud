@@ -11,7 +11,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/protocol"
 )
 
-func TestRecoveryDerivationVectorMatchesConsoleContract(t *testing.T) {
+func TestRecoveryDerivationVectorMatchesAppContract(t *testing.T) {
 	code := make([]byte, 32)
 	salt := make([]byte, 32)
 	spki := make([]byte, 32)

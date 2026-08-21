@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func activeSessionFixture(t *testing.T) (*AuthorityStore, *x509.Certificate, testConsoleIdentity, time.Time) {
+func activeSessionFixture(t *testing.T) (*AuthorityStore, *x509.Certificate, testAppIdentity, time.Time) {
 	t.Helper()
 	directory := privateTestDirectory(t)
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
@@ -23,7 +23,7 @@ func activeSessionFixture(t *testing.T) (*AuthorityStore, *x509.Certificate, tes
 	}
 	pairing, _ := NewPairingManager(authority)
 	pairing.now = func() time.Time { return now }
-	identity := newTestConsoleIdentity(t)
+	identity := newTestAppIdentity(t)
 	certificate := enrollTestIdentity(t, pairing, "enrollment", nil, identity)
 	return authority, certificate, identity, now
 }

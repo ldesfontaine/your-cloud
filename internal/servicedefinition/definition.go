@@ -14,7 +14,7 @@
 // than over the received bytes — and they share no field, no bound and no
 // domain, so neither can ever grow because the other did.
 //
-// The transcript below is the counterpart of the one written on the Console
+// The transcript below is the counterpart of the one written on the App
 // side. The two are held against one another by deterministic vectors on both
 // sides rather than by reading, because a canonical encoding that exists in two
 // implementations is only canonical while the two agree byte for byte.
@@ -78,7 +78,7 @@ const (
 	//
 	// It is the bound of the contract and it is its own: a definition carries
 	// lists no plan has ever carried, and this is twice the plan bound while
-	// staying small enough for the Console to always display the whole document.
+	// staying small enough for the App to always display the whole document.
 	// The two bounds are separate so that neither document grows one day because
 	// the other did.
 	MaxDefinitionBytes = 8192

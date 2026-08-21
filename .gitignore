@@ -5,15 +5,15 @@ dist/
 build/
 *.egg-info/
 .ansible/
-/console/node_modules/
-/console/dist/
-/console/dist-reflow/
-/console/src-tauri/gen/
-/console/src-tauri/target/
-/console/src-tauri/binaries/
+/app/node_modules/
+/app/dist/
+/app/dist-reflow/
+/app/src-tauri/gen/
+/app/src-tauri/target/
+/app/src-tauri/binaries/
 # Le lot serveur préparé pour l'embarquement : reconstruit ou re-vérifié à
 # chaque build contre le manifeste signé committé, jamais versionné lui-même.
-/console/src-tauri/server-bundle/
+/app/src-tauri/server-bundle/
 
 # Sorties de preuve locales ; seule leur convention est versionnée.
 /tests/artifacts/*

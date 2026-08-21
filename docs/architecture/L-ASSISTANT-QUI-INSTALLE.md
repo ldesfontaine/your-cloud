@@ -50,14 +50,14 @@ contrats qui les portent.
 
 | Constat | Où |
 |---|---|
-| `BootstrapAction` n'a qu'une variante, `AuditTargetReadOnly` | `console/src-tauri/crates/bootstrap-protocol/src/lib.rs:152-154` |
+| `BootstrapAction` n'a qu'une variante, `AuditTargetReadOnly` | `app/src-tauri/crates/bootstrap-protocol/src/lib.rs:152-154` |
 | la moitié qui juge existe entière : `anchor`, `embedded`, `bundle`, `preflight`, `association`, `plan`, `rollback` | `crates/native-bootstrap-assistant/src/installation.rs` |
 | `plan::authorize` exige les quatre témoins par type et n'est appelé par aucun code de production | `installation/plan.rs:179-184`, appelants : fixtures LAB seules |
 | aucun `dpkg`, aucun `systemctl` exécuté par le produit | grep du crate : commentaires et fixtures seulement |
 | la fixture d'installation le dit elle-même : « it performs no installation and it holds no privilege » | `src/controller_install_fixture.rs:1-14` |
 | le lot serveur est embarqué, signé, et l'Assistant le retrouve depuis sa position attestée | `installation/embedded.rs`, mode `--verify-embedded-server-bundle` |
-| l'IHM ne propose qu'« Associer » ; `start_bootstrap` est déclaré et jamais appelé | `console/src/product/access-views.tsx:207-214`, `native.ts:136-141` |
-| `bootstrap_status` efface le succès sans le nommer au frontend | `console/src-tauri/src/lib.rs:369-375` |
+| l'IHM ne propose qu'« Associer » ; `start_bootstrap` est déclaré et jamais appelé | `app/src/product/access-views.tsx:207-214`, `native.ts:136-141` |
+| `bootstrap_status` efface le succès sans le nommer au frontend | `app/src-tauri/src/lib.rs:369-375` |
 
 C'est la dette que la règle de preuve de
 [`QUALITE.md`](../contribution/QUALITE.md) nomme : chaque preuve
@@ -72,7 +72,7 @@ l'Assistant s'y prend. Deux variantes s'ajoutent à `AuditTargetReadOnly` :
 | Variante | Ce que l'humain approuve | Étapes du plan couvertes |
 |---|---|---|
 | `InstallServerBundle` | porter le lot vérifié jusqu'à la machine choisie puis l'y poser : le transfert et sa relecture d'empreinte, le paquet par `dpkg`, la configuration de cette machine, l'état privé, les sources de credentials. **Rien n'écoute encore** : les trois unités restent livrées inactives | `TransferBundle` → `InstallCredentialSources` |
-| `ActivateApprovedController` | activer la seule unité approuvée, associer cette Console, jouer le prévol depuis le Controller | `ActivateController` → `Preflight` |
+| `ActivateApprovedController` | activer la seule unité approuvée, associer cette App, jouer le prévol depuis le Controller | `ActivateController` → `Preflight` |
 
 ### Décision tranchée : deux variantes, pas une et pas sept
 
@@ -89,7 +89,7 @@ montre l'une puis l'autre par des phrases, comme le parcours utilisateur de
 
 ### Décision tranchée : le transfert est une étape du plan, non privilégiée
 
-Le lot vit dans le paquet de la Console ; `dpkg` court sur la cible. Entre les
+Le lot vit dans le paquet de l'App ; `dpkg` court sur la cible. Entre les
 deux, six mégaoctets traversent — et **un fichier de six mégaoctets qui
 apparaît sur une machine est un effet**. Tout effet de ce produit naît d'un plan
 approuvé et visible : le transfert est donc `TransferBundle`, première étape de
@@ -156,7 +156,7 @@ Chaque étape se conclut par une observation, jamais par un code de sortie :
   avec les budgets déclarés, à l'écoute de l'adresse privée déclarée — les
   valeurs que la preuve `#38` relevait au harnais, relevées désormais par le
   produit ;
-- après `AssociateConsole` et `Preflight` : l'association existe et chaque
+- après `AssociateApp` et `Preflight` : l'association existe et chaque
   endpoint déclaré a répondu sa clé confirmée **depuis le Controller**.
 
 Ce qui est constaté entre au registre ; ce qui n'a pas été constaté y entre
@@ -306,7 +306,7 @@ preuves passées y remplaçaient — `controller_install_fixture.rs` en tête �
 cette liste ferme vide. La fixture sort du trajet prouvé ; si elle survit,
 c'est hors trajet et nommée.
 
-1. la vraie Console installée, pilotée à l'écran, déroule « Créer une
+1. la vraie App installée, pilotée à l'écran, déroule « Créer une
    infrastructure » jusqu'au Controller actif sur `lab-machine-1` — chaque
    maillon exercé par les binaires livrés ;
 2. le lot installé est le lot embarqué : la version, la taille et l'empreinte
@@ -339,7 +339,7 @@ c'est hors trajet et nommée.
 
 ## Justification de sécurité
 
-- **Scénario et actifs.** Un humain installe, depuis sa Console, un Controller
+- **Scénario et actifs.** Un humain installe, depuis son App, un Controller
   sur une machine privée qu'il possède. Actifs : l'accès root temporaire prêté,
   le lot serveur, l'état et les credentials naissants du Controller, la machine
   elle-même.
@@ -369,7 +369,7 @@ c'est hors trajet et nommée.
   exacts), continuité (retour prouvé à l'état antérieur), développement sûr
   (témoins par type, preuve sans fixture).
 - **Risque résiduel.** Une compromission complète de la machine cible ou du
-  poste de la Console reste hors de portée de ce contrat ; l'humain qui
+  poste de l'App reste hors de portée de ce contrat ; l'humain qui
   approuve reste l'autorité que rien ne double-vérifie ; la reprise après
   coupure demande un geste humain informé, et un attaquant tenant la session
   élevée pendant sa durée de vie peut ce que la session peut.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Transfer the v0.0.1 binary directly from lab-console to one guarded LAB target.
-# The private client key never leaves lab-console. Root only prepares and removes
+# Transfer the v0.0.1 binary directly from lab-app to one guarded LAB target.
+# The private client key never leaves lab-app. Root only prepares and removes
 # a temporary account; the fixed receiver runs non-root, accepts at most 64 MiB
-# from the console's fixed IPv6, and cannot execute a caller-supplied command.
+# from the app's fixed IPv6, and cannot execute a caller-supplied command.
 # The host-key bootstrap remains the observation returned through the managed
 # labctl channel: the direct flow checks and pins it, but does not create an
 # independent cryptographic identity anchor.
@@ -10,7 +10,7 @@ set -eEuo pipefail
 
 transfer_user=your-cloud-xfer
 transfer_group=your-cloud-xfer
-console_source_ipv6=fd66:241::193
+app_source_ipv6=fd66:241::193
 remote_artifact=/tmp/your-cloud-v0.0.1-artifact
 max_artifact_bytes=$((64 * 1024 * 1024))
 managed_marker=your-cloud-v0.0.1-direct-artifact-transfer
@@ -56,17 +56,17 @@ validate_key() {
   [[ "$2" =~ ^[A-Za-z0-9+/]+={0,3}$ && ${#2} -le 256 ]] || die "invalid or unbounded Ed25519 public key"
 }
 
-validate_console_state() {
-  [[ "$1" =~ ^/tmp/your-cloud-v0\.0\.1-transfer-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "invalid lab-console transfer state path"
+validate_app_state() {
+  [[ "$1" =~ ^/tmp/your-cloud-v0\.0\.1-transfer-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "invalid lab-app transfer state path"
 }
 
 validate_target_state() {
   [[ "$1" =~ ^/run/your-cloud-v0\.0\.1-transfer-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "invalid target transfer state path"
 }
 
-require_console() {
+require_app() {
   require_root
-  [[ $(hostname) == lab-console ]] || die "this operation must run in lab-console"
+  [[ $(hostname) == lab-app ]] || die "this operation must run in lab-app"
 }
 
 require_named_target() {
@@ -86,12 +86,12 @@ has_ipv6_address() {
       '
 }
 
-require_console_state() {
+require_app_state() {
   local state=$1
-  validate_console_state "$state"
-  [[ -d "$state" && ! -L "$state" ]] || die "lab-console transfer state is absent or unsafe"
-  [[ -f "$state/.managed" && ! -L "$state/.managed" ]] || die "lab-console transfer marker is absent"
-  [[ $(<"$state/.managed") == "$managed_marker" ]] || die "lab-console transfer marker is not owned by this helper"
+  validate_app_state "$state"
+  [[ -d "$state" && ! -L "$state" ]] || die "lab-app transfer state is absent or unsafe"
+  [[ -f "$state/.managed" && ! -L "$state/.managed" ]] || die "lab-app transfer marker is absent"
+  [[ $(<"$state/.managed") == "$managed_marker" ]] || die "lab-app transfer marker is not owned by this helper"
 }
 
 require_target_state() {
@@ -104,7 +104,7 @@ require_target_state() {
 
 artifact_metadata() {
   local artifact=$1 sha size
-  [[ "$artifact" == /tmp/your-cloud-v0.0.1-src/dist/your-cloud ]] || die "unexpected lab-console artifact path"
+  [[ "$artifact" == /tmp/your-cloud-v0.0.1-src/dist/your-cloud ]] || die "unexpected lab-app artifact path"
   [[ -f "$artifact" && ! -L "$artifact" && -x "$artifact" ]] || die "LAB build artifact is not a regular executable"
   size=$(stat -c %s "$artifact")
   validate_size "$size"
@@ -114,14 +114,14 @@ artifact_metadata() {
   printf '%s\t%s\n' "$sha" "$size"
 }
 
-console_prepare() {
-  [[ $# -eq 3 ]] || die "usage: console-prepare <state> <artifact> <source-ipv6>"
+app_prepare() {
+  [[ $# -eq 3 ]] || die "usage: app-prepare <state> <artifact> <source-ipv6>"
   local state=$1 artifact=$2 source_ipv6=$3 metadata key_type key_blob ignored
-  require_console
-  validate_console_state "$state"
-  [[ "$source_ipv6" == "$console_source_ipv6" ]] || die "unexpected lab-console source IPv6"
-  has_ipv6_address "$source_ipv6" || die "fixed lab-console IPv6 address is absent"
-  [[ ! -e "$state" ]] || die "lab-console transfer state already exists"
+  require_app
+  validate_app_state "$state"
+  [[ "$source_ipv6" == "$app_source_ipv6" ]] || die "unexpected lab-app source IPv6"
+  has_ipv6_address "$source_ipv6" || die "fixed lab-app IPv6 address is absent"
+  [[ ! -e "$state" ]] || die "lab-app transfer state already exists"
   require_command ssh-keygen
   install -d -o root -g root -m 0700 "$state"
   printf '%s\n' "$managed_marker" >"$state/.managed"
@@ -156,21 +156,21 @@ write_known_host() {
   ssh-keygen -l -f "$state/known_hosts" >/dev/null || die "pinned known_hosts entry is invalid"
 }
 
-console_pin_host() {
-  [[ $# -eq 5 ]] || die "usage: console-pin-host <state> <target> <target-ipv6> <key-type> <key>"
+app_pin_host() {
+  [[ $# -eq 5 ]] || die "usage: app-pin-host <state> <target> <target-ipv6> <key-type> <key>"
   local state=$1 target=$2 address=$3 key_type=$4 key_blob=$5
-  require_console
-  require_console_state "$state"
+  require_app
+  require_app_state "$state"
   observe_host_key "$target" "$address" "$key_type" "$key_blob"
   write_known_host "$state" "$target" "$key_type" "$key_blob"
 }
 
-console_pin_wrong_host_for_test() {
-  [[ $# -eq 5 ]] || die "usage: console-pin-wrong-host-for-test <state> <target> <target-ipv6> <key-type> <key>"
+app_pin_wrong_host_for_test() {
+  [[ $# -eq 5 ]] || die "usage: app-pin-wrong-host-for-test <state> <target> <target-ipv6> <key-type> <key>"
   local state=$1 target=$2 address=$3 host_type=$4 host_blob=$5
   local client_type client_blob ignored
-  require_console
-  require_console_state "$state"
+  require_app
+  require_app_state "$state"
   observe_host_key "$target" "$address" "$host_type" "$host_blob"
   read -r client_type client_blob ignored <"$state/id_ed25519.pub"
   validate_key "$client_type" "$client_blob"
@@ -184,11 +184,11 @@ guarded_ssh() {
   local expected_sha=$7 expected_size=$8 metadata actual_sha actual_size
   local output expected_output ssh_error stderr_file status=0
   local -a ssh_options
-  require_console
-  require_console_state "$state"
+  require_app
+  require_app_state "$state"
   validate_target "$target" "$address"
-  [[ "$source_ipv6" == "$console_source_ipv6" ]] || die "unexpected transfer source IPv6"
-  has_ipv6_address "$source_ipv6" || die "fixed lab-console IPv6 address is absent"
+  [[ "$source_ipv6" == "$app_source_ipv6" ]] || die "unexpected transfer source IPv6"
+  has_ipv6_address "$source_ipv6" || die "fixed lab-app IPv6 address is absent"
   validate_sha256 "$expected_sha"
   validate_size "$expected_size"
   metadata=$(artifact_metadata "$artifact")
@@ -278,25 +278,25 @@ guarded_ssh() {
   printf 'PASS: direct artifact transfer to %s verified SHA-256 and %s bytes\n' "$target" "$expected_size"
 }
 
-console_send() {
-  [[ $# -eq 7 ]] || die "usage: console-send <state> <artifact> <source-ipv6> <target> <target-ipv6> <sha256> <size>"
+app_send() {
+  [[ $# -eq 7 ]] || die "usage: app-send <state> <artifact> <source-ipv6> <target> <target-ipv6> <sha256> <size>"
   guarded_ssh transfer "$@"
 }
 
-console_prove_host_key_refusal() {
-  [[ $# -eq 7 ]] || die "usage: console-prove-host-key-refusal <state> <artifact> <source-ipv6> <target> <target-ipv6> <sha256> <size>"
+app_prove_host_key_refusal() {
+  [[ $# -eq 7 ]] || die "usage: app-prove-host-key-refusal <state> <artifact> <source-ipv6> <target> <target-ipv6> <sha256> <size>"
   guarded_ssh expect-host-key-refusal "$@"
 }
 
-console_cleanup() {
-  [[ $# -eq 1 ]] || die "usage: console-cleanup <state>"
+app_cleanup() {
+  [[ $# -eq 1 ]] || die "usage: app-cleanup <state>"
   local state=$1
-  require_console
-  validate_console_state "$state"
+  require_app
+  validate_app_state "$state"
   [[ -e "$state" ]] || return 0
-  require_console_state "$state"
+  require_app_state "$state"
   rm -rf -- "$state"
-  [[ ! -e "$state" ]] || die "lab-console ephemeral SSH state remains"
+  [[ ! -e "$state" ]] || die "lab-app ephemeral SSH state remains"
 }
 
 target_host_key() {
@@ -375,7 +375,7 @@ target_prepare() {
   require_named_target "$target"
   validate_target_state "$state"
   validate_target "$target" "$address"
-  [[ "$source_ipv6" == "$console_source_ipv6" ]] || die "unexpected authorized source IPv6"
+  [[ "$source_ipv6" == "$app_source_ipv6" ]] || die "unexpected authorized source IPv6"
   has_ipv6_address "$address" || die "fixed target IPv6 address is absent"
   validate_sha256 "$expected_sha"
   validate_size "$expected_size"
@@ -477,12 +477,12 @@ target_finalize() {
 operation=$1
 shift
 case "$operation" in
-  console-prepare) console_prepare "$@" ;;
-  console-pin-host) console_pin_host "$@" ;;
-  console-pin-wrong-host-for-test) console_pin_wrong_host_for_test "$@" ;;
-  console-send) console_send "$@" ;;
-  console-prove-host-key-refusal) console_prove_host_key_refusal "$@" ;;
-  console-cleanup) console_cleanup "$@" ;;
+  app-prepare) app_prepare "$@" ;;
+  app-pin-host) app_pin_host "$@" ;;
+  app-pin-wrong-host-for-test) app_pin_wrong_host_for_test "$@" ;;
+  app-send) app_send "$@" ;;
+  app-prove-host-key-refusal) app_prove_host_key_refusal "$@" ;;
+  app-cleanup) app_cleanup "$@" ;;
   target-host-key) target_host_key "$@" ;;
   target-prepare) target_prepare "$@" ;;
   target-assert-empty) target_assert_empty "$@" ;;

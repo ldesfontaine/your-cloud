@@ -28,9 +28,9 @@ import (
 // copies them into this service's private credential directory at start.
 //
 // The endpoint sheet — address, port, account, pinned host key — lives here and
-// never in the inventory: the inventory is readable and writable by the Console,
-// and an address the Console could rewrite would be a Console that chooses where
-// a command goes. The Console names a machine; it never names an endpoint.
+// never in the inventory: the inventory is readable and writable by the App,
+// and an address the App could rewrite would be an App that chooses where
+// a command goes. The App names a machine; it never names an endpoint.
 const (
 	commandIdentitiesCredential = "command-identities"
 	commandEndpointsCredential  = "command-endpoints"

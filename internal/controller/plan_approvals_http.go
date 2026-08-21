@@ -36,16 +36,16 @@ const maxPlanApprovalRequestBytes = int64(2*(approval.MaxSignedApprovalBytes+
 
 const planApprovalSchema = 1
 
-// planApprovalRequest is everything the Console may submit: the approval's
+// planApprovalRequest is everything the App may submit: the approval's
 // exact signed bytes, the pair those bytes sign, and the definition exactly
-// when the operation's door pins one. The Console names no address, no port,
+// when the operation's door pins one. The App names no address, no port,
 // no host key and no identity — it names a machine inside the envelope it
 // signed, and everything else is a fact of enrolment this Controller reads on
 // its own disk.
 //
 // The documents travel as their exact canonical bytes inside JSON strings,
 // the one transport form this product gives a document: this Controller
-// recanonises and rehashes them itself, and believes neither the Console nor
+// recanonises and rehashes them itself, and believes neither the App nor
 // its own earlier freeze.
 type planApprovalRequest struct {
 	SchemaVersion      int             `json:"schema_version"`
@@ -55,7 +55,7 @@ type planApprovalRequest struct {
 	DefinitionDocument string          `json:"definition_document"`
 }
 
-// PlanDispatchEntry is one dispatch as the Console reads it: state, instants,
+// PlanDispatchEntry is one dispatch as the App reads it: state, instants,
 // digests, and what the machine reported or answered — nothing mutated, and
 // nothing omitted that the registry holds.
 type PlanDispatchEntry struct {
@@ -79,7 +79,7 @@ type PlanDispatchEntry struct {
 }
 
 // PlanDispatchesView is the bounded history, oldest first, every machine
-// together: the Console filters, this Controller does not choose for it.
+// together: the App filters, this Controller does not choose for it.
 type PlanDispatchesView struct {
 	SchemaVersion int                 `json:"schema_version"`
 	Dispatches    []PlanDispatchEntry `json:"dispatches"`
@@ -148,7 +148,7 @@ func commandTrajectoryRoute(path string) bool {
 }
 
 // approvalRefusals is the closed list of this route. Every name carries a
-// sentence in the Console; none carries another's status. The statuses tell
+// sentence in the App; none carries another's status. The statuses tell
 // the classes apart the way the package already does: a malformed request is
 // 400, a machine this Controller does not manage is the existing 422, an
 // authority that fails its own verification is 422, and signed bytes already
@@ -206,7 +206,7 @@ func (handler *ControllerHandler) servePlanApprovals(response http.ResponseWrite
 	}
 
 	// The signature is verified under the human approval key of this
-	// association — the key the Console's native core signs with — read from
+	// association — the key the App's native core signs with — read from
 	// this Controller's own authority store, never from the document.
 	device, err := handler.authority.AuthorizeActive(certificate, handler.now())
 	if err != nil {
@@ -296,7 +296,7 @@ func (handler *ControllerHandler) servePlanApprovals(response http.ResponseWrite
 
 	// From here the authority is spent whatever happens, and the launch is
 	// the dispatcher's. Its conclusion is written durably before the answer:
-	// an answer that outran its own state would let a Console read a history
+	// an answer that outran its own state would let an App read a history
 	// this Controller had not written yet.
 	conclusion := handler.dispatcher.Dispatch(record, wrapper)
 	finished := uint64(handler.now().Unix())

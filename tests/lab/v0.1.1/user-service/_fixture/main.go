@@ -4,7 +4,7 @@
 //   - the Controller, for the two things `v0.1.1` adds to it — freezing a
 //     definition and reading it back, and building the pair of a plan that pins
 //     one — plus the seven pairs the reference scenario of `v0.1.0` still needs;
-//   - the Console, which shows a pair to a human and signs the envelope naming
+//   - the App, which shows a pair to a human and signs the envelope naming
 //     their two digests;
 //   - the certificate authority of the declared names, which no plan describes
 //     and which the Auxiliary never writes into;
@@ -34,12 +34,12 @@
 //     net/http, and share nothing with the product at all.
 //
 // What this fixture is **not** is the Controller's HTTP surface. It opens no
-// listener for a Console, mints no session and presents no client certificate:
+// listener for an App, mints no session and presents no client certificate:
 // the three routes of `v0.1.1` are held by their own Go tests, and what this
 // proof exercises is the engine on machines. The report says so.
 //
 // The seed is synthetic and the key material lives only as long as the run.
-// Interoperability with the real Console is proven by the pinned cross-language
+// Interoperability with the real App is proven by the pinned cross-language
 // vectors, never by this program.
 package main
 

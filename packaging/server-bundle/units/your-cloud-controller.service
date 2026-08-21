@@ -27,7 +27,7 @@ UMask=0077
 EnvironmentFile=/etc/your-cloud/controller.env
 # The operational keys stay root-owned on disk and are handed to this one
 # service at start. They never travel through the command line, the environment
-# or the Console. The Controller's own identity is required hard: it is minted
+# or the App. The Controller's own identity is required hard: it is minted
 # by a named act of the approved plan, before the first activation, and a
 # Controller without it is not a Controller.
 LoadCredential=controller-reader.crt:/etc/your-cloud/controller-credentials/controller-reader.crt

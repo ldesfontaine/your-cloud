@@ -24,7 +24,7 @@ import (
 // Controller's machine, and everything here is written to keep that one place
 // small (docs/architecture/TRAJET-DE-COMMANDE.md, maillon 4).
 //
-// The Console names a machine and hands over signed bytes. Everything else —
+// The App names a machine and hands over signed bytes. Everything else —
 // the address, the port, the account, the expected host key, the identity — is
 // a fact of enrolment this Controller reads on its own disk, in two root-owned
 // places it can only read: the command endpoint sheets and the command
@@ -67,9 +67,9 @@ const (
 )
 
 // commandEndpoint is the enrolment fact, and deliberately not part of the
-// inventory: the inventory is readable and writable by the Console, and an
-// address the Console could rewrite would be a Console that chooses where a
-// command goes. The Console names a machine; it never names an endpoint.
+// inventory: the inventory is readable and writable by the App, and an
+// address the App could rewrite would be an App that chooses where a
+// command goes. The App names a machine; it never names an endpoint.
 type commandEndpoint struct {
 	SchemaVersion int    `json:"schema_version"`
 	MachineID     string `json:"machine_id"`

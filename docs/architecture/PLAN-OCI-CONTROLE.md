@@ -4,7 +4,7 @@
 > Il fixe ce que `plan_sha256` et `rollback_sha256` de l'enveloppe
 > d'approbation attestent, la liste fermée des champs qu'un plan de ce palier
 > peut porter, et l'image de la sonde épinglée. Les implémentations le suivent
-> depuis `#82` (Controller), `#83` (Console), `#84` (Auxiliaire) et `#85` pour
+> depuis `#82` (Controller), `#83` (App), `#84` (Auxiliaire) et `#85` pour
 > le comportement après échec ; la preuve LAB du palier reste `#86`.
 
 ## Rôle du plan dans la chaîne existante
@@ -18,7 +18,7 @@ Le partage d'autorité ne change pas :
 
 - le **Controller** construit le plan et son rollback, les fige et les
   transporte ; il ne peut fabriquer aucune approbation ;
-- la **Console** présente les deux documents, recueille la confirmation native
+- l'**App** présente les deux documents, recueille la confirmation native
   et signe l'enveloppe qui nomme leurs hachages exacts ;
 - l'**Auxiliaire** revérifie tout localement : signature contre l'ancre
   root-owned, époque, expiration, séquence anti-rejeu, puis conformité des
@@ -122,7 +122,7 @@ Décisions attachées à cette route :
   Relay fraîche ; exiger la preuve au présent reste le contrat des routes qui
   écrivent l'inventaire.
 - Les deux documents voyagent comme **chaînes JSON portant leurs octets
-  canoniques exacts**, accompagnés de leurs digests. La Console vérifie ainsi
+  canoniques exacts**, accompagnés de leurs digests. L'App vérifie ainsi
   les hachages sur les octets reçus sans posséder de ré-encodeur ; c'est la
   seule forme de transport, il n'en existe pas de seconde.
 

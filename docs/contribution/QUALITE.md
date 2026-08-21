@@ -128,7 +128,7 @@ Références de départ :
   l'invocation exacte de l'Auxiliaire, environnement réinitialisé, sans argument,
   `SETENV` ou règle `sudo` générale.
 - Faire signer l'enveloppe canonique du plan et de son rollback par le cœur
-  natif de la Console après confirmation explicite ; ne fournir au frontend
+  natif de l'App après confirmation explicite ; ne fournir au frontend
   aucune primitive de signature libre.
 - Revérifier localement signature, clé publique d'approbation, infrastructure,
   machine, époque, successeur exact de la séquence, action, version, expiration
@@ -136,7 +136,7 @@ Références de départ :
 - Consommer atomiquement la séquence avant la première mutation dans un état
   anti-rejeu root-owned minimal. Refuser les séquences anciennes ou déjà
   consommées avant et après redémarrage.
-- Après une récupération de Console qui remplace la clé humaine, refuser toute
+- Après une récupération de App qui remplace la clé humaine, refuser toute
   action jusqu'à la rotation des ancres par l'Assistant et l'accès SSH
   personnel ; ne jamais laisser le Controller tourner seul cette confiance.
 - Ne donner aucun accès réseau général à l'Auxiliaire. Une opération OCI peut

@@ -14,7 +14,7 @@
     <p class="eyebrow">Architecture · amorçage et remplacement</p>
     <!-- coherence: BOOTSTRAP-RECOVERY:start -->
     <h1>Créer l’autorité, puis fonctionner sans dépendance permanente au laptop.</h1>
-    <p class="lead">La Console lance un Assistant natif temporaire, utilise l’accès SSH déjà détenu par l’utilisateur, installe le premier Controller, puis lui transfère l’administration opérationnelle. Le même parcours permet plus tard de remplacer explicitement un Controller perdu.</p>
+    <p class="lead">L'App lance un Assistant natif temporaire, utilise l’accès SSH déjà détenu par l’utilisateur, installe le premier Controller, puis lui transfère l’administration opérationnelle. Le même parcours permet plus tard de remplacer explicitement un Controller perdu.</p>
     <div class="statebar" aria-label="État du contrat">
       <span class="pill decided">Contrat décidé</span>
       <span class="pill pending">Partiellement implémenté</span>
@@ -25,8 +25,8 @@
     <div class="grid">
       <article class="card">
         <h3>Processus confiné avant exécution</h3>
-        <p>Le helper distinct est livré avec la Console ; les deux exécutables installables sont signés par la même identité Authenticode synthétique. Windows crée le helper suspendu avec les seules poignées d’entrée-sortie exactes dans <code>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</code>, l’assigne à un Job Object, vérifie son appartenance, puis reprend son thread.</p>
-        <p>Le Job suit les descendants. Une session n’est considérée nettoyée qu’après la fin de la racine et la preuve que le Job est vide ; annulation et échec arrêtent l’arbre entier. Si l’absence des processus ne peut pas être prouvée, tout nouveau lancement est refusé pour le processus Console courant.</p>
+        <p>Le helper distinct est livré avec l'App ; les deux exécutables installables sont signés par la même identité Authenticode synthétique. Windows crée le helper suspendu avec les seules poignées d’entrée-sortie exactes dans <code>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</code>, l’assigne à un Job Object, vérifie son appartenance, puis reprend son thread.</p>
+        <p>Le Job suit les descendants. Une session n’est considérée nettoyée qu’après la fin de la racine et la preuve que le Job est vide ; annulation et échec arrêtent l’arbre entier. Si l’absence des processus ne peut pas être prouvée, tout nouveau lancement est refusé pour le processus App courant.</p>
       </article>
       <article class="card">
         <h3>IPC WebView/Tauri vivant</h3>
@@ -51,13 +51,13 @@
       <div class="step"><b>3 · Approuver</b>Une fenêtre native hors WebView confirme cibles, actions, expiration et secrets nécessaires.</div>
       <div class="step"><b>4 · Transférer</b>Le Controller vérifie les routes SSH ; l’artefact précède chaque accès forcé en lecture seule.</div>
     </div>
-    <p class="handoff"><strong>Résultat attendu :</strong> fermer la Console ou éteindre le laptop n’arrête ni le Controller, ni l’administration future, ni les services déjà déployés.</p>
+    <p class="handoff"><strong>Résultat attendu :</strong> fermer l'App ou éteindre le laptop n’arrête ni le Controller, ni l’administration future, ni les services déjà déployés.</p>
 
     <h2>Le secret reste dans un helper natif hors WebView</h2>
     <div class="grid">
       <article class="card">
         <h3>Un processus par consentement</h3>
-        <p>La Console lance le binaire compagnon signé <code>your-cloud-native-bootstrap-assistant</code> avec la garde fixe <code>--native-bootstrap-assistant</code>. Son graphe autonome exclut Tauri, Wry, Tao, WebKit et JavaScriptCore. Des pipes anonymes typés livrent seulement le périmètre public immuable au helper et rendent au parent des états expurgés. Le véritable parent et le pair IPC sont vérifiés. L'expiration vaut cinq minutes sur une horloge native monotone et ne peut être ni renouvelée, ni prolongée par le frontend.</p>
+        <p>L'App lance le binaire compagnon signé <code>your-cloud-native-bootstrap-assistant</code> avec la garde fixe <code>--native-bootstrap-assistant</code>. Son graphe autonome exclut Tauri, Wry, Tao, WebKit et JavaScriptCore. Des pipes anonymes typés livrent seulement le périmètre public immuable au helper et rendent au parent des états expurgés. Le véritable parent et le pair IPC sont vérifiés. L'expiration vaut cinq minutes sur une horloge native monotone et ne peut être ni renouvelée, ni prolongée par le frontend.</p>
         <ul>
           <li>aucun secret dans l’IPC frontend, les arguments, l’environnement, une URL, un fichier ou un journal ;</li>
           <li>aucune réutilisation entre deux opérations ;</li>
@@ -80,7 +80,7 @@
         <p>Les buffers propres au helper sont zéroïsés ; les protections anti-dump restent best effort. Root, administrateur, débogueur arbitraire, IME ou accessibilité hostile, copies internes des widgets et dumps noyau restent hors garantie.</p>
       </article>
     </div>
-    <p class="boundary"><strong>Gate structurel exécuté :</strong> le binaire Console construit dans le LAB le 2 août 2026 déclare directement <code>libwebkit2gtk-4.1.so.0</code> et <code>libjavascriptcoregtk-4.1.so.0</code> dans <code>DT_NEEDED</code>. Le helper séparé est donc obligatoire, avec empreinte, graphe, SBOM et signature propres dans la même release. Les bindings Rust GTK3 <code>0.18.2</code>, peu maintenus, restent épinglés et audités avec le verrou, la licence du composant système et le paquet réel ; un risque non maîtrisable impose une autre surface native avant release.</p>
+    <p class="boundary"><strong>Gate structurel exécuté :</strong> le binaire App construit dans le LAB le 2 août 2026 déclare directement <code>libwebkit2gtk-4.1.so.0</code> et <code>libjavascriptcoregtk-4.1.so.0</code> dans <code>DT_NEEDED</code>. Le helper séparé est donc obligatoire, avec empreinte, graphe, SBOM et signature propres dans la même release. Les bindings Rust GTK3 <code>0.18.2</code>, peu maintenus, restent épinglés et audités avec le verrou, la licence du composant système et le paquet réel ; un risque non maîtrisable impose une autre surface native avant release.</p>
 
     <h2>Deux catégories SSH, pas une troisième autorité</h2>
     <div class="authorities">
@@ -107,7 +107,7 @@
         </ul>
       </article>
     </div>
-    <p class="not-third"><strong>À distinguer :</strong> l’authentification Console–Controller autorise l’humain et son appareil dans le produit. Elle n’est pas une autorité SSH sur les machines et ne devient pas une troisième voie de secours.</p>
+    <p class="not-third"><strong>À distinguer :</strong> l’authentification App–Controller autorise l’humain et son appareil dans le produit. Elle n’est pas une autorité SSH sur les machines et ne devient pas une troisième voie de secours.</p>
 
     <h2>Création et transfert d’autorité</h2>
     <div class="grid">
@@ -133,16 +133,16 @@
       </article>
     </div>
     <p class="boundary"><strong>Approbation d’une action :</strong> après confirmation, le cœur natif signe une enveloppe canonique liant infrastructure, machine, époque, successeur exact de la séquence, plan, rollback, privilèges et expiration. La cible conserve la clé publique et consomme atomiquement la séquence dans un état root-owned minimal ; le Controller transporte sans pouvoir modifier, forger, sauter une séquence ou faire accepter un rejeu.</p>
-    <p class="boundary"><strong>Cohabitation :</strong> sur une petite infrastructure, le Controller peut partager un hôte avec d’autres rôles isolés, mais pas leur domaine de panne matériel. Les services des autres hôtes continuent si le Controller est perdu ; un service colocalisé peut être interrompu par la perte ou l’isolement de cet hôte. La Console doit rendre ce risque visible avant le placement.</p>
+    <p class="boundary"><strong>Cohabitation :</strong> sur une petite infrastructure, le Controller peut partager un hôte avec d’autres rôles isolés, mais pas leur domaine de panne matériel. Les services des autres hôtes continuent si le Controller est perdu ; un service colocalisé peut être interrompu par la perte ou l’isolement de cet hôte. L'App doit rendre ce risque visible avant le placement.</p>
 
     <h2>Remplacer explicitement un Controller perdu</h2>
     <p class="lead">Une simple indisponibilité ne déclenche rien. L’utilisateur choisit <code>Remplacer un Controller</code>, redéclare les endpoints si l’ancien inventaire est perdu et prête de nouveau son accès personnel.</p>
     <div class="replace" aria-label="Rotation lors du remplacement du Controller">
       <article class="controller old"><h3>Ancien Controller</h3><p>Toute autorité qu’il pouvait exercer devient candidate à rotation. S’il est soupçonné compromis, son hôte est isolé avant de continuer.</p></article>
       <div class="arrow" aria-hidden="true">→</div>
-      <article class="controller new"><h3>Nouveau Controller</h3><p>Sur une base saine, il reçoit une nouvelle association Console, un nouveau lecteur Relay et de nouvelles autorités vérifiées avant retrait.</p></article>
+      <article class="controller new"><h3>Nouveau Controller</h3><p>Sur une base saine, il reçoit une nouvelle association App, un nouveau lecteur Relay et de nouvelles autorités vérifiées avant retrait.</p></article>
     </div>
-    <p class="boundary"><strong>Invariant :</strong> association Console, identité et filtre du lecteur Relay, époque d’approbation, clés SSH, certificats, sessions et manifestes exposés sont tournés ; comptes, clés et droits personnels restent intacts. Une coupure rend <code>ancien seul</code>, <code>chevauchement borné</code>, <code>nouveau seul</code> ou <code>inconnu</code> par machine, jamais un succès global. Le code de récupération réassocie seulement une Console à un Controller vivant ; s’il remplace la clé humaine, les actions restent verrouillées jusqu’à rotation des ancres via l’accès personnel.</p>
+    <p class="boundary"><strong>Invariant :</strong> association App, identité et filtre du lecteur Relay, époque d’approbation, clés SSH, certificats, sessions et manifestes exposés sont tournés ; comptes, clés et droits personnels restent intacts. Une coupure rend <code>ancien seul</code>, <code>chevauchement borné</code>, <code>nouveau seul</code> ou <code>inconnu</code> par machine, jamais un succès global. Le code de récupération réassocie seulement une App à un Controller vivant ; s’il remplace la clé humaine, les actions restent verrouillées jusqu’à rotation des ancres via l’accès personnel.</p>
 
     <h2>Placement proportionné aux machines disponibles</h2>
     <div class="placement">
@@ -156,7 +156,7 @@
     <h2>Un lot vérifiable, pas un téléchargement root improvisé</h2>
     <div class="facts">
       <article class="bundle">
-        <h3>Bundle Console <code>v0.1.0</code></h3>
+        <h3>Bundle App <code>v0.1.0</code></h3>
         <ul>
           <li>Assistant natif temporaire ;</li>
           <li>unique paquet serveur <code>.deb</code> Debian 13 <code>amd64</code> ;</li>

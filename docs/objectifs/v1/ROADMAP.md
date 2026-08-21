@@ -177,13 +177,13 @@ simplement la roadmap de `v0.1.0` d'oublier la direction déjà validée.
 | Relay | Mode du même exécutable, activé seulement sur le VPS candidat ; processus, compte, identité, secrets et stockage séparés du Daemon ; aucun ordre retour | Rester une frontière d'observation explicitement provisionnée : le Controller peut obtenir son dernier état d'observation validé, mais le Relay ne porte ni utilisateur, ni inventaire métier, ni statut d'interface, ni canal d'action | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
 | Auxiliaire local | Mode ponctuel du même artefact, lancé par commande SSH forcée root-owned pour une enveloppe signée ; aucun listener, accès réseau général ou shell | Garder cette autorité pour les opérations Linux locales et utiliser une API ou un runner isolé pour les autres plateformes | [Cap](../../projet/CAP.md) |
 | Chemin d'action | Plan et rollback exacts → confirmation et signature natives → transport Controller → clé publique, époque et anti-rejeu local → Auxiliaire → vérification | Garder le même plan approuvé mais choisir l'autorité adaptée : Auxiliaire pour Linux local, API OpenStack, runner IaC isolé ou API K3s | [Cap](../../projet/CAP.md) et [objectif v0.1.0](README.md) |
-| App | Console cliente installée et signée sur Linux et Windows, frontend embarqué sans serveur local ; Controller backend d'une infrastructure sans frontend | Controller privé derrière WireGuard, clé de pair et identité distinctes par appareil administrateur, authentification humaine et fournisseur central d'identité facultatif ; téléphone puis navigateur public seulement comme modes futurs séparés | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
+| App | App cliente installée et signée sur Linux et Windows, frontend embarqué sans serveur local ; Controller backend d'une infrastructure sans frontend | Controller privé derrière WireGuard, clé de pair et identité distinctes par appareil administrateur, authentification humaine et fournisseur central d'identité facultatif ; téléphone puis navigateur public seulement comme modes futurs séparés | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
 | Chiffrement et identités | mTLS séparés pour l'observation, identité SSH par machine, approbation signée et anti-rejeu local, HTTPS pour le Web ; l'accès SSH personnel reste indépendant | Ajouter l'accès WireGuard borné des appareils administrateurs sans confondre possession de la clé du pair, authentification humaine et autorisation du Controller | [Objectif v0.1.0](README.md) |
 | Exposition des services | Scénario LAB de référence avec Traefik sur le VPS, file provider sans socket de moteur et deux profils optionnels sur la même IP et `443` ; BentoPDF local et Vaultwarden atteint uniquement par WireGuard | Accepter d'autres placements pris en charge ou externes et représenter plus tard une vraie DMZ seulement si des frontières réseau indépendantes sont appliquées et vérifiées | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
 | Exécution OCI | Podman rootless et Quadlet uniquement sur un hôte systemd avec cgroup v2 ; prérequis contrôlés avant mutation, images, versions et digests épinglés | Un hôte incompatible est refusé pour le déploiement géré ou reste externe ; aucun adaptateur d'init alternatif n'est planifié | [Objectif v0.1.0](README.md) |
 | Responsabilité | Mode géré pour ce que Your Cloud applique ; mode externe pour les services ou passages installés manuellement, avec état déclaré distinct de l'état vérifié | Découverte future uniquement en lecture seule sur les machines enrôlées, jamais par scan du LAN ; toute adoption reste auditée et approuvée | [Cap](../../projet/CAP.md) et [objectif v0.1.0](README.md) |
 | Sécurité et preuves | Justification OWASP et NIS2 proportionnée, refus hostiles, secrets synthétiques, artefacts épinglés, rapport visuel et aucune revendication de conformité | Conserver le moindre privilège, les mises à jour séparées, la révocation, les SBOM, la provenance et les risques résiduels visibles | [Qualité](../../contribution/QUALITE.md) et [cap](../../projet/CAP.md) |
-| Premier jalon après `v0.1.0` | Hors de `v0.1.0` | `v0.1.1` « Services utilisateur » : définitions bornées, gelées et hachées par le Controller, épinglées par digest dans des plans approuvés ([contrat](../../architecture/SERVICE-UTILISATEUR.md)), contractée en issues (`#115`–`#121`), puis `v0.1.2` « La Console aux commandes » : le trajet réel Console → machine → rapport ([contrat](../../architecture/TRAJET-DE-COMMANDE.md)), issues `#122`–`#128` ; le SSO OpenID Connect de Vaultwarden reste un jalon ultérieur non numéroté | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
+| Premier jalon après `v0.1.0` | Hors de `v0.1.0` | `v0.1.1` « Services utilisateur » : définitions bornées, gelées et hachées par le Controller, épinglées par digest dans des plans approuvés ([contrat](../../architecture/SERVICE-UTILISATEUR.md)), contractée en issues (`#115`–`#121`), puis `v0.1.2` « L'App aux commandes » : le trajet réel App → machine → rapport ([contrat](../../architecture/TRAJET-DE-COMMANDE.md)), issues `#122`–`#128` ; le SSO OpenID Connect de Vaultwarden reste un jalon ultérieur non numéroté | [Objectif v0.1.0](README.md) et [cap](../../projet/CAP.md) |
 
 ## Incrément prouvé : `v0.0.1`
 
@@ -278,16 +278,16 @@ donnée et les lacunes éventuelles sont déjà définis et vérifiables.
 <!-- coherence: V1-OBSERVATION:end -->
 
 <!-- coherence: V1-APP-ACCESS:start -->
-### Incrément fermé — preuves attribuées au candidat exact : `v0.0.3` — Console cliente et Controller de lecture
+### Incrément fermé — preuves attribuées au candidat exact : `v0.0.3` — App cliente et Controller de lecture
 
-**Résultat :** installer une Console signée fonctionnelle sur Linux et Windows,
+**Résultat :** installer une App signée fonctionnelle sur Linux et Windows,
 créer une infrastructure dans un Controller, y rattacher les deux machines et
-voir leur présence récente, ancienne ou absente. La Console embarque son frontend
+voir leur présence récente, ancienne ou absente. L'App embarque son frontend
 responsive et son client réseau : elle n'ouvre aucun serveur local, n'affiche pas
 une page `localhost` et ne télécharge aucun code depuis le Controller. Le
 Controller reste un backend d'une infrastructure et obtient le dernier état
 d'observation validé par le Relay au travers d'une frontière privée authentifiée.
-La Console ne contacte jamais le Relay et les Daemons ne connaissent aucun
+L'App ne contacte jamais le Relay et les Daemons ne connaissent aucun
 Controller.
 
 Le Controller possède la liste des machines attendues et la politique qui
@@ -297,13 +297,13 @@ schéma, à l'empreinte, aux séquences, à son heure locale de réception, aux
 lacunes cumulées, à la persistance du dernier état validé et à son accusé
 durable.
 
-**Cadrage validé :** la Console utilise Tauri 2 avec React, TypeScript et Vite.
+**Cadrage validé :** l'App utilise Tauri 2 avec React, TypeScript et Vite.
 Son frontend est embarqué, sans serveur local, réseau libre ou code distant. La
 distribution initiale produit un `.deb` Linux et un `.msi` Windows natifs,
 signés et reliés au même commit, au même verrou frontend, à un manifeste, des
 empreintes, une SBOM et leur provenance ; la mise à jour reste manuelle.
 
-L'API Console–Controller est REST JSON sur une origine HTTPS TLS 1.3 exacte.
+L'API App–Controller est REST JSON sur une origine HTTPS TLS 1.3 exacte.
 L'enveloppe présente une identité d'appareil mTLS et une session humaine opaque,
 puis expose seulement l'initialisation unique de l'infrastructure, sa lecture,
 la lecture des machines et le rattachement idempotent d'une machine déjà
@@ -382,7 +382,7 @@ et la représentation des données anciennes ou lacunaires ont franchi leur
 preuve de sortie.
 
 **Preuve de sortie :** les artefacts Linux et Windows proviennent des mêmes
-sources et vérifient leur signature ; la Console fonctionne sans frontend
+sources et vérifient leur signature ; l'App fonctionne sans frontend
 hébergé ni listener sur l'appareil administrateur ; un Controller ne peut pas lui substituer du code ;
 une identité d'appareil, une session, un Controller ou une infrastructure
 inconnus sont refusés. Une donnée non reçue n'est jamais présentée comme
@@ -396,7 +396,7 @@ Une VM hostile distincte, placée sur le même réseau LAB, doit vérifier que
 la frontière depuis l'IP autorisée mais sans le certificat lecteur. Elle croise
 ensuite certificats Daemon et Controller, CA, noms, infrastructures, registres,
 méthodes, routes, queries, corps, schémas, tailles, concurrence et horloges. Elle
-tente aussi l'accès Console–Controller sans certificat, avec une identité
+tente aussi l'accès App–Controller sans certificat, avec une identité
 inconnue, révoquée ou issue de l'autre
 Controller, avec une session ou une infrastructure croisée et avec une machine
 de l'autre infrastructure. Elle attaque aussi les fichiers d'état, les
@@ -413,7 +413,7 @@ développement. WireGuard, téléphone, navigateur public, SSO obligatoire et
 passerelle Web restent hors de `v0.0.3`. La cible finale conserve l'API du
 Controller privée derrière WireGuard avec une clé de pair révocable par appareil
 administrateur. Un futur palier postérieur à `v0.1.0` devra rendre cette liaison manipulable
-depuis la Console par une opération nommée, bornée au Controller, avec
+depuis l'App par une opération nommée, bornée au Controller, avec
 déverrouillage, timeout et déconnexion explicite sans exposer la clé au
 frontend ; son mécanisme reste ouvert. Les services publics gardent leur accès
 HTTPS normal.
@@ -432,7 +432,7 @@ La séquence de ce sous-palier plaçait #45 avant les sous-issues
 l'intégration `#35`. `#51` est fermée et `#52` est en revue : le travail
 reprend donc à `#53` une fois `#52` fermée, avant le reste du palier `#13`.
 
-**Résultat :** depuis une Console installée, choisir `Créer une infrastructure`,
+**Résultat :** depuis une App installée, choisir `Créer une infrastructure`,
 déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
 auditer les machines en lecture seule, approuver le placement puis installer un
 Controller autonome et les rôles approuvés. Avant de modifier les autres
@@ -441,7 +441,7 @@ Assistant natif fournit `Remplacer un Controller` après une perte ou l'isolemen
 d'un Controller compromis, sans dépendre de lui.
 
 L'enveloppe serveur initiale est un unique paquet `.deb` Debian 13 `amd64`.
-L'installateur de Console embarque l'Assistant, ce paquet, ses définitions
+L'installateur de App embarque l'Assistant, ce paquet, ses définitions
 statiques et le manifeste signé qui lie version, cible, taille et empreinte.
 L'Assistant vérifie le lot avant tout privilège, garde les dépendances hors
 ligne et orchestre installation, vérification et retour à la version ou à
@@ -516,10 +516,10 @@ frontière n'exécute ni SSH, ni `sudo`, ni `root`, ni audit ou installation.
   commande forcée vers l'Auxiliaire ; fichier, parents et binaire sont
   root-owned, tandis que shell, PTY, SFTP, rc, X11, environnement et transferts
   échouent ;
-- fermer l'Assistant et éteindre la Console n'arrêtent ni le Controller ni les
+- fermer l'Assistant et éteindre l'App n'arrêtent ni le Controller ni les
   services ;
 - l'accès personnel reste intact ;
-- un remplacement explicite crée une nouvelle association Console, limite le
+- un remplacement explicite crée une nouvelle association App, limite le
   lecteur Relay au nouveau Controller, tourne toute autorité exposée, réutilise
   les Agents compatibles et retire seulement les anciennes identités marquées
   Your Cloud après vérification ;
@@ -527,7 +527,7 @@ frontière n'exécute ni SSH, ni `sudo`, ni `root`, ni audit ou installation.
   coupure à chaque étape rend un état partiel reconstructible et jamais un
   succès global ;
 - la perte du Controller n'est pas confondue avec la récupération d'association
-  d'une Console vers un Controller encore vivant ; si cette récupération
+  d'une App vers un Controller encore vivant ; si cette récupération
   remplace la clé humaine, l'action reste verrouillée jusqu'à une rotation via
   l'accès personnel.
 
@@ -547,7 +547,7 @@ Le contrat complet est
 
 ### Palier dépendant — premier plan appliqué de manière contrôlée
 
-**Résultat :** le Controller construit un plan lisible que la Console présente
+**Résultat :** le Controller construit un plan lisible que l'App présente
 avec son rollback exact. Après confirmation, le cœur natif signe leur enveloppe
 canonique ; le Controller la transporte sans pouvoir fabriquer l'approbation,
 puis utilise l'identité SSH Your Cloud propre au VPS et sa commande forcée pour
@@ -559,7 +559,7 @@ devient pas un composant de Your Cloud.
 
 **Précondition d'autorité :** avant toute mutation, le Controller authentifie
 l'humain, l'appareil et la session, puis l'Auxiliaire vérifie indépendamment la
-signature de la Console, la clé publique et l'époque root-owned de la cible, la
+signature de l'App, la clé publique et l'époque root-owned de la cible, la
 successeur exact de la séquence anti-rejeu et l'expiration. La séquence est
 consommée durablement avant la mutation et reste refusée après redémarrage.
 L'accès au réseau privé ne remplace aucun de ces contrôles et une session de
@@ -655,7 +655,7 @@ l'[objectif v0.1.0](README.md), puis produire les artefacts et preuves de
 release.
 
 **Preuve de sortie :** deux machines observées, deux véritables services
-de référence accessibles en HTTPS depuis leur navigateur normal, Console native
+de référence accessibles en HTTPS depuis leur navigateur normal, App native
 installable sur Linux et Windows, Controller privé autonome, plans approuvés,
 second passage sans changement, redémarrages, sauvegarde/restauration, retrait
 propre, refus hostiles réseau et autorisation, secrets expurgés, versions
@@ -708,8 +708,8 @@ issues dans la
 (`#115`–`#121`). La `v0.1.1` ne sera pas déclarée atteinte avant le candidat
 attesté de `v0.1.0`. Le petit parcours SSO OpenID Connect de Vaultwarden, demandé plus
 tôt pour la `v0.1.1`, passe à un jalon ultérieur non numéroté sans changer de
-réserve. La `v0.1.2` « La Console aux commandes » suit : le chemin réel entre la
-Console et une machine — construction, consentement dans une fenêtre séparée,
+réserve. La `v0.1.2` « L'App aux commandes » suit : le chemin réel entre la
+App et une machine — construction, consentement dans une fenêtre séparée,
 soumission de l'approbation signée, lancement de l'Auxiliaire par l'identité de
 la machine et rapport lu jusqu'à l'humain —, contracté dans
 [`TRAJET-DE-COMMANDE.md`](../../architecture/TRAJET-DE-COMMANDE.md) et en issues
@@ -738,7 +738,7 @@ partie de la présente roadmap.
 
 `v0.0.1` et `v0.0.2` restent fermées par leurs contrats et rapports LAB. Les
 paramètres 1 à 8 de `v0.0.3` sont fermés et la preuve fonctionnelle Linux de la
-branche `console-controller` a été revalidée après review sur le commit produit
+branche `app-controller` a été revalidée après review sur le commit produit
 exact `02fe4f5`. La porte native Linux/Windows finale a réussi sur le candidat
 produit `3b8f81f` dans le run `30710037004`, sans prétendre rejouer la topologie
 multi-VM. L'issue `#9` relie cette preuve au SHA intégré par fast-forward :

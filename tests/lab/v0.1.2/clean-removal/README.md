@@ -1,7 +1,7 @@
-# La preuve du retrait propre de la Console Linux
+# La preuve du retrait propre de l'App Linux
 
 Après une désinstallation, que reste-t-il sur la machine ? La question n'avait
-jamais été posée pour la Console elle-même. Ce harnais y répond par des
+jamais été posée pour l'App elle-même. Ce harnais y répond par des
 **différences entre recensements du disque**, jamais par une inspection de ce
 qu'on s'attend à trouver : chercher ce qu'on attend est la façon de ne pas voir
 ce qu'on n'attend pas.
@@ -12,7 +12,7 @@ TAURI_DRIVER=/chemin/vers/tauri-driver \
 tests/lab/v0.1.2/clean-removal/prove
 ```
 
-La preuve ne crée ni ne détruit de topologie et ne parle qu'à `lab-console`,
+La preuve ne crée ni ne détruit de topologie et ne parle qu'à `lab-app`,
 qu'elle rend d'abord à son instantané `clean`.
 
 ## Les sept états
@@ -23,7 +23,7 @@ qu'elle rend d'abord à son instantané `clean`.
 | `base` | le sol posé : dépendances du paquet, sol du pilote, le compte de l'humain |
 | `control` | la même machine relevée une seconde fois, sans que rien n'arrive entre les deux |
 | `installed` | le `.deb` installé |
-| `used` | la Console lancée, un coffre créé, le formulaire d'association atteint |
+| `used` | l'App lancée, un coffre créé, le formulaire d'association atteint |
 | `removed` | après `dpkg --remove` |
 | `purged` | après `apt-get purge` |
 
@@ -47,20 +47,20 @@ a posé pour lui. Elles sont donc dans la base, et la différence isole le paque
 En contrepartie, ce que ces dépendances laissent après un `apt autoremove` n'est
 pas mesuré ici : c'est une autre question, et elle n'est pas celle du paquet.
 
-**L'usage tourne sous un vrai compte non privilégié.** La Console d'un humain
+**L'usage tourne sous un vrai compte non privilégié.** L'App d'un humain
 écrit sous son `$HOME` ; mesurer sous `/root` répondrait à une autre question que
 « que reste-t-il des données de l'humain ». Le compte est créé avant la base,
 pour que le compte lui-même ne soit pas attribué au paquet.
 
 **Aucune variable `XDG_*` n'est posée.** C'est la seule différence qui compte
 avec le patron d'oracle dont `inside` descend : le harnais du trajet de commande
-déplace l'état de la Console sous un répertoire à lui pour pouvoir le remettre à
+déplace l'état de l'App sous un répertoire à lui pour pouvoir le remettre à
 zéro entre deux étapes, alors que cette preuve-ci mesure justement **où le
 produit écrit quand personne ne le lui dit**.
 
 ## Ce que l'oracle fait, et où il s'arrête
 
-Il conduit le produit installé — `/usr/bin/your-cloud-console`, par
+Il conduit le produit installé — `/usr/bin/your-cloud-app`, par
 `tauri-driver` devant WebKitWebDriver — jusqu'au formulaire d'association :
 génération des deux secrets, création réelle du coffre, puis la vue
 d'association. Il s'arrête là volontairement. Le coffre, ses clés et la
@@ -81,7 +81,7 @@ rendre.
 
 ## Ce que la preuve porte sur le paquet
 
-Le `.deb` est construit depuis le tag `v0.1.0` sur `lab-console`, puis rapatrié.
+Le `.deb` est construit depuis le tag `v0.1.0` sur `lab-app`, puis rapatrié.
 **Il n'existe aucun paquet livré** : ce dépôt ne publie pas de release, la
 matrice hébergée construit et installe le `.deb` sans jamais l'archiver, et
 « attesté » y désigne un SHA passé au vert, pas un binaire signé. Le `.deb`

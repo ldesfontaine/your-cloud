@@ -1,6 +1,6 @@
-// Synthetic LAB fixture. It stands in for the Console core: same canonical
+// Synthetic LAB fixture. It stands in for the App core: same canonical
 // transcript, same Ed25519 key handling, a synthetic seed and nothing else. The
-// interoperability of this encoding with the real Console is proven separately
+// interoperability of this encoding with the real App is proven separately
 // by the pinned cross-language vector, not by this program.
 package main
 

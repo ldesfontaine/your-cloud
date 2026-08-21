@@ -72,7 +72,7 @@ func signedApprovalDocument(t *testing.T, operation string, frozen plan.Frozen, 
 	return document
 }
 
-// probeEnvelope is the envelope a Console signs for one frozen pair.
+// probeEnvelope is the envelope an App signs for one frozen pair.
 //
 // It carries the zero public key, which is the right default here: every test
 // that only reads the framing needs a well-formed envelope and no authority at
@@ -1254,7 +1254,7 @@ func frozenRoutePair(t *testing.T, operation, host string, port int) plan.Frozen
 // They exist so that the window this Auxiliary keeps open on those four document
 // shapes is proven against real documents rather than against an operation string
 // written into a shape this package already places: what must be refused is a
-// whole, valid, canonically frozen pair, exactly as a Console would hand it over.
+// whole, valid, canonically frozen pair, exactly as an App would hand it over.
 const (
 	fixtureOriginHost    = "vault.lab.your-cloud.test"
 	fixtureLinkRouteHost = "vault.lab.your-cloud.test"
@@ -1384,7 +1384,7 @@ func fixtureUserPlacement(t *testing.T) placement {
 
 // approvedUserService is the nominal schema 2 subject of the third door: the
 // signed pair, and the definition's own bytes travelling beside it exactly as a
-// Console hands them over.
+// App hands them over.
 func approvedUserService(t *testing.T, operation string, port int) (*approval.Acceptance, *Input) {
 	t.Helper()
 	accepted, input := approvedFrozenPair(operation, frozenUserServicePair(t, operation, port))

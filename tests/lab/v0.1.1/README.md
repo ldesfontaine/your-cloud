@@ -38,7 +38,7 @@ preuve nouvelle.
 - [`_fixture/main.go`](user-service/_fixture/main.go) tient les quatre autorités
   que le palier sépare et n'en détient aucune pour de vrai : le Controller — dont
   le gel et la relecture passent par `internal/controller` et non par une
-  seconde orthographe —, la Console, l'autorité de certification, et
+  seconde orthographe —, l'App, l'autorité de certification, et
   l'**origine de l'image**, qui est la seule que ce palier ne pouvait emprunter
   nulle part.
 - [`common`](user-service/common) est le vocabulaire partagé, repris de
@@ -51,7 +51,7 @@ preuve nouvelle.
 
 Aucune image tierce n'entre dans la preuve : seules l'application synthétique et
 les images produit épinglées — Traefik et Vaultwarden — sont tirées. L'image de
-l'application est construite sur les machines, servie depuis `lab-console` par
+l'application est construite sur les machines, servie depuis `lab-app` par
 la moitié en lecture de l'API de distribution OCI, en TLS sous l'autorité de la
 course, et **uniquement par digest**.
 

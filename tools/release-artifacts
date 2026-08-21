@@ -77,8 +77,8 @@ PRODUCED_BY_PROOF = "the complete v0.1.0 proof (#112)"
 LOCKS = {
     "go.mod": "go.mod",
     "go.sum": "go.sum",
-    "cargo": "console/src-tauri/Cargo.lock",
-    "npm": "console/package-lock.json",
+    "cargo": "app/src-tauri/Cargo.lock",
+    "npm": "app/package-lock.json",
 }
 
 # La source de vérité des images épinglées. Elles sont des constantes du
@@ -133,7 +133,7 @@ DOES_NOT_ATTEST = (
     "any signature: none enters this list while #12 is unresolved, because a "
     "synthetic signature proves a mechanism and never a trust.",
     "the distributable payloads: the Debian 13 amd64 server .deb and the "
-    "Console installers are built elsewhere and bound by their own signed "
+    "App installers are built elsewhere and bound by their own signed "
     "bundle manifest; this set carries none of their bytes.",
 )
 
@@ -210,18 +210,18 @@ def read_revision() -> dict[str, str]:
 def read_release_version() -> str:
     """Lit l'identité de release à sa source unique, ou refuse en la nommant.
 
-    `console/package.json` est la source de vérité que le contrat des sources
-    Console fait rayonner partout ailleurs (#55). Un artefact de release qui
+    `app/package.json` est la source de vérité que le contrat des sources
+    App fait rayonner partout ailleurs (#55). Un artefact de release qui
     porterait un autre numéro — ou aucun — relierait des empreintes à une
     identité que personne ne peut recouper avec le tag."""
 
-    manifest = ROOT / "console" / "package.json"
+    manifest = ROOT / "app" / "package.json"
     try:
         declared = json.loads(manifest.read_text(encoding="utf-8")).get("version", "")
     except (OSError, json.JSONDecodeError) as error:
         fail(f"the release version cannot be read from {manifest}: {error}")
     if not re.fullmatch(r"\d+\.\d+\.\d+", str(declared)):
-        fail(f"the release version in console/package.json is not exact semver: {declared!r}")
+        fail(f"the release version in app/package.json is not exact semver: {declared!r}")
     return str(declared)
 
 

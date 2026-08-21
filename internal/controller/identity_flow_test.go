@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-type testConsoleIdentity struct {
+type testAppIdentity struct {
 	devicePrivate   *ecdsa.PrivateKey
 	humanPublic     ed25519.PublicKey
 	humanPrivate    ed25519.PrivateKey
@@ -25,7 +25,7 @@ type testConsoleIdentity struct {
 	recoveryPrivate ed25519.PrivateKey
 }
 
-func newTestConsoleIdentity(t *testing.T) testConsoleIdentity {
+func newTestAppIdentity(t *testing.T) testAppIdentity {
 	t.Helper()
 	device, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -39,7 +39,7 @@ func newTestConsoleIdentity(t *testing.T) testConsoleIdentity {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return testConsoleIdentity{device, humanPublic, humanPrivate, recoveryPublic, recoveryPrivate}
+	return testAppIdentity{device, humanPublic, humanPrivate, recoveryPublic, recoveryPrivate}
 }
 
 func TestEnrollmentActivationAndRecoveryAreTwoPhaseAndSeparated(t *testing.T) {
@@ -57,13 +57,13 @@ func TestEnrollmentActivationAndRecoveryAreTwoPhaseAndSeparated(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.now = func() time.Time { return now }
-	first := newTestConsoleIdentity(t)
+	first := newTestAppIdentity(t)
 	firstCertificate := enrollTestIdentity(t, manager, "enrollment", nil, first)
 	if _, err := authority.AuthorizeActive(firstCertificate, now); err != nil {
 		t.Fatalf("activated enrollment certificate was refused: %v", err)
 	}
 
-	second := newTestConsoleIdentity(t)
+	second := newTestAppIdentity(t)
 	secondCertificate := enrollTestIdentity(t, manager, "recovery", first.recoveryPrivate, second)
 	if _, err := authority.AuthorizeActive(secondCertificate, now); err != nil {
 		t.Fatalf("activated recovery certificate was refused: %v", err)
@@ -77,7 +77,7 @@ func TestEnrollmentActivationAndRecoveryAreTwoPhaseAndSeparated(t *testing.T) {
 	}
 }
 
-func enrollTestIdentity(t *testing.T, manager *PairingManager, mode string, currentRecovery ed25519.PrivateKey, identity testConsoleIdentity) *x509.Certificate {
+func enrollTestIdentity(t *testing.T, manager *PairingManager, mode string, currentRecovery ed25519.PrivateKey, identity testAppIdentity) *x509.Certificate {
 	t.Helper()
 	sheet, err := manager.OpenWindow(mode)
 	if err != nil {

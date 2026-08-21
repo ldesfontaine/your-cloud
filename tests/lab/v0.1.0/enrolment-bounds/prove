@@ -54,7 +54,7 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
 labctl="$root/tools/labctl"
 harness=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
-console_vm=lab-console
+app_vm=lab-app
 target_vm=lab-machine-1
 expected_origin=your-cloud/labctl
 account=ycbounds
@@ -101,13 +101,13 @@ expect() {
   printf '  %-56s %s\n' "$label" "$wanted"
 }
 
-remote_console() { "$labctl" ssh "$console_vm" -- "$@"; }
+remote_app() { "$labctl" ssh "$app_vm" -- "$@"; }
 
 # ---------------------------------------------------------------------------
 
 do_artifact() {
   echo "==> artifact"
-  inventory "$console_vm" >/dev/null
+  inventory "$app_vm" >/dev/null
 
   # The Controller builds this palier's fixture from the sources of this very
   # run. `package.json` travels with `src-tauri` because `tauri.conf.json` reads
@@ -115,20 +115,20 @@ do_artifact() {
   # every extracted file with the extraction time, so Cargo cannot decide that
   # sources older than a warm artefact need no rebuild — a pass that was green
   # about code that was never compiled is worse than a slow one.
-  tar -C "$root/console" --exclude=target -czf "$workdir/console.tgz" src-tauri package.json
-  "$labctl" ssh "$console_vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
-  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" "$remote_harness/console.tgz" >/dev/null
-  remote_console "
+  tar -C "$root/app" --exclude=target -czf "$workdir/app.tgz" src-tauri package.json
+  "$labctl" ssh "$app_vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  "$labctl" copy-to "$app_vm" "$workdir/app.tgz" "$remote_harness/app.tgz" >/dev/null
+  remote_app "
 set -e
 install -d /root/work
 rm -f /root/work/package.json
 if [ -d /root/work/src-tauri ]; then
   find /root/work/src-tauri -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} +
 fi
-tar -C /root/work -xzmf $remote_harness/console.tgz
-rm -f $remote_harness/console.tgz"
+tar -C /root/work -xzmf $remote_harness/app.tgz
+rm -f $remote_harness/app.tgz"
 
-  remote_console "
+  remote_app "
 set -e
 . /root/.cargo/env
 install -d -m 0700 $state
@@ -137,18 +137,18 @@ export CARGO_BUILD_JOBS=1 LC_ALL=C.UTF-8
 cargo +1.94.1 build --locked --offline -j 1 -p your-cloud-native-bootstrap-assistant \
   --features machine-identity-contract-test --bin your-cloud-machine-identity-fixture >/dev/null 2>&1
 install -m 0700 target/debug/your-cloud-machine-identity-fixture $fixture"
-  echo "  fixture built in $console_vm from this run's sources"
+  echo "  fixture built in $app_vm from this run's sources"
 }
 
 do_setup() {
   echo "==> setup"
-  local console_address target_address mounted provenance
-  console_address=$(inventory "$console_vm")
+  local app_address target_address mounted provenance
+  app_address=$(inventory "$app_vm")
   target_address=$(inventory "$target_vm")
 
   # Sixty-five real Ed25519 pairs. The sixty-fifth exists only to be refused,
   # and it is a real key so that the refusal is about the count and nothing else.
-  remote_console "
+  remote_app "
 set -e
 install -d -m 0700 $state $state/keys
 rm -f $state/keys/* $state/perimeter.* $state/provenance.*
@@ -161,11 +161,11 @@ chmod 0600 $state/keys/id-*"
 
   # The perimeter files, each one line per identity, written from what
   # `ssh-keygen` reads back off the real public keys.
-  remote_console "
+  remote_app "
 set -e
 name_of() {
   case \$1 in
-    0) echo $console_vm ;;
+    0) echo $app_vm ;;
     1) echo $target_vm ;;
     *) echo lab-declared-\$1 ;;
   esac
@@ -184,9 +184,9 @@ head -n \$(($bound - 1)) $state/perimeter.bound >$state/perimeter.shared
 printf 'identity\t%s\t%s\n' lab-declared-$((bound - 1)) \"\$(fingerprint_of 0)\" >>$state/perimeter.shared
 # The same estate, but the last line naming a machine already in it.
 head -n \$(($bound - 1)) $state/perimeter.bound >$state/perimeter.duplicate
-printf 'identity\t%s\t%s\n' $console_vm \"\$(fingerprint_of \$(($bound - 1)))\" >>$state/perimeter.duplicate"
+printf 'identity\t%s\t%s\n' $app_vm \"\$(fingerprint_of \$(($bound - 1)))\" >>$state/perimeter.duplicate"
 
-  for vm in "$console_vm" "$target_vm"; do
+  for vm in "$app_vm" "$target_vm"; do
     "$labctl" ssh "$vm" -- "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
     for script in mount-machine remove-machine; do
       "$labctl" copy-to "$vm" "$harness/$script" "$remote_harness/$script" >/dev/null
@@ -197,32 +197,32 @@ printf 'identity\t%s\t%s\n' $console_vm \"\$(fingerprint_of \$(($bound - 1)))\" 
   # Index 0 belongs to the Controller's own machine, index 1 to the target. Each
   # public key travels through the managed channel; no private key ever leaves
   # the Controller.
-  "$labctl" copy-from "$console_vm" "$state/keys/id-0.pub" "$workdir/id-0.pub" >/dev/null
-  "$labctl" copy-from "$console_vm" "$state/keys/id-1.pub" "$workdir/id-1.pub" >/dev/null
-  "$labctl" copy-to "$console_vm" "$workdir/id-0.pub" "$remote_harness/held.pub" >/dev/null
+  "$labctl" copy-from "$app_vm" "$state/keys/id-0.pub" "$workdir/id-0.pub" >/dev/null
+  "$labctl" copy-from "$app_vm" "$state/keys/id-1.pub" "$workdir/id-1.pub" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/id-0.pub" "$remote_harness/held.pub" >/dev/null
   "$labctl" copy-to "$target_vm" "$workdir/id-1.pub" "$remote_harness/held.pub" >/dev/null
 
   : >"$workdir/provenance"
-  for vm in "$console_vm" "$target_vm"; do
+  for vm in "$app_vm" "$target_vm"; do
     mounted=$("$labctl" ssh "$vm" -- "$remote_harness/mount-machine $account $remote_harness/held.pub")
     printf '%s\n' "$mounted"
     provenance=$(sed -n 's/.*provenance=\([A-Z]*\).*/\1/p' <<<"$mounted")
     [[ -n "$provenance" ]] || fail "$vm did not report the account provenance"
     printf '%s\t%s\n' "$vm" "$provenance" >>"$workdir/provenance"
   done
-  "$labctl" copy-to "$console_vm" "$workdir/provenance" "$state/provenance.accounts" >/dev/null
+  "$labctl" copy-to "$app_vm" "$workdir/provenance" "$state/provenance.accounts" >/dev/null
 
   # The host keys are pinned from what the managed channel read, never from a
   # first answer of the network.
   : >"$workdir/known_hosts"
-  for pair in "$console_vm:$console_address" "$target_vm:$target_address"; do
+  for pair in "$app_vm:$app_address" "$target_vm:$target_address"; do
     local vm=${pair%%:*} address=${pair#*:}
     printf '%s %s\n' "$address" "$("$labctl" ssh "$vm" -- cat /etc/ssh/ssh_host_ed25519_key.pub | cut -d' ' -f1,2)" \
       >>"$workdir/known_hosts"
   done
-  "$labctl" copy-to "$console_vm" "$workdir/known_hosts" "$state/known_hosts" >/dev/null
-  remote_console "chmod 0600 $state/known_hosts
-printf '%s\n' '$console_address' >$state/address.$console_vm
+  "$labctl" copy-to "$app_vm" "$workdir/known_hosts" "$state/known_hosts" >/dev/null
+  remote_app "chmod 0600 $state/known_hosts
+printf '%s\n' '$app_address' >$state/address.$app_vm
 printf '%s\n' '$target_address' >$state/address.$target_vm"
   echo "  perimeter mounted on both machines, host keys pinned from the managed channel"
 }
@@ -231,18 +231,18 @@ do_estate() {
   echo "==> estate"
   local minted
 
-  minted=$(remote_console "$fixture estate $state/perimeter.bound") \
+  minted=$(remote_app "$fixture estate $state/perimeter.bound") \
     || fail "the gate refused an estate of exactly the bound: $minted"
   expect "an estate of exactly the bound is minted whole" \
     "MINTED count=$bound bound=$bound" "$minted"
   expect "and it is the estate this run declared" \
-    "first=$console_vm last=lab-declared-$((bound - 1))" "$minted"
+    "first=$app_vm last=lab-declared-$((bound - 1))" "$minted"
 
   cat <<EOF
 
   REPRESENTATIVITY real=2/$bound declared-only=$((bound - 2))/$bound
 
-    $console_vm     a real machine of the topology, really holding this identity
+    $app_vm     a real machine of the topology, really holding this identity
     $target_vm   a real machine of the topology, really holding this identity
     lab-declared-2 … lab-declared-$((bound - 1))
                     real Ed25519 identities that no machine holds
@@ -259,17 +259,17 @@ do_refuse() {
   echo "==> refuse"
   local observed
 
-  observed=$(remote_console "$fixture estate $state/perimeter.over" || true)
+  observed=$(remote_app "$fixture estate $state/perimeter.over" || true)
   expect "one machine past the bound is refused by name" \
     "REFUSED TooManyMachines { count: $((bound + 1)) }" "$observed"
 
-  observed=$(remote_console "$fixture estate $state/perimeter.shared" || true)
+  observed=$(remote_app "$fixture estate $state/perimeter.shared" || true)
   expect "two machines sharing an identity, at the bound" \
     "REFUSED SharedIdentity" "$observed"
   expect "and the refusal names both of them" \
-    "other: \"$console_vm\"" "$observed"
+    "other: \"$app_vm\"" "$observed"
 
-  observed=$(remote_console "$fixture estate $state/perimeter.duplicate" || true)
+  observed=$(remote_app "$fixture estate $state/perimeter.duplicate" || true)
   expect "the same machine declared twice, at the bound" \
     "REFUSED DuplicateMachine" "$observed"
 }
@@ -277,46 +277,46 @@ do_refuse() {
 # The one phase where the gate is confronted with something other than itself.
 do_agree() {
   echo "==> agree"
-  local held_here held_there judged opened refused console_address target_address
+  local held_here held_there judged opened refused app_address target_address
 
-  console_address=$(remote_console "cat $state/address.$console_vm")
-  target_address=$(remote_console "cat $state/address.$target_vm")
-  held_here=$(remote_console "ssh-keygen -lf $state/keys/id-0.pub | awk '{print \$2}'")
-  held_there=$(remote_console "ssh-keygen -lf $state/keys/id-1.pub | awk '{print \$2}'")
+  app_address=$(remote_app "cat $state/address.$app_vm")
+  target_address=$(remote_app "cat $state/address.$target_vm")
+  held_here=$(remote_app "ssh-keygen -lf $state/keys/id-0.pub | awk '{print \$2}'")
+  held_there=$(remote_app "ssh-keygen -lf $state/keys/id-1.pub | awk '{print \$2}'")
 
   # What the compiled gate decides.
-  judged=$(remote_console "$fixture admits $state/perimeter.bound $console_vm $held_here")
-  expect "the gate admits $console_vm its own identity" "ADMITTED machine=$console_vm" "$judged"
-  judged=$(remote_console "$fixture admits $state/perimeter.bound $console_vm $held_there" || true)
+  judged=$(remote_app "$fixture admits $state/perimeter.bound $app_vm $held_here")
+  expect "the gate admits $app_vm its own identity" "ADMITTED machine=$app_vm" "$judged"
+  judged=$(remote_app "$fixture admits $state/perimeter.bound $app_vm $held_there" || true)
   expect "the gate refuses it the identity of $target_vm, and names the owner" \
-    "ForeignIdentity { machine: \"$console_vm\", owner: \"$target_vm\" }" "$judged"
-  judged=$(remote_console "$fixture admits $state/perimeter.bound $target_vm $held_there")
+    "ForeignIdentity { machine: \"$app_vm\", owner: \"$target_vm\" }" "$judged"
+  judged=$(remote_app "$fixture admits $state/perimeter.bound $target_vm $held_there")
   expect "the gate admits $target_vm its own identity" "ADMITTED machine=$target_vm" "$judged"
-  judged=$(remote_console "$fixture admits $state/perimeter.bound $target_vm $held_here" || true)
-  expect "the gate refuses it the identity of $console_vm, and names the owner" \
-    "ForeignIdentity { machine: \"$target_vm\", owner: \"$console_vm\" }" "$judged"
+  judged=$(remote_app "$fixture admits $state/perimeter.bound $target_vm $held_here" || true)
+  expect "the gate refuses it the identity of $app_vm, and names the owner" \
+    "ForeignIdentity { machine: \"$target_vm\", owner: \"$app_vm\" }" "$judged"
 
   # What a real sshd decides, on the same four pairs. The sessions are opened
   # from the Controller, which is the only side holding private material.
   attempt() {
     local key=$1 address=$2
-    remote_console "
+    remote_app "
 ssh -i $state/keys/id-$key \
   -o UserKnownHostsFile=$state/known_hosts -o StrictHostKeyChecking=yes \
   -o IdentitiesOnly=yes -o PasswordAuthentication=no -o BatchMode=yes \
   -o ConnectTimeout=10 $account@$address true 2>&1" || true
   }
 
-  opened=$(attempt 0 "$console_address")
-  [[ -z "$opened" ]] || fail "a real sshd refused $console_vm its own identity: $opened"
-  printf '  %-56s %s\n' "a real sshd admits $console_vm its own identity" "session opened"
+  opened=$(attempt 0 "$app_address")
+  [[ -z "$opened" ]] || fail "a real sshd refused $app_vm its own identity: $opened"
+  printf '  %-56s %s\n' "a real sshd admits $app_vm its own identity" "session opened"
 
   opened=$(attempt 1 "$target_address")
   [[ -z "$opened" ]] || fail "a real sshd refused $target_vm its own identity: $opened"
   printf '  %-56s %s\n' "a real sshd admits $target_vm its own identity" "session opened"
 
-  refused=$(attempt 1 "$console_address")
-  expect "a real sshd refuses $console_vm the other identity" "Permission denied" "$refused"
+  refused=$(attempt 1 "$app_address")
+  expect "a real sshd refuses $app_vm the other identity" "Permission denied" "$refused"
   refused=$(attempt 0 "$target_address")
   expect "a real sshd refuses $target_vm the other identity" "Permission denied" "$refused"
 
@@ -331,7 +331,7 @@ do_mutate() {
   local source=/root/work/src-tauri/crates/native-bootstrap-assistant/src/machine_identity/identity.rs
   local observed status=0
 
-  remote_console "
+  remote_app "
 set -e
 test -f $source
 cp $source $state/identity.rs.original
@@ -342,7 +342,7 @@ grep -q '^pub const MAX_ENROLLED_MACHINES: usize = $((bound + 1));\$' $source"
 
   rebuild_fixture || status=$?
   if [[ $status -eq 0 ]]; then
-    observed=$(remote_console "$fixture estate $state/perimeter.over" || true)
+    observed=$(remote_app "$fixture estate $state/perimeter.over" || true)
     if [[ "$observed" == *"MINTED count=$((bound + 1))"* ]]; then
       printf '  %-56s %s\n' "MUTATION_CAUGHT: the bound stopped bounding" \
         "the mutated gate minted $((bound + 1))"
@@ -354,7 +354,7 @@ grep -q '^pub const MAX_ENROLLED_MACHINES: usize = $((bound + 1));\$' $source"
 
   # Restored whatever happened above: a mutated source left behind would make
   # every later run of this LAB judge something the repository does not hold.
-  remote_console "
+  remote_app "
 set -e
 test -f $state/identity.rs.original
 cp $state/identity.rs.original $source
@@ -362,7 +362,7 @@ rm -f $state/identity.rs.original
 grep -q '^pub const MAX_ENROLLED_MACHINES: usize = $bound;\$' $source"
   rebuild_fixture || fail "the fixture could not be rebuilt from the restored source"
 
-  observed=$(remote_console "$fixture estate $state/perimeter.over" || true)
+  observed=$(remote_app "$fixture estate $state/perimeter.over" || true)
   expect "the restored gate refuses the count again" \
     "REFUSED TooManyMachines { count: $((bound + 1)) }" "$observed"
 
@@ -370,7 +370,7 @@ grep -q '^pub const MAX_ENROLLED_MACHINES: usize = $bound;\$' $source"
 }
 
 rebuild_fixture() {
-  remote_console "
+  remote_app "
 set -e
 . /root/.cargo/env
 cd /root/work/src-tauri
@@ -384,9 +384,9 @@ do_remove() {
   echo "==> remove"
   local provenance removed
 
-  for vm in "$console_vm" "$target_vm"; do
+  for vm in "$app_vm" "$target_vm"; do
     provenance=$(awk -F'\t' -v vm="$vm" '$1 == vm {print $2}' <<<"$(
-      "$labctl" ssh "$console_vm" -- "cat $state/provenance.accounts 2>/dev/null || true"
+      "$labctl" ssh "$app_vm" -- "cat $state/provenance.accounts 2>/dev/null || true"
     )")
     [[ -n "$provenance" ]] || provenance=CREATED
     if "$labctl" ssh "$vm" -- "test -x $remote_harness/remove-machine"; then
@@ -402,7 +402,7 @@ do_remove() {
   # A mutation an interrupted run left behind is undone before anything else:
   # a source left mutated would make every later run judge something the
   # repository does not hold.
-  remote_console "
+  remote_app "
 source=/root/work/src-tauri/crates/native-bootstrap-assistant/src/machine_identity/identity.rs
 if [ -f $state/identity.rs.original ]; then
   cp $state/identity.rs.original \$source
@@ -411,13 +411,13 @@ if [ -f $state/identity.rs.original ]; then
 fi" || true
 
   # The private material is destroyed, not merely unlinked from a perimeter.
-  remote_console "
+  remote_app "
 set -e
 if [ -d $state/keys ]; then
   find $state/keys -type f -exec shred -u {} + 2>/dev/null || rm -f $state/keys/*
 fi
 rm -rf $state"
-  remote_console "test ! -e $state" || fail "the perimeter survives on $console_vm"
+  remote_app "test ! -e $state" || fail "the perimeter survives on $app_vm"
   echo "  both machines returned to their initial state, key material destroyed"
 }
 

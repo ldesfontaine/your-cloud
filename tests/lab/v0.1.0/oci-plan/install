@@ -3,7 +3,7 @@
 #
 # Everything installed here is synthetic and root-owned: one approval anchor
 # minted from a synthetic seed, one empty anti-replay position, the product
-# binary and the fixture that stands in for the Controller and the Console. No
+# binary and the fixture that stands in for the Controller and the App. No
 # real key, no real infrastructure, and no probe: the probe is what the proof
 # asks the product to create.
 #

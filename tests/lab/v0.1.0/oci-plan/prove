@@ -4,8 +4,8 @@
 # must have carried, then remove the perimeter and prove its absence.
 #
 # One VM plays every role this palier separates, and that is honest rather than
-# convenient: the Controller and the Console are a synthetic fixture here — the
-# Console window is not wired to this proof — while the Auxiliary is the real
+# convenient: the Controller and the App are a synthetic fixture here — the
+# App window is not wired to this proof — while the Auxiliary is the real
 # product binary, built from the synchronised sources, running as root against
 # a real systemd, a real rootless Podman and a real registry. What this harness
 # proves is therefore what the machine does with documents it did not write.
@@ -103,7 +103,7 @@ setup() {
   done
 
   # The product sources this run proves, and the synthetic fixture that stands
-  # in for the Controller and the Console. The fixture is placed *inside* the
+  # in for the Controller and the App. The fixture is placed *inside* the
   # module because it asks internal/plan for the canonical plan documents; it
   # exists only in this copy and is never a package of the product.
   tar czf "$workdir/sources.tgz" -C "$root" go.mod go.sum cmd internal

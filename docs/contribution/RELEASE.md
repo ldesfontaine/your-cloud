@@ -1,6 +1,6 @@
 # Signer le lot serveur, et ce que cette signature protège
 
-L'installateur de la Console porte le paquet serveur plutôt que d'aller le
+L'installateur de l'App porte le paquet serveur plutôt que d'aller le
 chercher : la raison est au [contrat d'amorçage](../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
 Cette page décrit le geste qui rend cet embarquement vérifiable, et **rien
 d'autre** — elle ne décrit pas la publication d'une release.
@@ -90,18 +90,18 @@ stat -c %s bundle-manifest.sig
 
 Le manifeste et sa signature sont committés dans
 [`packaging/server-bundle/manifest/`](../../packaging/server-bundle/manifest/).
-Le `.deb` du lot, lui, n'entre jamais au dépôt : chaque build de la Console le
+Le `.deb` du lot, lui, n'entre jamais au dépôt : chaque build de l'App le
 **reconstruit** depuis les sources avec l'outillage épinglé, confronte le
 manifeste produit octet pour octet au manifeste signé, et refuse toute dérive
-par son nom (`console/tools/prepare-server-bundle.mjs`). La porte hébergée fait
+par son nom (`app/tools/prepare-server-bundle.mjs`). La porte hébergée fait
 la même reconstruction dans un conteneur `debian:13` épinglé par digest — le
 seul environnement CI dont l'outillage est celui du verrou.
 
-Le paquet Debian de la Console livre alors les trois fichiers sous
-`/usr/lib/your-cloud-console/server-bundle/`, et l'Assistant installé les
+Le paquet Debian de l'App livre alors les trois fichiers sous
+`/usr/lib/your-cloud-app/server-bundle/`, et l'Assistant installé les
 retrouve **depuis sa propre position attestée** (`/proc/self/exe`), jamais
 depuis un argument ni un environnement. Son verdict se relit à tout moment sur
-une machine où la Console est installée :
+une machine où l'App est installée :
 
 ```bash
 /usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle
@@ -116,7 +116,7 @@ outil de diagnostic séparé.
 Il n'y a pas de révocation : l'ancre est scellée dans un binaire déjà installé,
 et rien ne peut la joindre après coup. **Une nouvelle ancre est donc une
 nouvelle release**, et les installations existantes continuent de faire
-confiance à l'ancienne jusqu'à ce que leur humain installe la nouvelle Console.
+confiance à l'ancienne jusqu'à ce que leur humain installe la nouvelle App.
 
 C'est une propriété, pas une lacune : l'ancre ne peut pas être changée à
 distance, donc elle ne peut pas être changée par quelqu'un d'autre.

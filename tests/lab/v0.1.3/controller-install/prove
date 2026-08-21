@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # La preuve du palier v0.1.3, sous la règle de docs/contribution/QUALITE.md :
 # aucune fixture ne remplace un composant du produit sur le trajet prouvé.
-# `controller_install_fixture.rs` sort du trajet — la vraie Console installée,
+# `controller_install_fixture.rs` sort du trajet — la vraie App installée,
 # pilotée à l'écran, déroule « Créer une infrastructure » jusqu'au Controller
 # actif sur lab-machine-1, et chaque maillon est un binaire livré.
 #
 # Deux machines, deux autorités :
-#   lab-console    la machine de l'humain : le .deb installé, sa WebView, son
+#   lab-app    la machine de l'humain : le .deb installé, sa WebView, son
 #                  Assistant natif, son coffre — piloté sous Xvfb (patron
 #                  command-path de #128) ;
 #   lab-machine-1  la machine cible : les comptes du périmètre d'accès
@@ -24,8 +24,8 @@ usage() {
   cat <<'USAGE'
 usage: prove <phase>
 
-  sync        sources → lab-console (arbre de build dédié, jamais l'arbre work)
-  build       construit et installe le candidat .deb sur lab-console
+  sync        sources → lab-app (arbre de build dédié, jamais l'arbre work)
+  build       construit et installe le candidat .deb sur lab-app
   perimeter   monte le périmètre d'accès personnel sur lab-machine-1
               (comptes ycpa*, agent, clé d'hôte relevée) — délègue à
               tests/lab/v0.1.0/personal-access/install-server
@@ -51,10 +51,10 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
 labctl="$root/tools/labctl"
 harness="$root/tests/lab/v0.1.3/controller-install"
 personal_access="$root/tests/lab/v0.1.0/personal-access"
-console_vm=lab-console
+app_vm=lab-app
 machine_vm=lab-machine-1
 remote_harness=/root/your-cloud-lab-controller-install
-remote_build=/root/your-cloud-console-build
+remote_build=/root/your-cloud-app-build
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 result_root="$root/tests/artifacts/proofs/controller-install/$run_id"
 workdir=$(mktemp -d)
@@ -90,42 +90,42 @@ deploy() {
 }
 
 sync_sources() {
-  inventory "$console_vm" >/dev/null
-  announce "sources → $console_vm ($remote_build)"
+  inventory "$app_vm" >/dev/null
+  announce "sources → $app_vm ($remote_build)"
   # La forme du dépôt entier, comme la preuve du lot embarqué : le build de la
-  # Console reconstruit le lot serveur (binaire Go + packaging) et le confronte
-  # au manifeste signé committé — un sync réduit à console/ rend un candidat
+  # App reconstruit le lot serveur (binaire Go + packaging) et le confronte
+  # au manifeste signé committé — un sync réduit à app/ rend un candidat
   # qui ne peut pas naître, mesuré au premier passage de ce harnais.
-  tar czf "$workdir/console.tgz" -C "$root" \
-    --exclude=console/node_modules \
-    --exclude=console/dist \
-    --exclude=console/dist-reflow \
-    --exclude=console/src-tauri/target \
-    --exclude=console/src-tauri/binaries \
-    --exclude=console/src-tauri/server-bundle \
-    console packaging tools go.mod go.sum cmd internal
-  "$labctl" ssh "$console_vm" -- "install -d -m 0700 $remote_build"
-  "$labctl" copy-to "$console_vm" "$workdir/console.tgz" "$remote_build/console.tgz" >/dev/null
+  tar czf "$workdir/app.tgz" -C "$root" \
+    --exclude=app/node_modules \
+    --exclude=app/dist \
+    --exclude=app/dist-reflow \
+    --exclude=app/src-tauri/target \
+    --exclude=app/src-tauri/binaries \
+    --exclude=app/src-tauri/server-bundle \
+    app packaging tools go.mod go.sum cmd internal
+  "$labctl" ssh "$app_vm" -- "install -d -m 0700 $remote_build"
+  "$labctl" copy-to "$app_vm" "$workdir/app.tgz" "$remote_build/app.tgz" >/dev/null
   # SANS strip-components : la forme du dépôt est la forme, et l'aplatir
-  # mélangerait console/ et packaging/ en un arbre que rien ne livre — le
+  # mélangerait app/ et packaging/ en un arbre que rien ne livre — le
   # second fait mesuré par ce harnais, au deuxième passage.
-  "$labctl" ssh "$console_vm" -- "
+  "$labctl" ssh "$app_vm" -- "
 set -e
-find $remote_build -mindepth 1 -maxdepth 1 ! -name console.tgz ! -name target-cache -exec rm -rf {} +
-tar xzmf $remote_build/console.tgz -C $remote_build
-rm -f $remote_build/console.tgz
+find $remote_build -mindepth 1 -maxdepth 1 ! -name app.tgz ! -name target-cache -exec rm -rf {} +
+tar xzmf $remote_build/app.tgz -C $remote_build
+rm -f $remote_build/app.tgz
 if [ -d $remote_build/target-cache ]; then
-  mv $remote_build/target-cache $remote_build/console/src-tauri/target
+  mv $remote_build/target-cache $remote_build/app/src-tauri/target
 fi"
   echo "SYNC_OK"
 }
 
 build_candidate() {
-  inventory "$console_vm" >/dev/null
-  announce "build + install du candidat sur $console_vm"
-  "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
-  deploy "$console_vm" build
-  "$labctl" ssh "$console_vm" -- "$remote_harness/build"
+  inventory "$app_vm" >/dev/null
+  announce "build + install du candidat sur $app_vm"
+  "$labctl" ssh "$app_vm" -- "swapon /swapfile 2>/dev/null || true"
+  deploy "$app_vm" build
+  "$labctl" ssh "$app_vm" -- "$remote_harness/build"
 }
 
 mount_perimeter() {
@@ -140,7 +140,7 @@ mount_perimeter() {
 }
 
 journey() {
-  inventory "$console_vm" >/dev/null
+  inventory "$app_vm" >/dev/null
   announce "le parcours nominal à l'écran — compte ycpasude, cible ycpa-target.test"
   require_pristine_target
   # La cible de la passe, écrite là où `inside` la relit. Les trois adresses :
@@ -151,7 +151,7 @@ journey() {
   # d'hôte y est relevée du périmètre déjà attesté par le canal géré — jamais
   # apprise d'une première réponse, jamais écrite en dur.
   write_target ycpasude
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run journey"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run journey"
 }
 
 # L'écran d'une passe qui n'est PAS le parcours nominal : même cible, même
@@ -168,11 +168,11 @@ journey() {
 write_target() {
   local username="$1" machine_address host_key
   machine_address=$(inventory "$machine_vm")
-  host_key=$("$labctl" ssh "$console_vm" -- \
+  host_key=$("$labctl" ssh "$app_vm" -- \
     "ssh-keygen -lf /root/your-cloud-lab-personal-access/server-host-key.pub" | awk '{print $2}')
   [[ "$host_key" == SHA256:* ]] || fail "l'empreinte de la clé d'hôte est illisible : $host_key"
-  deploy "$console_vm" run inside console-oracle.py
-  "$labctl" ssh "$console_vm" -- "cat > $remote_harness/target.env <<TARGET
+  deploy "$app_vm" run inside app-oracle.py
+  "$labctl" ssh "$app_vm" -- "cat > $remote_harness/target.env <<TARGET
 TARGET_HOST=ycpa-target.test
 TARGET_PORT=22
 TARGET_USERNAME=$username
@@ -182,11 +182,11 @@ TARGET_ALLOWED_SOURCE=192.168.240.9/32
 TARGET_RELAY_ENDPOINT=192.168.240.9:8444
 TARGET
 chmod 0600 $remote_harness/target.env"
-  "$labctl" ssh "$console_vm" -- "swapon /swapfile 2>/dev/null || true"
+  "$labctl" ssh "$app_vm" -- "swapon /swapfile 2>/dev/null || true"
 }
 
 # L'état initial de la cible, exigé par toute passe qui pose : cette preuve
-# CRÉE une infrastructure, depuis une Console froide ET une machine froide.
+# CRÉE une infrastructure, depuis une App froide ET une machine froide.
 #
 # Un répertoire d'attente résiduel est exactement ce que le juge de fraîcheur
 # du transfert refuse — `mkdir` sans `-p`, donc `StagingNotFresh`. Mesuré le
@@ -210,13 +210,13 @@ echo '  la cible est dans son état initial'"
 }
 
 asymmetry() {
-  inventory "$console_vm" >/dev/null
+  inventory "$app_vm" >/dev/null
   announce "le constat n°10 — ycpasudn : l'audit suffit, la pose est refusée"
   require_pristine_target
   # Le compte étroit du périmètre : son entrée sudoers ne nomme QUE la sonde
   # d'identité. C'est la définition de `install-server`, jamais recopiée ici.
   write_target ycpasudn
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run asymmetry"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run asymmetry"
   # Ce que la cible dit d'elle-même, indépendamment du produit : la pose
   # refusée n'a rien laissé.
   announce "la cible est-elle intacte après le refus ?"
@@ -231,21 +231,21 @@ echo 'ASYMMETRY_TARGET_INTACT_OK'"
 }
 
 hostile() {
-  inventory "$console_vm" >/dev/null
+  inventory "$app_vm" >/dev/null
   announce "le constat n°3 — un lot altéré est refusé AVANT tout dpkg"
   require_pristine_target
   # L'altération est une mutation de MACHINE : elle est posée ici, avec sa
   # sauvegarde, et défaite par le `trap` quoi qu'il arrive à la passe. Un octet
   # de l'artefact inversé, longueur inchangée — la même altération que la
-  # preuve du lot embarqué, sur le lot que la Console installée porte.
-  local bundle=/usr/lib/your-cloud-console/server-bundle/your-cloud-server.deb
-  "$labctl" ssh "$console_vm" -- "
+  # preuve du lot embarqué, sur le lot que l'App installée porte.
+  local bundle=/usr/lib/your-cloud-app/server-bundle/your-cloud-server.deb
+  "$labctl" ssh "$app_vm" -- "
 set -e
 cp -a $bundle $bundle.pristine
 printf '\\xff' | dd of=$bundle bs=1 seek=4096 count=1 conv=notrunc status=none
 echo '  un octet du lot installé inversé (offset 4096)'"
   restore_bundle() {
-    "$labctl" ssh "$console_vm" -- "
+    "$labctl" ssh "$app_vm" -- "
 set -e
 [ -e $bundle.pristine ] || exit 0
 mv $bundle.pristine $bundle
@@ -253,7 +253,7 @@ echo '  le lot installé est restauré'" || true
   }
   trap 'restore_bundle; rm -rf "$workdir"' EXIT
   write_target ycpasude
-  "$labctl" ssh "$console_vm" -- "$remote_harness/run hostile"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run hostile"
   announce "la cible a-t-elle été touchée par le lot altéré ?"
   "$labctl" ssh "$machine_vm" -- "
 set -e
@@ -265,7 +265,7 @@ echo 'HOSTILE_TARGET_UNTOUCHED_OK'"
   # Le lot restauré est-il de nouveau jugé bon ? Sans cela, un vert de la
   # phase suivante ne dirait pas si l'altération refusait ou si la machine
   # était cassée — c'est la garde que la preuve du lot embarqué a nommée.
-  "$labctl" ssh "$console_vm" -- \
+  "$labctl" ssh "$app_vm" -- \
     "/usr/bin/your-cloud-native-bootstrap-assistant --verify-embedded-server-bundle" \
     | grep -q '^VERIFIED ' \
     || fail "le lot restauré n'est plus jugé bon — la machine, pas l'altération"
@@ -354,7 +354,7 @@ collect() {
   local file
   for file in controller-install-journey.json controller-install-asymmetry.json \
               controller-install-hostile.json tauri-driver.log xvfb-errors.log; do
-    "$labctl" copy-from "$console_vm" "$remote_harness/output/$file" \
+    "$labctl" copy-from "$app_vm" "$remote_harness/output/$file" \
       "$result_root/$file" >/dev/null 2>&1 || echo "  (absent : $file)"
   done
   ls -1 "$result_root"

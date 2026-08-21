@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Minimal read-only Git metadata double for a Plumber scan in lab-console.
+# Minimal read-only Git metadata double for a Plumber scan in lab-app.
 set -euo pipefail
 
 repo_root=${PLUMBER_TEST_REPO_ROOT:-}

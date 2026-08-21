@@ -50,7 +50,7 @@ mutation silencieuse, jamais un `latest`.
 Le schéma `2` conserve tout le procédé du schéma `1` — document JSON strict
 borné à 4096 octets, transcript binaire à domaine séparé
 (`your-cloud/oci-plan.v2\0`), rollback comme document complet inverse, paire
-gelée par le Controller, signature par la Console, revérification par
+gelée par le Controller, signature par l'App, revérification par
 l'Auxiliaire — et ajoute six opérations, en trois paires inverses, aux
 listes de champs fermées :
 
@@ -110,7 +110,7 @@ Décisions attachées à ces routes :
 - Les deux documents voyagent comme **chaînes JSON portant leurs octets
   canoniques exacts**, accompagnés de leurs digests — la seule forme de
   transport, il n'en existe pas de seconde.
-- La Console ne choisit **ni l'infrastructure, ni l'image, ni le digest** :
+- L'App ne choisit **ni l'infrastructure, ni l'image, ni le digest** :
   l'infrastructure est celle dont ce Controller est l'autorité, et l'image est
   celle que le profil épingle. Elle choisit le profil, et un profil inconnu est
   refusé avant que le reste de la requête compte.

@@ -4,13 +4,13 @@
 #
 # This script never runs on lab-vps and never on lab-machine-1. It runs on the
 # pilot's own host and, for the readings that want a third machine with root, it
-# drives lab-console — which is also the machine this run's images came from. It
+# drives lab-app — which is also the machine this run's images came from. It
 # speaks to the two machines only over the addresses and ports a client of the
 # real world would use, and it pins the synthetic authority of this run and
 # nothing else.
 #
 # **The honesty this proof owes its reader is written here rather than in a
-# footnote.** The `quick` topology is one flat network: the pilot and lab-console
+# footnote.** The `quick` topology is one flat network: the pilot and lab-app
 # sit on the same subnet as lab-machine-1, so they can reach that machine's own
 # address directly, and they could before any of this existed. That is a property
 # of the LAB and not of the product. What is constated instead, and what the
@@ -74,7 +74,7 @@ reach() {
 
 hostile_reach() {
   local address=$1 port=$2
-  "$labctl" ssh lab-console -- \
+  "$labctl" ssh lab-app -- \
     "timeout 5 bash -c 'exec 3<>/dev/tcp/$address/$port' 2>/dev/null && echo reachable || echo refused" \
     2>/dev/null | tr -d '\r' | tail -1
 }
@@ -128,9 +128,9 @@ case "$stage" in
   after-user)
     step "B. from outside, once a service of the third door runs on the machine of the LAN"
     expect "the user service's port, from the pilot" "$(reach "$lan" "$app_port")" refused
-    expect "the user service's port, from lab-console" "$(hostile_reach "$lan" "$app_port")" refused
+    expect "the user service's port, from lab-app" "$(hostile_reach "$lan" "$app_port")" refused
     expect "the vault's port beside it, from the pilot" "$(reach "$lan" "$vault_port")" refused
-    expect "the vault's port, from lab-console" "$(hostile_reach "$lan" "$vault_port")" refused
+    expect "the vault's port, from lab-app" "$(hostile_reach "$lan" "$vault_port")" refused
     expect "the user service's port on the VPS's own address" "$(reach "$vps" "$app_port")" refused
     expect "the secure public port of the machine of the LAN" "$(reach "$lan" 443)" refused
     expect "the clear public port of the machine of the LAN" "$(reach "$lan" 80)" refused
@@ -194,7 +194,7 @@ case "$stage" in
     expect "https to a name nobody declared" "$(unpinned_get "$unknown_host")" 404
     expect "https to the address itself" "$(unpinned_get "$vps")" 404
     expect "the user service's port on the machine of the LAN" "$(reach "$lan" "$app_port")" refused
-    expect "the same port, from lab-console" "$(hostile_reach "$lan" "$app_port")" refused
+    expect "the same port, from lab-app" "$(hostile_reach "$lan" "$app_port")" refused
     expect "the vault's port, which no name publishes" "$(reach "$lan" "$vault_port")" refused
     expect "the other user service's port on the VPS" "$(reach "$vps" "$edge_port")" refused
     verdict "two names of the third door answer 200 on the same public address and the same 443 under certificates of their own names, one through the passage and one locally, what they serve is what their definitions said, and no other name, no direct address and no application port is served"
@@ -237,7 +237,7 @@ case "$stage" in
       expect "lab-vps:$port" "$(reach "$vps" "$port")" refused
       expect "lab-machine-1:$port" "$(reach "$lan" "$port")" refused
     done
-    expect "the user service's port, from lab-console" "$(hostile_reach "$lan" "$app_port")" refused
+    expect "the user service's port, from lab-app" "$(hostile_reach "$lan" "$app_port")" refused
     verdict "both machines offer this proof's client nothing at all"
     ;;
 

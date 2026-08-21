@@ -155,7 +155,7 @@ func TestControllerServiceDefinitionsFreezeAndList(t *testing.T) {
 
 // TestControllerServiceDefinitionsListNothingBeforeAnythingIsFrozen keeps the
 // reading honest on an empty inventory: an installation that froze nothing says
-// so with an empty list, never with a missing field a Console would have to guess
+// so with an empty list, never with a missing field an App would have to guess
 // the meaning of.
 func TestControllerServiceDefinitionsListNothingBeforeAnythingIsFrozen(t *testing.T) {
 	fixture := newControllerHTTPFixture(t)

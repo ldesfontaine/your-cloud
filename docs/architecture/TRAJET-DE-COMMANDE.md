@@ -1,12 +1,12 @@
 # Trajet de commande : de l'humain qui approuve à la machine qui rapporte
 
-> Statut : contrat d'architecture de `#122`, milestone `v0.1.2` « La Console aux
+> Statut : contrat d'architecture de `#122`, milestone `v0.1.2` « L'App aux
 > commandes ». Ses neuf décisions restées ouvertes ont été tranchées le
 > 11 août 2026 et sont écrites ici, chacune à sa place, avec l'invariant qui la
 > force et la mesure dont elle est dérivée ; la section
 > [« Les neuf décisions »](#les-neuf-décisions-tranchées-le-11-août-2026) les
 > récapitule. Il fixe les cinq maillons du chemin
-> « un humain déploie depuis la Console » : la construction d'une paire, sa
+> « un humain déploie depuis l'App » : la construction d'une paire, sa
 > lecture et son consentement dans une fenêtre séparée, la soumission de
 > l'approbation signée, le lancement de l'Auxiliaire par l'identité de la
 > machine, et le rapport lu jusqu'à l'humain. Les implémentations prévues le
@@ -18,9 +18,9 @@
 ## Ce que ce palier ajoute, et ce qu'il n'ajoute pas
 
 Tout ce que Your Cloud sait faire sur une machine est prouvé, et rien de ce
-qu'il sait faire n'est **commandé** depuis la Console. Les plans se
+qu'il sait faire n'est **commandé** depuis l'App. Les plans se
 construisent, les documents se hachent, l'enveloppe se signe, l'Auxiliaire
-vérifie et applique — et entre la Console et la machine, le chemin réel n'a
+vérifie et applique — et entre l'App et la machine, le chemin réel n'a
 jamais existé : chaque preuve passée l'a franchi par une fixture, et chaque
 harnais le dit lui-même. Ce palier construit ce chemin, une fois, avec les
 seules pièces du produit.
@@ -30,7 +30,7 @@ troisième accès SSH, pas de shell d'administration, pas de reprise autonome,
 pas de file d'attente d'actions, pas de rejeu. Le compte technique, la commande
 forcée, la règle d'élévation et l'état anti-rejeu de la machine ne bougent pas
 d'un octet : ce palier apprend à s'en servir, il ne les élargit pas. Et il
-n'ajoute aucune autorité à la Console : elle ne choisit ni une adresse, ni un
+n'ajoute aucune autorité à l'App : elle ne choisit ni une adresse, ni un
 port SSH, ni une clé, ni un ordre d'exécution — elle rédige des demandes et
 présente des phrases.
 
@@ -41,8 +41,8 @@ lecteur sache ce qui existait avant lui.
 
 | Maillon | Ce qui existe | Ce qui manque | Où cela se lit |
 |---|---|---|---|
-| 1. Construire | les douze routes `POST /v0/*-plans` construisent et gèlent des paires | aucune commande Tauri, aucune vue : la Console ne peut appeler aucune d'elles | `internal/controller/http.go:726-768` |
-| 2. Lire et consentir | le sidecar natif ne connaissait que l'amorçage (`AssistantScopeV1`, trame 4096) | aucune forme d'approbation n'existait — décision tranchée et testée depuis, consacrée plus bas | `console/src-tauri/crates/bootstrap-protocol/src/approval_consent.rs` |
+| 1. Construire | les douze routes `POST /v0/*-plans` construisent et gèlent des paires | aucune commande Tauri, aucune vue : l'App ne peut appeler aucune d'elles | `internal/controller/http.go:726-768` |
+| 2. Lire et consentir | le sidecar natif ne connaissait que l'amorçage (`AssistantScopeV1`, trame 4096) | aucune forme d'approbation n'existait — décision tranchée et testée depuis, consacrée plus bas | `app/src-tauri/crates/bootstrap-protocol/src/approval_consent.rs` |
 | 3. Soumettre | `sign_approval` est prouvé (`#37`) : le cœur natif signe, l'Auxiliaire vérifie | aucune route du Controller ne reçoit une approbation ; aucun fichier de production de `internal/controller` n'importe `internal/approval` | absence constatée par recherche ; gardes d'imports dans `service_definitions_test.go` et `external_test.go` |
 | 4. Lancer | compte `your-cloud-auxiliary`, commande forcée `/usr/bin/sudo -n /usr/lib/your-cloud/your-cloud auxiliary approve`, règle `sudo`, entrée `applyWrapper` | personne ne génère l'identité SSH d'une machine, aucun client SSH n'existe en Go, l'unité du Controller ne charge que trois credentials TLS | `machine_identity/identity.rs:22-24`, `internal/auxiliary/input.go:129`, `packaging/server-bundle/units/your-cloud-controller.service` |
 | 5. Rapporter | l'Auxiliaire rend un rapport structuré, complet, fermé | il meurt sur la sortie standard ; le seul retour vers l'humain est une observation passive | `cmd/your-cloud/auxiliary.go:41` et `:348` |
@@ -57,17 +57,17 @@ qui en produise.
 
 | Maillon | Qui décide | Qui détient | Ce qui traverse |
 |---|---|---|---|
-| Construire | le Controller | rien de durable | une paire gelée, rendue à la Console |
+| Construire | le Controller | rien de durable | une paire gelée, rendue à l'App |
 | Consentir | l'humain | la fenêtre native, hors de la surface WebView | des phrases et deux empreintes |
-| Signer | le cœur natif de la Console | la clé humaine, dans le coffre natif | une enveloppe canonique |
+| Signer | le cœur natif de l'App | la clé humaine, dans le coffre natif | une enveloppe canonique |
 | Soumettre | le Controller | le registre de dispatch, durable | l'approbation, la paire, la définition quand la porte l'exige |
 | Lancer | le Controller | l'identité de commande de **cette** machine | le wrapper sur l'entrée standard de la commande forcée |
 | Appliquer | l'Auxiliaire | l'ancre et l'état anti-rejeu de sa machine | rien : les effets restent sur la machine |
 | Rapporter | la machine | le rapport, conclusion de la machine | un document fermé, lu par le Controller, rendu en phrases |
 
 Aucune ligne de ce tableau ne fait confiance à la précédente. Le Controller
-revérifie ce que la Console lui remet ; l'Auxiliaire revérifie ce que le
-Controller lui porte ; la Console revérifie ce que le Controller lui rend. Le
+revérifie ce que l'App lui remet ; l'Auxiliaire revérifie ce que le
+Controller lui porte ; l'App revérifie ce que le Controller lui rend. Le
 transport est un transport, jamais une attestation.
 
 ## Maillon 2 — Ce que la fenêtre montre, et ce qu'elle prouve
@@ -122,14 +122,14 @@ document, jamais dans le dessin.
 
 ### Décision tranchée : la moitié Win32 est différée, et la dette est écrite
 
-La fenêtre d'approbation est livrée en GTK, prouvée sur `lab-console`. **La
+La fenêtre d'approbation est livrée en GTK, prouvée sur `lab-app`. **La
 moitié Win32 est différée après ce palier**, et ce n'est pas un oubli : le
 dialogue Win32 de l'amorçage est une implémentation complète — classe de
 fenêtre, boucle de messages, disposition et accessibilité propres — et écrire
 son équivalent sans pouvoir le compiler ni l'exécuter produirait du code non
 prouvé, ce que la discipline de ce dépôt refuse.
 
-**L'état honnête, écrit tel quel : la Console Windows observe, elle n'approuve
+**L'état honnête, écrit tel quel : l'App Windows observe, elle n'approuve
 pas encore de plans.** Elle construit un plan et le lit ; elle ne recueille pas
 de signature. L'arme Windows de la fenêtre répond `unavailable` — la seule
 réponse qui ne nomme aucune paire, et qui ne prétend pas qu'un humain a décliné
@@ -145,7 +145,7 @@ Win32 d'approbation, sa preuve dans `windows-eval`, et la levée de cette dette
 
 ### Décision tranchée : deux invocations nommées, et le compilateur qui l'atteste
 
-La Console possède **un seul chemin qui lance un processus**, et jusqu'ici il ne
+L'App possède **un seul chemin qui lance un processus**, et jusqu'ici il ne
 savait lancer qu'une chose : la fenêtre d'amorçage, avec son argument de mode et
 sa trame de portée. La fenêtre d'approbation en demande une seconde. La façon
 dont ce chemin se généralise est une décision d'autorité, pas de confort.
@@ -271,15 +271,15 @@ cette position, pour quatre raisons dont trois sont structurelles.
 4. **Le contre-argument est nommé plutôt qu'évité** : l'humain qui approuve un
    déploiement peut ne pas être celui qui a gelé la révision, ou l'avoir gelée
    il y a des semaines, et une empreinte n'est pas une mémoire. La réponse
-   n'est pas d'allonger la fenêtre : c'est que **la Console sache montrer la
+   n'est pas d'allonger la fenêtre : c'est que **l'App sache montrer la
    révision à côté du plan, avant que la fenêtre s'ouvre**. Lire est un geste de
-   la Console ; approuver est un geste de la fenêtre ; la fenêtre ne porte que
+   l'App ; approuver est un geste de la fenêtre ; la fenêtre ne porte que
    ce que la signature doit lier.
 
-**Conséquence tenue ici plutôt qu'ailleurs : la Console tient enfin une
+**Conséquence tenue ici plutôt qu'ailleurs : l'App tient enfin une
 définition à côté d'un plan, donc `RequireDefinitionAgreement` est miroité.**
 C'était la seconde dette de `#118`, explicitement conditionnée à ce que ces deux
-documents se rencontrent dans la Console. Ils s'y rencontrent : la Console lit
+documents se rencontrent dans l'App. Ils s'y rencontrent : l'App lit
 la paire, lit la révision épinglée, et **soumet les deux**. Le contrôle croisé
 reste tenu là où il peut l'être — construction par le Controller, revérification
 par le Controller à la soumission, revérification par l'Auxiliaire, définition
@@ -337,7 +337,7 @@ aucune trace, sans quoi un attaquant sans clé pourrait brûler les séquences
 d'une machine en soumettant des ordures.
 
 Les refus de cette route forment une liste fermée. Chacun est un nom, et chaque
-nom porte une phrase dans la Console :
+nom porte une phrase dans l'App :
 
 | Refus | Ce qu'il constate |
 |---|---|
@@ -504,8 +504,8 @@ même endroit et sous la même propriété que le fichier d'environnement de la
 machine et que les credentials.
 
 La raison est une frontière et non un rangement : **l'inventaire est lisible et
-modifiable par la Console**, et une adresse que la Console pourrait réécrire
-serait une Console qui choisit où part une commande. La Console nomme une
+modifiable par l'App**, et une adresse que l'App pourrait réécrire
+serait une App qui choisit où part une commande. L'App nomme une
 machine ; elle ne nomme jamais un endpoint.
 
 - **La clé d'hôte est épinglée à l'enrôlement, jamais apprise du réseau.**
@@ -531,7 +531,7 @@ d'amorçage a écarté l'exécutable `ssh` pour l'Assistant.
   sortie de la mémoire protégée et le budget de signatures aurait été perdu.
   Ici, **aucun secret ne traverse la ligne de commande**, aucune passphrase
   n'existe — la clé opérationnelle n'attend pas d'humain, parce que le
-  Controller doit rester autonome quand la Console est fermée — et il n'y a
+  Controller doit rester autonome quand l'App est fermée — et il n'y a
   aucun budget d'agent à tenir, puisqu'il n'y a pas d'agent.
 - Embarquer une bibliothèque SSH en Go ferait porter au composant qui détient
   **toutes** les identités de la flotte une implémentation de protocole et une
@@ -710,7 +710,7 @@ nouveau plan » — appliquée au maillon qui lui manquait.
 Deux décisions se lisent dans ce tableau.
 
 - **`en attente` n'est pas un état du Controller.** Une paire construite et pas
-  encore approuvée vit dans la Console, et le Controller n'en garde rien —
+  encore approuvée vit dans l'App, et le Controller n'en garde rien —
   conséquence directe du fait qu'il ne stocke aucune paire. L'histoire d'un plan
   commence à son approbation.
 - **Un enregistrement trouvé en `en cours` au démarrage devient
@@ -722,7 +722,7 @@ Deux décisions se lisent dans ce tableau.
 
 ### La position de commande d'une machine, et son incertitude
 
-La Console doit signer le **successeur exact** de la séquence de la machine.
+L'App doit signer le **successeur exact** de la séquence de la machine.
 Elle l'apprend du Controller : la vue des machines gagne deux champs en lecture
 seule — la dernière position que la machine a elle-même **rapportée**, et si
 cette position est certaine. Aucune route nouvelle.
@@ -762,7 +762,7 @@ ne le justifie pas encore.
 
 ### La projection : l'histoire d'un plan, et la dette « instances » soldée
 
-La Console lit l'histoire bornée des dispatchs et la rend en phrases :
+L'App lit l'histoire bornée des dispatchs et la rend en phrases :
 **construit → approuvé → lancé → rapporté**, avec ses instants, son état et ce
 que la machine a répondu. Un état `lancé, non rapporté` est affiché comme tel,
 jamais comme un échec ni comme un succès.
@@ -774,8 +774,8 @@ d'absence que ce palier lève ; le jour où `#127` atterrit, ses deux puces
 d'autre :
 
 > - **`RequireDefinitionAgreement` est miroité depuis `v0.1.2`.** C'était la
->   seconde dette de `#118`, conditionnée à ce que la Console tienne une
->   définition à côté d'un plan. Elle la tient depuis `#123`–`#124` : la Console
+>   seconde dette de `#118`, conditionnée à ce que l'App tienne une
+>   définition à côté d'un plan. Elle la tient depuis `#123`–`#124` : l'App
 >   lit la paire, lit la révision épinglée et soumet les deux. Le contrôle
 >   croisé est désormais tenu quatre fois — construction par le Controller,
 >   miroir Rust avant l'ouverture de la fenêtre, revérification par le Controller
@@ -845,7 +845,7 @@ phrases, et chacune est vérifiable.
 1. **L'humain lit des phrases, jamais un document.** Chaque écran du trajet
    rend les phrases dérivées ; les octets canoniques restent atteignables
    derrière un geste explicite (« voir les octets exacts »), jamais comme forme
-   par défaut. Vérifiable par le contrat de source de la Console.
+   par défaut. Vérifiable par le contrat de source de l'App.
 2. **Aucune empreinte sans la phrase qui la porte.** Une empreinte affichée est
    la fin d'une phrase. La fenêtre native le tient déjà par construction, et
    `validate` le refuse autrement.
@@ -912,7 +912,7 @@ Décisions attachées à ces routes :
   pas de `DELETE`, pas de `retry`, pas de `resume` : la reprise après un
   résultat inconnu est une observation puis un nouveau plan signé, et une route
   qui prétendrait faire mieux serait une route qui ment.
-- **La Console ne choisit ni l'adresse, ni le port, ni la clé d'hôte, ni
+- **L'App ne choisit ni l'adresse, ni le port, ni la clé d'hôte, ni
   l'identité, ni l'ordre.** Elle nomme une machine et remet des octets signés ;
   tout le reste est un fait de l'enrôlement que le Controller lit sur son
   disque.
@@ -957,7 +957,7 @@ Quatre propriétés sont attachées à ces nombres, et chacune est une décision
   une phrase que le produit n'a pas écrite, l'autre est son propre compte rendu
   de sa propre tentative, et un lecteur doit pouvoir dire lequel il lit ;
 - **la limite est nommée plutôt qu'évitée.** Une machine qui dépasse 32
-  dispatchs perd ses plus anciens de l'histoire que la Console lit ; les effets,
+  dispatchs perd ses plus anciens de l'histoire que l'App lit ; les effets,
   eux, restent sur la machine. Une instance dont le dernier dispatch rapporté
   est sorti de l'histoire est affichée **révision inconnue**, jamais avec une
   révision devinée. Aucun enregistrement non terminal ne sort jamais : un
@@ -992,7 +992,7 @@ La preuve (`#128`) est la première sous la règle inscrite à
 `docs/contribution/QUALITE.md` : **aucune fixture ne remplace un composant du
 produit sur ce trajet.** Elle constate :
 
-1. **chaque maillon est exercé par le binaire du produit** : la Console réelle
+1. **chaque maillon est exercé par le binaire du produit** : l'App réelle
    construit la paire, la vraie fenêtre native recueille le consentement, le
    cœur natif signe, le Controller réel reçoit, consomme, lance par SSH, et
    l'Auxiliaire réel applique sur l'autre machine ; le rapport LAB liste ce que
@@ -1011,9 +1011,9 @@ produit sur ce trajet.** Elle constate :
    autre machine ou une autre opération est écarté, et l'état du dispatch reste
    `lancé, non rapporté` plutôt que de devenir un succès ;
 6. **l'état « lancé, non rapporté » est constaté pour de vrai** : une coupure du
-   canal après l'écriture du wrapper laisse cet état, la Console l'affiche en
+   canal après l'écriture du wrapper laisse cet état, l'App l'affiche en
    ces termes, et le produit ne rejoue rien ;
-7. **la position incertaine se résout par un geste humain** : la Console nomme
+7. **la position incertaine se résout par un geste humain** : l'App nomme
    l'incertitude, la machine refuse une séquence dépassée en le disant, et la
    phrase de la machine est montrée sans être réécrite ;
 8. **rien n'est consommé par un refus** : une soumission refusée, quelle qu'en
@@ -1026,7 +1026,7 @@ produit sur ce trajet.** Elle constate :
     état de clôture nommé.
 
 Le rapport nommera aussi ce que ce trajet ne prouve pas : le pilotage de la
-Console réelle atteste ce que le moteur de pilotage peut atteindre, et la
+App réelle atteste ce que le moteur de pilotage peut atteindre, et la
 confirmation de la fenêtre native est faite par le mécanisme le plus honnête
 disponible — le rapport dit lequel, et ce qu'il ne remplace pas.
 
@@ -1075,7 +1075,7 @@ qui a été exécuté, et corriger un renvoi d'issue n'y touche aucune mesure.
 ## Justification de sécurité
 
 - **Scénario et actifs.** Un humain commande une mutation sur une machine
-  enrôlée depuis la Console. Actifs : la clé humaine d'approbation, les
+  enrôlée depuis l'App. Actifs : la clé humaine d'approbation, les
   identités de commande par machine, les positions anti-rejeu, et l'intégrité de
   ce qui s'exécute réellement sur la machine.
 - **Menaces traitées.** Un Controller compromis qui forge, rejoue ou redirige
@@ -1124,5 +1124,5 @@ qui a été exécuté, et corriger un renvoi d'issue n'y touche aucune mesure.
   la limite de la durée de vie de l'enveloppe et une seule fois ; une machine
   dont `root` est compromis peut mentir dans son rapport ; la version et les
   défauts compilés du client OpenSSH appartiennent à la distribution ; le
-  pilotage de la Console réelle dans la preuve atteste moins qu'un humain
+  pilotage de l'App réelle dans la preuve atteste moins qu'un humain
   devant l'écran, et le rapport LAB dira quoi.

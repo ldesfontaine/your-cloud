@@ -2,7 +2,7 @@
 # Every enrolment refusal and its positive control, decided by the compiled
 # gates rather than by this script.
 #
-# It runs on lab-console — the machine that plays the Controller — because that
+# It runs on lab-app — the machine that plays the Controller — because that
 # is where the decisions belong: the target reports what it observed, and the
 # Controller judges. A harness that compared the fields itself would stay green
 # against a product that had stopped judging.

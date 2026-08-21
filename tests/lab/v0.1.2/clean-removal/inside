@@ -2,13 +2,13 @@
 # Ce que l'oracle a besoin d'avoir autour de lui, dans l'écran virtuel que `run`
 # a ouvert, et sous le compte de l'humain.
 #
-# Le pilote est le produit installé : `/usr/bin/your-cloud-console`, le binaire
+# Le pilote est le produit installé : `/usr/bin/your-cloud-app`, le binaire
 # que le `.deb` de cette passe a réellement posé, conduit par `tauri-driver`
-# devant le même WebKitWebDriver avec lequel la Console Linux peint.
+# devant le même WebKitWebDriver avec lequel l'App Linux peint.
 #
 # **Aucune variable `XDG_*` n'est posée ici**, et c'est la seule différence qui
 # compte avec le patron dont ce script descend. Le harnais du trajet de commande
-# déplace l'état de la Console sous un répertoire à lui pour pouvoir le remettre
+# déplace l'état de l'App sous un répertoire à lui pour pouvoir le remettre
 # à zéro entre deux étapes ; cette preuve-ci mesure justement **où le produit
 # écrit quand personne ne le lui dit**. Un état déplacé rendrait la question
 # sans objet.
@@ -16,7 +16,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-application=/usr/bin/your-cloud-console
+application=/usr/bin/your-cloud-app
 output="$here/output"
 driver_port=4444
 native_port=4445
@@ -48,7 +48,7 @@ driver_pid=$!
 cleanup() {
   kill "$driver_pid" 2>/dev/null || true
   wait "$driver_pid" 2>/dev/null || true
-  pkill -x your-cloud-console 2>/dev/null || true
+  pkill -x your-cloud-app 2>/dev/null || true
   pkill -x your-cloud-native-bootstrap-assistant 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -60,7 +60,7 @@ echo "  candidat $(dpkg-query -W -f '${Version}' your-cloud 2>/dev/null || echo 
 echo "  humain $(id -un) — HOME=$HOME"
 
 set +e
-python3 -u -X faulthandler "$here/console-oracle.py" \
+python3 -u -X faulthandler "$here/app-oracle.py" \
   --base-url "http://127.0.0.1:$driver_port" \
   --application "$application" \
   --output "$output/usage.json"

@@ -151,7 +151,7 @@ func appendSSHString(destination, value []byte) []byte {
 // client reads without a helper: the unencrypted `openssh-key-v1` container.
 //
 // It carries no passphrase, and that is a decision rather than an omission: the
-// Controller must stay autonomous when the Console is closed, so no human is
+// Controller must stay autonomous when the App is closed, so no human is
 // there to unlock anything. What protects this half is the file mode, the
 // service's private credential directory, and the fact that it never travels —
 // the same protection the operational TLS keys already have, and the same named

@@ -41,7 +41,7 @@ controller_id=3f2504e0-4f89-41d3-9a0c-0305e82c3301
 # and no image of a third party may enter this proof. The name carries dots
 # because the contract requires a repository to open on a registry host, and it
 # resolves — by a line this harness writes into /etc/hosts and takes away again —
-# to lab-console, which is a real other machine of this flat subnet.
+# to lab-app, which is a real other machine of this flat subnet.
 origin_host_name=registry.lab.your-cloud.test
 origin_repository="$origin_host_name/lab/synthetic-app"
 origin_authority_anchor=/usr/local/share/ca-certificates/lab-user-service-authority.crt

@@ -4,7 +4,7 @@
 //   - the Controller, which freezes a plan and its rollback — here for two
 //     schemas at once, because the last palier of v0.1.0 composes a public
 //     profile, a private profile, their archives, a passage and two routes;
-//   - the Console, which shows the pair to a human and signs the envelope naming
+//   - the App, which shows the pair to a human and signs the envelope naming
 //     their two digests;
 //   - the certificate authority of the declared names, which the contract says
 //     belongs to the proof and never to the Auxiliary — no plan describes a
@@ -30,7 +30,7 @@
 // never holds a private one and could not.
 //
 // The seed is synthetic and the key material lives only as long as the run.
-// Interoperability with the real Console is proven by the pinned cross-language
+// Interoperability with the real App is proven by the pinned cross-language
 // vector, never by this program.
 package main
 
@@ -191,7 +191,7 @@ func main() {
 		planDocument = strings.Replace(planDocument, *machine, alterLast(*machine), 1)
 	case hostileApprovedMismatch:
 		// The one hostile case a human really signed: a Controller froze a plan
-		// beside a rollback that undoes another instance, and the Console signed
+		// beside a rollback that undoes another instance, and the App signed
 		// both digests. Every check upstream of the pair passes, and the refusal
 		// has to come from the pair itself.
 		other, err := freezePair(*operation, *infrastructure, *machine, *profile, *port+1,

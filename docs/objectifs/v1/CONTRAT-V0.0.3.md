@@ -1,4 +1,4 @@
-# Contrat `v0.0.3` — Console cliente et Controller de lecture
+# Contrat `v0.0.3` — App cliente et Controller de lecture
 
 > État au 1er août 2026 : **architecture produit et paramètres 1 à 8 validés ;
 > preuve fonctionnelle LAB Linux exécutée, réussie puis revalidée après review**
@@ -14,13 +14,13 @@
 
 ## Résultat utilisateur
 
-Un administrateur installe la Console Your Cloud sur Linux ou Windows, lui
+Un administrateur installe l'App Your Cloud sur Linux ou Windows, lui
 associe le Controller privé d'une infrastructure et consulte les deux machines
 déjà enrôlées. Il voit leur dernier état `host-health.v1`, l'heure de réception,
 la séquence, les lacunes connues et un statut `récent`, `ancien` ou `absent`,
 sans confondre ces valeurs avec un Relay indisponible ou une horloge non fiable.
 
-La Console permet de créer l'inventaire local du Controller et d'y rattacher des
+L'App permet de créer l'inventaire local du Controller et d'y rattacher des
 identifiants de machines déjà enrôlés. Cette écriture concerne seulement les
 données métier du Controller : elle ne délivre ni certificat, ni ordre, ni
 modification à une machine ou au Relay.
@@ -29,7 +29,7 @@ modification à une machine ou au Relay.
 
 ```text
 Appareil administrateur
-`- Console installée et signée
+`- App installée et signée
    |- frontend embarqué
    |- aucun serveur local, aucune page localhost
    |- associations de Controllers approuvées
@@ -41,11 +41,11 @@ Controller d'une infrastructure — backend uniquement, aucun frontend
 `- lecture privée authentifiée --> Relay
 
 Daemon -- POST mTLS --> Relay
-`- aucune connaissance du Controller ou de la Console
+`- aucune connaissance du Controller ou de l'App
 ```
 
 Un **frontend embarqué** désigne les fichiers de l'interface inclus dans
-l'artefact signé de la Console. Ils peuvent employer des technologies Web sans
+l'artefact signé de l'App. Ils peuvent employer des technologies Web sans
 être servis par un site, un Controller ou un serveur `localhost`.
 
 Une **enveloppe cliente** désigne le programme natif léger qui affiche ce
@@ -56,7 +56,7 @@ seulement des opérations Tauri nommées ; il ne reçoit ni client réseau gén�
 ni accès libre au système de fichiers, ni shell.
 
 Une **CSP** est la politique qui borne les sources de contenu exécutables par la
-WebView. Celle de la Console refuse le code distant et toute navigation non
+WebView. Celle de l'App refuse le code distant et toute navigation non
 prévue. Les ressources du frontend sont incluses dans l'artefact signé et Tauri
 ne démarre aucun serveur local pour les afficher.
 
@@ -64,12 +64,12 @@ Ce choix ajoute au build la chaîne Rust, Node, Tauri et les dépendances native
 de WebView : WebKitGTK sous Linux, outils MSVC et WebView2 sous Windows. Les
 versions exactes sont verrouillées dans les manifestes de dépendances et les
 images de runner ; aucun plugin Tauri n'est ajouté sans une opération native
-requise par ce contrat. À l'exécution, la Console réutilise la WebView du système,
+requise par ce contrat. À l'exécution, l'App réutilise la WebView du système,
 dont une vulnérabilité non corrigée reste un risque résiduel.
 
 ## Frontières d'autorité
 
-- La Console est un client multi-Controller ; elle n'est l'autorité d'aucune
+- L'App est un client multi-Controller ; elle n'est l'autorité d'aucune
   infrastructure et ne possède aucun secret de machine, de Relay, de runner ou
   de chemin d'action.
 - Un Controller porte l'autorité métier d'exactement une infrastructure. Il
@@ -77,7 +77,7 @@ dont une vulnérabilité non corrigée reste un risque résiduel.
   l'inventaire attendu et interprète les observations.
 - Le Controller expose une API privée, jamais un frontend. Un Controller
   compromis ne peut donc pas fournir directement du code exécutable à la
-  Console. Ses réponses restent néanmoins des données hostiles à valider et à
+  App. Ses réponses restent néanmoins des données hostiles à valider et à
   rendre sans interprétation active.
 - Le Relay authentifie, borne, persiste et accuse les observations. Il ne porte
   aucun utilisateur, rôle, inventaire métier, statut d'interface ou action.
@@ -91,7 +91,7 @@ dont une vulnérabilité non corrigée reste un risque résiduel.
 
 ## Plateformes et distribution
 
-`v0.0.3` produit une Console fonctionnelle sur Linux et Windows depuis le même
+`v0.0.3` produit une App fonctionnelle sur Linux et Windows depuis le même
 frontend responsive. Les artefacts proviennent des mêmes sources, sont bornés,
 inventoriés et signés. Aucun téléchargement de code ou de composant d'interface
 depuis un Controller n'est permis.
@@ -100,7 +100,7 @@ Le téléphone conserve le même contrat visuel et réseau, mais Android et iOS
 restent hors de ce palier. Leur empaquetage, signature, stockage sécurisé, cycle
 de vie en arrière-plan et distribution demanderont une preuve propre.
 
-Tout build, test, serveur, lancement ou preuve de la Console et du Controller
+Tout build, test, serveur, lancement ou preuve de l'App et du Controller
 s'exécute dans le LAB ou un runner isolé. Le laptop de développement reste
 limité à Git, l'édition, aux contrôles statiques autorisés et au pilotage de
 `labctl`.
@@ -133,7 +133,7 @@ contrôles distincts :
 
 1. le réseau privé borne les endpoints joignables sans prouver l'identité
    humaine ;
-2. la Console présente une identité d'appareil propre, révocable et distincte
+2. l'App présente une identité d'appareil propre, révocable et distincte
    pour chaque association ;
 3. le Controller vérifie une authentification humaine forte avant d'émettre une
    session courte liée à cet appareil et à cette infrastructure.
@@ -142,7 +142,7 @@ Une **session opaque** est un jeton aléatoire sans droit lisible côté client 
 seul le Controller retrouve sa portée dans son état serveur et peut l'invalider.
 
 Une **phrase secrète locale** est une phrase connue de l'humain qui déverrouille
-la Console sans être envoyée au Controller. Linux et Windows emploient le même
+l'App sans être envoyée au Controller. Linux et Windows emploient le même
 profil : ni Windows Hello, ni passkey, ni clé FIDO2, ni SSO/OIDC n'est requis ou
 implémenté dans `v0.1.0`. Ces profils pourront être étudiés après `v0.1.0` sans entrer
 dans le contrat actuel.
@@ -167,11 +167,11 @@ fichier clair. Une copie transitoire en mémoire Rust reste néanmoins un risque
 résiduel mesuré, pas une propriété d'enclave.
 
 La phrase dérive la clé de 32 octets du coffre par Argon2id avec un sel aléatoire
-de 16 octets propre à la Console. Le profil initial fixe `m=65536` Kio,
+de 16 octets propre à l'App. Le profil initial fixe `m=65536` Kio,
 `t=3`, `p=1` ; le format versionné conserve ces paramètres pour permettre une
 augmentation ultérieure sans rendre l'ancien coffre illisible. La phrase et la
 clé dérivée ne sont jamais persistées. La session humaine reste dans la seule
-mémoire native et disparaît à la fermeture ou au verrouillage de la Console.
+mémoire native et disparaît à la fermeture ou au verrouillage de l'App.
 Le cœur Rust applique lui-même ce profil Argon2id et refuse sel absent, recréé,
 mal dimensionné ou paramètres divergents ; il n'emploie pas les valeurs par
 défaut du helper Stronghold. Un changement de phrase écrit et valide un nouveau
@@ -203,7 +203,7 @@ enclave matérielle ni résistance à un processus déjà exécuté sous l'ident
 l'utilisateur.
 
 Le frontend affiche le champ de phrase puis la transmet uniquement à l'opération
-Tauri nommée `unlock_console`. Il efface aussitôt son champ et ne reçoit jamais
+Tauri nommée `unlock_app`. Il efface aussitôt son champ et ne reçoit jamais
 la clé dérivée, une clé privée, le contenu du coffre ou un jeton de session.
 JavaScript ne garantissant pas l'effacement immédiat de ses chaînes en mémoire,
 ce bref passage de la phrase constitue une limite explicite. La CSP, l'absence
@@ -213,7 +213,7 @@ sans la supprimer.
 Stronghold fournit un moteur commun aux deux systèmes, mais ne constitue pas
 une enclave matérielle. Le vol du coffre autorise des essais hors ligne contre
 la phrase ; Argon2id les ralentit sans les rendre impossibles. Un processus qui
-compromet la Console pendant qu'elle est déverrouillée peut viser toutes ses
+compromet l'App pendant qu'elle est déverrouillée peut viser toutes ses
 associations. Les clés restent néanmoins distinctes et le cœur Rust refuse
 qu'une opération visant un Controller utilise le compartiment d'un autre. Ces
 risques résiduels restent visibles et aucune résistance globale au logiciel
@@ -222,7 +222,7 @@ malveillant ou conformité ANSSI/OWASP n'est revendiquée.
 ### Phrase de déverrouillage et code de récupération
 
 La **phrase de déverrouillage** sert au quotidien à ouvrir le coffre local. La
-Console la génère avec un générateur cryptographiquement sûr en tirant six mots
+App la génère avec un générateur cryptographiquement sûr en tirant six mots
 indépendants et uniformes dans la liste française de 2 048 mots de
 [BIP-39](https://github.com/bitcoin/bips/blob/8c369ac8e60629ac6c032ffe21bb5ec5b35213d7/bip-0039/french.txt), soit
 66 bits d'entropie avant le coût Argon2id. Cette liste est seulement un
@@ -236,7 +236,7 @@ La **normalisation NFKD** donne aux mêmes caractères Unicode une représentati
 stable sur Linux et Windows. La forme canonique emploie les mots minuscules normalisés en NFKD, un espace
 ASCII entre deux mots et aucun espace en tête ou en fin. L'entrée brute est
 refusée au-delà de 192 octets UTF-8 avant toute normalisation, puis la forme
-canonique est bornée à 96 octets. L'opération Rust `unlock_console`, pas
+canonique est bornée à 96 octets. L'opération Rust `unlock_app`, pas
 React, normalise Unicode et les espaces avant de vérifier exactement six
 entrées de la liste. L'utilisateur peut régénérer la phrase
 avant de la confirmer, mais ne compose pas une phrase plus faible. Le changement
@@ -245,12 +245,12 @@ remplace atomiquement le chiffrement du coffre ; il ne réutilise ni ne fait
 tourner les clés des Controllers. Une erreur conserve l'ancien coffre intact.
 
 Le **code de récupération global** est un second secret, réservé aux incidents
-et distinct de cette phrase. La Console génère 256 bits aléatoires, les encode
+et distinct de cette phrase. L'App génère 256 bits aléatoires, les encode
 en 52 caractères Base32 RFC 4648 majuscules sans remplissage, puis ajoute deux
 caractères de contrôle issus des dix premiers bits de
 `SHA-256("your-cloud/recovery-check.v1" || code_brut)`. L'utilisateur doit
 voir neuf groupes de six caractères séparés par `-`, le ressaisir et en
-conserver deux copies hors ligne ; ni la Console, ni
+conserver deux copies hors ligne ; ni l'App, ni
 Stronghold, ni un Controller ne le sauvegardent. Le frontend voit
 temporairement la phrase, les codes d'appairage ou de récupération nécessaires
 à l'interface, les efface après l'opération et ne les place ni dans un stockage
@@ -271,7 +271,7 @@ l'empreinte SPKI de 32 octets — le SHA-256 de la clé publique de l'autorité 
 serveur épinglée. Des vecteurs de dérivation figés prouvent l'interopérabilité
 Linux/Windows. Le Controller
 ne conserve que ce sel, cette époque et la clé publique résultante. Le code et
-la clé privée dérivée ne quittent jamais la Console et sont effacés de la
+la clé privée dérivée ne quittent jamais l'App et sont effacés de la
 mémoire native après l'opération.
 
 La clé publique de cette autorité TLS reste immuable pendant `v0.1.0` ; un
@@ -307,7 +307,7 @@ récupération, une feuille affichée localement une seule fois contient son typ
 les origines exactes `9443` et temporaire `9444`, `infrastructure_id`, le
 certificat de l'autorité serveur et son empreinte SHA-256, un `window_id`
 aléatoire de 128 bits et un `window_code` aléatoire de 128 bits. Le code est
-encodé en 26 caractères Base32 et affiché en groupes `5-5-5-5-6`. La Console
+encodé en 26 caractères Base32 et affiché en groupes `5-5-5-5-6`. L'App
 épingle ces données avant son premier octet applicatif ; la confiance système
 seule ne suffit pas.
 
@@ -325,11 +325,11 @@ Le Controller ne conserve qu'un condensat du code et ne journalise ni code, ni
 challenge, ni signature, ni CSR. Une seule fenêtre d'appairage ou de
 récupération et une seule transaction d'identité sont actives à la fois.
 `v0.0.3` limite volontairement chaque Controller à un humain local et un
-appareil Console actifs ; un second appareil passe par une récupération qui
+appareil App actifs ; un second appareil passe par une récupération qui
 remplace le premier, pas par une extension silencieuse du modèle.
 
 Un **CSR PKCS#10** est une demande de certificat signée par la nouvelle clé
-d'appareil ; sa signature prouve que la Console possède la clé privée sans la
+d'appareil ; sa signature prouve que l'App possède la clé privée sans la
 transmettre. Un **certificat candidat** est déjà signé par le Controller mais ne
 possède encore aucun droit métier : seule son activation bornée peut le rendre
 actif.
@@ -338,14 +338,14 @@ Le listener temporaire expose exactement :
 
 | Méthode et route `9444` | Effet autorisé |
 |---|---|
-| `POST /v0/enrollment/challenge` | vérifier `window_id`, `window_code` et un `request_id` Console de 128 bits, puis faire générer au Controller `transaction_id`, `device_id`, challenge de 32 octets, sel public de récupération et époque initiale |
+| `POST /v0/enrollment/challenge` | vérifier `window_id`, `window_code` et un `request_id` App de 128 bits, puis faire générer au Controller `transaction_id`, `device_id`, challenge de 32 octets, sel public de récupération et époque initiale |
 | `PUT /v0/enrollment` | vérifier le CSR P-256 et les signatures du transcript par les nouvelles clés humaine et de récupération, puis rendre un certificat candidat sans encore donner de droit métier |
 | `POST /v0/recovery/challenge` | vérifier les mêmes identifiants et code locaux, puis faire générer au Controller `transaction_id`, nouveau `device_id`, challenge, prochain sel et prochaine époque ; rendre aussi le sel et l'époque courants sans recevoir le code global |
 | `PUT /v0/recovery` | vérifier le CSR et les signatures du même transcript par l'ancienne clé de récupération, la nouvelle clé humaine et la prochaine clé de récupération, puis préparer le remplacement candidat sans révoquer encore l'état actif |
 
 Seules les deux routes correspondant au type de fenêtre existent. Le challenge
 vaut deux minutes et une fois ; les dix minutes concernent la fenêtre, pas la
-preuve cryptographique. La Console génère `request_id` ; le Controller génère
+preuve cryptographique. L'App génère `request_id` ; le Controller génère
 `transaction_id` et le nouvel UUIDv4 `device_id`, qu'il n'a jamais attribué,
 même à une identité révoquée. Tant que la fenêtre reste ouverte, le même
 `request_id` et le même contenu rendent la même transaction ; un contenu
@@ -386,12 +386,12 @@ ECDSA avec SHA-256, un numéro de série aléatoire de 128 bits,
 `basicConstraints=CA:false`, `keyUsage=digitalSignature` et
 `extendedKeyUsage=clientAuth` critiques. Son SAN URI est exactement
 `urn:your-cloud:device:v1:<infrastructure_id>:<device_id>`, où
-`device_id` est un UUIDv4 aléatoire. Le certificat vaut 180 jours ; la Console
+`device_id` est un UUIDv4 aléatoire. Le certificat vaut 180 jours ; l'App
 avertit à J-30 puis J-7, mais aucun renouvellement automatique n'entre dans ce
 palier.
 
 La rotation manuelle utilise deux phases pour qu'une réponse réseau perdue ne
-verrouille jamais la Console :
+verrouille jamais l'App :
 
 1. sous l'ancien mTLS, avec session valide et preuve humaine fraîche liée au
    nouveau CSR, `PUT /v0/device-rotations/{rotation_id}` persiste et rend de
@@ -453,12 +453,12 @@ d'inactivité est de 30 minutes et la durée absolue de huit heures, tous deux
 imposés côté serveur. Seule une requête authentifiée acceptée prolonge
 l'inactivité ; un refus ne la prolonge jamais.
 
-Si la réponse qui contient un nouveau jeton se perd, la Console demande un
+Si la réponse qui contient un nouveau jeton se perd, l'App demande un
 nouveau challenge et crée une autre session ; ce succès invalide le jeton perdu.
 Le Controller n'a donc pas à conserver le jeton en clair pour rendre une réponse
 identique.
 
-La fermeture ou le verrouillage de la Console efface le jeton natif. Logout,
+La fermeture ou le verrouillage de l'App efface le jeton natif. Logout,
 expiration, révocation, rotation, récupération ou redémarrage du Controller
 l'invalident côté serveur. Sessions, challenges, fenêtres et candidats emploient
 des échéances monotones ; un redémarrage les invalide et conserve uniquement
@@ -488,10 +488,10 @@ code global est perdu lui aussi, aucune récupération distante n'est promise :
 l'autorité locale de chaque Controller doit réinitialiser explicitement son
 unique association avant un nouvel appairage.
 
-Si le code global est connu ou soupçonné compromis, la Console génère un
+Si le code global est connu ou soupçonné compromis, l'App génère un
 nouveau code et exige la confirmation de ses deux copies hors ligne avant le
 premier commit. L'utilisateur garde l'ancien et le nouveau code hors ligne
-jusqu'au dernier Controller. La Console exécute ensuite
+jusqu'au dernier Controller. L'App exécute ensuite
 `PUT /v0/recovery-key` séparément sur chaque association. Le corps versionné
 porte un identifiant de transaction, l'époque suivante, un nouveau sel, la
 nouvelle clé publique dérivée et les signatures humaine, de l'ancienne clé de
@@ -500,10 +500,10 @@ récupération et de la nouvelle clé prouvant sa possession.
 Chaque commit incrémente seulement l'époque de récupération de ce Controller et
 n'invalide pas la session ou l'appareil courants. Le reçu rend un rejeu
 strictement identique observable sans seconde mutation ; un contenu différent
-reçoit `409`. L'ancienne clé devient invalide dès ce commit. La Console persiste
+reçoit `409`. L'ancienne clé devient invalide dès ce commit. L'App persiste
 uniquement l'identifiant et l'état de chaque Controller, l'époque cible et le
 SHA-256 domainé du nouveau code, jamais les codes eux-mêmes. Après fermeture ou
-crash, l'utilisateur ressaisit les deux codes ; la Console reprend les reçus
+crash, l'utilisateur ressaisit les deux codes ; l'App reprend les reçus
 déjà commis et les associations encore à traiter. L'interface liste les
 Controllers terminés, en échec et en attente et n'annonce jamais une rotation
 globale tant qu'une association manque. Le code reste donc global pour
@@ -538,7 +538,7 @@ augmente le rayon d'incident même si les clés dérivées sont séparées et si
 fenêtre ouverte par l'autorité locale reste nécessaire. La durée de 180 jours laisse aussi une fenêtre
 résiduelle entre compromission et révocation. La compromission du Controller ou
 de son autorité de délivrance permet de fabriquer des identités, et celle d'une
-Console déverrouillée vise les clés actives. `v0.1.0` prouve des contrôles bornés
+App déverrouillée vise les clés actives. `v0.1.0` prouve des contrôles bornés
 contre ces scénarios. L'application ne peut pas exclure une capture par le
 système d'exploitation, une méthode de saisie, une API d'accessibilité ou les
 copies mémoire transitoires de l'IPC lorsque la phrase ou un code est affiché.
@@ -577,10 +577,10 @@ et les
 Ces sources justifient les contrôles ; les six mots, les durées, les ports et la
 surface de routes restent des choix de risque propres à `v0.0.3`.
 
-## API Console–Controller décidée
+## API App–Controller décidée
 
 Une **origine HTTPS** est le triplet exact protocole, nom et port. Chaque
-association de la Console approuve une origine distincte de la forme
+association de l'App approuve une origine distincte de la forme
 `https://controller.<infrastructure-id>.your-cloud.test:9443` dans le
 LAB. L'enveloppe Tauri, jamais le frontend, émet les requêtes REST JSON sur TLS
 1.3. Elle refuse HTTP, utilisateur dans l'URL, autre hôte ou port, query,
@@ -657,7 +657,7 @@ aucune réponse HTTP.
 | `503` | `controller_state_unavailable`, `relay_unavailable`, `projection_unavailable` | autorité locale inutilisable, lecture Relay requise impossible ou réponse sûre impossible |
 
 Tout autre statut, code, champ ou combinaison statut/code rend la réponse
-entière hostile et provoque un échec local générique. La Console utilise le
+entière hostile et provoque un échec local générique. L'App utilise le
 contexte de la route pour son libellé utilisateur, jamais un texte fourni par le
 serveur. Sur `401`, elle efface seulement la session native de l'association
 visée ; sur `403`, elle ne tente ni autre compartiment, ni autre endpoint.
@@ -681,7 +681,7 @@ Ces références soutiennent les contrôles ; elles ne constituent aucune
 revendication de conformité globale.
 
 Un Controller compromis peut toujours mentir dans les données et libellés qu'il
-rend. La Console les traite donc comme hostiles, sans HTML actif ni code reçu.
+rend. L'App les traite donc comme hostiles, sans HTML actif ni code reçu.
 La preuve devra en plus attaquer l'API depuis une VM distincte placée sur le même
 réseau LAB : aucun certificat, certificat inconnu, révoqué ou d'un autre
 Controller, session ou infrastructure croisée, machine de l'autre
@@ -952,7 +952,7 @@ autorise une seule requête HTTP active et douze débuts de requêtes authentifi
 sur la même fenêtre. Les dépassements réseau sont supprimés sans réponse ; un
 dépassement après TLS reçoit `429`.
 
-Lorsqu'un `PUT` Console–Controller, lui-même borné à 10 secondes, exige cette
+Lorsqu'un `PUT` App–Controller, lui-même borné à 10 secondes, exige cette
 lecture, la deadline interne vaut le minimum entre 6 secondes et la deadline
 externe moins 2 secondes. Si ce budget n'existe plus, le Controller n'ouvre pas
 de connexion et rend `503`. Les deux secondes réservées bornent validation
@@ -1015,7 +1015,7 @@ réussie remet le compteur à zéro. Il n'existe aucune goroutine de scrutation
 permanente.
 
 Le snapshot Relay pouvant atteindre 2 Mio n'est jamais retransmis tel quel par
-l'API Console–Controller bornée à 128 Kio. Sa projection métier rend toute
+l'API App–Controller bornée à 128 Kio. Sa projection métier rend toute
 synthèse explicite ; aucune lacune n'est tronquée ou abandonnée silencieusement.
 
 En cas de Relay indisponible, de réponse hostile ou après redémarrage du
@@ -1070,7 +1070,7 @@ Ces sources motivent les contrôles sans revendiquer une conformité globale.
 
 ## Stockage, projection et fraîcheur décidés
 
-Une **autorité métier** est ici l'état qui décide quelles machines la Console
+Une **autorité métier** est ici l'état qui décide quelles machines l'App
 attend et sous quel libellé ; un cache de transport ne possède jamais ce droit.
 Une **publication atomique** remplace un fichier complet ou ne le remplace pas :
 un crash ne doit pas laisser un document partiel considéré comme valide. Une
@@ -1083,7 +1083,7 @@ Le Controller fonctionne sous un utilisateur dynamique non privilégié, sans
 capacité Linux. systemd crée son répertoire d'état privé
 `/var/lib/private/your-cloud-controller/` en mode `0700`. Seul le compte courant
 du service possède ses fichiers réguliers en mode `0600`. Aucun état métier ne
-réside dans le répertoire du frontend ou dans le coffre de la Console.
+réside dans le répertoire du frontend ou dans le coffre de l'App.
 
 `inventory.json`, limité à 65 536 octets, est l'unique autorité métier :
 
@@ -1225,12 +1225,12 @@ Les octets NFC exacts déterminent l'idempotence : deux écritures canoniquement
 équivalentes sont identiques, mais la casse reste significative. Deux machines
 peuvent porter le même libellé. Un libellé ne sert jamais d'identité, de nom DNS,
 de route, de chemin, de clé de tri autoritaire ou d'autorisation ; le
-`machine_id` immuable reste affiché à côté. L'enveloppe native de la Console
+`machine_id` immuable reste affiché à côté. L'enveloppe native de l'App
 revérifie ce profil sur chaque réponse et refuse le document entier avant le
 frontend si un Controller compromis l'enfreint. Le rendu ultérieur utilise
 seulement du texte isolé, jamais du HTML actif.
 
-### Projection Console bornée
+### Projection App bornée
 
 `GET /v0/machines` projette uniquement les machines attendues de l'inventaire,
 triées par `machine_id`. Il ne révèle jamais une entrée du registre Relay qui
@@ -1306,7 +1306,7 @@ nombre, `dropped_count` leur somme exacte et `first_sequence` et
 `last_sequence` les extrémités de la première et de la dernière plage. Tout
 débordement ou invariant impossible refuse la projection ; les 8 192 plages
 complètes restent dans le cache et aucune liste partielle n'est rendue à la
-Console.
+App.
 
 Le Controller préencode la réponse complète et vérifie sa taille maximale de
 131 072 octets avant d'émettre le statut ou le premier octet. Un dépassement
@@ -1314,7 +1314,7 @@ reçoit `503` avec un code d'erreur fixe, sans troncature, pagination implicite,
 nouvelle route, mutation de l'inventaire ou remplacement du cache. Les
 frontières de 64 machines, 256 octets de libellé et la synthèse des lacunes
 doivent néanmoins être prouvées compatibles avec cette enveloppe. Le snapshot
-P5 brut de 2 Mio n'est jamais exposé à la Console ni au frontend.
+P5 brut de 2 Mio n'est jamais exposé à l'App ni au frontend.
 
 ### Menaces, choix et risques résiduels
 
@@ -1414,7 +1414,7 @@ aux séparateurs de `1px` et aux seuils où l'API Tauri exige cette unité. La m
 en page utilise `rem`, `%`, `fr`, `minmax()` et `clamp()` plutôt que des largeurs
 d'écran figées.
 
-La Console ouvre une fenêtre standard de `1280 x 800` pixels logiques et refuse
+L'App ouvre une fenêtre standard de `1280 x 800` pixels logiques et refuse
 une taille inférieure à `640 x 560`. Tant qu'elle tient à côté du contenu, la
 synthèse présente sa fiche de contexte à droite ; sinon cette fiche passe sous
 le contenu. Vers `40rem`, la navigation se compacte et les tableaux deviennent
@@ -1534,10 +1534,10 @@ La topologie `v1-full` existante reçoit exactement ces rôles :
 
 | Machine LAB | Rôle pendant la preuve `v0.0.3` |
 |---|---|
-| `lab-console` | runner Linux, build natif `.deb`, orchestration, puis après retour à un snapshot propre installation et exécution de la Console Linux |
-| `lab-console-recovery` | seconde Console et client hostile : appairage concurrent, récupération, appareil inconnu ou révoqué, session et infrastructure croisées, scan de l'API Controller |
+| `lab-app` | runner Linux, build natif `.deb`, orchestration, puis après retour à un snapshot propre installation et exécution de l'App Linux |
+| `lab-app-recovery` | seconde App et client hostile : appairage concurrent, récupération, appareil inconnu ou révoqué, session et infrastructure croisées, scan de l'API Controller |
 | `lab-coordinateur` | Controller A réel ; un second processus Controller B synthétique emploie une autre IPv4 privée, un autre compte, une autre origine, d'autres CA, fichiers et identifiants pour les preuves multi-Controller |
-| `lab-gateway` | routage et filtrage LAB uniquement, sans Console, Controller, Relay ou Daemon |
+| `lab-gateway` | routage et filtrage LAB uniquement, sans App, Controller, Relay ou Daemon |
 | `lab-machine-1` | Daemon et Relay A colocalisés mais séparés par processus, comptes, identités, stockages, ports et unités |
 | `lab-machine-2` | second Daemon A ; client hostile sans credential lecteur contre `8444`, y compris présentation d'une identité Daemon dans l'autorité lecteur |
 
@@ -1551,14 +1551,14 @@ sur l'IPv4 privée distincte de `lab-machine-1`, et deux Daemons sur
 `lab-machine-1` et `lab-machine-2`.
 
 Le réseau refuse l'API Controller hors du segment d'administration. Depuis
-`lab-console-recovery`, qui appartient à ce segment, la connexion peut atteindre
+`lab-app-recovery`, qui appartient à ce segment, la connexion peut atteindre
 la frontière mais reste sans droit sans appareil et humain valides. Pour
 `8444`, `lab-machine-2` prouve d'abord le filtrage de la mauvaise IP ; une phase
 isolée arrête le lecteur du Controller puis tente depuis son IP exacte sans le
 certificat lecteur, afin de prouver que l'autorisation réseau ne remplace pas
 mTLS. Chaque phase réaffirme ensuite le nominal et l'état inchangé.
 
-`lab-console` sépare build et exécution par snapshots. Il construit depuis le
+`lab-app` sépare build et exécution par snapshots. Il construit depuis le
 lot Git exact, exporte le `.deb`, ses empreintes et métadonnées, revient à un
 snapshot runtime propre, vérifie l'artefact puis l'installe. Le pilote externe
 `tauri-driver` contrôle la WebView installée ; aucun plugin WebDriver, serveur
@@ -1571,7 +1571,7 @@ Un déclenchement manuel sur la révision candidate exacte lance deux runners
 jetables en parallèle. La même archive de sources et le même verrou frontend
 produisent nativement le `.deb` sous Linux et le `.msi` sous Windows
 MSVC/WiX. Chaque runner vérifie ses tests natifs, construit, installe puis lance
-la Console réelle et refuse tout listener inattendu. Sous Windows, le mécanisme
+l'App réelle et refuse tout listener inattendu. Sous Windows, le mécanisme
 Authenticode synthétique, les ACL du coffre, l'IPC natif et le rendu installé
 sous WebView2 sont exécutés ; la signature synthétique ne vaut jamais identité
 publique de distribution.
@@ -1579,7 +1579,7 @@ publique de distribution.
 Le smoke WebView2 utilise des données bornées uniquement pour éprouver
 l'enveloppe et les vues installées. Il ne démarre ni Controller, ni Relay, ni
 Daemon, ne rejoint aucun segment d'administration et ne simule pas les preuves
-réseau ou multi-VM. Les comportements partagés Console–Controller, mTLS,
+réseau ou multi-VM. Les comportements partagés App–Controller, mTLS,
 multi-Controller, panne, reprise et contenu hostile restent sous l'autorité de
 la preuve fonctionnelle LAB Linux et des tests partagés. Un échec d'une variante
 native laisse les autres preuves visibles mais bloque la fermeture de
@@ -1594,9 +1594,9 @@ La fermeture du candidat assemble exactement :
 2. retour aux snapshots propres et export Git non sensible du commit annoncé,
    avec empreinte vérifiée après chaque transfert ;
 3. contrôles statiques, unitaires et hostiles puis build Linux LAB natif ;
-4. installation propre et parcours Console Linux à `1280 x 800` et
+4. installation propre et parcours App Linux à `1280 x 800` et
    `640 x 560`, thèmes clair et sombre, clavier et zoom 200 % ;
-5. cycle nominal Daemon–Relay–Controller–Console, deux machines, Controller B,
+5. cycle nominal Daemon–Relay–Controller–App, deux machines, Controller B,
    instantané vide, donnée ancienne, lacune, reprise et redémarrages ;
 6. matrice hostile réseau, TLS, API, identités, sessions, fichiers, schémas,
    tailles, horloges, concurrence et réponses tardives ;
@@ -1737,7 +1737,7 @@ La preuve finale devra au minimum démontrer :
   marque initiale et entrée UTF-8 invalide refusés sans mutation ; libellés
   identiques sur deux machines restant distingués par leur `machine_id` ;
 - mauvais certificat, endpoint, méthode, route, portée, schéma ou taille refusé
-  sur les frontières Console–Controller et Controller–Relay ;
+  sur les frontières App–Controller et Controller–Relay ;
 - inventaire libre non borné, machine non enrôlée et champ d'interface inconnu
   refusés ;
 - Relay indisponible, instantané vide, donnée ancienne, lacune, reprise et
@@ -1756,7 +1756,7 @@ La preuve finale devra au minimum démontrer :
 - frontend sans clé privée, clé dérivée, contenu de coffre ou session ; phrase,
   `window_code` et code de récupération transitoires absents du stockage Web,
   des URL, journaux, presse-papiers automatique et captures produites par la
-  Console ou le protocole LAB après usage ;
+  App ou le protocole LAB après usage ;
 - clavier, ordre et restitution du focus, zoom texte à 200 %, reflow, mouvement
   réduit, contrastes et libellés accessibles vérifiés ; l'automatisation et la
   revue manuelle sont distinguées sans revendiquer une conformité WCAG globale ;
@@ -1769,7 +1769,7 @@ local, WireGuard, service OCI, téléphone, navigateur public, passerelle Web,
 Proxmox, OpenStack, worker d'automatisation, projet IaC, série temporelle,
 plugin libre, scan LAN, renouvellement automatique ou élection de Relay.
 
-La cible ultérieure où la Console déverrouille et ferme elle-même une liaison
+La cible ultérieure où l'App déverrouille et ferme elle-même une liaison
 privée bornée au Controller est conservée dans le [cap du projet](../../projet/CAP.md).
 Elle appartient à un palier postérieur à `v0.1.0` et
 ne fournit ici ni dépendance, ni abstraction anticipée, ni exception à cette
@@ -1781,7 +1781,7 @@ exclusion.
    et mise à jour manuelle ;
 2. `.deb` Linux et `.msi` Windows natifs, manifeste, empreintes, SBOM,
    provenance et signatures vérifiables ;
-3. API Console–Controller REST JSON sur HTTPS TLS 1.3, appareil mTLS et session
+3. API App–Controller REST JSON sur HTTPS TLS 1.3, appareil mTLS et session
    humaine opaque, quatre routes métier, limites fermées et séparation stricte
    des infrastructures ;
 4. authentification locale et cycle d'identité :
@@ -1810,7 +1810,7 @@ exclusion.
    sept vues centrées sur l'infrastructure sans rubrique Controller ou
    Sécurité ;
 8. preuve : fonctionnel multi-VM sur les six VM Linux `v1-full`, Relay et Daemon
-   colocalisés sur `lab-machine-1`, seconde Console hostile et deux Controllers
+   colocalisés sur `lab-machine-1`, seconde App hostile et deux Controllers
    logiquement séparés ; matrice native Linux/Windows manuelle sur le candidat
    final exact, sans infrastructure simulée dans les runners hébergés.
 
@@ -1822,7 +1822,7 @@ explicite ; un incident d'implémentation ne les élargit pas silencieusement.
 ## Point d'arrêt
 
 Les paramètres 1 à 8 sont validés et la preuve fonctionnelle Linux de la branche
-`console-controller` a réussi dans le LAB, puis le candidat issu de la review a
+`app-controller` a réussi dans le LAB, puis le candidat issu de la review a
 été revalidé sur le commit produit exact `02fe4f5` avec un signataire LAB
 synthétique. La matrice historique `30700406219` a réussi sur `9c6f14f`, puis la
 porte native finale a entièrement réussi sur le candidat produit exact

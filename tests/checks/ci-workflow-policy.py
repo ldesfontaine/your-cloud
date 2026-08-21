@@ -11,7 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 NATIVE_MANIFEST = (
     ROOT
-    / "console"
+    / "app"
     / "src-tauri"
     / "crates"
     / "native-bootstrap-assistant"
@@ -125,7 +125,7 @@ def validate() -> None:
     jobs = mapping_block(lines, "jobs", 0)
     require(
         direct_keys(jobs, 2)
-        == ["source", "server_bundle", "console_platforms", "plumber_policy"],
+        == ["source", "server_bundle", "app_platforms", "plumber_policy"],
         "CI must retain the four independently diagnosable job families",
     )
 
@@ -134,7 +134,7 @@ def validate() -> None:
     bundle_lines = mapping_block(jobs, "server_bundle", 2)
     bundle = direct_values(bundle_lines, 4)
     plumber = direct_values(mapping_block(jobs, "plumber_policy", 2), 4)
-    console = direct_values(mapping_block(jobs, "console_platforms", 2), 4)
+    app = direct_values(mapping_block(jobs, "app_platforms", 2), 4)
     require("if" not in source, "source checks must remain automatic")
     require("if" not in plumber, "Plumber policy must remain automatic")
     # Le lot est une porte de reproductibilité : automatique comme les deux
@@ -151,21 +151,21 @@ def validate() -> None:
     require(
         "      - name: Vérifier le contrat PowerShell Windows" in source_lines
         and "        shell: pwsh" in source_lines
-        and "        run: ./tests/checks/console-windows-ci-contract.ps1"
+        and "        run: ./tests/checks/app-windows-ci-contract.ps1"
         in source_lines,
         "the fast gate must parse the Windows proof and exercise its cleanup contract",
     )
     require(
-        console.get("needs") == "[source, plumber_policy, server_bundle]",
-        "native Console jobs must wait for the three fast gates",
+        app.get("needs") == "[source, plumber_policy, server_bundle]",
+        "native App jobs must wait for the three fast gates",
     )
     require(
-        console.get("if") == "github.event_name == 'workflow_dispatch'",
-        "native Console jobs must require an explicit workflow_dispatch",
+        app.get("if") == "github.event_name == 'workflow_dispatch'",
+        "native App jobs must require an explicit workflow_dispatch",
     )
 
-    console_lines = mapping_block(jobs, "console_platforms", 2)
-    strategy_lines = mapping_block(console_lines, "strategy", 4)
+    app_lines = mapping_block(jobs, "app_platforms", 2)
+    strategy_lines = mapping_block(app_lines, "strategy", 4)
     require(
         direct_values(strategy_lines, 6)
         == {"fail-fast": "false", "max-parallel": "2", "matrix": ""},

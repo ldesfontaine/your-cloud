@@ -30,7 +30,7 @@ func routePlanBody(machineID, operation, host string, port int) string {
 }
 
 // TestControllerProfilePlansFreezeThePairsTheyBuilt is the nominal proof of the
-// three routes: the Console receives two complete documents and the two digests
+// three routes: the App receives two complete documents and the two digests
 // an envelope will name, and every one of them survives a decode by the same
 // rules the Auxiliary will apply.
 func TestControllerProfilePlansFreezeThePairsTheyBuilt(t *testing.T) {
@@ -120,7 +120,7 @@ func TestControllerProfilePlansFreezeThePairsTheyBuilt(t *testing.T) {
 			t.Fatalf("%s: the rollback does not undo the exact instance", name)
 		}
 
-		// The digests are the Console's to recompute; they must be the ones the
+		// The digests are the App's to recompute; they must be the ones the
 		// transported documents produce and not a claim beside them.
 		planDigest, err := document.SHA256()
 		if err != nil {

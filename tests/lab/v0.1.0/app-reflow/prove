@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# Prove that the App frontend reflows without cutting anything, at both
+# contractual window sizes, with the text at 100 % and at 200 %. Issue #56,
+# contract `docs/objectifs/v1/CONTRAT-V0.0.3.md`.
+#
+# Two pilots measure with the same two oracles, and they answer two different
+# questions. The `fixture` pilot drives the shipped frontend bundle — the same
+# React tree, the same stylesheets, the same fonts, one module replaced: the
+# Tauri IPC bridge — in WebKitGTK on a virtual screen, across all twelve
+# states, on labels a hostile Controller could send and the product's own
+# validation would refuse. The `installed` pilot builds the `.deb` on this
+# machine, installs it, and drives the product's own process through
+# `tauri-driver`: it measures the states a Controller is not needed for —
+# the local access view, the panel of generated secrets, the infrastructures
+# view and the association view.
+#
+# What still escapes both pilots is named by the report: the post-association
+# views inside the installed process — reachable only behind a live
+# Controller, and measured here by the fixture pilot alone — and the whole
+# Windows half of #56.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat >&2 <<'EOF'
+usage: prove [setup | run | sync | build | run-installed | collect | remove | all]
+
+  setup          build the fixture bundle and place the harness on lab-app
+  run            drive the twelve fixture states at both sizes and text sizes
+  sync           place the app sources for the candidate build
+  build          build the .deb offline on the machine and install it
+  run-installed  drive the installed candidate on the pre-association states
+  collect        bring the captures and the structured results back
+  remove         uninstall the candidate and leave the machine honest
+  all            everything above, then publish the report (default)
+
+The machine must already exist, be running and be provisioned:
+
+  tools/labctl topology create quick
+  tools/provision-lab lab-app
+EOF
+  exit 2
+}
+
+command=${1:-all}
+[[ $# -le 1 ]] || usage
+case "$command" in
+  setup | run | sync | build | run-installed | collect | remove | all) ;;
+  *) usage ;;
+esac
+
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
+harness=$(cd -- "$(dirname -- "$0")" && pwd)
+labctl="$root/tools/labctl"
+target_vm=lab-app
+expected_origin=your-cloud/labctl
+remote_harness=/root/your-cloud-lab-app-reflow
+remote_sources=/root/your-cloud-app-build
+result_root="$root/tests/artifacts/proofs/app-reflow"
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+fail() { echo "FAILED: $*" >&2; exit 1; }
+announce() { printf '\n==> %s\n' "$*"; }
+
+# The revision the artefacts belong to. A dirty tree is named as dirty rather
+# than passed off as the commit it sits on.
+revision() {
+  local head dirty=
+  head=$(cd "$root" && git rev-parse HEAD)
+  if ! (cd "$root" && git diff --quiet) \
+    || ! (cd "$root" && git diff --cached --quiet) \
+    || [[ -n "$(cd "$root" && git ls-files --others --exclude-standard)" ]]; then
+    dirty=+worktree
+  fi
+  printf '%s%s' "$head" "$dirty"
+}
+
+# The mandatory inventory guard: read the LAB before mutating any of it.
+inventory() {
+  local vm=$1 line state ips template topology origin
+  line=$("$labctl" list --format=tsv | awk -v vm="$vm" -F'\t' '$1 == vm')
+  [[ -n "$line" ]] || fail "$vm is not part of the LAB inventory"
+  IFS=$'\t' read -r _ state ips template topology origin <<<"$line"
+  [[ "$origin" == "$expected_origin" ]] || fail "$vm carries the origin $origin"
+  [[ "$state" == running ]] || fail "$vm is $state"
+  [[ "$topology" == quick ]] || fail "$vm belongs to the topology $topology"
+  [[ "$ips" != *,* ]] || fail "$vm holds several addresses: $ips"
+  [[ "$ips" != 192.168.122.123 && "$ips" != 10.66.66.1 ]] \
+    || fail "$vm holds an address this project never mutates"
+  echo "$ips"
+}
+
+on_machine() { "$labctl" ssh "$target_vm" -- "$*"; }
+
+setup() {
+  announce "lab-app — $(inventory "$target_vm")"
+
+  announce "building the fixture bundle from the working tree"
+  (cd "$root/app" && npm run --silent build:reflow-fixture)
+  [[ -f "$root/app/dist-reflow/index.html" ]] || fail "the fixture bundle was not produced"
+
+  announce "placing the harness on $target_vm"
+  on_machine "rm -rf $remote_harness && install -d -m 0700 $remote_harness"
+  local script
+  for script in inside run build remove reflow-oracle.py; do
+    "$labctl" copy-to "$target_vm" "$harness/$script" "$remote_harness/$script" >/dev/null
+    on_machine "chmod 0700 $remote_harness/$script"
+  done
+  tar czf "$workdir/bundle.tgz" -C "$root/app/dist-reflow" .
+  "$labctl" copy-to "$target_vm" "$workdir/bundle.tgz" "$remote_harness/bundle.tgz" >/dev/null
+  on_machine "install -d -m 0755 $remote_harness/bundle \
+    && tar xzf $remote_harness/bundle.tgz -C $remote_harness/bundle \
+    && rm -f $remote_harness/bundle.tgz"
+  echo "  bundle placed: $(on_machine "find $remote_harness/bundle -type f | wc -l") files"
+}
+
+run_oracle() {
+  announce "fixture pilot — twelve states at 1280x800 and 640x560, text 100 % and 200 %"
+  on_machine "$remote_harness/run '$(revision)' '$run_id' fixture"
+}
+
+sync_sources() {
+  announce "placing the app sources for the candidate build"
+  inventory "$target_vm" >/dev/null
+  tar czf "$workdir/sources.tgz" -C "$root" \
+    --exclude=app/node_modules \
+    --exclude=app/dist \
+    --exclude=app/dist-reflow \
+    --exclude=app/src-tauri/target \
+    --exclude=app/src-tauri/binaries \
+    app
+  # `-m` re-stamps every file to now, so the build caches that survive under
+  # `target/` can never mistake an older synced file for an already-built one.
+  on_machine "install -d -m 0700 $remote_sources"
+  "$labctl" copy-to "$target_vm" "$workdir/sources.tgz" "$remote_sources/sources.tgz" >/dev/null
+  on_machine "tar xzf $remote_sources/sources.tgz -C $remote_sources -m --strip-components=1 \
+    && rm -f $remote_sources/sources.tgz"
+  echo "  sources placed: $(on_machine "find $remote_sources -type f -not -path '*/target/*' -not -path '*/node_modules/*' | wc -l") files"
+}
+
+build_candidate() {
+  announce "building and installing the candidate on $target_vm (offline, one job)"
+  on_machine "$remote_harness/build"
+}
+
+run_installed() {
+  announce "installed pilot — pre-association states at both sizes and text sizes"
+  on_machine "$remote_harness/run '$(revision)' '$run_id' installed"
+}
+
+collect() {
+  announce "collecting the captures and the structured results"
+  install -d -m 0755 "$workdir/output"
+  "$labctl" copy-from "$target_vm" "$remote_harness/output" "$workdir/collected" >/dev/null
+  local produced="$workdir/collected"
+  [[ -d "$produced" ]] || produced="$workdir/collected/output"
+  local results
+  results=$(find "$produced" -name reflow-result.json | wc -l)
+  [[ "$results" -ge 1 ]] || fail "no structured result came back"
+  install -d -m 0755 "$result_root/$run_id"
+  cp -a "$produced/." "$result_root/$run_id/"
+  chmod -R u+rw "$result_root/$run_id"
+  echo "  results:  $results"
+  echo "  captures: $(find "$result_root/$run_id" -name '*.png' | wc -l)"
+  echo "  under:    $result_root/$run_id/"
+}
+
+publish() {
+  local status=$1 log=$2 directory="$result_root/$run_id"
+  install -d -m 0755 "$directory"
+  {
+    echo "proof: app-reflow"
+    echo "issue: #56"
+    echo "contract: docs/objectifs/v1/CONTRAT-V0.0.3.md"
+    echo "run: $run_id"
+    echo "revision: $(revision)"
+    echo "machine: $target_vm (WebKitGTK on Xvfb; installed pilot through tauri-driver)"
+    echo "outcome: $([[ $status -eq 0 ]] && echo pass || echo red)"
+    echo "finished_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    cat <<'DEBTS'
+
+what this proof does not claim, whatever its outcome:
+  - the fixture pilot measures the frontend bundle in WebKitGTK, with the
+    Tauri IPC bridge replaced; the installed pilot measures the product's own
+    installed process, but only on the states a Controller is not needed for:
+    local access, the generated secrets panel, infrastructures, association.
+    The post-association views under the installed process stay measured by
+    the fixture pilot alone, until a proof stands the real chain up;
+  - the installed pilot withholds the capture of the secrets panel, because
+    the panel really displays freshly generated secret material; its raster
+    guard for that state stays with the fixture pilot;
+  - it says nothing about Windows. The same measurement under WebView2 on the
+    `windows-eval` machine is the other half of #56 and is not run here;
+  - it measures reflow, clipping, overlap, reachability, keyboard order and
+    focus visibility. It is not a claim of WCAG 2.2 AA conformance;
+  - the labels the fixture exercises are hostile by construction, not
+    exhaustive, and the installed pilot's labels are only what the product
+    itself renders on a fresh machine. A Controller can always send a string
+    no fixture anticipated.
+
+DEBTS
+    sed -e "s#$root#<repo>#g" -e "s#$HOME#<home>#g" -e "s#$(id -un)#<user>#g" "$log"
+  } >"$directory/report.txt"
+  chmod 0644 "$directory/report.txt"
+  printf '\nreport=%s\n' "$directory/report.txt"
+}
+
+play() {
+  setup || return $?
+  run_oracle || return $?
+  sync_sources || return $?
+  build_candidate || return $?
+  run_installed || return $?
+  return 0
+}
+
+case "$command" in
+  setup) setup ;;
+  run) run_oracle ;;
+  sync) sync_sources ;;
+  build) build_candidate ;;
+  run-installed) run_installed ;;
+  collect) collect ;;
+  remove) on_machine "$remote_harness/remove" ;;
+  all)
+    # The verdict must survive the pipe: a proof whose status is lost to `tee`
+    # is a proof that always passes.
+    set +e
+    play 2>&1 | tee "$workdir/run.log"
+    status=${PIPESTATUS[0]}
+    set -e
+    collect 2>&1 | tee -a "$workdir/run.log" || status=${status:-1}
+    # Removal always runs, red or green: a harness left behind is a machine that
+    # lies to the next proof.
+    on_machine "$remote_harness/remove" 2>&1 | tee -a "$workdir/run.log" || true
+    publish "$status" "$workdir/run.log"
+    exit "$status"
+    ;;
+esac

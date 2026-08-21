@@ -13,7 +13,7 @@
 #                  and the rootless Podman ground a user service really needs.
 #                  It also serves the Relay the Controller reads from, and the
 #                  origin of this run's image;
-#   lab-console    the **human's machine**. It holds the real Console — the
+#   lab-app    the **human's machine**. It holds the real App — the
 #                  installed `.deb`, its WebView and its native helper — and
 #                  nothing of the server side.
 #

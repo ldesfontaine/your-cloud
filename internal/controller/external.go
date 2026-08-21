@@ -61,7 +61,7 @@ const (
 // human declared, held apart from the machines the product manages.
 //
 // It is a separate document in a separate file, and its revision is its own. The
-// managed inventory's revision is what a Console caches its machines against; a
+// managed inventory's revision is what an App caches its machines against; a
 // declaration must not disturb it, and a corrupt external document must not take
 // the managed inventory down with it. Two inventories that refuse each other do
 // not share one decode.
@@ -248,7 +248,7 @@ func (store *ExternalStore) Declare(declaration ExternalDeclaration, machineAtta
 }
 
 // Withdraw removes the declaration and nothing else. The thing the human named
-// keeps existing, and saying so is the Console's sentence from the context of
+// keeps existing, and saying so is the App's sentence from the context of
 // this route, never a text this Controller sends.
 func (store *ExternalStore) Withdraw(elementID string) (ExternalElement, uint64, error) {
 	if !canonicalRawURLBytes(elementID, 16) {

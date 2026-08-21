@@ -62,7 +62,7 @@ const (
 	// Records past the bound leave the registry oldest-first, and never a
 	// non-terminal one — an open dispatch cannot be forgotten. The named limit
 	// is that a machine which crosses the bound loses its oldest dispatches
-	// from the history the Console reads; the effects stay on the machine, and
+	// from the history the App reads; the effects stay on the machine, and
 	// an instance whose last reported dispatch has left the history is shown
 	// with its revision unknown rather than with an invented one. Raising this
 	// number is a measurement away and changes no format.
@@ -82,7 +82,7 @@ const (
 )
 
 // Dispatch states, stored in English like every stored word of this package;
-// the Console renders them as the contract's sentences. Their meaning is the
+// the App renders them as the contract's sentences. Their meaning is the
 // contract's table, and the honest default matters most: a record found
 // `in_flight` at startup becomes `launched_unreported`, because after a cut
 // the Controller cannot tell "nothing left" from "something left" and says
@@ -123,7 +123,7 @@ type DispatchRecord struct {
 	FinishedAtUnix uint64 `json:"finished_at_unix"`
 	// ExpiresAtUnix is the envelope's own window, carried here because it is
 	// what bounds the launch: a lauch that outran the authority permitting it
-	// would have nothing left to justify itself. The Console reads it too, so
+	// would have nothing left to justify itself. The App reads it too, so
 	// a human sees under which window a dispatch was allowed.
 	ExpiresAtUnix uint64 `json:"expires_at_unix"`
 	// MachineSentence is what the machine wrote on its error channel when it
@@ -306,7 +306,7 @@ func (store *DispatchRegistryStore) HighestReportedSequence(machineID string) ui
 	return highest
 }
 
-// CommandPosition is what this Controller may tell the Console about one
+// CommandPosition is what this Controller may tell the App about one
 // machine: the highest position that machine itself reported as consumed, and
 // whether that position is certain.
 //

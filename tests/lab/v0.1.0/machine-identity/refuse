@@ -7,7 +7,7 @@
 # restriction. Without it, "SFTP is refused" and "SFTP is not built into this
 # server" would be the same observation.
 #
-# It runs on lab-console, which plays the Controller: it holds the operational
+# It runs on lab-app, which plays the Controller: it holds the operational
 # private keys and is the only side that opens these sessions. Two channels are
 # used and they are not the same thing: the **bounded identity** is what is
 # being measured, and the **personal access** is only ever an observer here —

@@ -4,7 +4,7 @@ Ce dossier contient uniquement l'automatisation de preuve du palier `v0.0.1`.
 Il ne prépare aucune capacité de `v0.0.2`.
 
 - [`prove`](prove) est l'entrée unique : garde d'inventaire, lot source,
-  contrôle générique dans `lab-console`, transfert, cycle multi-VM, résultat P1
+  contrôle générique dans `lab-app`, transfert, cycle multi-VM, résultat P1
   et restitution P2. Son lot est construit depuis la liste positive des
   fichiers Git non ignorés, haché avant et après transit, puis protégé par un
   verrou LAB exclusif attribué au run. Un verrou existant n'est jamais repris
@@ -26,7 +26,7 @@ Il ne prépare aucune capacité de `v0.0.2`.
   Son SHA-256 est comparé après transit. Les rapports nominal et hostile ne
   sont publiés localement qu'après leur validation et le nettoyage distant.
 - [`transfer-artifact`](transfer-artifact) transfère le binaire directement de
-  `lab-console` vers les cibles avec une identité synthétique temporaire et des
+  `lab-app` vers les cibles avec une identité synthétique temporaire et des
   bornes fixes.
 - [`remote/`](remote/) contient les assertions et scénarios hostiles copiés
   avec les fichiers du lot [`deploy/`](deploy/) sur les VM cibles. Les
@@ -51,7 +51,7 @@ la capture prouvent seulement leur restitution.
 
 Limite de transport visible : la clé hôte de chaque cible est d'abord observée
 par le canal géré `labctl`, puis épinglée pour le SSH direct qui transporte le
-binaire depuis `lab-console`. Cet épinglage détecte une dérive pendant le run,
+binaire depuis `lab-app`. Cet épinglage détecte une dérive pendant le run,
 mais ne fournit pas un second ancrage d'identité indépendant de `labctl`.
 
 ## Référence historique de la réorganisation

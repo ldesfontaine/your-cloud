@@ -44,9 +44,9 @@ suite=(
 # what says so.
 "${suite[@]}" "$@" -- --test-threads=1
 
-# The cases a display is the whole point of: a helper launched by the Console's
+# The cases a display is the whole point of: a helper launched by the App's
 # own supervisor, observed through the window it opens. `LC_ALL` is fixed
-# because GTK writes on standard error under an unset locale, and the Console
+# because GTK writes on standard error under an unset locale, and the App
 # forwards to the helper exactly the locale it holds itself.
 #
 # `-noreset` is what makes the display a fixture instead of a moving part, and
@@ -58,7 +58,7 @@ suite=(
 # pending regeneration is closed before its setup reply ever arrives, so
 # `XOpenDisplay` answers nothing and the helper honestly reports a display it
 # could not reach. That refusal is aimed at no one in particular: on this very
-# session a stock `xdpyinfo`, with not a line of the Console in it, is refused
+# session a stock `xdpyinfo`, with not a line of the App in it, is refused
 # about three times in a hundred while an `xdotool` loop connects beside it, and
 # never once when the generation is held. The screen geometry is repeated here
 # because `--server-args` replaces the default rather than extending it.

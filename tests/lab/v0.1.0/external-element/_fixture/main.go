@@ -1,9 +1,9 @@
 // Synthetic LAB client of the real Controller. It stands in for the one
-// authority this proof does not exercise — the Console — and holds none of the
+// authority this proof does not exercise — the App — and holds none of the
 // others: the Controller, the Relay and the Daemon of this run are the product's
 // own binaries, running for real on real machines.
 //
-// It exists because `#108` closed with a named debt: the Console has no
+// It exists because `#108` closed with a named debt: the App has no
 // declaration form. It reads the declared inventory and withdraws a declaration,
 // and that is all. Declaring goes through `POST /v0/external-elements`, so a
 // proof of this palier needs something that can speak that route — a device the
@@ -18,10 +18,10 @@
 //     and the session transcript — are rebuilt by hand below, so the signature
 //     this program produces is not verified by the same lines that produced it.
 //
-// What it deliberately is not: a Console. It derives no key from a passphrase,
+// What it deliberately is not: an App. It derives no key from a passphrase,
 // holds no native vault, renders nothing and decides nothing about what a human
 // should be shown. The key material is synthetic, lives only as long as the run's
-// state directory, and interoperability with the real Console is held by that
+// state directory, and interoperability with the real App is held by that
 // suite and by the pinned cross-language vectors, never by this program.
 package main
 
@@ -81,7 +81,7 @@ type windowSheet struct {
 }
 
 // clientState is what this program keeps between invocations. It is written into
-// the run's own directory on lab-console, mode 0600, and removed with it.
+// the run's own directory on lab-app, mode 0600, and removed with it.
 type clientState struct {
 	ControllerID     string `json:"controller_id"`
 	InfrastructureID string `json:"infrastructure_id"`
@@ -97,13 +97,13 @@ type clientState struct {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "lab-external-console:", err)
+		fmt.Fprintln(os.Stderr, "lab-external-app:", err)
 		os.Exit(1)
 	}
 }
 
 func usage() error {
-	return errors.New("usage: lab-external-console <state-dir> " +
+	return errors.New("usage: lab-external-app <state-dir> " +
 		"pair <sheet> <endpoint:9443> <temporary-endpoint:9444> | session | " +
 		"call <METHOD> <PATH> [body]")
 }

@@ -32,7 +32,7 @@ Cette séparation prépare une CI propre sans prétendre qu'un conteneur standar
    d'échec.
 
 L'entrée [`checks/source-v0.0.1`](checks/source-v0.0.1) rend le placement
-explicite : le mode `lab` exige `lab-console` et root isolé pour produire
+explicite : le mode `lab` exige `lab-app` et root isolé pour produire
 `dist/your-cloud`, tandis que le mode `ci` exige un runner distant déclaré et
 non privilégié, puis construit dans un répertoire temporaire. Aucun mode
 n'autorise l'exécution sur le laptop.

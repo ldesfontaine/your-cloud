@@ -336,7 +336,7 @@ func rawTranscript(t *testing.T, document Document) []byte {
 // decision the layout rests on.
 //
 // The order of a list is inside the hashed bytes, so a Controller, a transport
-// or a Console that reordered a list would be handing an Auxiliary a document no
+// or an App that reordered a list would be handing an Auxiliary a document no
 // approval names. Freezing what the author wrote — rather than a sorted
 // rewriting of it — is what makes re-reading a frozen definition return the
 // bytes that were frozen.

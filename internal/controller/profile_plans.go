@@ -7,7 +7,7 @@ import (
 	"github.com/ldesfontaine/your-cloud/internal/plan"
 )
 
-// The three requests below are everything the Console may choose about a plan of
+// The three requests below are everything the App may choose about a plan of
 // the public profile, one closed schema per operation group.
 //
 // Three sibling routes rather than one route carrying a discriminator is the
@@ -52,20 +52,20 @@ type routePlanRequest struct {
 	BackendPort   int    `json:"backend_port"`
 }
 
-// PlanPairView is the frozen pair the Console signs over, and it is the same
+// PlanPairView is the frozen pair the App signs over, and it is the same
 // shape for every plan route of schemas 2 and 3: what differs between them is
 // what a human approves, not how the bytes travel. Its schema_version says which
-// contract the two documents were written in, so a Console never has to guess it
+// contract the two documents were written in, so an App never has to guess it
 // from their content.
 //
 // The two documents travel as their exact canonical bytes rather than as nested
-// objects, so that the Console does not have to own a canonical encoder to obtain
+// objects, so that the App does not have to own a canonical encoder to obtain
 // the bytes the digests were taken over. What it displays, what it hashes and
 // what the Auxiliary later receives are then the same bytes rather than three
 // encodings that happen to agree.
 //
 // The digests are carried beside the documents for the envelope to name; they are
-// not an authority. A Console that trusted them rather than recomputing them from
+// not an authority. An App that trusted them rather than recomputing them from
 // the documents it displays would be trusting the Controller to describe what the
 // human is approving.
 type PlanPairView struct {

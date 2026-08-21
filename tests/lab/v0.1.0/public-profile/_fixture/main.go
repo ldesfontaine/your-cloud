@@ -2,7 +2,7 @@
 // authorities this palier separates and holds none of them for real:
 //
 //   - the Controller, which freezes a schema 2 plan and its rollback;
-//   - the Console, which shows the pair to a human and signs the envelope naming
+//   - the App, which shows the pair to a human and signs the envelope naming
 //     their two digests;
 //   - the certificate authority of the declared names, which the contract says
 //     belongs to the proof and never to the Auxiliary — no plan describes a
@@ -20,7 +20,7 @@
 //
 // The third half shares nothing with the product at all: it is Go's own x509,
 // and the key material it mints lives only as long as the run's state directory.
-// Interoperability with the real Console is proven by the pinned cross-language
+// Interoperability with the real App is proven by the pinned cross-language
 // vector, never by this program.
 package main
 
@@ -157,7 +157,7 @@ func main() {
 		planDocument = strings.Replace(planDocument, *machine, alterLast(*machine), 1)
 	case hostileApprovedMismatch:
 		// The one hostile case a human really signed: a Controller froze a plan
-		// beside a rollback that undoes another instance, and the Console signed
+		// beside a rollback that undoes another instance, and the App signed
 		// both digests. Every check upstream of the pair passes, and the refusal
 		// has to come from the pair itself.
 		other, err := buildPair(*operation, *infrastructure, *machine, *profile, *port+1, *routeHost, *backendPort+1)
