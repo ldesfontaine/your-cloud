@@ -987,6 +987,24 @@ def refused_step(
     report.setdefault("refusals", []).append(measured)
 
 
+def refusals(driver: Driver, arguments, target: dict, passphrase: str, report: dict) -> None:
+    """Un refus hostile à l'écran, et **où il tombe**.
+
+    Les deux ne sont pas la même propriété, et la seconde est la plus forte :
+    « la fenêtre a nommé sa cause » dit que l'humain sait quoi faire ; « le
+    refus est tombé AVANT toute fenêtre » dit que rien n'a même été tenté, donc
+    que la machine n'a rien vu. Les comptes hostiles ne tombent pas tous au
+    même endroit, et c'est le rapport qui doit le dire pour chacun plutôt que
+    de les traiter en bloc.
+
+    `refused_step` mesure les deux — fenêtre ouverte ou non, l'instant de
+    chacune — et n'accepte la fenêtre que si elle est venue.
+    """
+    reach_vault(driver, report)
+    open_creation(driver, target, report)
+    refused_step(driver, "audit", arguments.key_file, passphrase, report)
+
+
 def asymmetry(driver: Driver, arguments, target: dict, passphrase: str, report: dict) -> None:
     """Le constat n°10, dans une seule passe : le même compte, deux issues.
 
@@ -1083,6 +1101,8 @@ def main() -> int:
                     report,
                     expect_sudo_password=sudo_password,
                 )
+        elif arguments.stage == "refusals":
+            refusals(driver, arguments, target, passphrase, report)
         elif arguments.stage == "asymmetry":
             asymmetry(driver, arguments, target, passphrase, report)
         else:
