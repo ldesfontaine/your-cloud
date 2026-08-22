@@ -16,7 +16,7 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Relire le contrat de l'App cliente et du Controller de lecture `v0.0.3` — **archive datée** | [`objectifs/v1/CONTRAT-V0.0.3.md`](objectifs/v1/CONTRAT-V0.0.3.md) |
 | Comprendre les machines, composants et flux | [`architecture/ANATOMIE.md`](architecture/ANATOMIE.md) |
 | Comprendre l'amorçage et le remplacement du Controller | [`architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`](architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) |
-| Comprendre les appels, données, états et protections de la chaîne d'observation | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
+| Connaître la frontière de la chaîne d'observation, puis ses appels, données et états | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |
 | Contribuer ou travailler avec un agent | [`contribution/README.md`](contribution/README.md) |
 | Comprendre comment le dépôt est lu avant d'agir | [`contribution/COMPRENDRE-LE-PROJET.md`](contribution/COMPRENDRE-LE-PROJET.md) |

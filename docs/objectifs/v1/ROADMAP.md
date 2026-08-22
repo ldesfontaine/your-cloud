@@ -244,7 +244,6 @@ préparer un réseau fermé, déployer sans exposition, vérifier, autoriser le 
 exact, publier ou basculer, observer, puis retirer l'ancien état.
 <!-- coherence: SERVICE-LIFECYCLE:end -->
 
-<!-- coherence: V1-OBSERVATION:start -->
 ### Incrément prouvé : `v0.0.2` — observation authentifiée et bornée
 
 Le comportement mesurable, les paramètres décidés et les exclusions de ce
@@ -275,7 +274,6 @@ qu'une saturation conserve l'état courant et crée une lacune visible.
 **Dépendance validée :** ce palier précède l'App. L'interface ne commence pas
 par afficher un transport provisoire : l'identité de la source, l'âge de la
 donnée et les lacunes éventuelles sont déjà définis et vérifiables.
-<!-- coherence: V1-OBSERVATION:end -->
 
 ### Incrément fermé — preuves attribuées au candidat exact : `v0.0.3` — App cliente et Controller de lecture
 
