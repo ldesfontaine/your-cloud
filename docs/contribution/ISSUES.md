@@ -44,86 +44,34 @@ Une incertitude qui doit être levée avant ce découpage reçoit une issue de
 décision séparée. Elle annonce la question à trancher et ne mélange pas étude et
 implémentation.
 
-## Milestone active de `v0.1.0`
+## Ce que devient une milestone franchie
 
-La milestone [v0.1.0](https://github.com/ldesfontaine/your-cloud/milestone/1)
-est la vue de suivi de toute la release. Elle regroupe les décisions de
-distribution bloquantes #11 et #12, les paliers #13 à #19, le suivi transversal
-[#20](https://github.com/ldesfontaine/your-cloud/issues/20), les sous-issues
-#34 à #45, les sous-issues #51 à #54 de l'accès personnel et les futures
-sous-issues exécutables de ces paliers. Le
-routage CI #10 reste hors de la milestone parce que #20 le classe comme travail
-transverse non bloquant.
+La milestone [v0.1.0](https://github.com/ldesfontaine/your-cloud/milestone/1) a
+été la vue de suivi de sa release : décisions de distribution bloquantes,
+paliers, suivi transversal et sous-issues exécutables. **Elle est franchie**, et
+son dossier d'objectif est archivé sous
+[`docs/objectifs/v1/`](../objectifs/v1/README.md).
 
-Terminer cette milestone signifie que chacun de ces contrats est réellement
-satisfait et fermé avec ses preuves et sa propagation documentaire. Sa simple
-fermeture administrative ne constitue pas une preuve supplémentaire.
+Une milestone franchie **ne se réécrit pas** : elle garde ses issues fermées et
+leurs preuves, et se lit comme un récit de ce qui a été fait. Sa fermeture
+administrative n'a jamais constitué une preuve — ce sont les rapports LAB qui la
+portent.
 
-Dans #35, la décision documentaire #44 ferme d'abord le canal natif des
-secrets. Elle bloque le bornage IPC #43 et le consentement natif #45 ; leur
-intégration permet ensuite l'accès SSH personnel borné #42. La fermeture de #35
-exige ces quatre résultats et leurs preuves, dans l'ordre
-`#44 → (#43 + #45) → #42 → #35` ; une seule sous-issue verte ne suffit pas.
-Le gate ELF Linux du 2 août 2026 a activé le repli prévu par #44 : #45 doit
-livrer un binaire helper distinct dont le graphe exclut l'App, Tauri, Wry,
-Tao, WebKit et JavaScriptCore. Cette décision ne change pas l'ordre des issues
-et ne vaut pas à elle seule preuve du helper. Sa fondation fail-closed et ses
-gates Linux sont exécutés ; le lancement parent et le premier consentement
-GTK3 sans secret sont également prouvés dans le LAB. La saisie GTK3 et Win32,
-l'effacement des secrets, l'annulation coopérative, `mlock`,
-`MADV_DONTDUMP`, `VirtualLock` et l'enregistrement Windows Error Reporting en
-défense en profondeur possèdent maintenant une implémentation et une preuve
-fonctionnelle. Les
-runs `30768351689` et `30768749538` sont rouges sous l'ancien oracle, mais
-caractérisent `LocalDumps` administrateur hors garantie avec contrôle et canari
-présents ; le
-[rapport #45](../lab/v0.1.0-native-secret-consent-linux-windows.md) conserve les
-tentatives sans fermer l'issue. `ae550470` corrige l'observation de l'oracle,
-mais reste intermédiaire : même observation, dump supprimé, répertoire prouvé
-vide et deux inscriptions de registre prouvées absentes avant verdict, puis
-retrait du répertoire seulement par `Drop`. Son run `30769440106` a réussi ses
-quatre jobs et prouve cette étape intermédiaire, mais ne ferme pas #45.
-`c8643b0` emploie ensuite `remove_and_prove_absent` pour exiger l'absence du
-répertoire avant verdict. Le run `30770893733` réussit les quatre jobs sur
-`b76ded8`, valide cette séquence et publie trois artefacts inspectés. Après
-trois corrections du harnais de captures, la matrice `30779157351` est
-entièrement verte sur `c0569d0` : l'issue #45 lie ce run et ce SHA, la PR #50
-est fusionnée par fast-forward et #45 est fermée le 3 août 2026. Cette
-fermeture débloque #51, puis #52, #53 et #54 dans cet ordre.
-Pour #43, la récolte Linux autonome, le Job Object Windows avec racine et vrai
-descendant, les branches hostiles avant reprise et le dispatch Tauri vivant ont
-réussi sur le candidat exact `f3fef79` dans le run manuel `30753216798` : cette
-intégration ferme #43. La garde des futurs
-descendants SSH ou privilégiés appartient encore à #42.
+## Comment le suivi fonctionne aujourd'hui
 
-#42 est maintenant une parente exécutable, découpée sans élargir sa portée :
+**Il n'existe pas de roadmap globale en versions**, et c'est délibéré : une
+version promise longtemps à l'avance engage sur ce qu'on ne sait pas encore.
 
-1. [#51](https://github.com/ldesfontaine/your-cloud/issues/51) ferme les bornes
-   KDF et la politique de journalisation `sudo` avant toute saisie distante ;
-2. [#52](https://github.com/ldesfontaine/your-cloud/issues/52) authentifie une
-   cible exacte par l'agent SSH personnel ;
-3. [#53](https://github.com/ldesfontaine/your-cloud/issues/53) ouvre la clé
-   OpenSSH chiffrée de repli dans la même session native ;
-4. [#54](https://github.com/ldesfontaine/your-cloud/issues/54) vérifie
-   l'élévation et termine `access_verified`.
+- la [direction](../projet/DIRECTION.md) fixe l'ordre des chantiers et leurs
+  dépendances, **sans les numéroter en versions** ;
+- **seul le prochain palier fixe son numéro, à son ouverture**, et reçoit alors
+  son dossier `objectifs/` borné par une ligne d'arrivée vérifiable, ainsi que
+  sa milestone ;
+- **un chantier n'est pas un palier** : c'est une unité de travail cohérente,
+  dont le regroupement en versions se décide au moment de l'ouvrir.
 
-`access_verified` signifie seulement que l'adresse résolue puis figée, la clé
-d'hôte exacte, l'identité choisie et la commande fixe `/usr/bin/id -u` ont
-vérifié l'accès direct `root` ou le chemin `sudo` autorisé. Il ne signifie ni
-audit Debian, ni installation, ni mutation, ni Controller autonome, ni succès
-d'amorçage. #42 ne se ferme qu'après #51, #52, #53 et #54 ; #35 se ferme après
-#42 et l'intégration avec #43/#45. La séquence de fermeture du sous-palier est
-`#45 → #51 → #52 → #53 → #54 → #42 → #35`. #45 étant fermée, la prochaine
-issue est #51 ; #13 et la milestone demeurent ouverts jusqu'à leurs propres
-preuves, tandis que `v0.1.0` reste à atteindre.
-
-Aucune date d'échéance arbitraire ne lui est attachée. La preuve globale #41,
-la propagation documentaire et la fermeture de #13 terminent seulement le
-palier d'amorçage et permettent d'ouvrir #14. La milestone reste ouverte jusqu'à
-la preuve finale #19, la fermeture des décisions #11 et #12, la propagation de
-l'état final et la fermeture du suivi #20. Une fois toutes ses issues réellement
-fermées, son achèvement devient équivalent à la ligne d'arrivée de `v0.1.0`,
-sans remplacer les preuves qui la justifient.
+Rien n'est donc créé d'avance : ni dossier d'objectif vide, ni milestone sans
+ligne d'arrivée. Ce qui existe correspond à un travail décidé.
 
 ## Convention de titre
 
