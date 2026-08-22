@@ -41,6 +41,33 @@ compte ACME de l'infrastructure.
 se pose une fois, avec l'aide de l'app, et se vérifie par résolution avant que
 le mode géré soit déclaré actif.
 
+## Ce que la délégation exige, et qui ne l'a pas
+
+**Le mode géré exige que vous possédiez une seconde zone DNS.** C'est une
+limite dure, et c'est le cas le plus courant qui s'y heurte.
+
+Un jeton d'API se restreint à une **zone**, jamais à un préfixe à l'intérieur
+d'une zone. `_acme-challenge.example.com` ne peut donc pas être délégué *dans*
+`example.com` : la délégation doit pointer vers une zone distincte, sur laquelle
+le jeton est restreint. **Qui ne possède qu'un seul domaine ne peut pas activer
+le mode géré.**
+
+Le chemin de cette personne est le **mode manuel**, et son coût est réel : un
+wildcard s'y renouvelle à la main **tous les ~90 jours**. Pour beaucoup
+d'auto-hébergeurs, ce n'est pas tenable — le badge d'expiration transforme une
+panne silencieuse en rappel, il ne supprime pas la corvée.
+
+Le produit dit cela **avant** que l'utilisateur choisisse, pas au moment où le
+mode géré refuse de s'activer.
+
+> **Direction identifiée, pas promesse.** Une sortie propre existe et n'est pas
+> écrite ici : déléguer `acme.example.com` par enregistrement **NS** vers la
+> machine du point d'entrée — ce qu'une zone unique permet — laisserait Your
+> Cloud **répondre lui-même aux défis**. Ni seconde zone, ni jeton pour la
+> partie ACME : le jeton ne servirait plus qu'aux enregistrements `A`. C'est
+> hors périmètre aujourd'hui, et l'inscrire comme direction n'en fait pas une
+> capacité annoncée.
+
 ## Où vit le jeton, et pourquoi la question est devenue secondaire
 
 **Sur la machine du point d'entrée**, déposé par un plan approuvé, propriété de
@@ -129,6 +156,8 @@ lui-même** s'il ne sait pas qu'il a eu lieu.
 
 - le mode géré **refuse de s'activer** tant que la délégation `_acme-challenge`
   n'est pas vérifiée par résolution ;
+- l'app **annonce l'exigence d'une seconde zone avant le choix du mode**, et non
+  au moment du refus ;
 - le jeton **ne peut écrire** hors de la zone déléguée — tenté, refusé ;
 - un wildcard se renouvelle **sans humain** et sans que l'app soit ouverte ;
 - aucun sous-domaine privé n'apparaît dans les journaux publics de transparence ;
