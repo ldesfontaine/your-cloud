@@ -8,6 +8,11 @@
 > L'exposition d'un service vers l'extérieur est fixée par le
 > [point d'entrée](POINT-D-ENTREE.md). Les deux frontières se touchent sans se
 > recouvrir : ici on transporte entre machines, là on ouvre vers Internet.
+>
+> Le [passage privé](PASSAGE-PRIVE-WIREGUARD.md) applique cette frontière à un
+> cas : un lien entre deux machines enrôlées, borné au seul service approuvé.
+> Il en tire les clés, les bornes `nftables` et les constantes ; il ne l'élargit
+> jamais.
 
 ## L'idée qui fonde tout le reste
 

@@ -1,12 +1,14 @@
 # Passage privé WireGuard borné au service
 
-> Statut : proposition de contrat pour le palier `#16`, suivie par `#93`, dont
-> l'application est portée par `#96` (cycle de vie WireGuard) et `#97` (bornes
-> `nftables`, règle de présence et matrice des refus).
+> Contrat rédigé pour le palier `#16`.
 > Il étend le contrat du plan aux opérations de lien entre deux machines
 > enrôlées, fixe le sort des clés, les constantes du scénario de référence et
-> les règles qui bornent le passage au seul service approuvé. Rien ici n'est
-> implémenté tant que ce contrat n'est pas validé.
+> les règles qui bornent le passage au seul service approuvé.
+>
+> La frontière du réseau interne — qui peut parler à qui, par où, et sous
+> quelle autorisation — est fixée par le [réseau](RESEAU.md). Ce contrat ne la
+> redit pas : il borne un passage particulier au seul service approuvé, et
+> c'est le réseau qui dit pourquoi un passage n'autorise rien par lui-même.
 
 ## Ce que ce passage est, et n'est pas
 

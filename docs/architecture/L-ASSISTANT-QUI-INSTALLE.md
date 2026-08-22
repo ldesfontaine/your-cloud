@@ -1,22 +1,9 @@
 # L'Assistant qui installe : du lot vérifié au Controller qui tourne
 
-> **Statut :** contrat d'architecture de la milestone `v0.1.3`, rédigé le
-> 15 août 2026 sur le patron de l'issue `#122` et porté par l'issue
-> [#143](https://github.com/ldesfontaine/your-cloud/issues/143). Issues
-> d'implémentation :
-> [#144](https://github.com/ldesfontaine/your-cloud/issues/144) (les deux
-> actions du protocole et leurs phrases),
-> [#145](https://github.com/ldesfontaine/your-cloud/issues/145) (l'exécution du
-> plan — commandes fixes, état constaté, registre),
-> [#146](https://github.com/ldesfontaine/your-cloud/issues/146) (« Créer une
-> infrastructure » aboutit). Preuve du palier sans fixture :
-> [#147](https://github.com/ldesfontaine/your-cloud/issues/147). Fermeture du
-> produit en queue de milestone :
-> [#148](https://github.com/ldesfontaine/your-cloud/issues/148) (release
-> téléchargeable), [#149](https://github.com/ldesfontaine/your-cloud/issues/149)
-> (parcours joué depuis Releases),
-> [#150](https://github.com/ldesfontaine/your-cloud/issues/150) (README
-> « Installation (Linux) »). Ce document est une source canonique inscrite à
+> Contrat rédigé pour la milestone `v0.1.3`
+> ([#143](https://github.com/ldesfontaine/your-cloud/issues/143)), le
+> 15 août 2026, sur le patron de l'issue `#122`.
+> Ce document est une source canonique inscrite à
 > [`docs/projet/COHERENCE.md`](../projet/COHERENCE.md) ; il ne redécide rien de
 > [`AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`](AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md),
 > qui reste l'autorité du contrat d'amorçage — il fixe **l'exécution** de ce que
@@ -24,14 +11,15 @@
 
 ## Ce que ce palier ajoute, et ce qu'il n'ajoute pas
 
-Toutes les portes existent, et aucune main ne les franchit. Le module
+Quand ce contrat est rédigé, toutes les portes existent et aucune main ne les
+franchit. Le module
 `installation` de l'Assistant juge un lot (`bundle::verify` contre l'ancre
 scellée), résout son emplacement depuis la position attestée
 (`installation::embedded`), refuse un placement exposé, exige l'élévation
 prouvée et le prévol, ordonne les étapes (`plan::authorize`) et sait ce qu'un
-échec doit rendre (`rollback::Ledger`). Mais rien dans le produit n'exécute :
-aucun `dpkg`, aucun `systemctl` dans le code livré, et l'écran « Créer une
-infrastructure » n'existe pas.
+échec doit rendre (`rollback::Ledger`). Mais rien dans le produit n'exécute
+alors : aucun `dpkg`, aucun `systemctl` dans le code livré, et l'écran « Créer
+une infrastructure » n'existe pas.
 
 Ce palier ajoute exactement la moitié qui agit : l'Assistant exécute
 l'installation que les portes jugent, vérifie **l'état constaté** après chaque

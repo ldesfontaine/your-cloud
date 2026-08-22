@@ -1,6 +1,8 @@
 # Anatomie du projet
 
-> Statut : représentation vivante de l'architecture en construction.
+> **Ce document projette l'architecture décidée** : les machines, les
+> composants, leurs placements, leurs autorités et leurs flux — jamais l'état
+> de ce qui est construit.
 
 Une [édition HTML autonome et visuelle](../html/anatomie.html) accompagne
 cette source Markdown. Elle évolue à chaque incrément qui modifie un composant,
@@ -8,7 +10,7 @@ un placement, une autorité ou un flux réseau.
 
 La [chaîne d'observation détaillée](CHAINE-D-OBSERVATION.md) cartographie les
 rôles Daemon, Relay et Diagnose, leurs appels, états, données, protections et
-limites dans `v0.0.2`.
+limites.
 
 ## Comment lire ce document
 
@@ -20,44 +22,17 @@ Trois états ne doivent jamais être confondus :
 - **prouvé** : le scénario annoncé a réellement réussi dans le LAB avec ses
   refus hostiles.
 
-À ce jour, `v0.0.1` et la chaîne d'observation authentifiée et bornée de
-`v0.0.2` sont implémentées et prouvées dans le LAB. Le fonctionnel Linux de
-l'App `v0.0.3` est également implémenté et prouvé dans le LAB. Après une matrice
-historique, la porte native Linux/Windows finale `30710037004` a entièrement
-réussi sur le candidat produit exact `3b8f81f`. L'issue `#9` relie ce run, le SHA
-et son intégration par fast-forward : le palier est fermé pour ce candidat,
-sans attribuer sa preuve aux révisions ultérieures. L'amorçage possède désormais
-un socle helper/IPC implémenté et prouvé sous Linux et Windows sur `f3fef79`,
-dans le run `30753216798`. Le consentement et la mémoire secrète #45 sont
-implémentés, prouvés sous Linux/Windows et fermés après les runs
-rouges `30768351689` et `30768749538`. Leur ancien oracle
-exigeait le canari absent ; le contrat corrigé classe `LocalDumps`
-administrateur hors garantie, garde l'enregistrement WER en défense en
-profondeur et exige contrôle et canari présents puis nettoyage prouvé.
-`ae550470` ne prouve toutefois que le dump supprimé et son répertoire vide
-avant verdict ; le répertoire n'est retiré que par `Drop` ensuite. Son run
-`30769440106` a réussi ses quatre jobs et prouve cette étape intermédiaire, sans
-fermer #45. `c8643b0` exige ensuite le répertoire absent avant verdict ; le run
-`30770893733` réussit les quatre jobs sur `b76ded8` et ses trois artefacts sont
-inspectés. Après trois corrections du harnais de captures, `30779157351`
-réussit ses quatre jobs sur `c0569d0` : l'issue #45 lie ce run et ce SHA, puis
-se ferme. Sa capacité globale, le chemin d'action et
-les services du reste de `v0.1.0` restent ouverts.
+**Ce document ne porte que le premier.** Il projette ce qui est décidé — les
+placements, les autorités, les flux — et rien de ce qui est atteint : une
+anatomie qui tiendrait le compte des runs, des commits et des issues périmerait
+à chaque fusion, et finirait par affirmer un état que personne n'a revérifié.
 
-Le **moteur des services utilisateur** de la `v0.1.1` est implémenté et
-**prouvé dans le LAB** par `#121`, dont le
-[rapport](../lab/v0.1.1-user-service.md) est la source : une application
-synthétique écrite pour l'exercer entièrement est gelée en définition, déployée
-à côté d'un profil livré dont la fiche ne bouge pas d'un octet, publiée par les
-deux genres de route, confinée, archivée, corrompue, restaurée, retirée et
-redéployée. Ce passage est vert **après deux rouges produit corrigés** — un
-répertoire intermédiaire de volume laissé à root, et une valeur approuvée
-tronquée à sa première espace dans la fiche. Ce qui reste hors preuve machine de
-cette milestone est nommé dans ce rapport : la surface HTTP du Controller et la
-vue Services de l'App restent tenues par leurs propres suites, et la
-révision jugée porte `+worktree`.
+Ce qui est **implémenté et prouvé** se lit dans les [rapports LAB](../lab/),
+qui portent seuls les dates, les commits et les résultats d'exécution. L'ordre
+dans lequel le reste arrive se lit dans la
+[direction](../projet/DIRECTION.md).
 
-## Distribution réellement prouvée pour `v0.0.2`
+## Distribution : les mêmes octets, deux rôles
 
 ```text
 Machine du LAN / non candidate              VPS simulé / candidat Relay
@@ -74,7 +49,7 @@ localement, le mode Relay refuse avant toute écoute. Le
 [rapport LAB](../lab/v0.0.2-observation.md) prouve mTLS, révocation, saturation,
 lacune, reprise et cycle de retrait-réinstallation.
 
-## Topologie de référence pour la preuve de `v0.1.0`
+## Topologie de référence
 
 ```text
                             INTERNET
@@ -112,7 +87,7 @@ lacune, reprise et cycle de retrait-réinstallation.
        +--------------------------------------------------+
 ```
 
-Cette topologie rend la preuve de `v0.1.0` déterministe ; elle ne prescrit pas
+Cette topologie rend les preuves déterministes ; elle ne prescrit pas
 l'infrastructure réelle d'un utilisateur. BentoPDF et Vaultwarden sont deux
 profils de service sélectionnés explicitement dans le LAB, jamais des composants
 installés par défaut. Une infrastructure peut ne choisir aucun de ces profils ;
@@ -124,7 +99,7 @@ L'App, le Controller et le Relay restent hors du chemin emprunté par le
 trafic Web vers les services : la panne de leurs processus ne doit pas arrêter
 un service hébergé sur une autre machine. La perte d'un hôte interrompt
 cependant les services qui y cohabitent. Le Controller porte l'autorité d'une
-seule infrastructure. `v0.1.0` prouve une App installée, un Controller et une
+seule infrastructure. Le produit tient une App installée, un Controller et une
 infrastructure ; les associations futures à plusieurs Controllers isolent
 identités d'appareil et sessions.
 
@@ -170,7 +145,8 @@ un coffre Tauri Stronghold commun à Linux et Windows, déverrouillé par une
 phrase secrète locale dérivée avec Argon2id. Le frontend voit brièvement cette
 saisie puis l'efface ; les clés dérivées, clés privées, contenus du coffre et
 sessions restent hors de son autorité. Windows Hello, passkeys, FIDO2 et
-SSO/OIDC restent postérieurs à `v0.1.0`.
+SSO/OIDC ne sont portés par aucun chantier de la
+[direction](../projet/DIRECTION.md).
 
 La phrase contient six mots français aléatoires. Un appairage ou une
 récupération n'ouvre `9444` sur l'adresse privée du Controller que pendant une
@@ -182,8 +158,7 @@ La session opaque est liée à l'appareil et à l'infrastructure, expire après 
 minutes d'inactivité ou huit heures absolues et disparaît après logout,
 révocation, rotation, récupération ou redémarrage. Un code global de 256 bits
 conservé hors ligne dérive une clé de récupération différente par Controller.
-Ce profil possède un seul humain et un seul appareil actifs par Controller dans
-`v0.0.3`.
+Ce profil possède un seul humain et un seul appareil actifs par Controller.
 
 Un Controller génère et conserve avant appairage des identifiants de Controller
 et d'infrastructure UUIDv4 immuables. Il refuse une machine tant qu'une lecture
@@ -219,8 +194,8 @@ restent obligatoires après l'accès réseau ; SSO/OIDC est facultatif. L'App
 devra masquer la configuration WireGuard derrière une opération de connexion
 nommée, déverrouiller uniquement la clé de l'infrastructure choisie et fermer la
 liaison au timeout ou à la demande. Cette direction ne choisit pas encore le
-mécanisme système ou intégré et reste postérieur à `v0.1.0`, donc hors de
-`v0.0.3`. Une
+mécanisme système ou intégré, et aucun chantier de la
+[direction](../projet/DIRECTION.md) ne le porte. Une
 passerelle Web publique et un frontend navigateur pourront être étudiés comme un
 mode futur distinct, sans autorité d'administration ni secret de machine. Les
 services publiés conservent leur propre accès HTTPS sans WireGuard.
@@ -271,8 +246,7 @@ du 2 août 2026 a trouvé WebKitGTK et JavaScriptCoreGTK dans le `DT_NEEDED` de 
 App. Le helper possède donc son propre crate, son propre graphe et sa propre
 preuve d'absence de WebView, tout en restant livré dans la même release.
 
-Le socle `#43` est implémenté et prouvé sous Linux et Windows sur le commit
-`f3fef79`, dans le run `30753216798`. Les modes `create` et `replace` passent
+Les modes `create` et `replace` passent
 par trois commandes Tauri positives sans champ secret et un identifiant natif
 anti-rejeu ; ni l'App ni le helper n'ouvrent de listener. Les gates natifs
 bornent aussi le packaging. Sous Windows, le processus est créé suspendu avec
@@ -280,25 +254,21 @@ une liste exacte de handles héritables, affecté au Job Object avant reprise, e
 les descendants ainsi que les branches d'échec sont terminés avec lui. Voir le
 [rapport du runner Windows](../lab/v1-bootstrap-ipc-windows.md).
 
-L'incrément #45 conserve ensuite le secret dans ce helper : le parent et le
+Le helper conserve le secret : le parent et le
 pair IPC sont vérifiés contre un périmètre immuable, la durée monotone vaut 300
 secondes et ne se renouvelle pas, puis GTK3 ou Win32 ouvre la fenêtre native.
 Le tampon `ProtectedSecret`, borné à 4096 octets, est détruit avant l'événement
 terminal public `Unavailable`. Sous Linux, la zone est
 créée avec `mmap`, verrouillée par `mlock` et exclue par `MADV_DONTDUMP` ; sous
 Windows, elle utilise `VirtualAlloc`, `VirtualLock` et l'exclusion Windows
-Error Reporting. Le
+Error Reporting.
+
+Une frontière est nommée plutôt que promise : les `LocalDumps` d'un
+administrateur sont **hors garantie**. Le contrat exige le contrôle et le
+canari présents puis un nettoyage prouvé, et il n'affirme aucune exclusion
+au-delà. Le
 [rapport de consentement natif](../lab/v0.1.0-native-secret-consent-linux-windows.md)
 distingue l'implémentation, les sous-cas Linux exécutés et la preuve Windows.
-`30768351689` et `30768749538` sont rouges sous l'ancien oracle,
-mais leurs dumps fixent la frontière `LocalDumps` administrateur : contrôle et
-canari présents, sans garantie d'exclusion. `ae550470` supprime le dump, prouve
-le répertoire vide et les deux inscriptions de registre absentes avant verdict,
-mais le répertoire lui-même ne disparaît qu'au `Drop` suivant ; son run
-`30769440106` a entièrement réussi ses quatre jobs, mais ne peut donc pas fermer
-#45. `c8643b0` exige avec `remove_and_prove_absent` que le répertoire soit
-absent avant verdict ; `30770893733` valide cette séquence dans la matrice
-complète sur `b76ded8`, avec trois artefacts inspectés.
 
 Il existe deux catégories d'accès SSH d'administration des machines : l'accès
 personnel conservé par l'utilisateur et l'identité Your Cloud propre à chaque
@@ -347,7 +317,7 @@ service colocalisé sur l'hôte perdu ------------> interruption possible
 
 Le code de récupération d'une App réassocie celle-ci à un Controller encore
 vivant ; il ne remplace pas ce parcours. Sans sauvegarde de l'ancien
-Controller, l'utilisateur redéclare ses endpoints. L'installateur de `v0.1.0`
+Controller, l'utilisateur redéclare ses endpoints. L'installateur
 embarque l'Assistant, un unique paquet serveur `.deb` Debian 13 `amd64`, ses
 définitions statiques et le manifeste signé qui lie version, cible, taille et empreinte.
 L'Assistant vérifie ce lot avant tout privilège, puis garde configurations,
@@ -365,13 +335,8 @@ font confiance au nouveau Controller seul. Une suspicion de compromission
 impose une base saine et l'isolement vérifié de l'ancien hôte.
 
 Le [contrat d'amorçage et de remplacement](AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md)
-reste partiellement implémenté et prouvé. La fermeture de l'issue `#45` exige
-l'ultime run de son SHA documentaire ; sa preuve fonctionnelle est acquise dans
-`30770893733`. L'accès SSH personnel avance ensuite
-par `#51`, `#52`, `#53` et `#54` avant la fermeture de `#42`, puis
-l'intégration complète `#35` reste nécessaire avant le reste du palier `#13`.
-Les preuves `#43` et `#45` ne ferment aucune de ces
-frontières, ni la milestone, ni `v0.1.0`.
+fixe l'autorité de ce parcours et le sort de chaque clé ; cette section n'en
+projette que les placements et les flux.
 <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 <!-- coherence: SERVICE-LIFECYCLE:start -->
@@ -421,7 +386,7 @@ Le contrat et ses scénarios sont détaillés dans le
 <!-- coherence: AGENT-AUTHORITY:start -->
 ## Observer et agir sont deux chemins
 
-Dans `v0.1.0`, une action demandée dans l'interface suit ce chemin :
+Une action demandée dans l'interface suit ce chemin :
 
 ```text
 Utilisateur -> App -> plan lisible -> confirmation native -> signature
@@ -473,7 +438,7 @@ liste positive locale. Une opération OCI peut seulement faire utiliser par
 Podman rootless le registre autorisé et le digest exact annoncés dans le plan.
 Une machine d'observation ne l'active pas. Le Daemon et le Relay restent
 consacrés aux observations. Ansible reste disponible comme outil externe de
-l'utilisateur ; il n'appartient pas au cœur de `v0.1.0`. Le Controller ne
+l'utilisateur ; il n'appartient pas au cœur du produit. Le Controller ne
 possède pas la clé humaine de l'App et ne peut donc pas forger seul une approbation.
 
 Les autres cibles utilisent leur propre autorité plutôt que ce chemin local :
@@ -486,7 +451,7 @@ Plan approuvé
 `- cluster K3s --------------------> adaptateur API K3s
 ```
 
-Les adaptateurs OpenStack, IaC et K3s restent hors de `v0.1.0`. Le chemin local
+Les adaptateurs OpenStack, IaC et K3s restent hors du produit. Le chemin local
 par l'Auxiliaire appartient en revanche à son contrat : le plan inclut un rollback
 exact ; la première mutation rend `changed=true`, le même état sans dérive rend
 `changed=false` sans réécriture ni redémarrage, et une dérive exige un nouveau
@@ -561,7 +526,7 @@ Pour cela, il doit interroger l'API Docker, souvent au moyen du socket
 `/var/run/docker.sock`. Cette API possède une autorité importante sur le moteur
 et peut devenir un chemin vers l'hôte si le proxy exposé est compromis.
 
-`v0.1.0` utilise donc le **file provider** :
+Your Cloud utilise donc le **file provider** :
 
 1. l'utilisateur demande une publication dans l'App ;
 2. Your Cloud calcule une route précise ;
@@ -590,7 +555,7 @@ sécurité.
 ports et les limites. À partir de cette fiche, systemd sait démarrer, arrêter,
 redémarrer et observer le conteneur comme un service Linux ordinaire.
 
-Podman rootless avec Quadlet est retenu pour `v0.1.0`. Le flux sera :
+Podman rootless avec Quadlet est retenu. Le flux sera :
 
 ```text
 Plan Your Cloud -> Auxiliaire -> fichier Quadlet -> systemd -> Podman -> conteneur

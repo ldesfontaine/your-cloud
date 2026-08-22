@@ -54,11 +54,11 @@ de vie :
 <!-- coherence: AGENT-AUTHORITY:start -->
 ## Placement des capacités
 
-Cette section décrit les processus réellement présents dans `v0.0.2` et dans la
-porte de lecture `v0.0.3`. L'Auxiliaire appartient désormais au contrat de
-`v0.1.0`,
-mais il n'est encore ni implémenté ni prouvé et ne doit pas être inventé dans
-la chaîne actuelle.
+Cette section décrit le placement des processus de la chaîne d'observation : le
+Daemon qui relève et le Relay qui reçoit. L'Auxiliaire n'y figure pas et ne doit
+pas y être inventé — il n'observe rien, il agit ponctuellement sous plan
+approuvé, et son trajet est fixé par le
+[trajet de commande](TRAJET-DE-COMMANDE.md).
 
 ```text
 machine administrée                  machine d'observation

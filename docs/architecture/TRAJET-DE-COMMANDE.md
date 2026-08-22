@@ -1,7 +1,7 @@
 # Trajet de commande : de l'humain qui approuve à la machine qui rapporte
 
-> Statut : contrat d'architecture de `#122`, milestone `v0.1.2` « L'App aux
-> commandes ». Ses neuf décisions restées ouvertes ont été tranchées le
+> Contrat rédigé pour la milestone `v0.1.2` « L'App aux commandes » (`#122`).
+> Ses neuf décisions restées ouvertes ont été tranchées le
 > 11 août 2026 et sont écrites ici, chacune à sa place, avec l'invariant qui la
 > force et la mesure dont elle est dérivée ; la section
 > [« Les neuf décisions »](#les-neuf-décisions-tranchées-le-11-août-2026) les
@@ -9,19 +9,15 @@
 > « un humain déploie depuis l'App » : la construction d'une paire, sa
 > lecture et son consentement dans une fenêtre séparée, la soumission de
 > l'approbation signée, le lancement de l'Auxiliaire par l'identité de la
-> machine, et le rapport lu jusqu'à l'humain. Les implémentations prévues le
-> suivront depuis `#123` (fenêtre native d'approbation), `#124` (commandes de
-> plan et vue Plans), `#125` (réception de l'approbation et consommation
-> durable), `#126` (identité de commande et lancement par SSH) et `#127`
-> (rapport remonté jusqu'à l'humain) ; la preuve LAB de la milestone est `#128`.
+> machine, et le rapport lu jusqu'à l'humain.
 
 ## Ce que ce palier ajoute, et ce qu'il n'ajoute pas
 
-Tout ce que Your Cloud sait faire sur une machine est prouvé, et rien de ce
-qu'il sait faire n'est **commandé** depuis l'App. Les plans se
-construisent, les documents se hachent, l'enveloppe se signe, l'Auxiliaire
-vérifie et applique — et entre l'App et la machine, le chemin réel n'a
-jamais existé : chaque preuve passée l'a franchi par une fixture, et chaque
+Quand ce contrat est rédigé, tout ce que Your Cloud sait faire sur une machine
+est prouvé, et rien de ce qu'il sait faire n'est **commandé** depuis l'App. Les
+plans se construisent, les documents se hachent, l'enveloppe se signe,
+l'Auxiliaire vérifie et applique — et entre l'App et la machine, le chemin réel
+n'existe pas : chaque preuve d'alors le franchit par une fixture, et chaque
 harnais le dit lui-même. Ce palier construit ce chemin, une fois, avec les
 seules pièces du produit.
 

@@ -12,12 +12,13 @@ déclaration, placement, plan et approbation explicites.
 
 ## Deux ordres à ne pas confondre
 
-La roadmap de `v0.1.0` décrit **l'ordre de construction du produit**. Elle peut
-prouver
-le profil BentoPDF sur le VPS de référence avant d'introduire WireGuard, car ce
-premier service permet de comprendre séparément le déploiement OCI, Traefik et
-HTTPS. Cette séquence de preuve ne devient pas l'ordre obligatoire d'une
-infrastructure réelle.
+La [direction](../projet/DIRECTION.md) décrit **l'ordre de construction du
+produit** : celui des chantiers, et il se choisit pour ce qu'il rend
+compréhensible. La roadmap archivée de `v0.1.0` prouvait ainsi le profil
+BentoPDF sur le VPS de référence avant d'introduire WireGuard, car ce premier
+service permet de comprendre séparément le déploiement OCI, Traefik et HTTPS —
+et l'ordre d'aujourd'hui n'est déjà plus celui-là. Aucune de ces séquences ne
+devient l'ordre obligatoire d'une infrastructure réelle.
 
 Une opération réelle décrit **l'ordre de changement d'une infrastructure**.
 Pour un service privé, « préparer le réseau avant le service » ne signifie
@@ -98,8 +99,8 @@ exige un nouveau plan.
 Une coupure au milieu d'une mutation ne déclenche aucun rejeu aveugle. Le
 Controller marque `résultat inconnu`, l'App l'affiche, puis le Controller
 observe le système par un chemin indépendant et propose seulement les actions
-compatibles avec l'état réellement constaté. `v0.1.0` ne promet ni rollback, ni
-continuation autonome lorsque l'Auxiliaire n'est plus joignable. La séquence
+compatibles avec l'état réellement constaté. Le produit ne promet ni rollback,
+ni continuation autonome lorsque l'Auxiliaire n'est plus joignable. La séquence
 consommée avant mutation reste refusée après redémarrage : reprendre exige
 toujours une nouvelle approbation.
 

@@ -1,13 +1,13 @@
 # Profil privé Vaultwarden : données, sauvegardes et trajet par le passage
 
-> Statut : contrat d'architecture validé (`#99`) pour le palier `#17`.
+> Contrat rédigé pour le palier `#17`.
 > Il étend le schéma 2 au premier service à données du produit, fixe ses
 > sauvegardes, son confinement et la route qui le publie par le seul passage
-> privé. Les implémentations le suivent depuis `#100` (plans et surface du
-> Controller), `#102` (l'Auxiliaire pose le service, son volume, son
-> environnement fermé, sa table de sortie et ses trois opérations d'archive) et
-> `#103` (l'Auxiliaire publie et retire la route de lien, et tient la panne du
-> passage) ; la preuve LAB du palier reste `#104`.
+> privé.
+>
+> Le passage qu'il emprunte est fixé par le
+> [passage privé](PASSAGE-PRIVE-WIREGUARD.md) ; ce contrat décrit le service
+> qui passe, pas le passage.
 
 ## Ce que ce profil est, et n'est pas
 

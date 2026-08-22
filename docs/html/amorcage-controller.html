@@ -1,4 +1,4 @@
-<!-- dérivé de ../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md @ sha256:76dc03d07573daf772010459d2db4fa395645f766c1797e5af48c0eedab5a926 -->
+<!-- dérivé de ../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md @ sha256:69b3249f5b992e735f87a433ef9b3cc9d8865fe5164fa5fd7801a75e4648cb8b -->
 <!doctype html>
 <html lang="fr">
 <head>
@@ -22,7 +22,7 @@
       <span class="pill pending">Partiellement prouvé</span>
     </div>
 
-    <h2>Socle Windows #43 : borné et prouvé</h2>
+    <h2>Socle Windows : ce qui le borne</h2>
     <div class="grid">
       <article class="card">
         <h3>Processus confiné avant exécution</h3>
@@ -40,10 +40,10 @@
       </article>
       <article class="card warning">
         <h3>Le parcours global reste ouvert</h3>
-        <p>#45 est prouvée et fermée. Son implémentation couvre les dialogues GTK3 et Win32, leur zéroïsation et les protections <code>mlock</code>, <code>MADV_DONTDUMP</code>, <code>VirtualLock</code> et Windows Error Reporting en défense en profondeur. Le run <code>30770893733</code> a entièrement réussi ses quatre jobs sur <code>b76ded8</code> : le test WER bloquant prouve avant verdict le dump, son répertoire, la clé <code>LocalDumps</code> et l’exclusion <code>AeDebug</code> absents. Ses trois artefacts publiés ont été inspectés. <code>LocalDumps</code> administrateur reste hors garantie avec contrôle et canari présents. Le run <code>30779157351</code> réussit ensuite ses quatre jobs sur <code>c0569d0</code> : l'issue #45 lie ce run et ce SHA, puis se ferme le 3 août 2026. Elle ne prouve ni SSH, ni <code>sudo</code>, ni <code>root</code>, ni audit, Controller installé ou succès métier ; l’ordre suivant commence par #51.</p>
+        <p>Le consentement natif couvre les dialogues GTK3 et Win32, leur zéroïsation et les protections <code>mlock</code>, <code>MADV_DONTDUMP</code>, <code>VirtualLock</code> et Windows Error Reporting en défense en profondeur. Le contrôle bloquant exige, avant verdict, le dump, son répertoire, la clé <code>LocalDumps</code> et l’exclusion <code>AeDebug</code> absents. <code>LocalDumps</code> administrateur reste hors garantie, avec contrôle et canari présents.</p>
       </article>
     </div>
-    <p class="boundary"><strong>Preuve exacte :</strong> consulter le <a href="../lab/v1-bootstrap-ipc-windows.md">rapport IPC, paquet et confinement Windows</a>. Il ferme seulement le socle #43 ; le contrat d’amorçage reste partiellement implémenté et prouvé.</p>
+    <p class="boundary"><strong>Preuve exacte :</strong> consulter le <a href="../lab/v1-bootstrap-ipc-windows.md">rapport IPC, paquet et confinement Windows</a>. Les rapports LAB portent seuls les dates, les commits et les résultats d’exécution.</p>
 
     <h2>Un parcours borné, sans dépendance permanente au laptop</h2>
     <div class="journey" aria-label="Parcours de création d'une infrastructure">
@@ -67,7 +67,7 @@
       </article>
       <article class="card">
         <h3>Saisie système directe · #45</h3>
-        <p>L'implémentation fournit l'entrée GTK3 masquée et son usage <code>Password</code>, ainsi que le dialogue Win32 modal avec contrôle <code>EDIT | ES_PASSWORD</code>. La surface répète les empreintes, l'étape, l'action et l'expiration. Un <code>ProtectedSecret</code> borné à 4096 octets est détruit avant l'événement terminal public <code>Unavailable</code>. Linux emploie <code>mmap</code>, <code>mlock</code> et <code>MADV_DONTDUMP</code> ; Windows <code>VirtualAlloc</code>, <code>VirtualLock</code> et l'enregistrement WER best effort. Le dump WER personnalisé <code>DumpType=0</code>, <code>CustomDumpFlags=0x321</code> caractérise <code>LocalDumps</code> administrateur hors garantie : contrôle ordinaire et canari placé dans la zone <code>VirtualAlloc</code> <code>PAGE_READWRITE</code> doivent être présents. Le run <code>30770893733</code> est <code>SUCCESS</code> quatre jobs sur quatre sur <code>b76ded8</code> ; le test WER bloquant prouve avant verdict le dump, son répertoire et les deux inscriptions de registre absents, et ses trois artefacts ont été inspectés. #45 ne peut être fermée que si l'ultime run du SHA documentaire est enregistré dans l'issue, sans modification suivante ; cette preuve ne couvre ni SSH, ni <code>sudo</code>, ni <code>root</code> ou succès métier. Voir le <a href="../lab/v0.1.0-native-secret-consent-linux-windows.md">rapport #45</a>.</p>
+        <p>L'implémentation fournit l'entrée GTK3 masquée et son usage <code>Password</code>, ainsi que le dialogue Win32 modal avec contrôle <code>EDIT | ES_PASSWORD</code>. La surface répète les empreintes, l'étape, l'action et l'expiration. Un <code>ProtectedSecret</code> borné à 4096 octets est détruit avant l'événement terminal public <code>Unavailable</code>. Linux emploie <code>mmap</code>, <code>mlock</code> et <code>MADV_DONTDUMP</code> ; Windows <code>VirtualAlloc</code>, <code>VirtualLock</code> et l'enregistrement WER best effort. Le dump WER personnalisé <code>DumpType=0</code>, <code>CustomDumpFlags=0x321</code> caractérise <code>LocalDumps</code> administrateur hors garantie : contrôle ordinaire et canari placé dans la zone <code>VirtualAlloc</code> <code>PAGE_READWRITE</code> doivent être présents. Le contrôle WER bloquant exige, avant verdict, le dump, son répertoire et les deux inscriptions de registre absents. Voir le <a href="../lab/v0.1.0-native-secret-consent-linux-windows.md">rapport de consentement natif</a>.</p>
       </article>
       <article class="card">
         <h3>Capacité SSH fermée · #42</h3>
@@ -157,12 +157,12 @@
       <article class="machine refused"><h3>Pas proposé par défaut</h3><small>Laptop ou VPS public du Relay</small><p>Le laptop n’est pas permanent ; la zone exposée n’est pas la place naturelle du Controller.</p></article>
     </div>
     <div class="resource-list" aria-label="Budgets de ressources séparés"><span>CPU</span><span>Mémoire</span><span>Processus</span><span>Disque</span><span>Réseau</span></div>
-    <p class="boundary">Les machines peuvent être lentes ou hétérogènes. CPU, mémoire, processus et disque sont bornés par systemd, cgroup v2 et quotas disponibles ; le réseau par les listeners, destinations, tailles, concurrences, délais et débits propres au rôle, jamais par systemd générique. L’Assistant refuse un placement insuffisant avec sa cause. La borne de 64 machines appartient à <code>v0.1.0</code> et à ses preuves, pas à la promesse générale du produit.</p>
+    <p class="boundary">Les machines peuvent être lentes ou hétérogènes. CPU, mémoire, processus et disque sont bornés par systemd, cgroup v2 et quotas disponibles ; le réseau par les listeners, destinations, tailles, concurrences, délais et débits propres au rôle, jamais par systemd générique. L’Assistant refuse un placement insuffisant avec sa cause. La borne de 64 machines appartient aux preuves qui l’ont établie, pas à la promesse générale du produit.</p>
 
     <h2>Un lot vérifiable, pas un téléchargement root improvisé</h2>
     <div class="facts">
       <article class="bundle">
-        <h3>Bundle App <code>v0.1.0</code></h3>
+        <h3>Bundle App</h3>
         <ul>
           <li>Assistant natif temporaire ;</li>
           <li>unique paquet serveur <code>.deb</code> Debian 13 <code>amd64</code> ;</li>
@@ -174,7 +174,7 @@
       </article>
       <article class="card warning">
         <h3>Bornes de distribution</h3>
-        <p>Un <code>.deb</code> isolé ne prouve ni son authenticité, ni un rollback global. L’Assistant restaure l’absence ou la version antérieure avant transfert ; tout état inconnu interdit un retrait aveugle. Mise à jour manuelle dans <code>v0.1.0</code>. <code>arm64</code> attend une preuve LAB dédiée. Une signature Windows synthétique ne vaut pas distribution publique reconnue.</p>
+        <p>Un <code>.deb</code> isolé ne prouve ni son authenticité, ni un rollback global. L’Assistant restaure l’absence ou la version antérieure avant transfert ; tout état inconnu interdit un retrait aveugle. Mise à jour manuelle. <code>arm64</code> attend une preuve LAB dédiée. Une signature Windows synthétique ne vaut pas distribution publique reconnue.</p>
       </article>
     </div>
     <p class="boundary"><strong>Choix de sécurité :</strong> le paquet Debian évite de réimplémenter sous <code>root</code> l’extraction, l’inventaire, les permissions et le retrait d’une archive. Ses scripts éventuels restent minimaux et n’activent aucun rôle. Retirer le paquet n’efface jamais implicitement configurations, secrets ou identités.</p>
@@ -190,7 +190,7 @@
         <p>Joignabilité depuis le Controller, entrée Auxiliaire en lecture seule, remplacement de toutes les autorités, états partiels honnêtes et ancienne base compromise isolée.</p>
       </article>
     </div>
-    <p class="boundary"><strong>Limites de <code>v0.1.0</code> :</strong> pas de bascule automatique, troisième autorité SSH, scan de récupération, conservation de la clé personnelle, reprise autonome d’une action interrompue ou Ansible obligatoire. Une coupure pendant une mutation donne un <code>résultat inconnu</code> : observer d’abord, ne jamais rejouer aveuglément.</p>
+    <p class="boundary"><strong>Limites du produit :</strong> pas de bascule automatique, troisième autorité SSH, scan de récupération, conservation de la clé personnelle, reprise autonome d’une action interrompue ou Ansible obligatoire. Une coupure pendant une mutation donne un <code>résultat inconnu</code> : observer d’abord, ne jamais rejouer aveuglément.</p>
     <!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
     <footer>Source canonique : <a href="../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md">AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md</a> · <a href="index.html">Index visuel</a></footer>

@@ -1,11 +1,15 @@
 # Amorçage et remplacement du Controller
 
-> Statut : contrat d'architecture décidé, partiellement implémenté et
-> partiellement prouvé. Le socle IPC et cycle de vie natif Linux/Windows de #43
-> est acquis. Le consentement et la mémoire secrète #45 sont prouvés sous Linux
-> et Windows par `30779157351` sur `c0569d0`, puis fermés le 3 août 2026. Le
-> travail reprend à #51. Le parcours d'amorçage global demeure ouvert avant le
-> premier plan d'action de `v0.1.0`.
+> **Ce document fixe l'autorité SSH initiale, son transfert et le remplacement
+> explicite du Controller** : ce que l'Assistant temporaire obtient, ce qu'il
+> rend, et ce qu'une machine exige avant d'accepter un successeur. Ce qu'il fixe
+> engage le produit — une autorité conservée au-delà de ce qu'il décrit est un
+> défaut, pas une variante.
+>
+> Il est la source canonique de la décision transverse `BOOTSTRAP-RECOVERY` au
+> sens du [registre de cohérence](../projet/COHERENCE.md). L'**exécution** de ce
+> qu'il décide est fixée par
+> [l'Assistant qui installe](L-ASSISTANT-QUI-INSTALLE.md).
 
 Une [édition HTML autonome et visuelle](../html/amorcage-controller.html)
 accompagne cette source Markdown.

@@ -11,6 +11,13 @@ refuse, ce que le Relay ne peut pas lui demander — est fixée par la
 [chaîne d'observation](CHAINE-D-OBSERVATION.md). Ce contrat s'y appuie et ne la
 redit pas.
 
+Une recette a deux origines et une seule valeur : la reprise décrite ici la
+lit sur une machine, et la
+[définition de service utilisateur](SERVICE-UTILISATEUR.md) la reçoit d'un
+document que l'utilisateur rédige et que le produit gèle. Ce contrat fixe ce
+que la connaissance de la recette autorise, quelle que soit celle des deux qui
+l'a donnée.
+
 ## Ce qui a changé, et pourquoi le dire ici
 
 Le modèle précédent demandait à l'utilisateur de **déclarer** ce qui tournait

@@ -21,9 +21,9 @@ pourcentage.
 |---|---|
 | 1. Installer l'app | **déjà vrai** — prouvé depuis la page Releases |
 | 2. Créer une infrastructure, importer les machines | chantiers 1-2 pour la première machine, **3** pour les suivantes |
-| 3. Vérifier que tout va bien | chantier **3**, puis **9** en continu |
-| 4. Installer un service sur la machine choisie | chantier **4** |
-| 5. Publier avec un domaine, et exiger une connexion si c'est privé | chantiers **6** et **7** |
+| 3. Vérifier que tout va bien | chantier **3**, puis **10** en continu |
+| 4. Installer un service sur la machine choisie | chantier **5** |
+| 5. Publier avec un domaine, et exiger une connexion si c'est privé | chantiers **7** et **8** |
 
 ## Les chantiers
 
@@ -54,11 +54,34 @@ plus économique.*
 Enrôler les machines suivantes **depuis l'app**, et voir ce qui tourne dessus :
 inventaire découvert par le Daemon, ports en écoute, identité stable.
 
+Une action **facultative** s'y attache, « Vérifier cette machine » : elle pose
+puis retire la sonde épinglée sur `127.0.0.1`. C'est la seule façon de constater
+qu'un enrôlement a produit une machine qui reçoit, vérifie et rend un plan
+approuvé — ce qu'une garde de capacité ne peut pas dire, puisqu'elle lit des
+capacités déclarées sans rien exécuter. L'enrôlement se termine sans elle, et
+rien ne casse si elle n'est jamais demandée.
+
 **Ce qu'on gagne** : les étapes 2 et 3 du parcours deviennent réelles.
 
-*Contrats : A1, A3. Dépend de : 2 — les machines ont besoin d'adresses.*
+*Contrats : A1, A3, `PLAN-OCI-CONTROLE.md`. Dépend de : 2 — les machines ont
+besoin d'adresses.*
 
-### 4. Les services
+### 4. Le remplacement du Controller
+
+Remplacer **depuis l'app** un Controller perdu ou compromis : chaque autorité
+que l'ancien exerçait est renouvelée, et l'état de chaque cible est visible —
+`ancien seul`, `chevauchement borné`, `nouveau seul` ou `inconnu`, jamais un
+succès global.
+
+**Ce qu'on gagne** : le parc survit à la perte de sa tête. La logique de
+décision existe déjà et **aucun binaire du produit ne l'atteint** : le module
+`replacement` n'a qu'une fixture LAB pour appelant. Ce chantier lui donne le
+sien.
+
+*Contrat : A9. Dépend de : 3 — le remplacement existe pour ne pas perdre le
+parc, et n'a de sens qu'une fois qu'il y a un parc à préserver.*
+
+### 5. Les services
 
 Déployer depuis les écrans, **reprendre** un service existant, mettre à jour
 avec snapshot et retour, cloisonnement loopback posé automatiquement.
@@ -68,26 +91,27 @@ demande pas ».
 
 *Contrats : A3, A8. Dépend de : 3.*
 
-### 5. Le réseau interne
+### 6. Le réseau interne
 
 Mesh entre N machines aux adresses stables, flux nommés ouverts par les actions,
-carte des liens et liste des flux à l'écran.
+carte des liens et liste des flux à l'écran. Les six plans du passage privé sont
+lus, consentis et signés depuis l'app comme n'importe quel autre plan.
 
 **Ce qu'on gagne** : des services qui se parlent, et la preuve visible que rien
 d'autre ne circule.
 
-*Contrat : A4. Dépend de : 3.*
+*Contrats : A4, `PASSAGE-PRIVE-WIREGUARD.md`. Dépend de : 3.*
 
-### 6. La publication
+### 7. La publication
 
 Publier un service sur son domaine en HTTPS : DNS géré ou manuel guidé,
 certificat wildcard renouvelé tout seul, route posée.
 
 **Ce qu'on gagne** : l'étape 5, moitié web.
 
-*Contrats : A5, A6. Dépend de : 5.*
+*Contrats : A5, A6. Dépend de : 6.*
 
-### 7. Les humains
+### 8. Les humains
 
 Portail d'authentification posé automatiquement au premier « Exiger une
 connexion » ; écran Personnes ; headers écrasés au proxy.
@@ -95,16 +119,16 @@ connexion » ; écran Personnes ; headers écrasés au proxy.
 **Ce qu'on gagne** : l'étape 5, moitié privée — la famille sur ses services sans
 rien installer.
 
-*Contrats : A5, A7. Dépend de : 6.*
+*Contrats : A5, A7. Dépend de : 7.*
 
-### 8. L'exposition L4
+### 9. L'exposition L4
 
 Exposer un service non-HTTP, IP source préservée — **à prouver en LAB avant
 d'être promise**, repli documenté sinon.
 
-*Contrat : A5. Dépend de : 5.*
+*Contrat : A5. Dépend de : 6.*
 
-### 9. La vue globale
+### 10. La vue globale
 
 Ligne de santé en phrases, badges d'attention, carte de l'infrastructure.
 

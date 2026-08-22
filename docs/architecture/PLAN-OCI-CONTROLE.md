@@ -1,11 +1,9 @@
 # Plan OCI contrôlé et sonde de validation
 
-> Statut : contrat d'architecture validé (`#81`) pour le palier `#14`.
+> Contrat rédigé pour le palier `#14`.
 > Il fixe ce que `plan_sha256` et `rollback_sha256` de l'enveloppe
 > d'approbation attestent, la liste fermée des champs qu'un plan de ce palier
-> peut porter, et l'image de la sonde épinglée. Les implémentations le suivent
-> depuis `#82` (Controller), `#83` (App), `#84` (Auxiliaire) et `#85` pour
-> le comportement après échec ; la preuve LAB du palier reste `#86`.
+> peut porter, et l'image de la sonde épinglée.
 
 ## Rôle du plan dans la chaîne existante
 
@@ -144,10 +142,16 @@ que décrire la requête reçue, aucune donnée persistante, aucun privilège,
 publié par l'organisation Traefik déjà présente dans le scénario de référence,
 et disponible en `arm64` pour une preuve future sans changer de sonde.
 
-La sonde reste ce que la roadmap en dit : un service jetable de validation,
-accessible uniquement sur `127.0.0.1`, retiré à la fin de la preuve. **Elle
-n'est pas un composant de Your Cloud** : aucune infrastructure utilisateur ne
-la reçoit sans plan approuvé, et aucun composant du produit ne dépend d'elle.
+La sonde est un service jetable de validation, accessible uniquement sur
+`127.0.0.1`, retiré à la fin de ce qu'elle vérifie. **Elle n'est pas un
+composant de Your Cloud** : aucune infrastructure utilisateur ne la reçoit sans
+plan approuvé, et aucun composant du produit ne dépend d'elle.
+
+**Un humain peut la demander ; rien ne la déclenche à sa place.** « Vérifier
+cette machine » est une action facultative, jamais une étape d'un parcours : un
+enrôlement se termine sans sonde, et rien ne casse si elle disparaît. C'est ce
+qui borne sa seule dépendance externe — tirer l'image épinglée exige un accès
+au registre, et personne ne le paie sans l'avoir demandé.
 
 Ce palier n'accepte qu'elle : `image_reference` doit valoir exactement
 `docker.io/traefik/whoami` et `image_digest` exactement le digest ci-dessus.

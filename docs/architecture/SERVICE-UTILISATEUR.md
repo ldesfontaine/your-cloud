@@ -1,13 +1,16 @@
 # Service utilisateur : la définition inerte et la troisième porte
 
-> Statut : brouillon de contrat d'architecture proposé pour `#115`, milestone
-> `v0.1.1` « Services utilisateur ». Il fixe l'objet « définition de service
-> utilisateur », ses bornes, la dérivation du placement, le trajet du document,
-> la troisième porte des opérations et le contrat d'éligibilité d'image. Les
-> implémentations prévues le suivront depuis `#116` (document Go et miroir
-> Rust), `#117` (gel et service par le Controller), `#118` (la paire de plans),
-> `#119` (dérivation et pose par l'Auxiliaire) et `#120` (vue Services de la
-> App) ; la preuve LAB de la milestone reste `#121`.
+> Contrat rédigé pour la milestone `v0.1.1` « Services utilisateur » (`#115`).
+> Il fixe l'objet « définition de service utilisateur », ses bornes, la
+> dérivation du placement, le trajet du document, la troisième porte des
+> opérations et le contrat d'éligibilité d'image.
+>
+> Une **définition** est ce que l'utilisateur rédige et que le produit gèle ;
+> une **recette** est ce que Your Cloud sait d'un service pour pouvoir le
+> refaire, et qu'une reprise peut aussi lui donner. Les deux ouvrent les mêmes
+> verbes, et ce que ces verbes autorisent est fixé par les
+> [services](SERVICES-DECOUVERTE-ET-REPRISE.md). Ce contrat décrit seulement
+> la première des deux voies.
 
 ## Ce que ce palier ajoute, et ce qu'il n'ajoute pas
 

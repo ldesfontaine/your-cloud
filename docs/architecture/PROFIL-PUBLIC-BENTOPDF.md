@@ -1,12 +1,9 @@
 # Profil public BentoPDF et point d'entrée Traefik
 
-> Statut : contrat d'architecture validé (`#87`) pour le palier `#15`.
-> Il étend le contrat du plan (`PLAN-OCI-CONTROLE.md`) aux opérations de
-> service et de publication, fixe l'édition, la licence et les images
-> épinglées du profil, et décrit ce que la preuve devra constater. Les
-> implémentations le suivent depuis `#88` (plans et surface du Controller),
-> `#90` (service géré côté Auxiliaire) et `#91` (point d'entrée et route
-> publiée côté Auxiliaire) ; la preuve LAB du palier reste `#92`.
+> Contrat rédigé pour le palier `#15`.
+> Il étend le contrat du plan ([`PLAN-OCI-CONTROLE.md`](PLAN-OCI-CONTROLE.md))
+> aux opérations de service et de publication, fixe l'édition, la licence et
+> les images épinglées du profil, et décrit ce qu'une preuve doit constater.
 
 ## Ce que ce profil est, et n'est pas
 
