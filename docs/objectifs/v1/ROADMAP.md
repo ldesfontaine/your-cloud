@@ -1,5 +1,21 @@
 # Roadmap vers `v0.1.0`
 
+> # ⬛ Objectif ATTEINT
+>
+> **`v0.1.0` est franchie**, et `v0.2.0` est publiée depuis. Ce dossier est
+> conservé comme **récit** : il dit ce que le produit devait rendre et l'a
+> rendu. Il ne décrit pas ce qu'il vise maintenant — cela se lit dans le
+> [cap](../../projet/CAP.md) et la [direction](../../projet/DIRECTION.md).
+>
+> **Les tags de cette période n'existent plus.** `v0.1.0`, `v0.1.3` et `v0.1.4`
+> ont été supprimés le 21 août 2026 avec le renommage `Console` → `App`
+> ([#159](https://github.com/ldesfontaine/your-cloud/issues/159)). Leurs commits
+> sont tous ancêtres de `main` — **rien n'est perdu** — mais un lecteur qui
+> cherche ces tags ne les trouvera pas. Seule `v0.2.0` subsiste.
+>
+> Ce dossier ne porte plus aucune décision transverse : elles ont rejoint des
+> foyers vivants au cours des amendements de la partie A.
+
 > Statut : `v0.0.1` et `v0.0.2` sont décidées, implémentées et prouvées dans le
 > LAB. Les huit paramètres de `v0.0.3` sont validés. Sa
 > [preuve fonctionnelle Linux](../../lab/v0.0.3-console-controller-linux.md), réussie une
@@ -234,7 +250,6 @@ au LAB. Aucune installation ou exécution du produit n'a lieu sur le laptop.
 
 ## Paliers nécessaires après `v0.0.1`
 
-<!-- coherence: SERVICE-LIFECYCLE:start -->
 Les paliers ci-dessous fixent un ordre de dépendance, pas encore des numéros de
 version ni un dessin détaillé de leur code. Cet ordre construit progressivement
 les capacités de Your Cloud ; il ne décrit pas l'ordre d'une opération sur une
@@ -242,7 +257,6 @@ infrastructure réelle. Une opération suit le
 [cycle de vie sûr validé](../../architecture/CYCLE-DE-VIE-DES-SERVICES.md) :
 préparer un réseau fermé, déployer sans exposition, vérifier, autoriser le flux
 exact, publier ou basculer, observer, puis retirer l'ancien état.
-<!-- coherence: SERVICE-LIFECYCLE:end -->
 
 ### Incrément prouvé : `v0.0.2` — observation authentifiée et bornée
 
@@ -415,230 +429,26 @@ déverrouillage, timeout et déconnexion explicite sans exposer la clé au
 frontend ; son mécanisme reste ouvert. Les services publics gardent leur accès
 HTTPS normal.
 
-<!-- coherence: BOOTSTRAP-RECOVERY:start -->
-### Palier ouvert — amorçage réutilisable
+### Épilogue — ces paliers sont franchis
 
-Ce palier est suivi par l'issue `#13`. La condition de fermeture `#9` de
-`v0.0.3` est satisfaite sur le candidat produit `3b8f81f` effectivement
-fusionné : l'amorçage est donc le palier ouvert. Son contrat est décidé afin que
-l'implémentation ne réinvente pas l'autorité initiale. Le socle helper/IPC
-`#43` est prouvé. `#45` est prouvée sur `c0569d0` puis fermée le 3 août 2026.
-La séquence de ce sous-palier plaçait #45 avant les sous-issues
-`#51 → #52 → #53 → #54`, la fermeture de leur parente `#42`, puis celle de
-l'intégration `#35`. `#51` est fermée et `#52` est en revue : le travail
-reprend donc à `#53` une fois `#52` fermée, avant le reste du palier `#13`.
+Les six paliers qui suivaient `v0.0.3` étaient décrits ici comme **ouverts** ou
+**dépendants**. Ils sont **tous fermés**, chacun sur une preuve LAB réellement
+exécutée : amorçage réutilisable, premier plan appliqué, premier service public,
+passage privé limité au service, service privé publié, responsabilité externe.
 
-**Résultat :** depuis une App installée, choisir `Créer une infrastructure`,
-déclarer les endpoints sans scan, prêter temporairement un accès SSH personnel,
-auditer les machines en lecture seule, approuver le placement puis installer un
-Controller autonome et les rôles approuvés. Avant de modifier les autres
-machines, le nouveau Controller prouve qu'il joint leurs endpoints SSH. Le même
-Assistant natif fournit `Remplacer un Controller` après une perte ou l'isolement
-d'un Controller compromis, sans dépendre de lui.
+Leur description détaillée a été retirée plutôt que conservée au passé : elle
+annonçait un travail à faire, et le lire ainsi aujourd'hui induirait en erreur.
+Ce qui les remplace est plus utile — **les rapports de ce qui a réellement été
+mesuré**, sous [`docs/lab/`](../../lab/README.md), et les contrats vivants
+qu'ils ont produits.
 
-L'enveloppe serveur initiale est un unique paquet `.deb` Debian 13 `amd64`.
-L'installateur de App embarque l'Assistant, ce paquet, ses définitions
-statiques et le manifeste signé qui lie version, cible, taille et empreinte.
-L'Assistant vérifie le lot avant tout privilège, garde les dépendances hors
-ligne et orchestre installation, vérification et retour à la version ou à
-l'absence antérieure. Le paquet possède seulement le binaire root-owned sous
-`/usr/lib/your-cloud` et les unités Controller, Daemon et Relay livrées
-inactives sous `/usr/lib/systemd/system` ; il ne porte ni secret, ni
-configuration propre à une machine, ni activation de rôle ou transfert
-d'autorité. Aucun binaire privilégié n'est téléchargé dynamiquement.
-Le Controller réside sur une machine privée et normalement
-allumée. La cohabitation isolée est permise pour une petite infrastructure, une
-machine ou VM dédiée est recommandée lorsque taille ou sensibilité augmentent.
-Cette cohabitation partage la panne matérielle : perdre ou isoler l'hôte peut
-interrompre ses services locaux, tandis que les services des autres hôtes
-continuent.
+Un point mérite d'être conservé ici, parce qu'il ne se lit nulle part ailleurs :
+**le modèle de responsabilité de ce palier a été abandonné**. Les modes « géré »
+et « externe », l'état déclaré distinct du vérifié comme concepts de premier
+rang, et l'adoption jamais implémentée ont été retirés du produit en août 2026.
+Ce que le texte ci-dessus en dit décrit fidèlement `v0.1.0` — et ne décrit plus
+le produit.
 
-**Socle déjà prouvé (`#43`) :** sur le commit `f3fef79`, le run
-`30753216798` a exécuté sous Linux et Windows les modes `create` et `replace`,
-les commandes Tauri positives sans champ secret, l'identifiant natif
-anti-rejeu, l'absence de listener et les gates de packaging natif. Sous Windows,
-la création suspendue, la liste exacte de handles et le Job Object bornent aussi
-les descendants et les branches d'échec. Voir le
-[rapport du runner Windows](../../lab/v1-bootstrap-ipc-windows.md).
-
-**Implémentation prouvée et fermée (`#45`) :** le helper lie le véritable parent et
-son pair IPC au périmètre public immuable, fixe une échéance monotone de 300
-secondes non renouvelable et ouvre directement les fenêtres GTK3 ou Win32. Un
-`ProtectedSecret` borné à 4096 octets est détruit avant la sortie ; Linux
-emploie `mmap`, `mlock` et `MADV_DONTDUMP`, Windows `VirtualAlloc`,
-`VirtualLock` et l'enregistrement Windows Error Reporting en défense en
-profondeur. Le
-[rapport dédié](../../lab/v0.1.0-native-secret-consent-linux-windows.md)
-conserve les sous-cas Linux exécutés et les tentatives diagnostiques Windows.
-Les runs `30768351689` et `30768749538` sont rouges sous l'ancien oracle, qui
-exigeait le canari absent. Ils caractérisent désormais la frontière
-`LocalDumps` administrateur hors garantie : contrôle et canari sont présents,
-tandis que `WerRegisterExcludedMemoryBlock` reste une défense en profondeur. Le
-candidat intermédiaire `ae550470` exige cette observation, supprime le dump,
-prouve son répertoire vide et les deux inscriptions de registre absentes, mais
-ne retire le répertoire que par `Drop` après verdict. Son run `30769440106` a
-entièrement réussi ses quatre jobs et prouve cette étape intermédiaire, mais ne
-ferme pas #45. `c8643b0` ajoute `remove_and_prove_absent`, qui exige le
-répertoire absent avant verdict. Le run `30770893733` réussit ensuite ses
-quatre jobs sur `b76ded8`, valide cette séquence et publie trois artefacts
-inspectés. Après trois corrections du harnais de captures, le run
-`30779157351` réussit ses quatre jobs sur `c0569d0` : l'issue #45 lie ce run et
-ce SHA, fusionné par fast-forward, puis se ferme. Après
-acceptation, l'événement terminal public reste `Unavailable` : cette
-frontière n'exécute ni SSH, ni `sudo`, ni `root`, ni audit ou installation.
-
-**Preuve de sortie :**
-
-- le frontend, le Controller, les fichiers persistants et les journaux ne
-  reçoivent jamais la clé personnelle ou le mot de passe `sudo` ;
-- sous Linux comme sous Windows, le prompt natif lie passphrase, mot de passe
-  et consentement `root` aux cibles, actions et expiration exactes sans
-  primitive SSH libre pour la WebView ;
-- `root` n'est utilisé qu'après ce consentement explicite ;
-- l'audit refuse une clé d'hôte non confirmée, une cible incompatible, un rôle
-  non approuvé, tout scan implicite et toute cible non joignable depuis le
-  Controller choisi ;
-- le manifeste signé, la version, la cible, la taille, l'empreinte et les
-  dépendances hors ligne du `.deb` sont vérifiés avant privilège ; un échec
-  restaure l'état absent ou la version antérieure, tandis qu'un état inconnu
-  interdit tout retrait aveugle ;
-- seuls le binaire sans setuid, setgid ou capacité de fichier et les trois
-  unités statiques inactives occupent les chemins paquet root-owned décidés ;
-  configuration, secret et identité propres à une machine restent hors du
-  `.deb` ;
-- le lot serveur est installé avant la commande forcée ; l'entrée Auxiliaire
-  initiale est en lecture seule et refuse toute mutation inconnue ;
-- chaque machine reçoit une identité SSH Your Cloud différente, restreinte par
-  commande forcée vers l'Auxiliaire ; fichier, parents et binaire sont
-  root-owned, tandis que shell, PTY, SFTP, rc, X11, environnement et transferts
-  échouent ;
-- fermer l'Assistant et éteindre l'App n'arrêtent ni le Controller ni les
-  services ;
-- l'accès personnel reste intact ;
-- un remplacement explicite crée une nouvelle association App, limite le
-  lecteur Relay au nouveau Controller, tourne toute autorité exposée, réutilise
-  les Agents compatibles et retire seulement les anciennes identités marquées
-  Your Cloud après vérification ;
-- une suspicion de compromission exige l'isolement de l'ancien hôte ; une
-  coupure à chaque étape rend un état partiel reconstructible et jamais un
-  succès global ;
-- la perte du Controller n'est pas confondue avec la récupération d'association
-  d'une App vers un Controller encore vivant ; si cette récupération
-  remplace la clé humaine, l'action reste verrouillée jusqu'à une rotation via
-  l'accès personnel.
-
-Le socle `#43` ci-dessus est exécuté dans des runners isolés avec des données
-sentinelles synthétiques et aucun secret réel. La preuve de sortie globale reste
-incomplète : `#45` a réussi sa matrice native finale et est fermée ; l'accès SSH
-personnel a fermé `#51`, tient `#52` en revue avec sa moitié Linux prouvée dans
-le LAB et sa moitié Windows en attente, puis avance par `#53` et `#54` avant la
-fermeture de `#42` ; l'intégration `#35` reste à prouver. La signature Windows
-synthétique valide la mécanique de build du candidat, pas une identité
-publique ; une distribution publique attend toujours une signature reconnue et
-gratuite réellement opérationnelle.
-
-Le contrat complet est
-[Amorçage et remplacement du Controller](../../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md).
-<!-- coherence: BOOTSTRAP-RECOVERY:end -->
-
-### Palier dépendant — premier plan appliqué de manière contrôlée
-
-**Résultat :** le Controller construit un plan lisible que l'App présente
-avec son rollback exact. Après confirmation, le cœur natif signe leur enveloppe
-canonique ; le Controller la transporte sans pouvoir fabriquer l'approbation,
-puis utilise l'identité SSH Your Cloud propre au VPS et sa commande forcée pour
-lancer l'Auxiliaire. Celui-ci déploie une **sonde OCI de validation** avec
-Podman rootless et Quadlet. Cette sonde est un petit service HTTP jetable, sans
-donnée persistante et accessible uniquement localement sur la machine. Son
-image est choisie à ce palier, puis épinglée par version et digest ; elle ne
-devient pas un composant de Your Cloud.
-
-**Précondition d'autorité :** avant toute mutation, le Controller authentifie
-l'humain, l'appareil et la session, puis l'Auxiliaire vérifie indépendamment la
-signature de l'App, la clé publique et l'époque root-owned de la cible, la
-successeur exact de la séquence anti-rejeu et l'expiration. La séquence est
-consommée durablement avant la mutation et reste refusée après redémarrage.
-L'accès au réseau privé ne remplace aucun de ces contrôles et une session de
-lecture `v0.0.3` ne reçoit pas implicitement le droit d'agir. Le palier
-d'amorçage précédent a déjà prouvé l'identité par machine, la commande forcée
-et l'absence de shell général.
-
-**Preuve de sortie :** aucun playbook, inventaire, argument, chemin ou commande
-libre ne vient du frontend ; l'Auxiliaire refuse une cible inconnue, un plan
-altéré, expiré ou rejoué, un digest flottant, un registre, volume, port ou
-privilège non approuvé. Une cible sans systemd ou cgroup v2 est refusée avant
-mutation. La première application rend `changed=true` ; un nouveau plan
-demandant le même état rend `changed=false` sans réécriture ni redémarrage,
-tandis que rejouer l'ancienne enveloppe est refusé. Une dérive exige un nouveau
-plan ; retirer une sonde déjà absente rend `changed=false`. Un échec contrôlé
-tente le rollback exact approuvé ; une coupure rend le résultat inconnu, ne
-déclenche aucun rejeu et impose une observation avant un nouveau plan. Une
-requête locale obtient la réponse attendue ; redémarrage et retrait produisent
-l'état annoncé sans port public ni donnée restante.
-
-**Dépendance validée :** ce mécanisme générique est prouvé avant BentoPDF. Le
-palier suivant réutilise donc un chemin de plan, d'approbation et d'exécution
-déjà compris au lieu de déboguer simultanément l'action, le proxy, TLS et le
-premier véritable service.
-
-### Palier dépendant — premier véritable service public
-
-**Résultat :** prouver le parcours générique d'un service web OCI public avec le
-profil BentoPDF explicitement sélectionné dans le scénario LAB de référence :
-déploiement sur le VPS, Traefik sans socket de moteur, route générée avec le
-file provider et HTTPS sur un nom déclaré. Ce profil n'est jamais installé par
-défaut dans une infrastructure utilisateur.
-
-**Preuve de sortie :** seul `443` est nécessaire publiquement, avec `80`
-éventuellement limité à la redirection ; le port interne de BentoPDF reste
-privé ; une requête directe par l'IP ou un nom inconnu n'obtient aucune route
-applicative ; l'image, la configuration et les dépendances sont épinglées et
-vérifiées.
-
-### Palier dépendant — passage privé limité au service
-
-**Résultat :** Your Cloud prépare, fait approuver puis applique le passage
-WireGuard entre les deux machines enrôlées, avec adresses `/32`, routes et règles
-`nftables` limitées au service prévu.
-
-**Preuve de sortie :** la machine du LAN n'a aucun port Internet entrant ; le
-VPS ne peut joindre ni SSH, ni les autres ports, ni le sous-réseau du LAN ; une
-modification de pair, destination ou port produit un nouveau plan au lieu d'une
-mutation silencieuse.
-
-### Palier dépendant — véritable service privé publié par le VPS
-
-**Résultat :** prouver le parcours générique d'un service privé persistant avec
-le profil Vaultwarden explicitement sélectionné dans le scénario LAB de
-référence : déploiement avec Podman rootless sur la machine du LAN, stockage
-persistant, puis seconde route HTTPS Traefik qui le rejoint uniquement par
-WireGuard. Ce profil et cette topologie ne sont jamais imposés à une
-infrastructure utilisateur.
-
-**Preuve de sortie :** `pdf.<domaine>` et `vault.<domaine>` utilisent la même IP
-publique et `443` sans exposer leurs ports internes ; Vaultwarden survit aux
-redémarrages et à une recréation contrôlée ; sauvegarde et restauration avec des
-secrets synthétiques sont prouvées ; le service ne peut joindre aucun voisin
-synthétique du LAN sans flux approuvé.
-
-Le VPS ainsi durci reste une zone d'exposition, pas une DMZ revendiquée. Une
-future DMZ exigera un segment dédié et des frontières filtrantes indépendantes
-vers Internet, les zones privées et le plan d'administration.
-
-### Palier dépendant — responsabilité externe visible
-
-**Résultat :** déclarer dans l'App un service ou un passage installé à la main,
-sans transférer son autorité à Your Cloud, et distinguer l'état déclaré de ce
-qu'un adaptateur en lecture seule sait réellement vérifier.
-
-La présence d'un profil de service pris en charge ne crée aucune ressource et
-n'impose aucun placement : chaque instance gérée exige une déclaration, un
-placement, un plan et une approbation explicites, tandis qu'un autre service
-peut rester externe.
-
-**Preuve de sortie :** un élément inconnu n'est ni découvert par scan, ni adopté
-silencieusement, ni présenté comme géré ; l'App annonce clairement ce qu'elle ne
-peut ni mettre à jour, ni restaurer, ni supprimer.
 
 ### Preuve complète de `v0.1.0`
 
@@ -656,7 +466,6 @@ profils peuvent être sélectionnés ; elle n'en fait pas des installations par
 défaut. Une signature Windows synthétique ne suffit pas à une distribution
 publique. Toute capacité non prouvée reste annoncée comme telle et bloque `v0.1.0`.
 
-<!-- coherence: AGENT-AUTHORITY:start -->
 ## Frontières d'autorité conservées au-delà de `v0.1.0`
 
 La roadmap s'arrête à la preuve complète précédente. Les frontières suivantes
@@ -689,7 +498,6 @@ d'une architecture contradictoire :
 Cette section ne planifie ni OpenStack, ni Terraform/OpenTofu, ni K3s, ni
 runner Ansible, ni découverte assistée, ni haute disponibilité. Elle fixe leurs
 frontières avant leur futur cadrage.
-<!-- coherence: AGENT-AUTHORITY:end -->
 
 Le premier jalon déjà noté après cette limite est la `v0.1.1` « Services
 utilisateur » : des définitions de service bornées, gelées et hachées par le
