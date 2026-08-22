@@ -27,6 +27,8 @@
       <p>Le tampon a une limite de taille et d'âge, pour qu'une panne longue du Relay ne remplisse jamais le disque. À la limite, l'état courant est conservé, le plus ancien retiré, et une <strong>lacune d'observation</strong> nomme l'intervalle et le nombre d'éléments perdus. Aucune continuité n'est reconstruite.</p>
       <h3>Profil d'observation choisi par l'utilisateur</h3>
       <p>Un profil est une liste de collecteurs nommés et pris en charge par la version du Daemon. Le plan présente pour chacun la cible, les champs produits et exclus, la fréquence, la rétention, le budget, ce qu'il doit lire, les flux nécessaires et ce que le résultat permet de conclure.</p>
+      <h3>La découverte : énumérer ce qui n'a pas été déclaré</h3>
+      <p>Une famille de collecteurs nommée « inventaire » relève, sur la machine où le Daemon tourne, les unités systemd et les ports en écoute. Elle est locale à une machine déjà enrôlée, n'ajoute aucun privilège et n'ouvre aucun canal descendant. Ce que le Daemon refuse toujours, c'est de regarder au-delà de sa machine : pas de découverte du LAN, pas de découverte des voisins.</p>
       <h3>Extension future sans backdoor</h3>
       <p>Un nouveau collecteur est une capacité nommée de la version du Daemon, approuvée dans un profil — jamais une commande envoyée depuis le Relay.</p>
       <h3>Justification OWASP et NIS2</h3>

@@ -47,6 +47,30 @@ WireGuard peut ainsi être établi avec des pairs et routes `/32` pendant que
 qu'après une vérification du service. La route publique Traefik arrive en
 dernier.
 
+## Reprendre un service que Your Cloud n'a pas posé
+
+Un service découvert sur une machine enrôlée peut être **repris** : Your Cloud
+en obtient la recette, et cette recette lui ouvre tous les autres verbes. Le
+chemin est fermé et se lit dans cet ordre :
+
+1. **un audit approuvé, en lecture seule** — la machine rend la configuration
+   réelle du service : image et digest, volumes, environnement, ports. Rien
+   n'est modifié, et cet audit ne reprend rien à lui seul ;
+2. **la recette est relue par l'humain, ajustée si besoin, puis gelée** — c'est
+   lui qui valide ce que Your Cloud croit avoir compris, jamais l'inverse ;
+3. **le service redémarre depuis la recette**, sous compte dédié cloisonné, en
+   unité posée par plan. **L'ancien conteneur est arrêté et conservé** : la
+   fenêtre de retour existe avant qu'on en ait besoin.
+
+**Un service est repris quand il tourne depuis la recette validée**, jamais
+quand l'audit se termine. Tant que la recette n'est pas gelée, Your Cloud sait
+voir et arrêter, pas refaire.
+
+Ce chemin n'invente aucune mécanique : c'est la paire plan/retour habituelle,
+avec un audit en lecture seule devant. Ce qu'il ajoute est une **origine** —
+jusqu'ici, seul un service posé par Your Cloud pouvait être mis à jour,
+sauvegardé ou recréé.
+
 ## Contrat d'une opération
 
 | Phase | Ce que l'App doit rendre visible | Comportement sûr en cas d'échec |

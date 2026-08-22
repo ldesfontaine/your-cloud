@@ -510,16 +510,23 @@ du Daemon**. Pour chaque collecteur, le plan présente :
 - les flux réseau éventuellement nécessaires ;
 - ce que le résultat permet réellement de conclure.
 
-Le même mécanisme sert à observer un service géré et à vérifier en lecture seule
-un service ou un passage explicitement déclaré. Le statut reste celui d'une
-observation en lecture seule : obtenir une preuve ne transfère aucune autorité
-de modification à Your Cloud.
+Le même mécanisme sert à observer un service dont Your Cloud connaît la recette
+et à vérifier en lecture seule un service ou un passage qu'il ne connaît pas.
+Le statut reste celui d'une observation en lecture seule : obtenir une preuve ne
+transfère aucune autorité de modification à Your Cloud.
+
+**Le Daemon énumère aussi ce qui n'a pas été déclaré.** Une famille de
+collecteurs nommée « inventaire » relève, sur la machine où il tourne, les
+unités systemd et les ports en écoute — c'est la **découverte**. Elle ne change
+rien à ce qui précède : elle est locale à une machine déjà enrôlée, elle
+n'ajoute aucun privilège, et elle n'ouvre aucun canal descendant. Ce que le
+Daemon refuse toujours, c'est de regarder **au-delà de sa machine**.
 
 Le Daemon refuse :
 
 - toute commande shell ou suite d'arguments libre ;
 - tout chemin de fichier arbitraire, motif global ou lecture de contenu ;
-- toute découverte du LAN, des voisins ou de services non déclarés ;
+- toute découverte du LAN ou des voisins ;
 - tout collecteur inconnu, non versionné ou téléchargé à la demande ;
 - tout résultat qui ne respecte pas son schéma, sa taille et son type attendus.
 
