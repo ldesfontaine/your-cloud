@@ -109,6 +109,11 @@
     </div>
     <p class="not-third"><strong>À distinguer :</strong> l’authentification App–Controller autorise l’humain et son appareil dans le produit. Elle n’est pas une autorité SSH sur les machines et ne devient pas une troisième voie de secours.</p>
 
+    <h2>Deux consentements, et deux choses à fournir</h2>
+    <p>« Se connecter et examiner la machine » reste séparé — c'est le premier usage de l'accès SSH prêté, et consentir à regarder n'est pas consentir à agir. « Installer et mettre en service le Controller » fusionne la pose et le démarrage, détail dépliable. C'est le consentement qui fusionne, pas la séquence : demander deux fois ce que l'humain a compris comme un seul geste fabrique l'habitude d'approuver sans lire.</p>
+    <p class="boundary">La double confirmation est réservée à l'irréversible — supprimer un service avec ses données, retirer une machine. Le reste a un filet mécanique ; le doubler serait un rituel.</p>
+    <p>Les trois questions d'adresses disparaissent : écoute, source autorisée et endpoint du Relay se dérivent du plan d'adressage. Restent un compte pour se connecter et l'empreinte de clé d'hôte relevée sur le serveur — celle-ci ne se dérive pas, elle distingue la machine attendue d'un imposteur et doit venir hors bande.</p>
+    <p>Le nominal est le compte que Debian crée à son installation, tel quel : groupe <code>sudo</code>, mot de passe, aucune préparation. <code>root</code> direct et <code>NOPASSWD</code> restent servis sans être demandés. Servir <code>root</code> n'est pas l'accepter silencieusement : prêt ponctuel consenti, jamais conservé, plus jamais utilisé après l'installation, et le produit ne crée ni ne renforce jamais un accès <code>root</code>.</p>
     <h2>Création et transfert d’autorité</h2>
     <div class="grid">
       <article class="card">

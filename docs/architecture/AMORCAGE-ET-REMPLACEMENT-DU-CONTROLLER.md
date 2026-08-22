@@ -396,9 +396,45 @@ tenter à l'aveugle.
   protégeait pas de cela. La borne de vie du secret est **inchangée** : il meurt
   à la fin de la séquence, sur succès comme sur échec.
 
+**Le nominal est le compte que Debian crée à son installation, tel quel** :
+membre du groupe `sudo`, protégé par mot de passe, sans aucune préparation. Le
+préflight reste le gardien — une politique `sudo` restrictive exotique reçoit un
+refus qui nomme sa cause et le geste qui la lève — mais la politique standard
+d'une Debian installée par défaut passe.
+
+Les autres postures restent **servies sans être demandées** : un accès `root`
+direct, pour les hébergeurs qui ne donnent que cela, et une entrée `NOPASSWD`
+pour qui en possède déjà une. Le produit s'adapte à la machine ; il n'exige pas
+qu'on l'affaiblisse pour lui.
+
+**Servir `root` sans le demander n'est pas l'accepter silencieusement.** Quatre
+bornes le disent, et aucune n'est nouvelle — elles étaient éparses, elles sont
+réunies ici parce que c'est là qu'on vient les chercher :
+
+- chaque usage de l'accès personnel est un **prêt ponctuel consenti** : la clé
+  sort de la fenêtre au moment de l'approbation, pour cette séquence ;
+- l'Assistant **ne conserve jamais** cet accès. Il s'arrête et oublie ; rien
+  n'est rejouable sans la clé et une nouvelle approbation ;
+- après l'installation, le produit **n'utilise plus jamais** l'accès personnel :
+  il travaille avec les identités de commande dédiées à chaque machine ;
+- le produit **ne crée ni ne renforce jamais** un accès `root` : il ne touche
+  pas à la configuration SSH, n'ajoute aucune clé, ne désactive aucun mot de
+  passe.
+
+> **Intervalle entre ce contrat et le produit.** Ce contrat fixe la cible. Le
+> `README` de la `v0.2.0` décrit ce que le produit exige **aujourd'hui** —
+> préparer le compte hors du groupe `sudo` avec une entrée `NOPASSWD`. L'écart
+> est connu, porté par
+> [#158](https://github.com/ldesfontaine/your-cloud/issues/158), et il se ferme
+> à la preuve LAB rejouée depuis la page : compte Debian nu jusqu'au Controller
+> actif. **La section de préparation du README disparaît dans la pull request
+> qui apporte cette preuve** — jamais avant, ce serait promettre ce que le
+> produit refuse ; jamais après, ce serait faire taper des commandes devenues
+> inutiles.
+
 L'utilisateur peut fournir :
 
-- de préférence, un compte d'administration non-root avec clé SSH et élévation
+- le compte d'administration ordinaire, non-root, avec clé SSH et élévation
   `sudo` protégée par mot de passe ;
 - si l'environnement l'exige, un accès SSH `root`, prêté explicitement pour
   cette opération précise.
@@ -550,6 +586,40 @@ futurs partiront de mesures de l'inventaire, de l'observation et des actions con
 d'introduire pagination, partitionnement ou plusieurs Controllers. `v0.1.0` ne
 préconçoit pas ces mécanismes, mais ne présente jamais 64 comme un plafond
 durable du produit.
+
+## Ce que l'humain approuve, et combien de fois
+
+**Deux consentements, pas trois.**
+
+1. **« Se connecter et examiner la machine »** — lecture seule, rien n'est
+   écrit. Cette étape reste séparée parce que c'est le **premier usage de
+   l'accès SSH personnel prêté** : consentir à regarder n'est pas consentir à
+   agir, et l'humain doit pouvoir s'arrêter là.
+2. **« Installer et mettre en service le Controller »** — la pose et le
+   démarrage en une seule approbation, dont le détail se déplie.
+
+**C'est le consentement qui fusionne, pas la séquence.** La mécanique interne ne
+change pas d'un acte : transfert non privilégié d'abord, vérification du lot,
+actes joués un à un, rapport de la machine. Demander deux fois à l'humain de
+consentir à ce qu'il a déjà compris comme un seul geste n'ajoute aucune
+protection — cela fabrique l'habitude d'approuver sans lire, qui en retire une.
+
+**Une action, une approbation.** La double confirmation est réservée à
+l'irréversible : supprimer un service avec ses données, retirer une machine. Le
+reste possède un filet mécanique — instantané préalable, fenêtre de retour — et
+le doubler serait un rituel, pas une sécurité.
+
+### Les trois questions d'adresses disparaissent
+
+L'amorçage ne demande plus l'adresse d'écoute, la source autorisée en `/32` ni
+l'endpoint du Relay. **Le produit les dérive** du plan d'adressage de
+l'infrastructure, fixé par le [réseau](RESEAU.md) : le Controller n'écoute que
+sur son adresse du réseau d'accès, et les autorisations en découlent.
+
+Il reste donc à l'humain **deux choses à fournir** : un compte pour se
+connecter, et l'empreinte de clé d'hôte relevée sur le serveur. La seconde n'est
+pas une commodité qu'on pourrait dériver — c'est ce qui distingue la machine
+attendue d'un imposteur, et elle doit venir hors bande.
 
 ## Création d'une infrastructure
 
