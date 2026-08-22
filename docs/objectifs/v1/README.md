@@ -1,5 +1,21 @@
 # Objectif `v0.1.0`
 
+> # ⬛ Objectif ATTEINT
+>
+> **`v0.1.0` est franchie**, et `v0.2.0` est publiée depuis. Ce dossier est
+> conservé comme **récit** : il dit ce que le produit devait rendre et l'a
+> rendu. Il ne décrit pas ce qu'il vise maintenant — cela se lit dans le
+> [cap](../../projet/CAP.md) et la [direction](../../projet/DIRECTION.md).
+>
+> **Les tags de cette période n'existent plus.** `v0.1.0`, `v0.1.3` et `v0.1.4`
+> ont été supprimés le 21 août 2026 avec le renommage `Console` → `App`
+> ([#159](https://github.com/ldesfontaine/your-cloud/issues/159)). Leurs commits
+> sont tous ancêtres de `main` — **rien n'est perdu** — mais un lecteur qui
+> cherche ces tags ne les trouvera pas. Seule `v0.2.0` subsiste.
+>
+> Ce dossier ne porte plus aucune décision transverse : elles ont rejoint des
+> foyers vivants au cours des amendements de la partie A.
+
 > Statut : contrat fonctionnel validé pour le découpage de la roadmap. Les
 > paramètres d'implémentation encore inconnus seront mesurés au palier concerné
 > sans modifier silencieusement cette ligne d'arrivée.
@@ -274,7 +290,6 @@ facultatif et sans autorité d'administration ni secret de machine. Ses pouvoirs
 résiduels sur le routage, la disponibilité, TLS, l'intégrité du code livré et la
 transmission d'identité devront être bornés.
 
-<!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ## Amorçage et remplacement du Controller
 
 Le premier Controller n'existe pas encore pour installer sa propre autorité.
@@ -418,7 +433,6 @@ le secret est détruit et l'événement terminal public reste `Unavailable` jusq
 `#42` ; aucun SSH, `sudo`, `root`, audit ou succès d'amorçage n'est revendiqué.
 L'accès SSH personnel `#42`, puis l'intégration complète suivie par `#35`
 restent à implémenter et prouver avant la suite du palier.
-<!-- coherence: BOOTSTRAP-RECOVERY:end -->
 
 ## Quatre chemins différents
 
@@ -463,7 +477,6 @@ sans exposition publique du port de la machine du LAN. `v0.1.0` ne prétend pas
 encore qu'une App installée n'importe où peut traverser seule n'importe quel
 NAT.
 
-<!-- coherence: AGENT-AUTHORITY:start -->
 ### Compatibilité avec la cible finale
 
 `v0.1.0` et la cible à long terme conservent le même contrat utilisateur :
@@ -531,7 +544,6 @@ Les contraintes de `v0.1.0` sont :
   doit pas arrêter un service déjà déployé ;
 - les résultats directs et les observations ultérieures restent deux preuves
   distinctes, visibles dans l'App.
-<!-- coherence: AGENT-AUTHORITY:end -->
 
 ## Identités et chiffrement
 

@@ -20,8 +20,8 @@ sources.
 | `CONTEXT.md` | Le vocabulaire et les relations du domaine, sans choix d'implémentation |
 | `docs/README.md` | La carte de navigation, jamais une décision produit |
 | `docs/projet/CAP.md` | La destination à long terme et les contraintes durables |
-| `docs/objectifs/v1/README.md` | Ce qui doit être vrai pour déclarer la version `v0.1.0` atteinte |
-| `docs/objectifs/v1/ROADMAP.md` | L'ordre des preuves jusqu'à `v0.1.0` et le prochain incrément détaillé |
+| `docs/objectifs/v1/README.md` | **Objectif atteint** — ce qui devait être vrai pour déclarer `v0.1.0` atteinte |
+| `docs/objectifs/v1/ROADMAP.md` | **Objectif atteint** — l'ordre des preuves qui a mené à `v0.1.0` |
 | `docs/contribution/QUALITE.md` | Les règles de conception, développement et validation |
 | `docs/contribution/CI.md` | Les déclenchements, permissions, placements et limites des contrôles GitHub Actions |
 | `docs/contribution/TESTS.md` | Le registre des contrôles, incidents et écarts à automatiser, jamais une preuve par lui-même |
@@ -86,13 +86,13 @@ ci-dessous sert seulement à reconnaître son sujet.
 <!-- coherence-registry:start -->
 | Identifiant | Frontière suivie | Source canonique | Projections obligatoires |
 |---|---|---|---|
-| `AGENT-AUTHORITY` | Un artefact Agent par version, rôles en processus isolés, Daemon non-root, Relay explicitement activé, Auxiliaire ponctuel et autorités adaptées | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md`, `docs/contribution/QUALITE.md` |
-| `BOOTSTRAP-RECOVERY` | Assistant temporaire, accès personnel conservé, approbation signée, identités par machine et remplacement explicite de toutes les autorités du Controller | `docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
+| `AGENT-AUTHORITY` | Un artefact Agent par version, rôles en processus isolés, Daemon non-root, Relay explicitement activé, Auxiliaire ponctuel et autorités adaptées | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md`, `docs/contribution/QUALITE.md` |
+| `BOOTSTRAP-RECOVERY` | Assistant temporaire, accès personnel conservé, approbation signée, identités par machine et remplacement explicite de toutes les autorités du Controller | `docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/architecture/ANATOMIE.md` |
 | `V1-OBSERVATION` | Collecteurs nommés, sortie mTLS, Relay sans ordre, tampon borné et lacunes visibles | `docs/architecture/CHAINE-D-OBSERVATION.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/architecture/ANATOMIE.md` |
 | `V1-APP-ACCESS` | App cliente installée et signée, Controller backend sans frontend qui n'écoute que sur son adresse du réseau d'accès, pair WireGuard par appareil et services publiés indépendants | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
 | `INTERNAL-NETWORK` | Machines enrôlées seules pairs, transport qui n'autorise rien, flux nommés et bornés, aucune route générale vers le LAN | `docs/architecture/RESEAU.md` | `CONTEXT.md` |
 | `PUBLIC-EXPOSURE` | Point d'entrée unique, expositions nommées, en-têtes d'identité écrasés, zone d'exposition sans fausse DMZ | `docs/architecture/POINT-D-ENTREE.md` | `CONTEXT.md`, `docs/projet/CAP.md` |
-| `SERVICE-LIFECYCLE` | Réseau préparé fermé, service vérifié avant publication, bascule observable et retour honnête | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
+| `SERVICE-LIFECYCLE` | Réseau préparé fermé, service vérifié avant publication, bascule observable et retour honnête | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/architecture/ANATOMIE.md` |
 <!-- coherence-registry:end -->
 
 Le registre reste limité aux sept frontières dont une divergence changerait le
