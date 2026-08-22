@@ -72,6 +72,23 @@ Un playbook réel reçoit d'abord un `--syntax-check`, puis un second passage do
 produire `changed=0`, entièrement dans le LAB. Une preuve non exécutée reste
 annoncée comme telle.
 
+**Un arbre de sources déposé à la main dans une VM est une dette, pas un
+raccourci** — et il se retire à la fin de la tâche qui l'a déposé, au même titre
+qu'une topologie. Un arbre qu'aucun pilote ne crée fait deux dégâts qu'aucun
+compte rendu ne relie spontanément : il occupe le disque, qui est la contrainte
+structurante de ces VM, et il fait rougir la garde de démontage « aucun matériau
+de clé privée sous `/root` » — dont la liste d'exclusions ne connaît que les
+arbres que les pilotes créent. Le second symptôme ressemble alors à une fuite de
+secret là où il n'y a qu'une copie du dépôt : le produit **analyse** les clés
+OpenSSH, si bien que l'en-tête `BEGIN OPENSSH PRIVATE KEY` vit légitimement dans
+ses sources et dans ses binaires.
+
+Constaté le 22 août 2026 sur `lab-app` : un arbre de 5,9 Gio laissé par une
+séance antérieure a bloqué la garde disque de 4 GiB du pilote de pose — la même
+saturation que celle datée du 12 août dans `tests/lab/v0.1.3/controller-install/build`.
+Ce que `tests/lab/v0.1.0/personal-access/prove sync` dépose, lui, se resynchronise ;
+un arbre hors pilote n'a personne pour le reprendre.
+
 ## Commandes disponibles
 
 ```text
