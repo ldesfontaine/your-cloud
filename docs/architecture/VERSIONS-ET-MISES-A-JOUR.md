@@ -29,22 +29,28 @@ Cela vaut pour les services **proposés** comme pour ceux que l'utilisateur a
 
 ### Où tourne ce collecteur, et pourquoi
 
-**Chez le Controller.** Trois raisons, dans cet ordre :
+**Dans l'app.**
 
-1. **il détient les recettes gelées** — comparer un tag à un digest déployé exige
-   de connaître le digest déployé, et c'est lui qui le porte ;
-2. **il est allumé en permanence** — un collecteur qui vivrait dans l'app ne
-   verrait les nouvelles versions qu'à son ouverture, et un badge périmé est pire
-   qu'aucun badge ;
-3. **il a déjà une sortie** — lui en ajouter une n'ouvre pas une catégorie de
-   chemin qui n'existait pas.
+Elle connaît les deux côtés de la comparaison — le tag suivi et le digest
+déployé — et **un badge n'est lu que lorsque l'app est ouverte**. Une veille
+permanente achèterait donc une fraîcheur que personne n'utilise, au prix d'une
+sortie Internet permanente sur le backend d'autorité de l'infrastructure.
 
-**Ce que cela coûte, et qui est assumé** : le Controller acquiert une
-communication sortante vers des registres publics, donc un lien entre une
-infrastructure privée et l'extérieur qui n'existait pas. C'est borné à une
-**lecture** de métadonnées de manifestes, vers des hôtes déclarés par les
-recettes, et jamais un canal par lequel quelque chose entre. Le refus du canal
-descendant est intact : personne ne *pousse* une version.
+**Le badge porte sa date de vérification**, comme tout ce que le produit
+affiche : « vérifié à telle heure ». Ce n'est pas un pis-aller. Le produit ne
+cache jamais l'ancienneté d'une information — il la montre, et c'est cette
+règle qui rend une donnée fraîche croyable. Un badge daté est honnête ; un badge
+qui prétendrait à une fraîcheur permanente ne le serait pas.
+
+**Ce que le Controller n'acquiert donc pas** : une communication sortante vers
+des registres publics. Ses sorties actuelles vont vers le Relay et vers les
+machines de son infrastructure ; parler à des hôtes publics arbitraires est
+d'une autre nature, et ce contrat ne la lui donne pas.
+
+**La seule raison qui renverserait ce choix** serait de notifier une nouvelle
+version **sans ouvrir l'app**. Ce serait un contrat à part — il faudrait dire
+qui notifie, par quel chemin, et ce que cette notification vaut. Il n'est pas
+écrit ici, et ce contrat ne le prépare pas silencieusement.
 
 ## Jamais d'auto-update silencieux
 
