@@ -733,15 +733,23 @@ def answer_access_window(key_file: str, passphrase: str, report: dict) -> None:
 # Le parcours « Créer une infrastructure », étape par étape.
 # ---------------------------------------------------------------------------
 
+# Les deux consentements de l'écran, depuis #219 — ils étaient trois.
+#
+# Ces chaînes sont les YEUX du harnais, pas un artefact figé : elles doivent
+# dire ce que l'écran peint AUJOURD'HUI, sans quoi l'oracle cherche un bouton
+# qui n'existe plus et la preuve rougit sur son propre vocabulaire. Cinq des
+# six chaînes d'avant sont devenues fausses le jour où les consentements ont
+# fusionné, et c'est la preuve de #220 qui l'a mesuré en confrontant les deux.
+#
+# Le libellé du bouton dérive du titre de l'étape dans la vue : le figer ici
+# à la main serait une seconde définition, et les deux finiraient par diverger.
 STEP_BUTTONS = {
-    "audit": "Commencer par l’audit",
-    "install": "Continuer : pose du lot serveur",
-    "activate": "Continuer : activation du controller",
+    "audit": "Commencer : se connecter et examiner la machine",
+    "commission": "Continuer : installer et mettre en service le controller",
 }
 STEP_SENTENCES = {
     "audit": "La machine a été auditée en lecture seule. Rien n’a été écrit.",
-    "install": "Le lot est posé et vérifié sur la machine. Rien n’écoute encore.",
-    "activate": "Le Controller est actif sur la machine.",
+    "commission": "Le lot est posé et vérifié, et le Controller est actif sur la machine.",
 }
 def sentence_shown(wanted: str) -> str:
     """Le script qui répond LA PHRASE quand elle est à l'écran, sinon rien.
@@ -945,7 +953,7 @@ def asymmetry(driver: Driver, arguments, target: dict, passphrase: str, report: 
     report["audit_with_narrow_entry"] = (
         "l'audit rend sa phrase avec une entrée sudoers qui ne nomme que la sonde"
     )
-    refused_step(driver, "install", arguments.key_file, passphrase, report)
+    refused_step(driver, "commission", arguments.key_file, passphrase, report)
 
 
 def hostile(driver: Driver, arguments, target: dict, passphrase: str, report: dict) -> None:
@@ -959,7 +967,7 @@ def hostile(driver: Driver, arguments, target: dict, passphrase: str, report: di
     reach_vault(driver, report)
     open_creation(driver, target, report)
     run_step(driver, "audit", arguments.key_file, passphrase, report)
-    refused_step(driver, "install", arguments.key_file, passphrase, report)
+    refused_step(driver, "commission", arguments.key_file, passphrase, report)
 
 
 def main() -> int:
@@ -1018,7 +1026,7 @@ def main() -> int:
             pathlib.Path(arguments.secrets).write_text(f"{phrase}\n{recovery}\n")
             os.chmod(arguments.secrets, 0o600)
             open_creation(driver, target, report)
-            for step in ["audit", "install", "activate"]:
+            for step in ["audit", "commission"]:
                 run_step(
                     driver,
                     step,

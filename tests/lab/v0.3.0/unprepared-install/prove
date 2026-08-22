@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# La preuve de la milestone `v0.3.0` : une machine cible vierge et un compte
+# Debian ORDINAIRE, non préparé, menés jusqu'au Controller actif.
+#
+# Ce que cette preuve ajoute à celle de `v0.1.3` tient en deux faits, et les
+# deux étaient impossibles il y a un jour :
+#
+#   1. le compte est celui que l'installateur Debian produit — membre du groupe
+#      `sudo`, un mot de passe, et AUCUNE ligne de sudoers écrite pour lui.
+#      Lire sa politique coûte le mot de passe, ce que le produit refusait
+#      jusqu'à #218 ;
+#   2. l'humain approuve DEUX fois au lieu de trois (#219), et la seconde
+#      fenêtre nomme ses deux actes.
+#
+# CE QUI EST DÉLÉGUÉ, ET POURQUOI. La construction du candidat, le périmètre
+# d'accès personnel et l'écran virtuel appartiennent au harnais de `v0.1.3` et
+# à celui de `v0.1.0` : les dupliquer ici donnerait deux définitions du même
+# montage, et deux définitions divergent. Ce pilote n'apporte que ce qui lui
+# est propre — le compte visé, l'état vierge de la cible, et les relevés que
+# la machine rend d'elle-même.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+usage() {
+  cat <<'USAGE'
+usage: prove <phase>
+
+  build       sources → lab-app puis candidat construit et installé
+              (délégué à tests/lab/v0.1.3/controller-install/prove)
+  perimeter   monte le périmètre d'accès personnel sur lab-machine-1
+              (délégué à tests/lab/v0.1.0/personal-access/prove)
+  journey     le parcours à l'écran sur le compte Debian NON PRÉPARÉ :
+              deux consentements, jusqu'au Controller actif
+  constats    relevés indépendants sur la cible, par des outils qui ne sont
+              pas le produit
+  remove      rend la cible à son état initial et asserte l'absence
+  all         tout, dans cet ordre, remove garanti rouge ou vert
+USAGE
+}
+
+command=${1:-all}
+[[ $# -eq 0 ]] || shift
+case "$command" in
+  build | perimeter | journey | constats | remove | all) ;;
+  *) usage; exit 2 ;;
+esac
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
+labctl="$root/tools/labctl"
+model="$root/tests/lab/v0.1.3/controller-install"
+personal_access="$root/tests/lab/v0.1.0/personal-access"
+app_vm=lab-app
+machine_vm=lab-machine-1
+# Le MÊME répertoire distant que le harnais modèle : `inside` y attend son
+# écran, son état d'App et sa sortie. Un second répertoire obligerait à
+# recopier `inside`, donc à en tenir deux versions.
+remote_harness=/root/your-cloud-lab-controller-install
+# Le compte que l'installateur Debian produit. Son nom vient du périmètre
+# d'accès personnel, qui le monte ; il n'est pas inventé ici.
+account=ycpasudg
+
+announce() { printf '\n== %s\n' "$*"; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+# La garde d'inventaire obligatoire : jamais de mutation sans relire ce que la
+# machine est, et refuser tout ce qui n'est pas la topologie de ce dépôt.
+inventory() {
+  local name="$1" line
+  line=$("$labctl" list --format=tsv | awk -F'\t' -v n="$name" '$1 == n') ||
+    fail "labctl list n'a pas rendu $name"
+  [[ -n "$line" ]] || fail "$name absente de l'inventaire"
+  awk -F'\t' '{
+    if ($2 != "running") { exit 1 }
+    if ($5 != "quick") { exit 2 }
+    if ($6 != "your-cloud/labctl") { exit 3 }
+    print $3
+  }' <<<"$line" || fail "$name n'est pas la VM attendue (état/topologie/origine)"
+}
+
+# La posture du compte, VÉRIFIÉE plutôt que supposée — c'est la prémisse de
+# toute cette milestone, et une preuve qui la suppose ne prouve rien.
+assert_unprepared() {
+  announce "la posture du compte $account, vérifiée avant tout parcours"
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+id -nG $account | tr ' ' '\n' | grep -qx sudo \
+  || { echo 'FAILED: $account n'\''est pas dans le groupe sudo' >&2; exit 1; }
+ls /etc/sudoers.d/ | grep -q '$account\$' \
+  && { echo 'FAILED: une ligne de sudoers a été écrite pour $account' >&2; exit 1; }
+passwd -S $account | awk '\$2 != \"P\" { print \"FAILED: \" \$1 \" n'\''a pas de mot de passe\"; exit 1 }'
+echo '  groupe sudo : oui — sudoers dédié : aucun — mot de passe : oui'
+runuser -u $account -- env LC_ALL=C /usr/bin/sudo -N -n -l -l >/dev/null 2>&1 </dev/null \
+  && { echo 'FAILED: la politique se lit SANS secret — ce n'\''est pas la posture visée' >&2; exit 1; }
+echo '  le prévol non secret ne peut pas lire sa politique : c'\''est bien la posture de #218'"
+}
+
+require_pristine_target() {
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+if dpkg-query -W your-cloud-server >/dev/null 2>&1; then
+  echo 'FAILED: your-cloud-server est déjà installé sur la cible' >&2
+  exit 1
+fi
+rm -rf /home/$account/.your-cloud-bootstrap
+echo '  la cible est vierge'"
+}
+
+do_build() { "$model/prove" sync && "$model/prove" build; }
+
+do_perimeter() {
+  inventory "$machine_vm" >/dev/null
+  announce "périmètre d'accès personnel sur $machine_vm"
+  "$personal_access/prove" setup
+}
+
+do_journey() {
+  inventory "$app_vm" >/dev/null
+  assert_unprepared
+  require_pristine_target
+  announce "le parcours à l'écran — compte $account, deux consentements"
+  local machine_address host_key
+  machine_address=$(inventory "$machine_vm")
+  host_key=$("$labctl" ssh "$app_vm" -- \
+    "ssh-keygen -lf /root/your-cloud-lab-personal-access/server-host-key.pub" | awk '{print $2}')
+  [[ "$host_key" == SHA256:* ]] || fail "l'empreinte de la clé d'hôte est illisible : $host_key"
+  local file
+  "$labctl" ssh "$app_vm" -- "install -d -m 0700 $remote_harness"
+  for file in run inside app-oracle.py; do
+    "$labctl" copy-to "$app_vm" "$model/$file" "$remote_harness/$file" >/dev/null
+    "$labctl" ssh "$app_vm" -- "chmod 0700 $remote_harness/$file"
+  done
+  "$labctl" ssh "$app_vm" -- "cat > $remote_harness/target.env <<TARGET
+TARGET_HOST=ycpa-target.test
+TARGET_PORT=22
+TARGET_USERNAME=$account
+TARGET_HOST_KEY=$host_key
+TARGET_LISTEN=$machine_address:9443
+TARGET_ALLOWED_SOURCE=192.168.240.9/32
+TARGET_RELAY_ENDPOINT=192.168.240.9:8444
+TARGET"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run journey"
+}
+
+do_constats() {
+  inventory "$machine_vm" >/dev/null
+  announce "les relevés indépendants sur $machine_vm"
+  # Ce que la machine dit d'elle-même, par des outils qui ne sont pas le
+  # produit. Un succès annoncé par la partie qui agit n'est pas un constat.
+  "$labctl" ssh "$machine_vm" -- '
+set -e
+echo "--- le paquet, vu par dpkg ---"
+dpkg -l your-cloud-server | tail -1
+echo "--- l'"'"'unité, vue par systemd ---"
+systemctl is-enabled your-cloud-controller
+systemctl is-active your-cloud-controller
+echo "--- aucun secret résiduel du parcours ---"
+[ -e /home/ycpasudg/.your-cloud-bootstrap ] \
+  && { echo "FAILED: un répertoire d'"'"'attente a survécu" >&2; exit 1; }
+echo "  aucun répertoire d'"'"'attente"
+echo "CONSTATS_OK"'
+}
+
+do_remove() {
+  announce "la cible rendue à son état initial"
+  "$labctl" ssh "$machine_vm" -- "
+set -e
+if dpkg-query -W your-cloud-server >/dev/null 2>&1; then
+  systemctl stop your-cloud-controller 2>/dev/null || true
+  systemctl disable your-cloud-controller 2>/dev/null || true
+  dpkg --purge your-cloud-server
+fi
+rm -rf /home/$account/.your-cloud-bootstrap /etc/your-cloud /var/lib/private/your-cloud-controller
+dpkg-query -W your-cloud-server >/dev/null 2>&1 \
+  && { echo 'FAILED: le paquet survit au démontage' >&2; exit 1; }
+echo 'REMOVE_TARGET_OK'"
+}
+
+case "$command" in
+  build) do_build ;;
+  perimeter) do_perimeter ;;
+  journey) do_journey ;;
+  constats) do_constats ;;
+  remove) do_remove ;;
+  all)
+    status=0
+    # Le sous-shell est une instruction NUE, encadrée de `set +e` : à gauche
+    # d'un `||`, `errexit` serait supprimé jusqu'à l'intérieur, et une phase
+    # rouge n'arrêterait pas les suivantes. Mesuré le 22 août 2026 sur le
+    # pilote des bornes d'enrôlement.
+    set +e
+    (
+      set -e
+      do_perimeter
+      do_journey
+      do_constats
+    )
+    status=$?
+    set -e
+    do_remove || status=$?
+    [[ $status -eq 0 ]] || exit "$status"
+    echo
+    echo "PROVE_UNPREPARED_INSTALL_OK compte=$account consentements=2"
+    ;;
+esac

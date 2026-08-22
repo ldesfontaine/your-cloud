@@ -414,7 +414,9 @@ export function CreateInfrastructureView({
                     onClick={() => void runStep(index)}
                     disabled={!declarationComplete || running}
                   >
-                    {index === 0 ? "Commencer par l’audit" : `Continuer : ${step.title.toLowerCase()}`}
+                    {index === 0
+                      ? `Commencer : ${step.title.toLowerCase()}`
+                      : `Continuer : ${step.title.toLowerCase()}`}
                   </Button>
                 ) : null}
               </li>
