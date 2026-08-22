@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Contrôle de harnais : ce que la journalisation d'entrée `sudo` capture
+# réellement de la forme de commande du produit.
+#
+# Ce contrôle existe parce qu'un raisonnement écrit dans le contrat s'est
+# révélé faux à la mesure : « le mot de passe voyage sur l'entrée standard de
+# la commande distante, donc une politique qui journalise l'entrée le pose en
+# clair dans /var/log/sudo-io ». Sans PTY et avec `-S`, `sudo` consomme la
+# ligne du secret pendant l'authentification, AVANT que le journal d'E/S de la
+# commande n'existe.
+#
+# Une mesure écrite une fois redevient une croyance quand `sudo` change de
+# version. Ce fichier la rejoue.
+#
+# Le témoin de contrôle n'est pas un ornement : sans lui, « secret absent »
+# ne se distingue pas de « journal muet ». Le contrôle échoue donc AUSSI
+# lorsque le témoin manque.
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+cible_vm="${YOUR_CLOUD_LAB_TARGET:-lab-machine-1}"
+labctl="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)/tools/labctl"
+
+announce() { printf '\n== %s\n' "$*"; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+# Même garde que les autres pilotes : état et origine avant toute mutation.
+inventory() {
+  local name="$1" line
+  line=$("$labctl" list --format=tsv | awk -F'\t' -v n="$name" '$1 == n') ||
+    fail "labctl list n'a pas rendu $name"
+  [[ -n "$line" ]] || fail "$name absente de l'inventaire"
+  awk -F'\t' '{
+    if ($2 != "running") { exit 1 }
+    if ($6 != "your-cloud/labctl") { exit 2 }
+    print $3
+  }' <<<"$line" || fail "$name n'est pas la VM attendue (état/origine)"
+}
+
+adresse=$(inventory "$cible_vm")
+[[ "$adresse" != *192.168.122.123* && "$adresse" != *10.66.66.1* ]] ||
+  fail "$cible_vm porte une adresse de production"
+announce "cible $cible_vm ($adresse) — origine et gabarit confirmés"
+
+# `labctl ssh` ne transmet PAS l'entrée standard : un `bash -s` alimenté par
+# un heredoc local reçoit un script VIDE et sort 0. Le contrôle serait vert
+# sans avoir rien mesuré. Le script part donc par `copy-to`, et la sortie
+# distante est vérifiée ci-dessous plutôt que supposée.
+distant=$(mktemp)
+trap 'rm -f "$distant"' EXIT
+cat >"$distant" <<'DISTANT'
+set -u
+COMPTE=yc-iolog-controle
+DROPIN=/etc/sudoers.d/99-yc-iolog-controle
+SENTINELLE='your-cloud-sudo-prompt:'
+# Secrets SYNTHÉTIQUES, nés ici et morts avec le contrôle.
+SECRET="Synthetique-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+TEMOIN="TEMOIN-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
+# Le démontage court quelle que soit l'issue, et prouve l'absence.
+nettoyer() {
+  rm -f "$DROPIN"
+  userdel -r "$COMPTE" 2>/dev/null
+  rm -rf /var/log/sudo-io
+  local residu=0
+  id "$COMPTE" >/dev/null 2>&1 && { echo "RESIDU: compte $COMPTE"; residu=1; }
+  [ -e "$DROPIN" ] && { echo "RESIDU: $DROPIN"; residu=1; }
+  [ -e /var/log/sudo-io ] && { echo "RESIDU: /var/log/sudo-io"; residu=1; }
+  [ "$residu" -eq 0 ] && echo "DEMONTAGE_PROUVE"
+}
+trap nettoyer EXIT
+
+. /etc/os-release
+echo "SYSTEME: $PRETTY_NAME"
+echo "SUDO: $(sudo --version | head -1)"
+
+useradd -m -s /bin/bash "$COMPTE" >/dev/null 2>&1 || { echo "ECHEC: useradd"; exit 1; }
+echo "$COMPTE:$SECRET" | chpasswd || { echo "ECHEC: chpasswd"; exit 1; }
+usermod -aG sudo "$COMPTE" || { echo "ECHEC: usermod"; exit 1; }
+printf 'Defaults log_input\nDefaults log_output\n' > "$DROPIN"
+chmod 0440 "$DROPIN"
+visudo -c -f "$DROPIN" >/dev/null || { echo "ECHEC: sudoers invalide"; exit 1; }
+echo "MONTE: compte du groupe sudo, mot de passe, log_input et log_output actifs"
+
+# La posture que le produit sert : le prévol non secret ne peut pas lire la
+# politique. C'est la prémisse du chantier, et elle est vérifiée ici.
+runuser -u "$COMPTE" -- env LC_ALL=C /usr/bin/sudo -N -n -l -l >/dev/null 2>&1 </dev/null
+[ $? -ne 0 ] && echo "PREVOL_REFUSE: la politique ne se lit pas sans secret" \
+             || echo "PREVOL_LISIBLE: cette machine n'est pas la posture visée"
+
+# La forme de commande du produit, avec un témoin derrière le secret. `cat`
+# tient lieu d'acte : il lit son entrée, donc ce que le journal capte est
+# observable.
+sortie=$(printf '%s\n%s\n' "$SECRET" "$TEMOIN" \
+  | runuser -u "$COMPTE" -- env LC_ALL=C \
+      /usr/bin/sudo -k -S -p "$SENTINELLE" -- /usr/bin/cat 2>&1) || {
+  echo "ECHEC: la commande fixe n'a pas abouti"; exit 1; }
+case "$sortie" in
+  *"$SECRET"*) echo "ECHEC: le secret est ressorti sur la sortie de la commande"; exit 1 ;;
+  *"$TEMOIN"*) echo "COMMANDE_OK: sudo a consommé le secret, la commande a lu le témoin" ;;
+  *) echo "ECHEC: le témoin n'est pas ressorti — la mesure n'est pas concluante"; exit 1 ;;
+esac
+
+[ -d /var/log/sudo-io ] || { echo "ECHEC: aucun journal d'E/S produit"; exit 1; }
+
+secret_trouve=0
+temoin_trouve=0
+while IFS= read -r f; do
+  zcat -f "$f" 2>/dev/null | grep -qF "$SECRET" && { secret_trouve=1; echo "SECRET_DANS: ${f#/var/log/sudo-io/}"; }
+  zcat -f "$f" 2>/dev/null | grep -qF "$TEMOIN" && temoin_trouve=1
+done < <(find /var/log/sudo-io -type f)
+
+# Les deux assertions, et la seconde est ce qui rend la première recevable.
+[ "$temoin_trouve" -eq 1 ] || { echo "ECHEC: le témoin est absent du journal — journal muet, mesure nulle"; exit 1; }
+echo "TEMOIN_PRESENT: le journal capte bien l'entrée de la commande"
+[ "$secret_trouve" -eq 0 ] || { echo "ECHEC: le secret EST journalisé — le raisonnement d'origine du contrat redevient vrai"; exit 1; }
+echo "SECRET_ABSENT: le secret n'est dans aucun fichier du journal"
+echo "CONTROLE_OK"
+DISTANT
+
+announce "mesure sur la cible"
+"$labctl" copy-to "$cible_vm" "$distant" /tmp/yc-iolog-controle.sh >/dev/null ||
+  fail "le script du contrôle n'a pas atteint $cible_vm"
+sortie=$("$labctl" ssh "$cible_vm" -- 'bash /tmp/yc-iolog-controle.sh; rm -f /tmp/yc-iolog-controle.sh' 2>&1) ||
+  fail "le contrôle distant a échoué :\n$sortie"
+printf '%s\n' "$sortie"
+
+# Un contrôle muet n'est pas un contrôle vert. Les trois marqueurs sont exigés
+# explicitement : sans eux, un script vide ou tronqué passerait pour un succès.
+for marqueur in TEMOIN_PRESENT SECRET_ABSENT CONTROLE_OK DEMONTAGE_PROUVE; do
+  case "$sortie" in
+    *"$marqueur"*) ;;
+    *) fail "marqueur $marqueur absent — le contrôle n'a pas prouvé ce qu'il annonce" ;;
+  esac
+done
+
+announce "contrôle terminé — le secret est absent, le témoin est présent, le démontage est prouvé"
