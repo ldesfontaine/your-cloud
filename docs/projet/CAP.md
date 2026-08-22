@@ -209,8 +209,12 @@ plage réseau, ni un compte fournisseur. L'App recommande ensuite un
 placement et montre les comptes, artefacts, flux et privilèges exacts.
 L'utilisateur l'approuve avant que l'Assistant installe le premier Controller.
 Un compte non-root avec clé SSH et `sudo` protégé par mot de passe reste le
-choix recommandé. Un accès SSH `root` n'est utilisé qu'après consentement
-explicite pour cette opération et n'est jamais repris silencieusement.
+choix recommandé — **c'est le compte que Debian crée à son installation, tel
+quel, sans préparation**. Cette phrase n'a pas changé et n'avait pas à changer :
+elle décrivait déjà la cible. Ce qui a changé est le contrat d'amorçage, qui
+refusait cette posture par un excès de prudence désormais levé et justifié.
+Un accès SSH `root` n'est utilisé qu'après consentement explicite pour cette
+opération et n'est jamais repris silencieusement.
 Après l'installation du Controller et avant de modifier une autre machine, la
 joignabilité SSH et la clé d'hôte de chaque cible sont aussi vérifiées depuis
 ce Controller.

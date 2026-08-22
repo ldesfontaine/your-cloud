@@ -343,15 +343,58 @@ automatique, ni shell, ni interpolation de commande. L'opération est refusée s
 la politique distante ne permet pas d'établir cette capacité exacte ou si sa
 journalisation d'entrée peut capturer le secret.
 
-Ce refus a une conséquence mesurée qu'il faut assumer plutôt que découvrir :
-sur une machine dont la politique n'autorise pas à lire le listing des droits
-sans mot de passe — ce qui est la configuration par défaut de Debian —
-l'établissement de la capacité exacte est lui-même impossible sans envoyer un
-secret. Or ce palier refuse d'envoyer un secret pour savoir s'il a le droit de
-l'envoyer. L'élévation y est donc refusée, et seule une politique qui rend le
-listing lisible sans authentification, ou qui dispense d'authentifier l'action
-elle-même, permet d'aller au bout. C'est une limite du parcours, pas un défaut
-de la machine visée, et elle est préférée à un essai à l'aveugle.
+Sur une machine dont la politique n'autorise pas à lire le listing des droits
+sans mot de passe — **ce qui est la configuration par défaut de Debian** —
+l'établissement de la capacité exacte exige d'envoyer le secret. **Ce contrat
+l'autorise**, à l'intérieur de la séquence approuvée et sous les bornes déjà
+posées : le secret a été prêté par l'humain dans le dialogue natif pour cette
+séquence, et il meurt avec elle.
+
+Un état antérieur de ce contrat refusait ce pas — « ne pas envoyer un secret
+pour savoir si l'on a le droit de l'envoyer » — et en assumait la conséquence :
+le compte d'administration ordinaire d'une Debian était refusé. **Ce refus était
+prudent d'un cran de trop**, et sa justification est ci-dessous.
+
+L'établissement de la capacité reste **un acte de la séquence**, pas un
+préalable qui s'en affranchirait : il est soumis aux mêmes bornes que l'acte
+qu'il prépare, et un refus de la politique distante se nomme au lieu de se
+tenter à l'aveugle.
+
+#### Justification de sécurité de la lecture authentifiée de la politique
+
+- **Scénario et actifs** : le mot de passe `sudo` d'un compte d'administration
+  ordinaire, prêté pour une séquence d'amorçage, sur une machine cible dont
+  l'empreinte de clé d'hôte a été relevée hors bande.
+- **Menace traitée** : envoyer un secret à une machine dont on n'aurait pas
+  établi qu'elle a le droit de le recevoir.
+- **Pourquoi le refus était d'un cran de trop** : **l'identité de la machine est
+  déjà établie** — l'empreinte de clé d'hôte relevée hors bande sur le serveur
+  la fixe avant toute connexion. Ce qui restait inconnu n'était donc pas *à qui
+  l'on parle*, mais *quel privilège possède le compte prêté*. Et le secret
+  partait de toute façon vers cette même machine à l'acte suivant : le refus
+  déplaçait l'envoi d'un acte, il ne l'évitait pas.
+- **Alternatives considérées** : exiger `NOPASSWD` — **écarté** et il le reste,
+  pour la raison écrite plus haut : affaiblir durablement la machine de l'humain
+  au profit d'une propriété transitoire de notre processus. Tenter l'action à
+  l'aveugle sans établir la capacité — écarté, un échec sans cause nommée ne dit
+  rien à l'utilisateur.
+- **Portée accordée et moindre privilège** : inchangés. Le secret voyage sur
+  l'entrée chiffrée d'une session SSH déjà authentifiée, vers une commande fixe,
+  sans PTY, sans shell, sans relance automatique.
+- **OWASP** : défense en profondeur (l'identité de l'hôte précède le secret),
+  séparation des responsabilités (le dialogue natif recueille, le helper
+  transmet, ni l'un ni l'autre ne conserve), réduction de surface (une commande
+  fixe, un envoi).
+- **NIS2** : contrôle d'accès, cryptographie, gestion d'incident — un refus de
+  politique se nomme et son geste correcteur aussi.
+- **Preuves attendues** : le compte d'administration ordinaire d'une Debian
+  installée par défaut mène au Controller actif ; une politique restrictive
+  exotique reçoit un refus qui nomme sa cause ; aucun secret ne survit à la fin
+  de la séquence, sur toute sortie.
+- **Risque résiduel, assumé et nommé** : une machine légitime mais **déjà
+  compromise** verra ce secret. Elle l'aurait vu à l'acte suivant — le refus ne
+  protégeait pas de cela. La borne de vie du secret est **inchangée** : il meurt
+  à la fin de la séquence, sur succès comme sur échec.
 
 L'utilisateur peut fournir :
 
