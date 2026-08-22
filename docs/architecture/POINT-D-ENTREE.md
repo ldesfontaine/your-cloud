@@ -91,9 +91,9 @@ ouvrir.
 
 Pour un service privé, le point d'entrée **délègue la validation au portail
 avant de servir quoi que ce soit**. Le service n'est jamais atteint par une
-requête non validée. Le portail lui-même — son image, sa preuve, son cycle —
-appartient à son contrat de profil, qui reste à écrire : ce contrat-ci fixe le
-branchement, pas le composant branché.
+requête non validée. Le portail lui-même — son image, sa preuve, son cycle — appartient à son
+[contrat de profil](PROFIL-AUTHELIA.md) : ce contrat-ci fixe le branchement,
+pas le composant branché.
 
 ## Ce que ce contrat ne lève pas
 
