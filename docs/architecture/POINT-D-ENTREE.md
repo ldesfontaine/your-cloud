@@ -104,6 +104,64 @@ branchement, pas le composant branché.
 - le point d'entrée **ne détient aucune autorité d'administration** : il route,
   termine du TLS et valide des sessions ; il ne pose ni ne modifie de service.
 
+<!-- coherence: PUBLIC-EXPOSURE:start -->
+## Ce que ce contrat fixe, et que l'objectif `v0.1.0` fixait déjà
+
+## Point d'entrée HTTPS retenu
+
+Dans son scénario de référence, `v0.1.0` utilise **Traefik** sur le VPS pour
+terminer HTTPS et router les noms publics vers BentoPDF et Vaultwarden. Ce
+choix rend la preuve déterministe sans imposer ce proxy, ces services ou ce
+placement à une infrastructure utilisateur.
+
+Your Cloud reste l'autorité déclarative des publications : il génère une
+configuration dynamique Traefik en YAML avec le `file provider`, la présente
+dans le plan, la fait déposer atomiquement par l'Auxiliaire du VPS puis vérifie
+le résultat. Traefik ne découvre pas seul les conteneurs et ne reçoit pas le
+socket Docker dans `v0.1.0`. La configuration vise explicitement BentoPDF sur le
+VPS et Vaultwarden par son adresse WireGuard et son port autorisé.
+
+Contraintes de sécurité :
+
+- version de Traefik et artefact épinglés précisément ;
+- seuls les points d'entrée publics `80` pour la redirection et `443` pour HTTPS
+  sont exposés ;
+- API, mode `insecure`, endpoints de debug et dashboard publics désactivés ;
+- données ACME persistantes accessibles uniquement au compte Traefik ;
+- configuration dynamique sans secret en clair et écrite de manière atomique
+  dans le répertoire surveillé ;
+- vérification de la configuration, du certificat, des en-têtes nécessaires et
+  des deux routes avant de considérer le plan réussi ;
+- retrait d'un service accompagné du retrait de sa route et de son autorisation
+  réseau.
+
+### Justification de sécurité de Traefik
+
+- **Menace traitée** : publication accidentelle d'un conteneur, compromission
+  du proxy donnant accès au moteur de conteneurs, route trop large ou interface
+  d'administration exposée.
+- **Alternative considérée** : le provider Docker et ses labels faciliteraient
+  la découverte, mais nécessiteraient un accès à l'API Docker et déplaceraient
+  une partie de l'autorité de publication hors du plan explicite Your Cloud.
+- **Moindre privilège** : le `file provider` ne donne à Traefik que les routes
+  approuvées et aucun contrôle du moteur de conteneurs.
+- **Preuves hostiles** : un conteneur non déclaré ne reçoit aucune route ; le
+  socket Docker, l'API, le dashboard, les endpoints de debug et un port backend
+  non autorisé restent inaccessibles depuis Internet et WireGuard.
+- **Risque résiduel** : Traefik demeure un composant exposé ; sa compromission
+  peut lire le trafic qu'il termine et utiliser les destinations strictement
+  autorisées, sans toutefois donner par conception le contrôle de Docker ou du
+  reste du LAN.
+
+La documentation officielle distingue le
+[file provider](https://doc.traefik.io/traefik/v3.6/reference/install-configuration/providers/others/file/)
+du [provider Docker](https://doc.traefik.io/traefik/v3.6/reference/install-configuration/providers/docker/)
+et signale elle-même le risque d'un accès non restreint à l'API Docker. Ce choix
+applique le moindre privilège et la réduction de surface d'attaque attendus par
+OWASP, ainsi que les mesures proportionnées de contrôle d'accès, développement
+sûr et réduction du risque de NIS2, sans constituer une conformité à lui seul.
+<!-- coherence: PUBLIC-EXPOSURE:end -->
+
 ## Ce que la preuve devra constater
 
 - un en-tête d'identité forgé, présenté au point d'entrée, **n'atteint jamais**

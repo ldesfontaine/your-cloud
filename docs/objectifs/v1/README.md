@@ -533,7 +533,6 @@ Les contraintes de `v0.1.0` sont :
   distinctes, visibles dans l'App.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
-<!-- coherence: V1-NETWORK:start -->
 ## Identités et chiffrement
 
 Seules les machines explicitement enrôlées peuvent devenir des pairs du passage
@@ -770,7 +769,6 @@ et signale elle-même le risque d'un accès non restreint à l'API Docker. Ce ch
 applique le moindre privilège et la réduction de surface d'attaque attendus par
 OWASP, ainsi que les mesures proportionnées de contrôle d'accès, développement
 sûr et réduction du risque de NIS2, sans constituer une conformité à lui seul.
-<!-- coherence: V1-NETWORK:end -->
 
 ## Méthode de déploiement
 

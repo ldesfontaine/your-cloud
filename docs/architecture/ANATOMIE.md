@@ -74,7 +74,6 @@ localement, le mode Relay refuse avant toute écoute. Le
 [rapport LAB](../lab/v0.0.2-observation.md) prouve mTLS, révocation, saturation,
 lacune, reprise et cycle de retrait-réinstallation.
 
-<!-- coherence: V1-NETWORK:start -->
 ## Topologie de référence pour la preuve de `v0.1.0`
 
 ```text
@@ -232,7 +231,6 @@ chemin. Leurs noms DNS pointent vers la même IP du VPS et Traefik reçoit les d
 sur `443`, puis route le nom BentoPDF vers le service local et le nom
 Vaultwarden vers le passage WireGuard. Aucun port de backend n'est exposé
 directement.
-<!-- coherence: V1-NETWORK:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ## Créer puis remplacer le Controller

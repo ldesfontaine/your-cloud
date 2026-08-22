@@ -600,7 +600,68 @@ de la direction produit. Chaque intégration est introduite seulement lorsqu'un
 parcours plus petit a rendu ses besoins, son autorité et ses preuves
 compréhensibles.
 
-<!-- coherence: V1-NETWORK:start -->
+<!-- coherence: PUBLIC-EXPOSURE:start -->
+## Chaque chemin est protégé, et aucun ne fait exception
+
+Chaque donnée Your Cloud qui traverse le réseau privé entre deux machines
+enrôlées est chiffrée et authentifiée avant de quitter sa machine, avec le
+mécanisme adapté au chemin :
+
+| Flux | Protection retenue pour `v0.1.0` |
+|---|---|
+| Paquets privés entre machines enrôlées | WireGuard, pairs nommés et routes bornées |
+| Daemon vers Relay | mTLS avec une identité propre à chaque Daemon, y compris au-dessus de WireGuard lorsque le Relay est distant |
+| App installée vers Controller | origine HTTPS TLS 1.3 exacte ; identité d'appareil P-256 mTLS et signature humaine Ed25519 liées au Controller et à son infrastructure ; clés distinctes dans un coffre Tauri Stronghold commun Linux/Windows déverrouillé par six mots locaux Argon2id ; appairage et récupération sur listener temporaire épinglé, session bornée et rotations en deux phases |
+| Controller vers Relay | `GET /v0/snapshot` sur le listener privé exact `8444`, filtré sur l'IP source Controller puis protégé par TLS 1.3 mTLS, CA Ed25519 dédiées, manifeste et `infrastructure_id` commun ; UTC et reprise bornées |
+| Controller vers machine pour un plan approuvé | SSH avec une identité Your Cloud propre à la machine et une commande forcée root-owned ; enveloppe signée par l'App, clé publique, époque et anti-rejeu vérifiés sur la cible ; aucun shell, PTY, SFTP, rc, X11, environnement ou transfert |
+| Navigateur vers service publié | HTTPS jusqu'au point d'entrée public |
+| VPS vers service du LAN | WireGuard et autorisation limitée à la destination et au port du service |
+
+WireGuard et mTLS ne sont pas deux synonymes. WireGuard chiffre et authentifie
+les paquets entre machines ; mTLS identifie les composants Your Cloud qui
+échangent des données applicatives. SSH protège le chemin d'administration et
+HTTPS protège les accès Web. Après `v0.1.0`, l'accès d'un appareil administrateur
+au Controller utilisera aussi un passage WireGuard borné, sans remplacer
+l'authentification de l'humain dans le Controller. Ajouter mTLS indistinctement
+à tous les services tiers n'apporterait pas automatiquement une meilleure
+sécurité ; une couche supplémentaire doit protéger une identité ou une menace
+réellement définie.
+
+### Justification de sécurité
+
+- **Menace traitée** : écoute ou modification du trafic, fausse machine,
+  composant usurpé et déplacement latéral depuis une machine compromise.
+- **Alternatives écartées** : WireGuard seul ne distingue pas les composants
+  applicatifs d'une même machine ; mTLS seul ne borne ni les routes ni les ports
+  du système ; un réseau de confiance entre toutes les machines enrôlées donne
+  trop de droits.
+- **Choix** : WireGuard pour le transport privé borné, mTLS pour le protocole
+  Daemon–Relay, SSH pour l'administration et HTTPS pour le Web, avec des
+  identités et autorités séparées.
+- **Preuves attendues** : un pair WireGuard inconnu, un certificat de Daemon
+  inconnu ou révoqué, une mauvaise clé d'hôte SSH et un port non prévu sont tous
+  refusés ; aucune donnée applicative utile ne traverse le réseau en clair.
+- **Risque résiduel** : la compromission complète d'une machine peut donner
+  accès aux clés présentes sur celle-ci et aux flux exactement autorisés pour
+  elle ; le chiffrement en transit ne protège pas une donnée déjà déchiffrée en
+  mémoire sur son extrémité légitime.
+
+Ce choix applique la confidentialité, l'intégrité, l'authentification forte, la
+segmentation et le moindre privilège recommandés par
+[OWASP pour TLS](https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html)
+et s'inscrit dans les mesures proportionnées de cryptographie, contrôle d'accès
+et gestion des risques de l'[article 21 de NIS2](https://eur-lex.europa.eu/legal-content/FR/TXT/?uri=CELEX:32022L2555).
+Il ne constitue pas à lui seul une preuve de conformité.
+
+**Direction de lecture, pour que cette table ne devienne pas une seconde
+source.** Le cap fixe ici la garantie **universelle** — aucun chemin ne fait
+exception — parce qu'aucune décision transverse ne peut l'affirmer : chacune ne
+voit que son propre chemin. **Chaque décision fixe le mécanisme de son chemin**,
+et cette table les rassemble pour qu'on puisse les lire ensemble. Le jour où un
+mécanisme change, **on amende la décision d'abord et la table ensuite** : une
+divergence entre les deux est un défaut de la décision, jamais un arbitrage
+entre deux sources.
+
 ## Zone d'exposition et vraie DMZ
 
 Le VPS public du scénario de référence de `v0.1.0` constitue une zone
@@ -613,7 +674,7 @@ services privés et le plan d'administration reste séparé.
 Your Cloud pourra représenter cette architecture, préparer les flux strictement
 nécessaires et en vérifier les refus. Il ne qualifiera jamais automatiquement
 une machine publique de « DMZ » en raison de son adresse ou de son fournisseur.
-<!-- coherence: V1-NETWORK:end -->
+<!-- coherence: PUBLIC-EXPOSURE:end -->
 
 ## Rien n'est imposé, rien n'est deviné
 

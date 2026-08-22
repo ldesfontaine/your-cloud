@@ -581,7 +581,6 @@ palier suivant réutilise donc un chemin de plan, d'approbation et d'exécution
 déjà compris au lieu de déboguer simultanément l'action, le proxy, TLS et le
 premier véritable service.
 
-<!-- coherence: V1-NETWORK:start -->
 ### Palier dépendant — premier véritable service public
 
 **Résultat :** prouver le parcours générique d'un service web OCI public avec le
@@ -625,7 +624,6 @@ synthétique du LAN sans flux approuvé.
 Le VPS ainsi durci reste une zone d'exposition, pas une DMZ revendiquée. Une
 future DMZ exigera un segment dédié et des frontières filtrantes indépendantes
 vers Internet, les zones privées et le plan d'administration.
-<!-- coherence: V1-NETWORK:end -->
 
 ### Palier dépendant — responsabilité externe visible
 

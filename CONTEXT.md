@@ -77,7 +77,7 @@ Processus ponctuel de l'Agent qui vérifie puis applique sur sa machine une opé
 Rôle activé seulement sur une machine candidate qui authentifie, borne, persiste et accuse les observations des Daemons sans porter d'utilisateur ni d'action.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
-<!-- coherence: V1-NETWORK:start -->
+<!-- coherence: PUBLIC-EXPOSURE:start -->
 **Point d'entrée public**:
 Fonction joignable depuis Internet qui reçoit le trafic Web destiné aux services publiés.
 
@@ -87,9 +87,12 @@ Zone logique qui contient les composants autorisés à recevoir du trafic extér
 **DMZ**:
 Zone d'exposition séparée d'Internet et des zones privées par des frontières réseau filtrantes indépendantes.
 
+<!-- coherence: PUBLIC-EXPOSURE:end -->
+
+<!-- coherence: INTERNAL-NETWORK:start -->
 **Passage privé**:
 Liaison chiffrée entre deux machines enrôlées sans ouverture entrante vers le LAN privé.
-<!-- coherence: V1-NETWORK:end -->
+<!-- coherence: INTERNAL-NETWORK:end -->
 
 **Plan d'action**:
 Description lisible et figée d'un changement proposé, de sa cible, de ses effets et des autorités nécessaires avant son approbation.

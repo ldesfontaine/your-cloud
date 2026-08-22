@@ -87,10 +87,10 @@
     </div>
     <h2>Plateformes et extensions</h2>
     <p>Your Cloud peut partir de machines Linux existantes ou déléguer leur provisionnement à des intégrations explicites telles qu'OpenStack, Terraform ou OpenTofu, sans réimplémenter leurs moteurs ni leurs autorités. K3s et d'autres familles de services sont introduits seulement lorsque leurs besoins et leurs preuves sont compris.</p>
-    <!-- coherence: V1-NETWORK:start -->
+    <!-- coherence: PUBLIC-EXPOSURE:start -->
     <h2>Une vraie DMZ</h2>
     <p>Le VPS public du scénario de référence de <code>v0.1.0</code> est une zone d'exposition durcie, pas automatiquement une DMZ. Une DMZ réelle possède un segment dédié et des frontières filtrantes indépendantes vers Internet et vers les zones privées, tandis que l'administration reste séparée. Your Cloud pourra représenter et vérifier ces frontières sans déduire une DMZ de la seule présence d'une adresse publique.</p>
-    <!-- coherence: V1-NETWORK:end -->
+    <!-- coherence: PUBLIC-EXPOSURE:end -->
     <h2>Rien n'est imposé, rien n'est deviné</h2>
     <p>Your Cloud n'impose ni topologie type, ni catalogue à installer. Un profil de service décrit seulement un parcours pris en charge : sa présence dans l'App ne crée aucune ressource sans déclaration, placement, plan et approbation explicites. Les services nommés dans une preuve LAB rendent ce scénario reproductible ; ils ne deviennent pas des prérequis de l'infrastructure réelle.</p>
     <h2>Un inventaire local, jamais un scan</h2>
