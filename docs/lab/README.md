@@ -572,9 +572,14 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   paquet, `systemd` dit `enabled` et `active`, et le mot de passe `sudo` ne
   survit nulle part — témoin de contrôle à l'appui. Les deux consentements se
   concluent en 11,2 s et 12,2 s, loin de la borne de 300 s. Dette nommée :
-  une pose réussie laisse son répertoire d'attente (n°156, ouverte). Restent à
-  faire : les refus hostiles **à l'écran**, et le trajet depuis la page
-  Releases. Rejouable par `tests/lab/v0.3.0/unprepared-install/prove all`.
+  une pose réussie laisse son répertoire d'attente (n°156, ouverte). **Les quatre
+  refus hostiles sont joués à l'écran, et le rapport dit où chacun tombe** :
+  `requiretty` et la politique ambiguë n'ouvrent jamais la fenêtre de mot de
+  passe — aucun secret ne part ; le mot de passe refusé l'ouvre et la machine
+  le refuse ; l'entrée trop étroite tombe **avant toute fenêtre** (0,02 s),
+  donc sans rien tenter sur la machine. Reste hors périmètre : le trajet depuis
+  la page Releases, qui voyage à la publication.
+  Rejouable par `tests/lab/v0.3.0/unprepared-install/prove all`.
 
 - [`v0.3.0` — ce que la journalisation d'entrée `sudo` capture réellement](v0.3.0-sudo-io-logging.md) :
   mesure du 22 août 2026 sur `lab-machine-1`, Debian 13 et `sudo` 1.9.16p2. Le

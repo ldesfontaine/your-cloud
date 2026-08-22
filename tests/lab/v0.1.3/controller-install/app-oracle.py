@@ -931,6 +931,7 @@ def refused_step(
     passphrase: str,
     report: dict,
     window_grace: int = 90,
+    expect_sudo_password: str | None = None,
 ) -> None:
     """Une étape dont on attend le REFUS, et dont on mesure quand il tombe.
 
@@ -979,6 +980,39 @@ def refused_step(
         # APRÈS un consentement qui n'aurait pas dû être demandé.
         measured["acceptance_button_reached"] = "alt+a, mnémonique du produit"
         answer_access_window(key_file, passphrase, report)
+        # **Le secret aussi, quand le refus attendu est celui de la machine.**
+        # Sans cette réponse, la fenêtre de mot de passe reste ouverte, le
+        # helper attend, et la session expire : on mesure alors « personne n'a
+        # répondu » en croyant mesurer « la machine a refusé ». Mesuré le
+        # 22 août 2026 — la phrase rendue était l'expiration, pas le refus.
+        if expect_sudo_password is not None:
+            # **Sa présence est la mesure, pas une précondition.** Un refus
+            # jugé au prévol NON SECRET n'ouvre jamais cette fenêtre — c'est
+            # même ce qui établit qu'aucun secret n'est parti. Un `await` qui
+            # lèverait sur son absence transformerait donc le constat le plus
+            # fort en erreur de harnais. On l'attend, on note ce qu'on trouve,
+            # et on ne répond que si elle est là.
+            sudo_deadline = time.monotonic() + 45
+            sudo_window = None
+            while time.monotonic() < sudo_deadline:
+                sudo_window = window_titled(SUDO_TITLE)
+                if sudo_window is not None:
+                    break
+                shown = None
+                try:
+                    shown = driver.execute(FAILURE_SENTENCE)
+                except (http.client.RemoteDisconnected, ConnectionResetError):
+                    pass
+                if isinstance(shown, str) and shown:
+                    break
+                time.sleep(0.25)
+            measured["sudo_window_opened"] = sudo_window is not None
+            if sudo_window is not None:
+                time.sleep(0.5)
+                note_window(report, SUDO_TITLE, "apparue")
+                type_text(sudo_window, expect_sudo_password)
+                press(sudo_window, "alt+c")
+                measured["sudo_window_answered"] = True
     measured["refusal"] = (
         refusal_first
         if refusal_first is not None
@@ -1002,7 +1036,18 @@ def refusals(driver: Driver, arguments, target: dict, passphrase: str, report: d
     """
     reach_vault(driver, report)
     open_creation(driver, target, report)
-    refused_step(driver, "audit", arguments.key_file, passphrase, report)
+    refused_step(
+        driver,
+        "audit",
+        arguments.key_file,
+        passphrase,
+        report,
+        expect_sudo_password=(
+            pathlib.Path(arguments.sudo_password_file).read_text().rstrip("\n")
+            if arguments.sudo_password_file
+            else None
+        ),
+    )
 
 
 def asymmetry(driver: Driver, arguments, target: dict, passphrase: str, report: dict) -> None:
@@ -1043,7 +1088,9 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--secrets", required=True)
     parser.add_argument(
-        "--stage", required=True, choices=["journey", "asymmetry", "hostile"]
+        "--stage",
+        required=True,
+        choices=["journey", "refusals", "asymmetry", "hostile"],
     )
     parser.add_argument("--target-host", required=True)
     parser.add_argument("--target-port", type=int, default=22)

@@ -117,6 +117,11 @@ do_build() { "$model/prove" sync && "$model/prove" build; }
 do_perimeter() {
   inventory "$machine_vm" >/dev/null
   announce "périmètre d'accès personnel sur $machine_vm"
+  # Le montage est IDEMPOTENT, parce que `all` doit partir d'un état connu et
+  # non d'un état espéré : `setup` refuse un périmètre déjà monté, et une passe
+  # qui suppose la machine vierge échoue sur la réussite de la précédente. Le
+  # démontage tolère l'absence ; le montage, lui, est exigé.
+  "$personal_access/prove" remove >/dev/null 2>&1 || true
   "$personal_access/prove" setup
 }
 
@@ -164,7 +169,7 @@ TARGET"
 # « le refus est tombé AVANT toute fenêtre » dit que rien n'a même été tenté.
 # Les quatre ne tombent pas au même endroit — le rapport le dit pour chacun.
 refus_sur() {
-  local compte="$1" etiquette="$2" secret="$3" machine_address host_key
+  local compte="$1" etiquette="$2" secret="$3" stage="$4" machine_address host_key
   machine_address=$(inventory "$machine_vm")
   host_key=$("$labctl" ssh "$app_vm" -- \
     "ssh-keygen -lf /root/your-cloud-lab-personal-access/server-host-key.pub" | awk '{print $2}')
@@ -183,17 +188,17 @@ TARGET_HOST_KEY=$host_key
 TARGET_LISTEN=$machine_address:9443
 TARGET_ALLOWED_SOURCE=192.168.240.9/32
 TARGET_RELAY_ENDPOINT=192.168.240.9:8444
-TARGET_SUDO_PASSWORD_FILE=$secret
+${secret:+TARGET_SUDO_PASSWORD_FILE=$secret}
 TARGET"
   # **Un artefact absent est un ROUGE, jamais un silence.** La première version
   # de cette phase avalait l'échec de la passe (`|| true`) puis imprimait
   # « ILLISIBLE » avant de conclure `REFUSALS_OK` : un vert posé sur trois
   # mesures qui n'existaient pas. C'est le défaut que cette milestone entière
   # a traqué, retrouvé dans le code écrit pour le corriger.
-  "$labctl" ssh "$app_vm" -- "rm -f $remote_harness/output/controller-install-refusals.json"
-  "$labctl" ssh "$app_vm" -- "$remote_harness/run refusals" >"$workdir/$compte.log" 2>&1 \
-    || { sed -n '$p;1,20p' "$workdir/$compte.log" >&2; fail "la passe de $compte n'a pas abouti"; }
-  "$labctl" ssh "$app_vm" -- "cat $remote_harness/output/controller-install-refusals.json" \
+  "$labctl" ssh "$app_vm" -- "rm -f $remote_harness/output/controller-install-$stage.json"
+  "$labctl" ssh "$app_vm" -- "$remote_harness/run $stage" >"$workdir/$compte.log" 2>&1 \
+    || { tail -25 "$workdir/$compte.log" >&2; fail "la passe de $compte n'a pas abouti"; }
+  "$labctl" ssh "$app_vm" -- "cat $remote_harness/output/controller-install-$stage.json" \
     >"$workdir/$compte.json" 2>/dev/null || fail "$compte n'a produit aucun artefact de refus"
   [[ -s "$workdir/$compte.json" ]] || fail "$compte a produit un artefact VIDE — rien n'est mesuré"
   python3 - "$workdir/$compte.json" "$etiquette" <<'LIRE'
@@ -211,7 +216,10 @@ for m in mesures:
     print(f"    ou il tombe : {ou}")
     print(f"    fenetre a   : {m['seconds_before_window']} s")
     print(f"    refus a     : {m['seconds_before_refusal']} s")
-    print(f"    phrase      : {(m.get('refusal') or '')[:150]}")
+    sudo = m.get("sudo_window_opened")
+    if sudo is not None:
+        print(f"    fenetre sudo: {'ouverte et repondue' if sudo else 'JAMAIS ouverte (aucun secret parti)'}")
+    print(f"    phrase      : {(m.get('refusal') or '')[:160]}")
 LIRE
 }
 
@@ -221,12 +229,21 @@ do_refusals() {
   # Un mot de passe FAUX, né ici et mort avec la passe : le compte est bon, le
   # secret ne l'est pas, et c'est la faute la plus probable d'un humain.
   "$labctl" ssh "$app_vm" -- "printf 'mauvais-mot-de-passe-synthetique\n' > $remote_harness/faux-secret"
+  # Les trois refus qui tombent pendant le PREMIER consentement.
   refus_sur ycpasudt "politique exigeant un terminal (requiretty)" \
-    /root/lab-personal-access/needle/sudo-password
+    /root/lab-personal-access/needle/sudo-password refusals
   refus_sur ycpasuda "politique ambigue (deux entrees sudoers)" \
-    /root/lab-personal-access/needle/sudo-password
+    /root/lab-personal-access/needle/sudo-password refusals
   refus_sur ycpasudg "mot de passe refuse par la machine" \
-    "$remote_harness/faux-secret"
+    "$remote_harness/faux-secret" refusals
+  # **Le quatrième, et le plus fort.** L'entrée trop étroite est refusée au
+  # SECOND consentement, avant toute fenêtre, parce que le premier a déjà
+  # exporté la portée que l'entrée permet. C'est la forme la plus forte des
+  # deux propriétés — non pas « la fenêtre a nommé sa cause » mais « rien n'a
+  # même été tenté sur la machine » — et c'est le refus que #158 nomme.
+  # Le compte est `NOPASSWD` : aucun secret ne lui est présenté, d'où
+  # l'absence de feuille de mot de passe.
+  refus_sur ycpasudn "entree sudoers trop etroite pour installer" "" asymmetry
   "$labctl" ssh "$app_vm" -- "rm -f $remote_harness/faux-secret"
   echo "REFUSALS_OK"
 }
@@ -314,6 +331,10 @@ case "$command" in
       do_perimeter
       do_journey
       do_constats
+      # La cible est rendue AVANT les refus : chacun d'eux exige une machine
+      # vierge, et les relevés qui précèdent constatent précisément une machine
+      # installée. Sans ce retour, `all` échouerait sur sa propre réussite.
+      do_remove
       do_refusals
     )
     status=$?
