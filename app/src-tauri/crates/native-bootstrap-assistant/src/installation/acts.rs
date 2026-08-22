@@ -492,6 +492,85 @@ impl ElevatedAct {
 mod tests {
     use super::*;
 
+    /// Ce qu'un acte peut faire apparaître dans le journal d'E/S d'une machine
+    /// qui journalise.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Material {
+        /// Rien du produit : messages d'outil, chemins constants, état de la
+        /// machine elle-même.
+        NothingOfOurs,
+        /// Du matériau du produit, mais public par construction.
+        PublicOnly,
+        /// Du matériau qu'une machine tierce ne doit pas conserver.
+        Private,
+    }
+
+    /// La classification est **exhaustive par construction** : une étape
+    /// ajoutée ne compile pas sans être relue ici.
+    fn material_on_output(step: Step) -> Material {
+        match step {
+            // `dpkg`, `systemctl`, `install` : ils nomment des chemins
+            // constants et rendent l'état de la machine, jamais le nôtre.
+            Step::InstallPackage
+            | Step::WriteMachineConfiguration
+            | Step::CreateState
+            | Step::InstallCredentialSources
+            | Step::ActivateController => Material::NothingOfOurs,
+            // `controller init` rend deux identifiants immuables ; `mint-reader`
+            // en rend quatre valeurs dont le code dit lui-même qu'elles sont
+            // « toutes publiques », la moitié privée n'étant nommée nulle part.
+            Step::InitialiseController | Step::MintReaderIdentity => Material::PublicOnly,
+            // Aucune commande élevée : le transfert ne dépense aucun privilège,
+            // l'association et le prévol ne sont pas des actes de cette table.
+            Step::TransferBundle | Step::AssociateApp | Step::Preflight => Material::NothingOfOurs,
+        }
+    }
+
+    /// Aucun acte ne porte de matériau produit — ni sur son entrée, ni sur sa
+    /// sortie.
+    ///
+    /// **Cette garde remplace le refus `InputLoggingActive`**, retiré le
+    /// 22 août 2026 (#217). Ce refus regardait la politique d'une machine
+    /// distante pour se protéger d'un défaut qui naîtrait ici : il était du
+    /// mauvais côté de la frontière, et refusait du service à un utilisateur
+    /// dont la machine est bien configurée. Sa raison écrite était de surcroît
+    /// fausse, mesurée : sans PTY et avec `-S`, `sudo` consomme la ligne du
+    /// secret pendant l'authentification, avant que le journal d'E/S de la
+    /// commande n'existe.
+    ///
+    /// Ce qui reste vrai, et que cette garde tient : sur une machine qui
+    /// journalise, **la sortie des actes est bien capturée** — mesuré, témoin
+    /// à l'appui. Les huit sorties sont publiques aujourd'hui ; la
+    /// classification ci-dessus est exhaustive pour qu'un acte futur soit relu
+    /// plutôt que supposé propre.
+    #[test]
+    fn no_act_carries_product_material_on_its_input_or_its_output() {
+        for (step, commands) in ACTS {
+            assert_ne!(
+                material_on_output(step),
+                Material::Private,
+                "{step:?} ferait apparaître du matériau privé dans le journal d'E/S \
+                 d'une machine qui journalise"
+            );
+            // Rien ne peut alimenter l'entrée de la commande : la seule ligne
+            // d'entrée de la séquence est le secret, et `sudo` la consomme.
+            // Une plomberie de shell ici la ferait, elle, atteindre l'acte.
+            for command in [commands.without_password, commands.with_password] {
+                let spelling = command.as_str();
+                for plumbing in ['<', '|', '>', '`'] {
+                    assert!(
+                        !spelling.contains(plumbing),
+                        "{step:?} porte la plomberie {plumbing:?} : son entrée cesserait d'être vide"
+                    );
+                }
+                assert!(
+                    !spelling.contains("$("),
+                    "{step:?} porte une substitution de commande"
+                );
+            }
+        }
+    }
+
     /// Le constat des nœuds dépense l'élévation, et lui seul — mesuré, pas
     /// choisi : `/var/lib/private` réserve cette lecture à `root`.
     ///

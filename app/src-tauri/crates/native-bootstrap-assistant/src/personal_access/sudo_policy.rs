@@ -1,16 +1,39 @@
 //! Non-secret preflight of the effective remote `sudo` policy.
 //!
-//! A `sudo` password travels on the standard input of the remote command. If
-//! the remote policy logs input, that password lands in `/var/log/sudo-io` in
-//! clear text. This module decides, *before* any password exists, whether that
-//! outcome can be excluded. Everything it reads is public policy output: it
-//! never sees, sends or stores a secret.
+//! This module judges whether the listing of the remote policy can be trusted.
+//! Everything it reads is public policy output: it never sees, sends or stores
+//! a secret.
 //!
-//! The decision never relies on `sudo`'s own password redaction. That
-//! redaction depends on `passprompt_regex` matching the prompt, and this
-//! palier passes its own sentinel prompt, which the default regex does not
-//! describe. Input logging is therefore refused outright instead of being
-//! trusted to redact.
+//! **Ce module a porté un refus de plus, et il est tombé le 22 août 2026
+//! (#217).** Il refusait une politique portant `log_input` ou `log_stdin`, au
+//! motif écrit que « le mot de passe voyage sur l'entrée standard de la
+//! commande distante, donc une politique qui journalise l'entrée le pose en
+//! clair dans `/var/log/sudo-io` ». **Ce mécanisme a été mesuré, et il est
+//! faux pour la forme de commande du produit** : sans PTY et avec `-S`, `sudo`
+//! consomme la ligne du secret pendant l'authentification, avant que le
+//! journal d'E/S de la commande n'existe. Le journal capte bien l'entrée de la
+//! commande — un témoin placé derrière le secret s'y retrouve — mais le secret,
+//! lui, n'y est jamais.
+//!
+//! **Bornes de cette mesure, et ce qui ramènerait le refus.** Elle vaut pour
+//! Debian 13, `sudo` 1.9.16p2, sans PTY, et la forme `-S` sans rien piper
+//! derrière le secret. Un acte futur qui allouerait un PTY, ou une version de
+//! `sudo` qui lirait le secret autrement, rouvrirait la question.
+//! Le pilote LAB `sudo-io-logging` rejoue la mesure : c'est lui qui justifie
+//! l'absence de ce refus, et qui rougira le jour où elle cessera d'être vraie.
+//!
+//! **Ce que ce refus ne protégeait pas, et qui a pris sa place.** Il regardait
+//! la politique d'une machine distante pour se prémunir d'un défaut qui
+//! naîtrait ici. La garde appartient donc à la table des actes, où elle est
+//! exerçable : `installation::acts` tient qu'aucun acte ne porte de matériau
+//! produit, ni sur son entrée, ni sur sa sortie — et la sortie compte, parce
+//! qu'une machine qui journalise capture bien celle des commandes.
+//!
+//! La décision ne s'appuie jamais sur le masquage de mot de passe de `sudo`.
+//! Cette réduction dépend de `passprompt_regex`, que la configuration peut
+//! changer, et ce palier passe son propre prompt sentinelle, que la regex par
+//! défaut ne décrit pas. Le prompt sentinelle reste : il protège de
+//! l'usurpation d'invite, ce qu'aucune regex configurable ne fait.
 
 /// Fixed preflight argument vector. `-N` keeps the timestamp untouched, `-n`
 /// forbids any interactive prompt and `-ll` asks for the long listing. No part
@@ -37,10 +60,6 @@ const AUTHENTICATION_MARKERS: [&str; 4] = [
     "sorry, you must have a tty",
 ];
 
-/// Boolean sudoers flags that place the standard input in the I/O log.
-/// `log_input` implies `log_stdin`; both are refused.
-const INPUT_LOGGING_FLAGS: [&str; 2] = ["log_input", "log_stdin"];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SudoRefusal {
     /// Listing the policy would itself require authenticating, so the policy
@@ -50,7 +69,6 @@ pub enum SudoRefusal {
     OutputNotAscii,
     /// Missing, translated or otherwise unrecognised listing.
     Unattestable,
-    InputLoggingActive,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,10 +112,12 @@ pub fn evaluate(
         return Err(SudoRefusal::Unattestable);
     }
 
-    let tokens = defaults_tokens(text).ok_or(SudoRefusal::Unattestable)?;
-    if input_logging_active(&tokens) {
-        return Err(SudoRefusal::InputLoggingActive);
-    }
+    // Le bloc `Defaults` doit être présent et lisible : c'est une moitié de
+    // l'attestation du listing, au même titre que l'ancre des commandes. Ce
+    // qu'on y lisait — la journalisation d'entrée — a cessé d'être un refus,
+    // mais un listing dont ce bloc manque reste un listing qu'on ne comprend
+    // pas. Retirer un refus n'autorise pas à emporter ses voisins.
+    defaults_tokens(text).ok_or(SudoRefusal::Unattestable)?;
 
     Ok(SudoDecision {
         password_may_be_sent: true,
@@ -125,16 +145,6 @@ fn defaults_tokens(text: &str) -> Option<Vec<&str>> {
     Some(tokens)
 }
 
-/// A disabled boolean is either absent or printed negated, so only a bare
-/// flag name counts as active. An unknown token is ignored here because the
-/// anchors above already established that the listing itself is understood.
-fn input_logging_active(tokens: &[&str]) -> bool {
-    tokens.iter().any(|token| {
-        let name = token.split('=').next().unwrap_or(token).trim();
-        INPUT_LOGGING_FLAGS.contains(&name)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn a_policy_without_input_logging_allows_sending_the_password_once() {
+    fn a_plain_policy_allows_sending_the_password_once() {
         let output = listing("env_reset, mail_badpass, secure_path=/usr/bin");
         let decision = evaluate(true, output.as_bytes(), false).expect("attestable policy");
         assert!(decision.password_may_be_sent);
@@ -158,35 +168,23 @@ mod tests {
         );
     }
 
+    /// Une machine qui journalise ses E/S est **servie**, et ce test est la
+    /// trace exécutable du refus retiré (#217).
+    ///
+    /// Le refus supposait que le secret atterrissait dans le journal ; la
+    /// mesure a établi le contraire pour la forme de commande du produit. Ce
+    /// que la journalisation capte réellement — la sortie des actes — est tenu
+    /// là où c'est exerçable : `installation::acts` interdit qu'un acte y porte
+    /// du matériau produit.
     #[test]
-    fn input_logging_refuses_before_any_password_exists() {
-        for flag in ["log_input", "log_stdin"] {
+    fn a_machine_that_logs_its_io_is_served_rather_than_refused() {
+        for flag in ["log_input", "log_stdin", "log_input, log_output"] {
             let output = listing(&format!("env_reset, {flag}, mail_badpass"));
-            assert_eq!(
-                evaluate(true, output.as_bytes(), false),
-                Err(SudoRefusal::InputLoggingActive),
-                "{flag} must fail closed"
-            );
+            let decision = evaluate(true, output.as_bytes(), false).unwrap_or_else(|refusal| {
+                panic!("{flag} doit être servi, refus rendu : {refusal:?}")
+            });
+            assert!(decision.password_may_be_sent);
         }
-    }
-
-    #[test]
-    fn a_negated_flag_is_not_read_as_active() {
-        let output = listing("env_reset, !log_input, !log_stdin");
-        assert!(
-            evaluate(true, output.as_bytes(), false)
-                .expect("negated flags leave logging off")
-                .password_may_be_sent
-        );
-    }
-
-    #[test]
-    fn input_logging_is_detected_anywhere_in_the_entry_list() {
-        let output = listing("env_reset, mail_badpass, secure_path=/usr/bin, log_input");
-        assert_eq!(
-            evaluate(true, output.as_bytes(), false),
-            Err(SudoRefusal::InputLoggingActive)
-        );
     }
 
     #[test]
@@ -298,13 +296,17 @@ mod tests {
             assert!(!decision.relies_on_sudo_redaction);
         }
 
+        /// Les deux captures réelles d'une politique journalisante restent
+        /// dans la suite après le retrait du refus : elles prouvent désormais
+        /// qu'une telle machine est servie, sur le format exact que Debian 13
+        /// émet — repli de ligne compris.
         #[test]
-        fn real_input_logging_is_detected_on_a_wrapped_continuation_line() {
+        fn real_io_logging_captures_are_served() {
             for capture in [LOG_INPUT, LOG_STDIN] {
-                assert_eq!(
-                    evaluate(true, capture.as_bytes(), false),
-                    Err(SudoRefusal::InputLoggingActive),
-                    "input logging wrapped onto a continuation line must fail closed"
+                assert!(
+                    evaluate(true, capture.as_bytes(), false)
+                        .expect("une politique journalisante est servie")
+                        .password_may_be_sent
                 );
             }
         }
@@ -326,14 +328,14 @@ mod tests {
             );
         }
 
-        /// `use_pty` and `secure_path` sit next to the flags that matter and
-        /// must never be mistaken for input logging.
+        /// Le bloc `Defaults` reste lu, et son repli de ligne reste compris :
+        /// c'est une moitié de l'attestation du listing, et elle survit au
+        /// refus retiré. Retirer un refus n'emporte pas ses voisins.
         #[test]
-        fn neighbouring_default_entries_are_not_read_as_input_logging() {
+        fn the_wrapped_defaults_block_is_still_parsed() {
             let tokens = defaults_tokens(NOMINAL).expect("wrapped defaults");
             assert!(tokens.contains(&"use_pty"));
             assert!(tokens.iter().any(|token| token.starts_with("secure_path=")));
-            assert!(!input_logging_active(&tokens));
         }
     }
 }

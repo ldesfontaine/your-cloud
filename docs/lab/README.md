@@ -546,6 +546,19 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   palier précédent : l'ancre n'est plus déposée par un harnais, et le lot n'est
   plus embarqué par autre chose que l'empaquetage du produit.
 
+- [`v0.3.0` — ce que la journalisation d'entrée `sudo` capture réellement](v0.3.0-sudo-io-logging.md) :
+  mesure du 22 août 2026 sur `lab-machine-1`, Debian 13 et `sudo` 1.9.16p2. Le
+  contrat affirmait que le mot de passe atterrissait en clair dans
+  `/var/log/sudo-io` quand la politique journalise l'entrée ; **c'est faux pour
+  la forme de commande du produit** — sans PTY et avec `-S`, `sudo` consomme la
+  ligne du secret avant que le journal d'E/S de la commande n'existe. Un témoin
+  placé derrière le secret s'y retrouve, le secret jamais : c'est ce contrôle
+  qui rend la mesure concluante plutôt qu'un `stdin` vide. Le refus
+  `InputLoggingActive` est retiré au profit d'un invariant local des actes, dans
+  les deux sens. Bornes nommées : une autre version de `sudo`, une autre
+  distribution ou un acte futur allouant un PTY rouvriraient la question.
+  Rejouable par `tests/lab/v0.3.0/sudo-io-logging/prove`.
+
 - [`v0.2.0` — la publication du renommage, depuis la page Releases](v0.2.0-from-releases.md) :
   passage du 21 août 2026 sur `lab-vps` (le poste) et `lab-machine-1` (le
   serveur). Premier rejeu de cette preuve **sans aucun écart** : `ECARTS_README=0`,

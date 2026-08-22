@@ -983,17 +983,18 @@ mod tests {
                 SudoRefusal::AuthenticationRequired
             ))
         );
-        assert_eq!(
-            attest_policy(
-                true,
-                listing("", "/usr/bin/id")
-                    .replace("env_reset,", "env_reset, log_input,")
-                    .as_bytes(),
-                false,
-                RequiredScope::IdentityProbe
-            ),
-            Err(ElevationRefusal::Policy(SudoRefusal::InputLoggingActive))
-        );
+        // Une politique journalisante n'est plus un refus (#217) : elle est
+        // attestée comme les autres, et ce qu'elle capte est tenu à la table
+        // des actes plutôt qu'ici.
+        assert!(attest_policy(
+            true,
+            listing("", "/usr/bin/id")
+                .replace("env_reset,", "env_reset, log_input,")
+                .as_bytes(),
+            false,
+            RequiredScope::IdentityProbe
+        )
+        .is_ok());
         assert_eq!(
             attest_policy(
                 true,

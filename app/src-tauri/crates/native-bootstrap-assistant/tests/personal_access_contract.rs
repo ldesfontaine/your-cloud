@@ -4453,6 +4453,27 @@ fn the_encrypted_key_file_reaches_the_same_proven_elevation() {
     assert_eq!(run.channels_spent, MAX_EXEC_CHANNELS);
 }
 
+/// Une machine qui journalise ses E/S mène l'élévation à son terme.
+///
+/// C'est la trace exécutable du refus retiré par #217, sur un `sudoers` réel
+/// portant `log_input` — pas sur un listing écrit ici. Le compte était monté
+/// par le harnais comme cas hostile ; il est devenu un cas nominal, et le
+/// harnais le monte toujours.
+///
+/// Ce que ce test **ne** prouve pas : que le secret reste hors du journal.
+/// Cela se mesure sur la machine, pas depuis le client : le pilote LAB
+/// `sudo-io-logging` le rejoue avec son témoin de contrôle.
+#[test]
+fn a_machine_that_logs_its_io_reaches_the_end() {
+    let username = required(SUDO_LOG_INPUT_USERNAME);
+    let run = elevate_as(&username, Some(&sudo_password()));
+    assert!(
+        run.outcome.is_ok(),
+        "une politique journalisante est servie depuis #217 : {:?}",
+        run.outcome
+    );
+}
+
 /// The password is sent once and never again. `sudo` answers a wrong one by
 /// printing the sentinel a second time, and that second prompt is exactly what
 /// this client refuses: there is no answer left to give it.
@@ -4483,7 +4504,12 @@ fn a_wrong_password_is_refused_on_its_second_prompt_and_never_retried() {
 /// listed — fails this test instead of passing it.
 #[test]
 fn every_hostile_policy_fails_closed_at_the_stage_that_judged_it() {
-    let hostile: [(&str, Stop); 5] = [
+    // `SUDO_LOG_INPUT_USERNAME` n'est plus ici : depuis #217 une politique
+    // journalisante est **servie**, et le compte du périmètre qui la porte est
+    // exercé par `a_machine_that_logs_its_io_reaches_the_end` ci-dessous. Le
+    // compte reste monté par le harnais — il est devenu un cas nominal, pas un
+    // cas disparu.
+    let hostile: [(&str, Stop); 4] = [
         (
             SUDO_UNLISTABLE_USERNAME,
             Stop::Policy(ElevationRefusal::Policy(
@@ -4495,10 +4521,6 @@ fn every_hostile_policy_fails_closed_at_the_stage_that_judged_it() {
             Stop::Policy(ElevationRefusal::Policy(
                 SudoRefusal::AuthenticationRequired,
             )),
-        ),
-        (
-            SUDO_LOG_INPUT_USERNAME,
-            Stop::Policy(ElevationRefusal::Policy(SudoRefusal::InputLoggingActive)),
         ),
         (
             SUDO_DIVERGENT_USERNAME,

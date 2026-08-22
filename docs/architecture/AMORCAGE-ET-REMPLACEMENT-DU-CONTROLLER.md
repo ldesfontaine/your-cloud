@@ -316,14 +316,78 @@ OpenSSH de 16. Cette borne est un garde-fou : la garantie reste l'échéance
 monotone appliquée pendant la dérivation. Aucun minimum de politique n'est
 imposé, seul le chiffrement effectif est exigé.
 
-La journalisation d'entrée `sudo` est traitée en amont du secret. Un préflight
-non secret `sudo -N -n -l -l`, sans PTY, entrée fermée, sous `LC_ALL=C` et à
-sortie bornée, doit produire un listing attestable ; `log_input` et `log_stdin`
-y sont des refus durs. Une sortie absente, tronquée, traduite ou exigeant elle-même
-une authentification échoue fermé. La décision ne s'appuie jamais sur le
-masquage de mot de passe de `sudo`, dont la regex de prompt est configurable :
-le prompt sentinelle du produit n'est pas celui que la regex par défaut décrit,
-et la journalisation est donc refusée plutôt que supposée masquée.
+Un préflight non secret `sudo -N -n -l -l`, sans PTY, entrée fermée, sous
+`LC_ALL=C` et à sortie bornée, doit produire un listing **attestable** : une
+sortie absente, tronquée, traduite ou non reconnue échoue fermé. Ces refus
+portent sur la confiance accordée au listing, jamais sur le secret.
+
+**Amendement du 22 août 2026 — la journalisation d'entrée cesse d'être un
+refus, et la garde change de côté.** Ce paragraphe affirmait que `log_input` et
+`log_stdin` étaient des refus durs, au motif que le mot de passe voyage sur
+l'entrée standard de la commande distante et atterrirait donc en clair dans
+`/var/log/sudo-io`. **Ce mécanisme a été mesuré, et il est faux pour la forme
+de commande du produit** : sans PTY et avec `-S`, `sudo` consomme la ligne du
+secret pendant l'authentification, avant que le journal d'E/S de la commande
+n'existe. Un témoin placé derrière le secret se retrouve dans le journal ; le
+secret, jamais.
+
+Le refus regardait donc la politique d'une machine tierce pour se prémunir d'un
+défaut qui naîtrait ici — il était du mauvais côté de la frontière, et refusait
+du service à un utilisateur dont la machine est correctement configurée. **Ce
+qui le remplace est un invariant local et exerçable** : aucun acte ne porte de
+matériau produit, ni sur son entrée, ni sur sa sortie. La table des actes est
+close et sa classification est exhaustive, si bien qu'un acte ajouté ne compile
+pas sans être relu.
+
+**Bornes de la mesure, et ce qui ramènerait le refus.** Elle vaut pour
+Debian 13, `sudo` 1.9.16p2, sans PTY, et la forme `-S` sans rien piper derrière
+le secret. Un acte futur qui allouerait un PTY, ou une version de `sudo` qui
+lirait le secret autrement, rouvrirait la question. La mesure est donc rejouée
+plutôt que racontée : `tests/lab/v0.3.0/sudo-io-logging/prove` justifie
+l'**absence** de ce refus et rougit le jour où elle cesse d'être vraie.
+
+La décision ne s'appuie jamais sur le masquage de mot de passe de `sudo`, dont
+la regex de prompt est configurable : le prompt sentinelle du produit n'est pas
+celui que la regex par défaut décrit. Le prompt sentinelle **reste** — il
+protège de l'usurpation d'invite, ce qu'aucune regex configurable ne fait, et
+l'échanger contre du masquage troquerait une garde forte contre une garde que
+la machine d'en face peut désactiver.
+
+#### Justification de sécurité du retrait du refus de journalisation
+
+- **Scénario et actifs** : le mot de passe `sudo` d'un compte d'administration
+  ordinaire, et les sorties des huit actes privilégiés, sur une machine cible
+  dont la politique `sudo` journalise les entrées et les sorties.
+- **Menace ou échec traité** : qu'un secret du produit soit conservé en clair
+  dans le journal d'E/S d'une machine tierce.
+- **Alternatives réellement considérées** : *maintenir le refus* — écarté, sa
+  raison écrite est mesurée fausse et il refusait du service à une machine
+  correctement configurée ; *transformer le refus en refus de `log_output`* —
+  écarté, rien de mesuré ne le demande, les huit sorties étant publiques ;
+  *adopter le prompt par défaut de `sudo` pour bénéficier de son masquage* —
+  écarté, cela troquerait une protection contre l'usurpation d'invite contre
+  une réduction par regex que la machine d'en face configure.
+- **Portée d'accès accordée et moindre privilège** : inchangés. Le retrait
+  n'ouvre aucune commande, n'élargit aucune portée et ne change pas la borne de
+  vie du secret.
+- **OWASP** : séparation des responsabilités — la garde passe du jugement de la
+  configuration d'autrui à un invariant de nos propres actes ; réduction de
+  surface — un refus de moins à maintenir juste ; valeur sûre par défaut — la
+  classification des actes est exhaustive, un acte non relu ne compile pas.
+- **NIS2** : analyse des risques fondée sur une mesure plutôt que sur une
+  croyance ; développement sûr — l'invariant est un test, pas un commentaire ;
+  mesure d'efficacité — le contrôle rejouable atteste dans la durée.
+- **Tests normaux et hostiles** : la mesure LAB avec son témoin de contrôle
+  (`tests/lab/v0.3.0/sudo-io-logging/prove`), qui échoue si le témoin manque
+  comme si le secret apparaît ; l'invariant de la table des actes ; le compte
+  du périmètre portant `log_input`, passé de cas hostile à cas nominal dans la
+  suite `personal-access-contract`.
+- **Risque résiduel, assumé et nommé** : sur une machine qui journalise, **les
+  sorties des actes sont capturées** — c'est mesuré, témoin à l'appui. Ce qui
+  garantit qu'elles ne portent rien de sensible n'est plus un refus mais
+  l'invariant local, et il ne vaut que tant que la table des actes reste close
+  et relue. Restent explicitement non garantis : le comportement d'une version
+  de `sudo` autre que 1.9.16p2, et tout acte futur qui allouerait un PTY.
 
 L'exécution de #42 suit quatre contrats successifs. #51 mesure et ferme les
 bornes du KDF ainsi que la politique de journalisation `sudo` ; #52
