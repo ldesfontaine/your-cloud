@@ -149,16 +149,26 @@ annoncées sont exécutées, les limites restantes sont nommées et les document
 canoniques concernés sont propagés. Une preuve manuelle indique ses
 préconditions, son action, son résultat attendu et son résultat observé.
 
-**Fermer l'issue fait partie du geste de fusion, et rien ne le fera à votre
-place.** Le style de sujet de ce dépôt est `type(portée): action (#N)`, où
-`(#N)` est une **référence** et non un mot-clé : seuls `Closes`, `Fixes` et
-`Resolves` ferment. Le mot-clé placé dans le corps d'une pull request ne ferme
-que si GitHub exécute lui-même la fusion — or l'historique reste linéaire et
-les branches atterrissent en avance rapide depuis le poste. Les deux
-conventions se combinent donc en un silence : vingt-deux issues sont restées
-ouvertes alors que leur travail était sur `main`, certaines depuis des
-semaines. Après avoir poussé `main`, fermer l'issue et nommer son commit de
-fusion dans un commentaire.
+**Fermer l'issue et supprimer la branche font partie du geste de fusion, et
+rien ne le fera à votre place.** Les deux automatismes de GitHub — fermeture
+par mot-clé, suppression de la branche à la fusion — ne se déclenchent que si
+**GitHub exécute lui-même la fusion**. Or l'historique reste linéaire et les
+branches atterrissent en avance rapide depuis le poste, pour que les rapports
+LAB puissent citer des SHA exacts. Aucun des deux ne se produira donc jamais
+ici.
+
+S'y ajoute, pour la fermeture, une seconde raison : le style de sujet de ce
+dépôt est `type(portée): action (#N)`, où `(#N)` est une **référence** et non
+un mot-clé — seuls `Closes`, `Fixes` et `Resolves` ferment, et le mot-clé du
+corps d'une pull request ne vaut qu'à la fusion GitHub.
+
+Le silence se mesure des deux côtés : vingt-deux issues sont restées ouvertes
+alors que leur travail était sur `main`, certaines depuis des semaines ; et
+quatre branches fusionnées se sont accumulées en une seule séance, après
+vingt et une nettoyées la veille.
+
+Après avoir poussé `main` : fermer l'issue en nommant son commit de fusion dans
+un commentaire, puis supprimer la branche, locale et distante.
 
 Un blocage externe ne transforme pas un travail non prouvé en travail terminé.
 L'issue reste ouverte ou porte explicitement son blocage et la prochaine action
