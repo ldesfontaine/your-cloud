@@ -153,14 +153,18 @@ ouverture créée par Your Cloud.
 
 ## Frontière WireGuard retenue
 
-WireGuard sert de transport chiffré entre le VPS et la machine privée, jamais
-de VPN général vers le LAN :
+WireGuard porte le réseau interne entre **toutes** les machines enrôlées, et le
+réseau d'accès entre l'app et le Controller. **Ce n'est jamais un VPN général
+vers le LAN** — la distinction tient, ce qui change est le nombre de pairs :
 
 - une paire de clés distincte par machine, sans secret de flotte partagé ;
 - les clés privées sont générées et conservées sur leur machine ;
 - une adresse de tunnel `/32` par pair ;
 - aucune route vers le sous-réseau du LAN et aucun `0.0.0.0/0` ;
-- aucun forwarding du tunnel vers les autres machines du LAN ;
+- des liens **directs** entre machines enrôlées, sans relais par défaut — ce
+  qu'un tunnel unique VPS↔machine privée ne permettait pas ;
+- **aucun forwarding vers une machine non enrôlée** : un pair transporte pour
+  lui-même, jamais pour le LAN qui l'entoure ;
 - politique `nftables` en refus par défaut sur l'interface WireGuard ;
 - autorisation limitée aux ports des services explicitement publiés ;
 - aucun accès depuis le VPS vers SSH, l'administration ou les autres ports de
@@ -176,6 +180,35 @@ explicites et vérifiables, jamais une confiance générale dans le LAN.
 WireGuard authentifie le pair et chiffre le transport. Il ne remplace ni
 l'autorisation par service, ni HTTPS, ni le suivi des clés, ni les preuves de
 révocation. Your Cloud porte ces responsabilités supplémentaires.
+
+### Justification de sécurité du maillage
+
+- **Scénario et actifs** : N machines enrôlées d'une même infrastructure, leurs
+  services et leurs données, reliées deux à deux plutôt que par un tunnel
+  unique ; l'app rejoint le réseau d'accès comme pair.
+- **Menace traitée** : un pair compromis. Un maillage donne à chaque machine une
+  route vers ses voisines ; sans borne, la compromission d'une seule les
+  ouvrirait toutes — c'est le déplacement latéral que le tunnel unique évitait
+  par sa forme.
+- **Alternatives considérées** : garder un tunnel unique par relais central —
+  écarté, il fait transiter le trafic privé par la machine la plus exposée et
+  échoue dès que deux machines privées doivent se parler ; un maillage sans
+  flux nommés — écarté, il rétablit exactement le réseau de confiance que le
+  zéro-flux refuse.
+- **Portée accordée et moindre privilège** : un lien ne donne **aucun droit**.
+  Chaque flux est nommé, approuvé, borné à une destination et un port, et
+  révocable seul. Deux réseaux séparés bornent l'app hors des services.
+- **OWASP** : valeur sûre par défaut (refus), segmentation (deux réseaux),
+  moindre privilège (flux par destination et port), défense en profondeur (le
+  tunnel ne remplace ni mTLS ni la session humaine).
+- **NIS2** : contrôle d'accès, segmentation, gestion des actifs, continuité —
+  les liens et règles survivent au redémarrage et à la panne du pilotage.
+- **Preuves attendues** : deux machines reliées et sans flux approuvé
+  n'échangent rien ; un pair inconnu est refusé ; un flux retiré ferme ; le
+  trafic entre deux machines privées ne traverse pas la machine publique ; un
+  pair ne route pas pour une machine non enrôlée.
+- **Risque résiduel** : une machine entièrement compromise garde ses clés et ses
+  flux exactement autorisés. Le maillage ne l'aggrave pas, il ne l'efface pas.
 <!-- coherence: INTERNAL-NETWORK:end -->
 
 ## Ce que la preuve devra constater

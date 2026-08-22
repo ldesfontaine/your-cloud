@@ -135,6 +135,37 @@ Contraintes de sécurité :
 - retrait d'un service accompagné du retrait de sa route et de son autorisation
   réseau.
 
+### Justification de sécurité de la famille L4 et de l'écrasement des en-têtes
+
+- **Scénario et actifs** : un service non-HTTP joignable depuis Internet par un
+  port public, et tout service privé dont l'identité de l'appelant décide de
+  l'accès.
+- **Menace traitée** : deux, distinctes. Une **exposition trop large** — un port
+  ouvert qui atteint plus que son service, ou qui survit à son retrait. Une
+  **identité forgée** — un appelant qui présente lui-même les en-têtes
+  `X-Forwarded-*` et se fait passer pour authentifié.
+- **Alternatives considérées** : un proxy applicatif pour le L4 — écarté, il
+  termine la connexion et perd l'adresse du visiteur par construction ; faire
+  confiance aux en-têtes d'un appelant « interne » — écarté, c'est la confiance
+  générale que le réseau refuse déjà.
+- **Portée accordée et moindre privilège** : un port public sert **un** service ;
+  la redirection vise une destination et un port ; le point d'entrée écrase
+  **tous** les en-têtes d'identité et pose les siens ; il ne détient aucune
+  autorité d'administration.
+- **OWASP** : réduction de surface (un port, un service), valeur sûre par défaut
+  (aucune exposition implicite), séparation des responsabilités (router n'est
+  pas administrer), défense en profondeur (l'écrasement s'appuie sur le fait que
+  le service n'est joignable que par le point d'entrée).
+- **NIS2** : contrôle d'accès, gestion des actifs, analyse des risques —
+  l'adresse préservée est une cible dont la preuve conditionne la promesse.
+- **Preuves attendues** : un en-tête forgé n'atteint jamais le service ; un
+  service n'est pas joignable hors du point d'entrée ; une exposition retirée
+  ferme son port **et** son flux ; deux services d'une machine ne s'atteignent
+  pas par le loopback.
+- **Risque résiduel** : le point d'entrée reste une cible de valeur — il voit le
+  trafic en clair après terminaison TLS. Sa compromission n'accorde toutefois
+  aucune autorité d'administration ni secret de machine.
+
 ### Justification de sécurité de Traefik
 
 - **Menace traitée** : publication accidentelle d'un conteneur, compromission
