@@ -8,7 +8,9 @@ route y laisserait le dépôt sale, et un plantage un `docs/` amputé.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
 import tempfile
 from pathlib import Path
@@ -55,6 +57,14 @@ def build_tree(base: Path) -> Path:
         "<!-- coherence: EXEMPLE:end -->\n",
         encoding="utf-8",
     )
+    (root / "docs/html").mkdir(parents=True)
+    mirror = root / "docs/html/frontiere.html"
+    mirror.write_text(
+        "<h1>La frontière, en vue</h1>\n"
+        "<!-- coherence: EXEMPLE:start -->\n<p>Une vue éditoriale, reformulée.</p>\n"
+        "<!-- coherence: EXEMPLE:end -->\n",
+        encoding="utf-8",
+    )
     (root / "docs/projet/COHERENCE.md").write_text(
         "# Cohérence\n\n<!-- coherence-registry:start -->\n"
         "| Identifiant | Frontière suivie | Source canonique | Projections obligatoires |\n"
@@ -63,14 +73,19 @@ def build_tree(base: Path) -> Path:
         "<!-- coherence-registry:end -->\n",
         encoding="utf-8",
     )
+    # le miroir naît tamponné : un arbre sain est un arbre à jour
+    import importlib
+    module = sys.modules["check_docs"]
+    mirror.write_text(
+        module.stamp_line(root / "docs/architecture/FRONTIERE.md", mirror) + "\n"
+        + mirror.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     return root
 
 
 def run(module, root: Path) -> int:
     """Exécute le contrôle en absorbant sa sortie : seul son verdict compte ici."""
-
-    import contextlib
-    import io
 
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         return module.main(root)
@@ -90,7 +105,7 @@ def main() -> int:
     # les contrôles de fichiers requis visent le vrai dépôt : on les neutralise
     # pour l'arbre-fixture, qui n'a pas vocation à porter toute la carte.
     module.REQUIRED_FILES = ()
-    module.HTML_MIRRORS = {}
+    module.HTML_MIRRORS = {"docs/architecture/FRONTIERE.md": "docs/html/frontiere.html"}
 
     resultats: list[bool] = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -116,9 +131,26 @@ def main() -> int:
         p.write_text(p.read_text(encoding="utf-8").replace("EXEMPLE", "INCONNU"), encoding="utf-8")
         resultats.append(expect("marqueur: identifiant inconnu du registre", module, orphan_marker, 1))
 
+        # cas hostile 4 — la source bouge, le miroir n'est pas re-tamponné
+        derive = build_tree(base / "derive")
+        source = derive / "docs/architecture/FRONTIERE.md"
+        source.write_text(source.read_text(encoding="utf-8") + "\nUne phrase de plus.\n", encoding="utf-8")
+        resultats.append(expect("miroir: source bougée sans re-tampon", module, derive, 1))
+
+        # cas hostile 5 — le miroir re-tamponné redevient vert
+        with contextlib.redirect_stdout(io.StringIO()):
+            module.stamp_mirrors(derive)
+        resultats.append(expect("miroir: re-tamponné", module, derive, 0))
+
+        # cas hostile 6 — un miroir sans aucune empreinte
+        sans = build_tree(base / "sans-tampon")
+        m = sans / "docs/html/frontiere.html"
+        m.write_text(module.STAMP_PATTERN.sub("", m.read_text(encoding="utf-8")), encoding="utf-8")
+        resultats.append(expect("miroir: empreinte absente", module, sans, 1))
+
     print()
     if all(resultats):
-        print(f"check-docs: PASS — {len(resultats)} cas, dont {len(resultats)-1} refus prouvés")
+        print(f"check-docs: PASS — {len(resultats)} cas, dont 5 refus prouvés")
         return 0
     print("check-docs: FAIL — un contrôle n'a pas rendu le verdict attendu", file=sys.stderr)
     return 1

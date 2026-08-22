@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -429,6 +431,77 @@ def validate_archives(root: Path, decisions: tuple[Decision, ...], errors: list[
                 )
 
 
+STAMP_PATTERN = re.compile(
+    r"<!--\s*dérivé de (?P<source>[^\s]+) @ sha256:(?P<digest>[0-9a-f]{64})\s*-->"
+)
+
+
+def source_digest(path: Path) -> str:
+    """Empreinte de la source telle qu'elle est sur le disque."""
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def stamp_line(source: Path, mirror: Path) -> str:
+    """Construit le commentaire d'empreinte que le miroir doit porter."""
+
+    relative = os.path.relpath(source, mirror.parent)
+    return f"<!-- dérivé de {relative} @ sha256:{source_digest(source)} -->"
+
+
+def validate_mirror_freshness(root: Path, errors: list[str]) -> None:
+    """Refuse un miroir dont la source a bougé depuis son dernier tampon.
+
+    On ne compare pas deux textes : un miroir est une **vue éditoriale**, pas un
+    rendu mécanique — il reformule, aplatit la hiérarchie et choisit ce qu'il
+    montre. Comparer des titres serait donc impossible, et comparer leur nombre
+    serait faible : une section remplacée par une autre passerait.
+
+    Ce contrôle constate seulement qu'une source a changé depuis la dernière
+    fois que quelqu'un a regardé son miroir.
+
+    **Limite assumée** : l'empreinte prouve qu'on a pris acte, pas que le miroir
+    a été corrigé. Quelqu'un peut re-tamponner sans rien relire. Ce qu'elle
+    apporte est de transformer une dérive silencieuse en geste délibéré.
+    """
+
+    for source_rel, mirror_rel in HTML_MIRRORS.items():
+        source, mirror = root / source_rel, root / mirror_rel
+        if not source.is_file() or not mirror.is_file():
+            continue
+        found = STAMP_PATTERN.search(mirror.read_text(encoding="utf-8"))
+        if found is None:
+            errors.append(
+                f"empreinte de dérivation absente dans {mirror_rel}: "
+                f"elle doit nommer {source_rel} et son empreinte"
+            )
+            continue
+        if found.group("digest") != source_digest(source):
+            errors.append(
+                f"miroir périmé {mirror_rel}: {source_rel} a changé depuis son "
+                f"dernier tampon — relire le miroir, puis re-tamponner avec "
+                f"`tools/check-docs --stamp`"
+            )
+
+
+def stamp_mirrors(root: Path) -> int:
+    """Réécrit l'empreinte de chaque miroir. Geste délibéré, jamais automatique."""
+
+    for source_rel, mirror_rel in HTML_MIRRORS.items():
+        source, mirror = root / source_rel, root / mirror_rel
+        if not source.is_file() or not mirror.is_file():
+            continue
+        text = mirror.read_text(encoding="utf-8")
+        ligne = stamp_line(source, mirror)
+        if STAMP_PATTERN.search(text):
+            text = STAMP_PATTERN.sub(ligne, text, count=1)
+        else:
+            text = ligne + "\n" + text
+        mirror.write_text(text, encoding="utf-8")
+        print(f"tamponné {mirror_rel} ← {source_rel}")
+    return 0
+
+
 def main(root: Path = DEFAULT_ROOT) -> int:
     """Exécute tous les contrôles et produit une sortie courte et actionnable."""
 
@@ -440,6 +513,7 @@ def main(root: Path = DEFAULT_ROOT) -> int:
     validate_stale_phrases(root, errors)
     validate_orphans(root, errors)
     validate_archives(root, decisions, errors)
+    validate_mirror_freshness(root, errors)
 
     if errors:
         print("Documentation: FAIL", file=sys.stderr)
@@ -458,4 +532,6 @@ def main(root: Path = DEFAULT_ROOT) -> int:
 
 
 if __name__ == "__main__":
+    if "--stamp" in sys.argv:
+        raise SystemExit(stamp_mirrors(DEFAULT_ROOT))
     raise SystemExit(main())
