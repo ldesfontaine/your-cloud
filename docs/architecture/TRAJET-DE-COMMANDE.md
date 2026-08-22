@@ -864,7 +864,8 @@ phrases, et chacune est vérifiable.
 ## Surface du Controller étendue de deux routes
 
 `PROFIL-PUBLIC-BENTOPDF.md`, `PASSAGE-PRIVE-WIREGUARD.md`,
-`PROFIL-PRIVE-VAULTWARDEN.md`, `RESPONSABILITE-EXTERNE.md` puis
+`PROFIL-PRIVE-VAULTWARDEN.md`, `RESPONSABILITE-EXTERNE.md` (remplacé depuis par
+`SERVICES-DECOUVERTE-ET-REPRISE.md`) puis
 `SERVICE-UTILISATEUR.md` ont étendu la surface métier du Controller de trois,
 trois, quatre, trois puis trois routes. Le présent contrat l'étend de **deux**,
 et d'aucune autre — une seule peut faire partir un octet vers une machine :

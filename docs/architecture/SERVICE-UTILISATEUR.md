@@ -281,7 +281,8 @@ croisé des genres sur un même nom valent inchangés.
 
 `PLAN-OCI-CONTROLE.md`, `PROFIL-PUBLIC-BENTOPDF.md`,
 `PASSAGE-PRIVE-WIREGUARD.md`, `PROFIL-PRIVE-VAULTWARDEN.md` puis
-`RESPONSABILITE-EXTERNE.md` ont étendu la surface métier du Controller d'une,
+`RESPONSABILITE-EXTERNE.md` (remplacé depuis par
+`SERVICES-DECOUVERTE-ET-REPRISE.md`) ont étendu la surface métier du Controller d'une,
 trois, trois, quatre puis trois routes. Le présent contrat l'étend de trois,
 et d'aucune autre — une seule construit des plans :
 
