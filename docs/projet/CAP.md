@@ -344,6 +344,10 @@ présence :
   préalable une configuration et une identité Relay explicitement
   provisionnées. Cette capacité est optionnelle sur chaque Agent, mais la chaîne
   d'observation de `v0.1.0` provisionne exactement un Relay ;
+- le **Daemon** relève aussi, sur sa seule machine, une famille de collecteurs
+  nommée « inventaire » — unités systemd et ports en écoute. Elle ne lui donne
+  aucun privilège nouveau, ne le rend pas root, et ne regarde jamais au-delà de
+  la machine où il tourne ;
 - un **Auxiliaire local** optionnel peut être activé uniquement pour une machine
   enrôlée. Il n'est pas permanent, n'écoute aucun port, est lancé
   pour un plan précis, applique une opération nommée avec les seuls privilèges
