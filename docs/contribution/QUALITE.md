@@ -230,6 +230,23 @@ action ; elles ne justifient aucune abstraction anticipée :
   qu'elle ne garantit pas.
 - Distinguer explicitement ce qui est documenté, implémenté et réellement
   prouvé.
+- **Un document vivant conserve sa ligne d'origine et jamais de clause de
+  preuve.** « Contrat rédigé pour le palier `#N` » est un fait immuable : il dit
+  pourquoi le document existe et pour quel périmètre il a été écrit. « Prouvé
+  par `#M` » devient faux dès que le document est amendé — la ligne affirme
+  alors qu'une preuve établit un texte qu'elle n'a jamais vu. C'est la règle
+  « ne jamais présenter comme prouvé ce que les preuves exécutées ne démontrent
+  pas », appliquée à un bandeau.
+- **L'état vivant réside ailleurs, et le document le dit.** Les rapports sous
+  `docs/lab/` portent seuls les dates, les commits et les résultats
+  d'exécution ; `docs/projet/DIRECTION.md` porte l'ordre du reste. Un suivi
+  d'issues, un numéro de run ou un SHA dans un document vivant se dément tout
+  seul dès que le travail avance.
+- **Le remède à une prose d'état périmée est de la retirer, pas de la mettre à
+  jour.** Un document qui tient le compte des runs périme à chaque fusion. Une
+  affirmation au présent devenue fausse se rattache au moment de sa rédaction
+  lorsqu'elle porte le motif du texte ; une mesure explicitement datée se garde
+  telle quelle, elle est auto-marquante.
 
 ## Preuves et fixtures
 
@@ -258,6 +275,30 @@ suivant plutôt qu'à celui qui l'a créée.
   mécanisme peut atteindre : le rapport dit lequel a été employé et ce qu'il ne
   remplace pas.
 
+## Code dormant
+
+Un module qu'aucun code de production n'atteint est branché par un chantier
+nommé de `docs/projet/DIRECTION.md`, ou supprimé. Un `TODO` ne fait pas un
+chantier : c'est du code mort avec une excuse.
+
+- **`#[allow(dead_code)]` se pose sur l'item précis, jamais sur un `mod`.** Un
+  attribut de module éteint l'avertissement pour tout ce que le module
+  contiendra, y compris ce qui devient atteint plus tard. Il ne dit pas ce qu'il
+  couvre ; il dit seulement de ne pas regarder. Deux annotations ont ainsi menti
+  pendant des mois sur des modules atteints depuis une commande enregistrée,
+  sans qu'aucun contrôle puisse le voir.
+- **Chaque attribut restant nomme son chantier en commentaire**, et ce chantier
+  existe dans `DIRECTION.md`. Un chantier inventé dans un commentaire ne borne
+  rien : il déplace seulement l'excuse.
+- **Retirer un attribut exige de lire ce qu'il réveille.** Trois issues, pas
+  deux : aucun avertissement — l'attribut ne masquait rien ; item réellement
+  inutilisé — on le retire ; item attendu par un chantier nommé — l'attribut se
+  repose sur cet item seul. La compilation n'échoue pas sur un avertissement :
+  un vert ne prouve pas que rien n'a été réveillé.
+- **Un seul appelant hors test qui est une fixture est une dette, pas une
+  branche vivante.** Elle se nomme comme telle, au même titre qu'une fixture qui
+  remplace un composant du produit.
+
 ## Condition de sortie d'un changement
 
 Un changement est terminé seulement lorsque :
@@ -275,4 +316,9 @@ Un changement est terminé seulement lorsque :
    hostiles et son risque résiduel ;
 8. le changement est compréhensible avant l'ouverture du chantier suivant ;
 9. toute fixture qui remplace un composant du produit sur le trajet prouvé est
-   nommée comme dette dans le rapport LAB et dans le commentaire de fermeture.
+   nommée comme dette dans le rapport LAB et dans le commentaire de fermeture ;
+10. aucun `#[allow(dead_code)]` introduit ne porte un `mod`, et tout module que
+    le changement laisse injoignable est rattaché à un chantier nommé de
+    `DIRECTION.md` ou supprimé ;
+11. les documents touchés ne portent aucune clause de preuve, et leur ligne
+    d'origine survit seule à l'amendement.
