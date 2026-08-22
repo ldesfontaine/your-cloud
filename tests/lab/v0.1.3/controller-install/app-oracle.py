@@ -499,7 +499,13 @@ return 'installed: ' + installed.join(',');
 
 READ_RECORDER = """
 if (!window.__ycRecorder) { return null; }
-return window.__ycRecorder.buffer.slice(-60);
+// Le tampon ENTIER, borné à sa capacité et pas à une fenêtre plus étroite
+// qu'elle. `slice(-60)` rendait les soixante dernières entrées d'un tampon de
+// quatre cents : sur une étape qui dure cinq minutes, cela ne montrait que la
+// dernière minute — et un blocage situé plus tôt devenait indevinable depuis
+// l'artefact. Mesuré le 22 août 2026 : une expiration de session dont les
+// artefacts ne pouvaient pas dire où le temps était parti.
+return window.__ycRecorder.buffer;
 """
 
 
@@ -694,12 +700,30 @@ def capture_processes(moment: str) -> dict[str, object]:
     }
 
 
+# L'origine du chronomètre d'une étape. Elle est posée au clic, et c'est ce qui
+# rend les horodatages des fenêtres comparables à la borne de session.
+STEP_STARTED: float = time.monotonic()
+
+
+def note_window(report: dict, label: str, event: str) -> None:
+    """Une fenêtre native, et QUAND elle est arrivée ou repartie.
+
+    Une liste de titres ne dit pas où le temps est parti : la passe du 22 août
+    2026 a expiré à 300 s, et son artefact ne portait qu'un titre sans instant.
+    Trois causes possibles restaient indépartageables faute de cette ligne.
+    """
+    report.setdefault("native_windows", []).append(
+        {"window": label, "event": event, "at_s": round(time.monotonic() - STEP_STARTED, 1)}
+    )
+
+
 def answer_access_window(key_file: str, passphrase: str, report: dict) -> None:
     """Nomme le fichier de clé, tape la passphrase, autorise l'accès."""
     window = await_window(ACCESS_WINDOW_TITLE)
-    report.setdefault("native_windows", []).append(ACCESS_WINDOW_TITLE)
+    note_window(report, ACCESS_WINDOW_TITLE, "apparue")
     press(window, "alt+o")
     selector = await_window(SELECTOR_TITLE, seconds=30)
+    note_window(report, SELECTOR_TITLE, "apparue")
     # La barre d'emplacement du sélecteur : ctrl+l la nomme, le chemin se tape,
     # Return répond ; alt+o en secours quand le toolkit n'active pas seul.
     press(selector, "ctrl+l")
@@ -710,18 +734,22 @@ def answer_access_window(key_file: str, passphrase: str, report: dict) -> None:
         press(selector, "alt+o")
     if not window_gone(SELECTOR_TITLE, seconds=10):
         raise RuntimeError("the key selector never answered the named file")
+    note_window(report, SELECTOR_TITLE, "fermée")
     # L'ordre du contrat : le fichier est nommé, PUIS l'accès est accepté sur
     # la fenêtre d'accès — et c'est cette acceptation, l'ouverture validée du
     # fichier, qui fait apparaître la fenêtre de passphrase. L'inverse laissait
     # attendre une passphrase que rien n'avait demandée.
     press(window, "alt+a")
     passphrase_window = await_window(PASSPHRASE_TITLE, seconds=30)
+    note_window(report, PASSPHRASE_TITLE, "apparue")
     type_text(passphrase_window, passphrase)
     press(passphrase_window, "alt+c")
     if not window_gone(PASSPHRASE_TITLE, seconds=30):
         raise RuntimeError("the passphrase window never accepted")
+    note_window(report, PASSPHRASE_TITLE, "fermée")
     if not window_gone(ACCESS_WINDOW_TITLE, seconds=60):
         raise RuntimeError("the access window never closed after the passphrase")
+    note_window(report, ACCESS_WINDOW_TITLE, "fermée")
     # L'instant où le verdict se joue : le helper vient de finir, et ce qui
     # reste de son groupe décide si son succès est reconnu.
     report.setdefault("process_tree", []).append(
@@ -861,15 +889,20 @@ def run_step(
     report.setdefault("recorder_reinstall", {})[step] = driver.execute(
         INSTALL_RECORDER.replace("const buffer = [];", "const buffer = (window.__ycRecorder && window.__ycRecorder.buffer) || [];")
     )
+    global STEP_STARTED
+    STEP_STARTED = time.monotonic()
     click(driver, STEP_BUTTONS[step])
     answer_access_window(key_file, passphrase, report)
     if expect_sudo_password is not None:
         sudo_window = await_window(SUDO_TITLE, seconds=60)
+        note_window(report, SUDO_TITLE, "apparue")
         type_text(sudo_window, expect_sudo_password)
         press(sudo_window, "alt+c")
         if not window_gone(SUDO_TITLE, seconds=30):
             raise RuntimeError("the sudo password window never accepted")
+        note_window(report, SUDO_TITLE, "fermée")
     outcome = await_outcome(driver, step, seconds=600)
+    note_window(report, f"issue:{step}", outcome[:60])
     report.setdefault("tape_by_step", {})[step] = read_recorder(driver)
     if outcome != STEP_SENTENCES[step]:
         raise RuntimeError(f"the {step} step was refused: {outcome}")

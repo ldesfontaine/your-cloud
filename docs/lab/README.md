@@ -563,6 +563,19 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   palier précédent : l'ancre n'est plus déposée par un harnais, et le lot n'est
   plus embarqué par autre chose que l'empaquetage du produit.
 
+- [`v0.3.0` — une Debian ordinaire, sans préparation, jusqu'au Controller actif](v0.3.0-unprepared-install.md) :
+  passage du 22 août 2026 sur `lab-app` et `lab-machine-1`. Le compte que
+  l'installateur Debian produit — groupe `sudo`, mot de passe, **aucune ligne de
+  sudoers pour lui** — mène le parcours jusqu'au Controller actif en **deux**
+  consentements, sur un candidat `0.2.0` (`2ab4627f…`). La posture est vérifiée
+  avant le parcours plutôt que supposée. Relevé indépendant : `dpkg` voit le
+  paquet, `systemd` dit `enabled` et `active`, et le mot de passe `sudo` ne
+  survit nulle part — témoin de contrôle à l'appui. Les deux consentements se
+  concluent en 11,2 s et 12,2 s, loin de la borne de 300 s. Dette nommée :
+  une pose réussie laisse son répertoire d'attente (n°156, ouverte). Restent à
+  faire : les refus hostiles **à l'écran**, et le trajet depuis la page
+  Releases. Rejouable par `tests/lab/v0.3.0/unprepared-install/prove all`.
+
 - [`v0.3.0` — ce que la journalisation d'entrée `sudo` capture réellement](v0.3.0-sudo-io-logging.md) :
   mesure du 22 août 2026 sur `lab-machine-1`, Debian 13 et `sudo` 1.9.16p2. Le
   contrat affirmait que le mot de passe atterrissait en clair dans

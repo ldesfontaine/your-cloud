@@ -58,6 +58,9 @@ remote_harness=/root/your-cloud-lab-controller-install
 # Le compte que l'installateur Debian produit. Son nom vient du périmètre
 # d'accès personnel, qui le monte ; il n'est pas inventé ici.
 account=ycpasudg
+# Le fichier local qui porte le secret de contrôle le temps du relevé.
+secret_local=$(mktemp)
+trap 'rm -f "$secret_local"' EXIT
 
 announce() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAILED: $*" >&2; exit 1; }
@@ -129,6 +132,14 @@ do_journey() {
     "$labctl" copy-to "$app_vm" "$model/$file" "$remote_harness/$file" >/dev/null
     "$labctl" ssh "$app_vm" -- "chmod 0700 $remote_harness/$file"
   done
+  # **`TARGET_SUDO_PASSWORD_FILE` est ce qui distingue cette preuve de celle du
+  # palier `v0.1.3`**, et son absence a coûté deux passes. Le parcours du
+  # palier prête un compte `NOPASSWD` : aucune fenêtre de mot de passe ne
+  # s'ouvre, et l'oracle laisse l'option absente. Ici le compte est celui que
+  # Debian crée, sa politique ne renonce à rien, et le produit DEMANDE le
+  # secret — une feuille de cible qui ne le nomme pas laisse cette fenêtre sans
+  # réponse jusqu'à ce que la session expire. Le fichier est celui que le
+  # périmètre d'accès personnel écrit, jamais une valeur recopiée ici.
   "$labctl" ssh "$app_vm" -- "cat > $remote_harness/target.env <<TARGET
 TARGET_HOST=ycpa-target.test
 TARGET_PORT=22
@@ -137,6 +148,7 @@ TARGET_HOST_KEY=$host_key
 TARGET_LISTEN=$machine_address:9443
 TARGET_ALLOWED_SOURCE=192.168.240.9/32
 TARGET_RELAY_ENDPOINT=192.168.240.9:8444
+TARGET_SUDO_PASSWORD_FILE=/root/lab-personal-access/needle/sudo-password
 TARGET"
   "$labctl" ssh "$app_vm" -- "$remote_harness/run journey"
 }
@@ -144,20 +156,50 @@ TARGET"
 do_constats() {
   inventory "$machine_vm" >/dev/null
   announce "les relevés indépendants sur $machine_vm"
+  # Le secret synthétique du périmètre est déposé sur la CIBLE le temps de la
+  # recherche, puis détruit : le chercher depuis le poste obligerait à le poser
+  # sur une ligne de commande distante, c'est-à-dire à créer la fuite même que
+  # ce relevé existe pour réfuter.
+  "$labctl" ssh "$app_vm" -- 'cat /root/lab-personal-access/needle/sudo-password' \
+    >"$secret_local"
+  "$labctl" copy-to "$machine_vm" "$secret_local" /root/yc-controle-secret >/dev/null
   # Ce que la machine dit d'elle-même, par des outils qui ne sont pas le
   # produit. Un succès annoncé par la partie qui agit n'est pas un constat.
   "$labctl" ssh "$machine_vm" -- '
 set -e
 echo "--- le paquet, vu par dpkg ---"
 dpkg -l your-cloud-server | tail -1
-echo "--- l'"'"'unité, vue par systemd ---"
+echo "--- l unite, vue par systemd ---"
 systemctl is-enabled your-cloud-controller
 systemctl is-active your-cloud-controller
-echo "--- aucun secret résiduel du parcours ---"
-[ -e /home/ycpasudg/.your-cloud-bootstrap ] \
-  && { echo "FAILED: un répertoire d'"'"'attente a survécu" >&2; exit 1; }
-echo "  aucun répertoire d'"'"'attente"
+echo "--- le repertoire d attente : dette CONNUE, nommee et non masquee ---"
+# Une pose reussie laisse son repertoire d attente : c est le defaut n°156,
+# ouvert et suivi. Ce releve le NOMME au lieu d echouer dessus — echouer
+# ferait porter a cette preuve un defaut qui a deja son issue, et le masquer
+# ferait mentir le rapport. Ce qui reste exige est ailleurs, ci-dessous.
+if [ -d /home/ycpasudg/.your-cloud-bootstrap ]; then
+  echo "  DETTE n°156 — repertoire d attente survivant :"
+  ls -la /home/ycpasudg/.your-cloud-bootstrap | tail -n +2 | sed "s/^/    /"
+else
+  echo "  aucun repertoire d attente (n°156 serait donc corrigee)"
+fi
+echo "--- ce qui reste EXIGE : aucun secret survivant ---"
+# Le mot de passe sudo a voyage deux fois pendant ce parcours. Rien de ce que
+# la cible conserve ne doit le porter. Le temoin de controle vient d abord :
+# une recherche qui ne trouve pas son propre secret la ou il EST ne prouve
+# rien de son absence ailleurs.
+secret=$(cat /root/yc-controle-secret)
+[ -n "$secret" ] || { echo "FAILED: le secret de controle est vide" >&2; exit 1; }
+grep -qF "$secret" /root/yc-controle-secret \
+  || { echo "FAILED: la recherche ne trouve pas le secret la ou il est — temoin casse" >&2; exit 1; }
+echo "  temoin : la recherche trouve bien le secret quand il est present"
+if grep -rqF "$secret" /home/ycpasudg /etc/your-cloud /var/lib/private 2>/dev/null; then
+  echo "FAILED: le mot de passe sudo survit sur la cible" >&2; exit 1
+fi
+echo "  le mot de passe sudo n est nulle part sous les chemins du parcours"
 echo "CONSTATS_OK"'
+  "$labctl" ssh "$machine_vm" -- 'rm -f /root/yc-controle-secret'
+  rm -f "$secret_local"
 }
 
 do_remove() {
