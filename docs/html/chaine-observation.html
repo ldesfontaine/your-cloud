@@ -13,12 +13,24 @@
   <main>
     <header>
       <p class="eyebrow">Your Cloud · architecture vivante</p>
-      <h1>La carte technique de l'observation.</h1>
-      <p class="lead">Du lancement systemd jusqu'à l'App installée : processus, appels, données, crypto, pannes et limites de capacité.</p>
+      <h1>La frontière de l'observation, puis sa carte.</h1>
+      <p class="lead">Ce que le Daemon relève, ce qu'il refuse et ce que le Relay ne peut pas lui demander — puis, du lancement systemd jusqu'à l'App installée : processus, appels, données, crypto, pannes et limites de capacité.</p>
       <p class="status">● carte des capacités et frontières</p>
     </header>
 
     <section>
+      <h2>Contrat d'observation du Daemon</h2>
+      <p>L'utilisateur choisit ce qu'il veut observer, et Your Cloud montre exactement les données, droits et coûts nécessaires avant de l'appliquer.</p>
+      <h3>Aucun accès entrant au Daemon</h3>
+      <p>Le Relay ne vient jamais chercher les données. Le Daemon relève, écrit dans son tampon local, ouvre lui-même une sortie mTLS et n'efface que ce dont l'enregistrement durable est confirmé. Il n'écoute sur aucun port, et le protocole ne transporte aucune commande en sens inverse : le Relay peut accuser réception ou refuser, jamais changer un profil ni demander un fichier.</p>
+      <h3>Rétention locale liée à la livraison</h3>
+      <p>Le tampon a une limite de taille et d'âge, pour qu'une panne longue du Relay ne remplisse jamais le disque. À la limite, l'état courant est conservé, le plus ancien retiré, et une <strong>lacune d'observation</strong> nomme l'intervalle et le nombre d'éléments perdus. Aucune continuité n'est reconstruite.</p>
+      <h3>Profil d'observation choisi par l'utilisateur</h3>
+      <p>Un profil est une liste de collecteurs nommés et pris en charge par la version du Daemon. Le plan présente pour chacun la cible, les champs produits et exclus, la fréquence, la rétention, le budget, ce qu'il doit lire, les flux nécessaires et ce que le résultat permet de conclure.</p>
+      <h3>Extension future sans backdoor</h3>
+      <p>Un nouveau collecteur est une capacité nommée de la version du Daemon, approuvée dans un profil — jamais une commande envoyée depuis le Relay.</p>
+      <h3>Justification OWASP et NIS2</h3>
+      <p>Sortie seule, refus des entrées libres et lacunes visibles servent la vérifiabilité ; l'ensemble contribue aux mesures de gestion des risques sans constituer à lui seul une déclaration de conformité.</p>
       <h2>Les quatre rôles du même exécutable</h2>
       <div class="grid">
         <article class="card"><span class="tag">processus permanent</span><h3>Daemon</h3><p>Collecte localement, persiste puis livre. Il n'écoute aucun port.</p></article>
