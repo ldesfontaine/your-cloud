@@ -16,6 +16,18 @@
 > Ce dossier ne porte plus aucune décision transverse : elles ont rejoint des
 > foyers vivants au cours des amendements de la partie A.
 
+
+## Les pièces de cet objectif
+
+- [`ROADMAP.md`](ROADMAP.md) — l'ordre des preuves qui a mené à `v0.1.0` ;
+- [`CONTRAT-V0.0.1.md`](CONTRAT-V0.0.1.md) — le contrat du premier incrément ;
+- [`CONTRAT-V0.0.2.md`](CONTRAT-V0.0.2.md) — observation authentifiée et bornée ;
+- [`CONTRAT-V0.0.3.md`](CONTRAT-V0.0.3.md) — App cliente et Controller de lecture ;
+- [`PREUVE-COMPLETE.md`](PREUVE-COMPLETE.md) — ce qui est rejoué et ce qui est produit.
+
+Ces documents sont **datés** : ils décrivent ce qui a été décidé et prouvé à
+leur moment, et ne décrivent plus le produit.
+
 > Statut : contrat fonctionnel validé pour le découpage de la roadmap. Les
 > paramètres d'implémentation encore inconnus seront mesurés au palier concerné
 > sans modifier silencieusement cette ligne d'arrivée.

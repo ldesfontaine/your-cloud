@@ -24,6 +24,13 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Comprendre comment un nom public désigne l'infrastructure et comment son certificat se renouvelle | [`architecture/DNS-ET-CERTIFICATS.md`](architecture/DNS-ET-CERTIFICATS.md) |
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |
 | Savoir comment une version est vue, choisie, gelée et remplacée | [`architecture/VERSIONS-ET-MISES-A-JOUR.md`](architecture/VERSIONS-ET-MISES-A-JOUR.md) |
+| Comprendre comment l'Assistant mène le lot vérifié jusqu'au Controller qui tourne | [`architecture/L-ASSISTANT-QUI-INSTALLE.md`](architecture/L-ASSISTANT-QUI-INSTALLE.md) |
+| Suivre le trajet d'une commande, de l'humain qui approuve à la machine qui rapporte | [`architecture/TRAJET-DE-COMMANDE.md`](architecture/TRAJET-DE-COMMANDE.md) |
+| Comprendre la définition inerte d'un service utilisateur et sa troisième porte | [`architecture/SERVICE-UTILISATEUR.md`](architecture/SERVICE-UTILISATEUR.md) |
+| Comprendre le plan OCI contrôlé et sa sonde de validation | [`architecture/PLAN-OCI-CONTROLE.md`](architecture/PLAN-OCI-CONTROLE.md) |
+| Comprendre le passage privé WireGuard borné au service | [`architecture/PASSAGE-PRIVE-WIREGUARD.md`](architecture/PASSAGE-PRIVE-WIREGUARD.md) |
+| Lire le profil public BentoPDF et son point d'entrée | [`architecture/PROFIL-PUBLIC-BENTOPDF.md`](architecture/PROFIL-PUBLIC-BENTOPDF.md) |
+| Lire le profil privé Vaultwarden : données, sauvegardes et trajet | [`architecture/PROFIL-PRIVE-VAULTWARDEN.md`](architecture/PROFIL-PRIVE-VAULTWARDEN.md) |
 | Contribuer ou travailler avec un agent | [`contribution/README.md`](contribution/README.md) |
 | Comprendre comment le dépôt est lu avant d'agir | [`contribution/COMPRENDRE-LE-PROJET.md`](contribution/COMPRENDRE-LE-PROJET.md) |
 | Organiser la roadmap en issues exécutables | [`contribution/ISSUES.md`](contribution/ISSUES.md) |

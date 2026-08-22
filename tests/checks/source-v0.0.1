@@ -71,7 +71,8 @@ PYTHONPYCACHEPREFIX="$workdir/pycache" python3 -m py_compile \
   tests/checks/render-v0.0.1-schema.py \
   tests/checks/plumber-report.py \
   tests/checks/test-plumber-report.py \
-  tests/checks/test-app-ui-raster.py
+  tests/checks/test-app-ui-raster.py \
+  tests/checks/test-check-docs.py
 
 step "CI trigger policy"
 python3 -B tests/checks/ci-workflow-policy.py
@@ -84,6 +85,9 @@ python3 -B tests/checks/test-plumber-report.py
 
 step "Installed UI screenshot raster boundary"
 python3 -B tests/checks/test-app-ui-raster.py
+
+step "check-docs refuses what it must"
+python3 -B tests/checks/test-check-docs.py
 
 step "labctl list contract"
 bash tests/checks/labctl-list
