@@ -21,6 +21,7 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Connaître la frontière du réseau interne : qui parle à qui, et sous quelle autorisation | [`architecture/RESEAU.md`](architecture/RESEAU.md) |
 | Connaître la frontière de l'exposition publique et le sort des identités présentées | [`architecture/POINT-D-ENTREE.md`](architecture/POINT-D-ENTREE.md) |
 | Savoir ce que Your Cloud pose quand un service exige une connexion | [`architecture/PROFIL-AUTHELIA.md`](architecture/PROFIL-AUTHELIA.md) |
+| Comprendre comment un nom public désigne l'infrastructure et comment son certificat se renouvelle | [`architecture/DNS-ET-CERTIFICATS.md`](architecture/DNS-ET-CERTIFICATS.md) |
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |
 | Savoir comment une version est vue, choisie, gelée et remplacée | [`architecture/VERSIONS-ET-MISES-A-JOUR.md`](architecture/VERSIONS-ET-MISES-A-JOUR.md) |
 | Contribuer ou travailler avec un agent | [`contribution/README.md`](contribution/README.md) |
