@@ -406,6 +406,7 @@ if (window.__ycRecorder) { return 'already installed'; }
 const internals = window.__TAURI_INTERNALS__;
 const buffer = [];
 const LIMIT = 400;
+let perdues = 0;
 const started = Date.now();
 const installed = [];
 
@@ -443,7 +444,7 @@ if (typeof window.fetch === 'function') {
 }
 
 if (!internals || typeof internals.invoke !== 'function') {
-  window.__ycRecorder = { buffer, started };
+  window.__ycRecorder = { buffer, started, lacune: () => perdues };
   return installed.length ? 'installed: ' + installed.join(',') : 'no IPC surface';
 }
 installed.push('invoke');
@@ -478,7 +479,17 @@ internals.invoke = function (name, args, options) {
     },
   );
 };
-function push(record) { buffer.push(record); if (buffer.length > LIMIT) { buffer.shift(); } }
+function push(record) {
+  buffer.push(record);
+  // **La lacune est déclarée, jamais silencieuse.** C'est la règle que le
+  // produit s'applique à lui-même dans la chaîne d'observation : « une lacune
+  // décrit explicitement les séquences supprimées lorsque le tampon atteint
+  // une limite ». Un instrument qui tronque sans le dire transforme une mesure
+  // en supposition — et le lecteur suivant lit une absence de trace comme une
+  // trace d'absence. Mesuré le 22 août 2026 : une demi-journée passée sur trois
+  // hypothèses qu'un compteur aurait départagées.
+  if (buffer.length > LIMIT) { buffer.shift(); perdues += 1; }
+}
 function codeOf(error) {
   if (error && typeof error === 'object' && 'code' in error) { return error.code; }
   return String(error).slice(0, 120);
@@ -493,7 +504,7 @@ function summarise(args) {
   }
   return kept;
 }
-window.__ycRecorder = { buffer, started };
+window.__ycRecorder = { buffer, started, lacune: () => perdues };
 return 'installed: ' + installed.join(',');
 """
 
@@ -505,7 +516,11 @@ if (!window.__ycRecorder) { return null; }
 // dernière minute — et un blocage situé plus tôt devenait indevinable depuis
 // l'artefact. Mesuré le 22 août 2026 : une expiration de session dont les
 // artefacts ne pouvaient pas dire où le temps était parti.
-return window.__ycRecorder.buffer;
+// Le tampon ENTIER et sa lacune, ensemble. `slice(-60)` rendait les
+// soixante dernières entrées d'un tampon de quatre cents : sur une étape de
+// cinq minutes, la dernière minute seulement, et un blocage plus ancien
+// devenait indevinable depuis l'artefact.
+return { perdues: window.__ycRecorder.lacune(), limite: 400, bande: window.__ycRecorder.buffer };
 """
 
 
