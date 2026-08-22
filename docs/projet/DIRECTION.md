@@ -35,7 +35,8 @@ README ; l'amorçage passe à deux approbations.
 **Ce qu'on gagne** : « télécharger, installer, créer son infrastructure » sans
 jamais taper une commande sur le serveur.
 
-*Ferme #158. Contrat : A9. Dépend de : rien.*
+*Ferme #158. Contrat : `AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`. Dépend
+de : rien.*
 
 ### 2. Le pilotage à distance
 
@@ -45,9 +46,9 @@ questions d'adresses disparaissent de l'amorçage.
 
 **Ce qu'on gagne** : piloter depuis n'importe où, sans rien exposer.
 
-*Contrat : A4. Dépend de : rien — mais touche les mêmes écrans que le
-chantier 1. Les fusionner en une seule refonte de l'amorçage est probablement
-plus économique.*
+*Contrat : `RESEAU.md`. Dépend de : rien — mais touche les mêmes écrans que
+le chantier 1. Les fusionner en une seule refonte de l'amorçage est
+probablement plus économique.*
 
 ### 3. Le parc
 
@@ -63,8 +64,8 @@ rien ne casse si elle n'est jamais demandée.
 
 **Ce qu'on gagne** : les étapes 2 et 3 du parcours deviennent réelles.
 
-*Contrats : A1, A3, `PLAN-OCI-CONTROLE.md`. Dépend de : 2 — les machines ont
-besoin d'adresses.*
+*Contrats : `CONTEXT.md`, `SERVICES-DECOUVERTE-ET-REPRISE.md`,
+`PLAN-OCI-CONTROLE.md`. Dépend de : 2 — les machines ont besoin d'adresses.*
 
 ### 4. Le remplacement du Controller
 
@@ -78,8 +79,9 @@ décision existe déjà et **aucun binaire du produit ne l'atteint** : le module
 `replacement` n'a qu'une fixture LAB pour appelant. Ce chantier lui donne le
 sien.
 
-*Contrat : A9. Dépend de : 3 — le remplacement existe pour ne pas perdre le
-parc, et n'a de sens qu'une fois qu'il y a un parc à préserver.*
+*Contrat : `AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`. Dépend de : 3 — le
+remplacement existe pour ne pas perdre le parc, et n'a de sens qu'une fois
+qu'il y a un parc à préserver.*
 
 ### 5. Les services
 
@@ -89,7 +91,8 @@ avec snapshot et retour, cloisonnement loopback posé automatiquement.
 **Ce qu'on gagne** : l'étape 4, et la fin du « code qui sait mais que l'écran ne
 demande pas ».
 
-*Contrats : A3, A8. Dépend de : 3.*
+*Contrats : `SERVICES-DECOUVERTE-ET-REPRISE.md`,
+`VERSIONS-ET-MISES-A-JOUR.md`. Dépend de : 3.*
 
 ### 6. Le réseau interne
 
@@ -100,7 +103,7 @@ lus, consentis et signés depuis l'app comme n'importe quel autre plan.
 **Ce qu'on gagne** : des services qui se parlent, et la preuve visible que rien
 d'autre ne circule.
 
-*Contrats : A4, `PASSAGE-PRIVE-WIREGUARD.md`. Dépend de : 3.*
+*Contrats : `RESEAU.md`, `PASSAGE-PRIVE-WIREGUARD.md`. Dépend de : 3.*
 
 ### 7. La publication
 
@@ -109,7 +112,7 @@ certificat wildcard renouvelé tout seul, route posée.
 
 **Ce qu'on gagne** : l'étape 5, moitié web.
 
-*Contrats : A5, A6. Dépend de : 6.*
+*Contrats : `POINT-D-ENTREE.md`, `DNS-ET-CERTIFICATS.md`. Dépend de : 6.*
 
 ### 8. Les humains
 
@@ -119,14 +122,14 @@ connexion » ; écran Personnes ; headers écrasés au proxy.
 **Ce qu'on gagne** : l'étape 5, moitié privée — la famille sur ses services sans
 rien installer.
 
-*Contrats : A5, A7. Dépend de : 7.*
+*Contrats : `POINT-D-ENTREE.md`, `PROFIL-AUTHELIA.md`. Dépend de : 7.*
 
 ### 9. L'exposition L4
 
 Exposer un service non-HTTP, IP source préservée — **à prouver en LAB avant
 d'être promise**, repli documenté sinon.
 
-*Contrat : A5. Dépend de : 6.*
+*Contrat : `POINT-D-ENTREE.md`. Dépend de : 6.*
 
 ### 10. La vue globale
 
