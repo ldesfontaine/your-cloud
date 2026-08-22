@@ -11,7 +11,7 @@
 #
 # Deux machines, et la distinction est celle du monde d'un utilisateur :
 #   lab-vps        le POSTE de l'inconnu — image Debian 13 nue du LAB, aucun
-#                  provisioning produit ; instantané `vierge` pour rejouer ;
+#                  provisioning produit ; instantané `clean` pour rejouer ;
 #   lab-machine-1  SON SERVEUR — une machine qu'il possède déjà, avec un compte
 #                  administrateur ordinaire et sa propre clé SSH. Rien du
 #                  périmètre d'accès personnel de `#52-#54` n'y est monté :
@@ -188,7 +188,7 @@ curl -sSL -o /root/README.md '$readme_raw'
 python3 - <<'PY'
 import re, pathlib
 texte = pathlib.Path('/root/README.md').read_text()
-debut = texte.index('### Ce que l'application vous demandera')
+debut = texte.index('### Ce que l\'application vous demandera')
 blocs = re.findall(r'\`\`\`bash\n(.*?)\`\`\`', texte[debut:], re.S)
 mutations = [b.strip() for b in blocs
              if re.search(r'sudoers|deluser|usermod|visudo|chmod|tee /etc', b)]
@@ -267,9 +267,34 @@ rm -f altere.deb"
 
 # --- installer : les commandes de la page, dans leur ordre --------------------
 
+# L'HORLOGE DU POSTE, AVANT DE JOUER QUOI QUE CE SOIT.
+#
+# Un retour à l'instantané ramène l'horloge de l'instantané. Mesuré le 22 août
+# 2026 : juste après `labctl revert`, `lab-vps` lisait 10:55 quand le poste
+# lisait 18:35 — sept heures quarante de retard. `apt update` refusait alors la
+# signature du dépôt (« Not live until … »), et le harnais comptait un ÉCART DU
+# README pour une commande que le README écrit correctement.
+#
+# C'est le pire genre de faux écart : il accuse la page. Le critère de #150 —
+# aucun écart — deviendrait inatteignable après tout retour à l'instantané, et
+# la cause serait invisible dans le rapport.
+attendre_horloge() {
+  local vm="$1" essai
+  for essai in $(seq 1 60); do
+    if "$labctl" ssh "$vm" -- 'timedatectl show -p NTPSynchronized --value' 2>/dev/null \
+         | grep -qx yes; then
+      echo "  horloge de $vm synchronisée (après $essai essai(s))"
+      return 0
+    fi
+    sleep 5
+  done
+  fail "l'horloge de $vm n'est pas synchronisée : tout écart mesuré accuserait le README à tort"
+}
+
 installer() {
   inventory "$poste_vm" >/dev/null
   announce "les commandes du README, dans leur ordre, sur une machine nue"
+  attendre_horloge "$poste_vm"
   # L'ORACLE DU PREMIER CRITÈRE DE #149. Les commandes ne sont pas recopiées
   # ici : elles sont LUES dans le README publié, celui qu'un inconnu voit en
   # arrivant sur le dépôt, et jouées dans son ordre. Un harnais qui porterait
@@ -286,7 +311,7 @@ python3 - <<'PY'
 import re, pathlib
 texte = pathlib.Path('/root/README.md').read_text()
 debut = texte.index('## Installer (Linux)')
-fin = texte.index('### Ce que l'application vous demandera', debut)
+fin = texte.index('### Ce que l\'application vous demandera', debut)
 blocs = re.findall(r'\`\`\`bash\n(.*?)\`\`\`', texte[debut:fin], re.S)
 lignes = [ligne for bloc in blocs for ligne in bloc.strip().split('\n') if ligne.strip()]
 if not lignes:
@@ -429,7 +454,7 @@ rm -f /etc/sudoers.d/90-inconnu
 dpkg-query -W your-cloud-server >/dev/null 2>&1 && { echo "FAILED: le paquet survit" >&2; exit 1; }
 [ -e /etc/your-cloud ] && { echo "FAILED: la configuration survit" >&2; exit 1; }
 echo "SERVEUR_RENDU_OK"'
-  echo "REMOVE_OK — le poste se rend par: labctl revert lab-vps vierge"
+  echo "REMOVE_OK — le poste se rend par: labctl revert lab-vps clean"
 }
 
 workdir=$(mktemp -d)

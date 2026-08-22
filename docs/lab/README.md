@@ -598,6 +598,23 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   distribution ou un acte futur allouant un PTY rouvriraient la question.
   Rejouable par `tests/lab/v0.3.0/sudo-io-logging/prove`.
 
+- [`v0.3.0` — la publication de l'installation sans préparation, depuis la page Releases](v0.3.0-from-releases.md) :
+  passage du 22 août 2026 sur `lab-vps` (le poste) et `lab-machine-1` (le
+  serveur). **Première fois que cette preuve se joue sur un serveur dont le
+  compte n'a rien reçu** : ni retrait du groupe `sudo`, ni entrée `NOPASSWD`.
+  `ECARTS_README=0` — les quatre commandes lues dans le README publié suffisent
+  —, l'Assistant installé rend `VERIFIED version=0.3.0` sur le lot qu'il
+  transporte, et « Créer une infrastructure » mène au Controller actif en
+  **28 s**, en deux consentements. Le zéro n'est pas muet : le même harnais a
+  rendu `ECARTS_README=1` au passage précédent, en nommant la commande fautive.
+  Relevé indépendant : une seule unité active, `NRestarts=0`. Deux faux écarts
+  mesurés et gardés — une apostrophe du titre de section qui cassait le parseur
+  du README, et une horloge revenue avec l'instantané (sept heures quarante de
+  retard) qui faisait refuser la signature du dépôt et accusait la page.
+  Limites : le `.deb` n'est pas reproductible — seul le lot serveur embarqué
+  l'est —, et le résidu de pose de #156 est constaté.
+  Rejouable par `tests/lab/v0.1.3/from-releases/prove all`.
+
 - [`v0.2.0` — la publication du renommage, depuis la page Releases](v0.2.0-from-releases.md) :
   passage du 21 août 2026 sur `lab-vps` (le poste) et `lab-machine-1` (le
   serveur). Premier rejeu de cette preuve **sans aucun écart** : `ECARTS_README=0`,
