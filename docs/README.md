@@ -18,6 +18,8 @@ indique où lire une information et évite de charger tout le dépôt pour répo
 | Comprendre l'amorçage et le remplacement du Controller | [`architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md`](architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md) |
 | Connaître la frontière de la chaîne d'observation, puis ses appels, données et états | [`architecture/CHAINE-D-OBSERVATION.md`](architecture/CHAINE-D-OBSERVATION.md) |
 | Savoir ce que Your Cloud peut faire d'un service, et pourquoi | [`architecture/SERVICES-DECOUVERTE-ET-REPRISE.md`](architecture/SERVICES-DECOUVERTE-ET-REPRISE.md) |
+| Connaître la frontière du réseau interne : qui parle à qui, et sous quelle autorisation | [`architecture/RESEAU.md`](architecture/RESEAU.md) |
+| Connaître la frontière de l'exposition publique et le sort des identités présentées | [`architecture/POINT-D-ENTREE.md`](architecture/POINT-D-ENTREE.md) |
 | Comprendre comment déployer, publier ou migrer un service | [`architecture/CYCLE-DE-VIE-DES-SERVICES.md`](architecture/CYCLE-DE-VIE-DES-SERVICES.md) |
 | Contribuer ou travailler avec un agent | [`contribution/README.md`](contribution/README.md) |
 | Comprendre comment le dépôt est lu avant d'agir | [`contribution/COMPRENDRE-LE-PROJET.md`](contribution/COMPRENDRE-LE-PROJET.md) |
