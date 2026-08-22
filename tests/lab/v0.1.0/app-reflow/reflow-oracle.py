@@ -57,7 +57,7 @@ CONTROL_SELECTOR = 'button, a[href], input, select, textarea, [tabindex]:not([ta
 
 # The seven contractual views of `docs/objectifs/v1/CONTRAT-V0.0.3.md`, plus the
 # state of the first one that displays the two local secrets, plus the eighth
-# view `docs/architecture/RESPONSABILITE-EXTERNE.md` adds and the ninth
+# view `docs/architecture/SERVICES-DECOUVERTE-ET-REPRISE.md` adds and the ninth
 # `docs/architecture/SERVICE-UTILISATEUR.md` adds — each named where it was
 # added rather than in the older contract, because an increment that rewrote
 # another's contract would erase what that one had proven. Each case
