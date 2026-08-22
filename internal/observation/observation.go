@@ -15,7 +15,7 @@ const (
 	// SchemaVersion identifies the only accepted host-health wire schema.
 	SchemaVersion = 1
 	// DaemonVersion is the exact producer version accepted by the Relay.
-	DaemonVersion = "v0.2.0"
+	DaemonVersion = "v0.3.0"
 	// Profile identifies the fixed collector set.
 	Profile = "host-health.v1"
 	// CollectionInterval is the candidate cadence measured by the LAB proof.
