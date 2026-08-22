@@ -433,14 +433,36 @@ case "$command" in
   remove) do_remove ;;
   all)
     status=0
+    # **Le sous-shell est une instruction NUE, encadrée de `set +e`, et son
+    # statut se lit dans `$?`.** Il était à gauche d'un `||`, et c'est un
+    # vert-qui-ment mesuré le 22 août 2026 : `errexit` est supprimé pour toute
+    # commande placée là, et cette suppression **entre dans le sous-shell**.
+    # Les six phases couraient donc jusqu'au bout même quand la première
+    # échouait, et le statut rendu était celui de `do_mutate` — un
+    # `PROVE_ENROLMENT_BOUNDS_OK` pouvait s'imprimer sur un montage qui n'avait
+    # jamais eu lieu.
+    #
+    # Réarmer `set -e` À L'INTÉRIEUR ne suffit pas : mesuré, `( set -e; a; b )
+    # || status=$?` laisse `b` courir après l'échec de `a` exactement comme
+    # sans lui. Ce qui répare est de sortir le sous-shell du contexte
+    # conditionnel — c'est la forme que `v0.1.2/command-path` emploie déjà.
+    #
+    # Les six phases restent dans UN seul sous-shell : elles se passent de
+    # l'état, et une par sous-shell le perdrait.
+    set +e
     (
+      set -e
       do_artifact
       do_setup
       do_estate
       do_refuse
       do_agree
       do_mutate
-    ) || status=$?
+    )
+    status=$?
+    set -e
+    # Le démontage court quelle que soit l'issue, et n'efface pas un rouge
+    # déjà constaté : `||` n'assigne que s'il échoue lui-même.
     do_remove || status=$?
     [[ $status -eq 0 ]] || exit "$status"
     echo
