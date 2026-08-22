@@ -149,6 +149,17 @@ annoncées sont exécutées, les limites restantes sont nommées et les document
 canoniques concernés sont propagés. Une preuve manuelle indique ses
 préconditions, son action, son résultat attendu et son résultat observé.
 
+**Fermer l'issue fait partie du geste de fusion, et rien ne le fera à votre
+place.** Le style de sujet de ce dépôt est `type(portée): action (#N)`, où
+`(#N)` est une **référence** et non un mot-clé : seuls `Closes`, `Fixes` et
+`Resolves` ferment. Le mot-clé placé dans le corps d'une pull request ne ferme
+que si GitHub exécute lui-même la fusion — or l'historique reste linéaire et
+les branches atterrissent en avance rapide depuis le poste. Les deux
+conventions se combinent donc en un silence : vingt-deux issues sont restées
+ouvertes alors que leur travail était sur `main`, certaines depuis des
+semaines. Après avoir poussé `main`, fermer l'issue et nommer son commit de
+fusion dans un commentaire.
+
 Un blocage externe ne transforme pas un travail non prouvé en travail terminé.
 L'issue reste ouverte ou porte explicitement son blocage et la prochaine action
 sûre. Une issue parente n'est fermée que lorsque toutes les sous-issues exigées
