@@ -21,7 +21,7 @@ _Avoid_: « machine partagée », car deux infrastructures ne détiennent jamais
 **Service**:
 Application ou capacité que l'utilisateur veut exécuter sur une ou plusieurs machines.
 
-<!-- coherence: V1-APP-ACCESS:start -->
+<!-- coherence: APP-ACCESS:start -->
 **Your Cloud**:
 Produit formé par une App et un ou plusieurs Controllers, sans confondre leur interface et leur autorité.
 
@@ -34,7 +34,7 @@ n'autorise rien par elle-même.
 
 **Controller**:
 Backend privé d'autorité d'une seule infrastructure, chargé de ses utilisateurs, de son état métier, de ses plans et de leur coordination. Il expose une API authentifiée sur sa seule adresse du réseau d'accès, jamais nu sur Internet, et n'héberge aucun frontend.
-<!-- coherence: V1-APP-ACCESS:end -->
+<!-- coherence: APP-ACCESS:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 **Amorçage**:
@@ -111,7 +111,7 @@ Période annoncée après une bascule pendant laquelle l'ancien état reste cons
 Événement après lequel restaurer simplement l'ancien placement ou l'ancienne route pourrait perdre ou rendre incohérentes des données nouvelles.
 <!-- coherence: SERVICE-LIFECYCLE:end -->
 
-<!-- coherence: V1-OBSERVATION:start -->
+<!-- coherence: OBSERVATION-CHAIN:start -->
 **Observation ancienne**:
 Dernier état reçu d'une machine dont l'âge dépasse la limite annoncée et qui ne doit plus être présenté comme actuel.
 
@@ -120,7 +120,7 @@ Sélection approuvée d'informations nommées que le Daemon peut relever sur des
 
 **Lacune d'observation**:
 Intervalle signalé pour lequel le tampon local n'a pas pu conserver toutes les observations en attente.
-<!-- coherence: V1-OBSERVATION:end -->
+<!-- coherence: OBSERVATION-CHAIN:end -->
 
 **Découverte**:
 Ce que le Daemon relève de lui-même sur une machine enrôlée, sans rien recevoir d'en haut : les unités systemd et les ports en écoute. Un service découvert est identifié par son **nom d'unité ou de conteneur, jamais par son port** — il redémarre ou change de port sans cesser d'être le même service.

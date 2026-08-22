@@ -119,7 +119,7 @@ installés par défaut. Une infrastructure peut ne choisir aucun de ces profils 
 un service placé autrement reste externe tant qu'un parcours géré dédié n'est
 pas pris en charge.
 
-<!-- coherence: V1-APP-ACCESS:start -->
+<!-- coherence: APP-ACCESS:start -->
 L'App, le Controller et le Relay restent hors du chemin emprunté par le
 trafic Web vers les services : la panne de leurs processus ne doit pas arrêter
 un service hébergé sur une autre machine. La perte d'un hôte interrompt
@@ -224,7 +224,7 @@ mécanisme système ou intégré et reste postérieur à `v0.1.0`, donc hors de
 passerelle Web publique et un frontend navigateur pourront être étudiés comme un
 mode futur distinct, sans autorité d'administration ni secret de machine. Les
 services publiés conservent leur propre accès HTTPS sans WireGuard.
-<!-- coherence: V1-APP-ACCESS:end -->
+<!-- coherence: APP-ACCESS:end -->
 
 Dans le scénario de référence, les deux profils de service suivent un autre
 chemin. Leurs noms DNS pointent vers la même IP du VPS et Traefik reçoit les deux
@@ -501,7 +501,7 @@ budget restent séparés. Une machine non candidate ne reçoit aucun manifeste
 Relay exploitable et refuse ce mode avant l'ouverture d'un port.
 <!-- coherence: AGENT-AUTHORITY:end -->
 
-<!-- coherence: V1-OBSERVATION:start -->
+<!-- coherence: OBSERVATION-CHAIN:start -->
 ## Observer sans ouvrir une porte
 
 ```text
@@ -541,7 +541,7 @@ observation.
 À l'avenir, une source d'observation nécessitant plus de droits demandera un
 contrat local borné et une justification propre. Le Daemon entier ne devient
 pas root pour faciliter une nouvelle métrique.
-<!-- coherence: V1-OBSERVATION:end -->
+<!-- coherence: OBSERVATION-CHAIN:end -->
 
 ## Gestion explicite, jamais découverte du LAN
 

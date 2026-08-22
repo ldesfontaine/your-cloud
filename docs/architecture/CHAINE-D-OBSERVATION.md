@@ -9,7 +9,7 @@
 > commits et résultats d'exécution.
 
 Depuis le 22 août 2026, ce document est la **source canonique** de la décision
-transverse `V1-OBSERVATION` au sens du
+transverse `OBSERVATION-CHAIN` au sens du
 [registre de cohérence](../projet/COHERENCE.md). Les énoncés qui la fixent
 vivaient dans l'objectif `v0.1.0`, désormais atteint : ils ont été rapatriés
 ici sans être modifiés.
@@ -248,7 +248,7 @@ fichiers qu'après son implémentation réelle.
 
 <!-- coherence: AGENT-AUTHORITY:end -->
 
-<!-- coherence: V1-APP-ACCESS:start -->
+<!-- coherence: APP-ACCESS:start -->
 ## Chemin Controller–Relay–App
 
 La séparation des responsabilités et le sens de lecture ci-dessous sont des
@@ -442,9 +442,9 @@ après panne ou restart, reprend à la demande avec un backoff
 à 128 Kio. Le Controller initial reste en lecture seule : aucun SSH, Ansible,
 plan appliqué, SSO obligatoire, session utilisateur publique ou canal d'action
 n'est ajouté au Relay.
-<!-- coherence: V1-APP-ACCESS:end -->
+<!-- coherence: APP-ACCESS:end -->
 
-<!-- coherence: V1-OBSERVATION:start -->
+<!-- coherence: OBSERVATION-CHAIN:start -->
 ## Contrat d'observation du Daemon
 
 Les données, la vérification d'un élément externe et les choix de l'interface
@@ -873,7 +873,7 @@ refus par défaut appliquent moindre privilège, réduction de surface, séparat
 des responsabilités et défense en profondeur. Ils contribuent aux mesures de
 cryptographie, contrôle d'accès, continuité, développement sûr et mesure
 d'efficacité de NIS2 sans constituer une déclaration de conformité.
-<!-- coherence: V1-OBSERVATION:end -->
+<!-- coherence: OBSERVATION-CHAIN:end -->
 
 ## Sources pour aller plus loin
 
