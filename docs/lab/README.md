@@ -519,6 +519,33 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
 
 ## Rapports exécutés
 
+- [`v0.1.3` — le parcours d'un inconnu, depuis la page Releases](v0.1.3-from-releases.md) :
+  passage du 20 août 2026 sur `lab-vps` (le poste) et `lab-machine-1` (le
+  serveur). Le parcours aboutit — **mais pas depuis la page** : un inconnu qui
+  suit littéralement ce qu'elle publie est arrêté dès la deuxième commande, et
+  la vérification qu'elle promet lui est inatteignable. **Six écarts mesurés**,
+  dont deux bloquants du README et deux qui appartiennent au produit. Une fois
+  l'installation faite par la commande que la page ne donne pas, le trajet mène
+  au Controller actif en 30 secondes — mais sur une configuration de compte que
+  **rien ne documentait**. C'est ce rapport qui a produit `#150` et `#157`, et
+  le rejeu du soir a rendu les trois critères tenus.
+- [`v0.1.3` — la preuve du palier sans fixture : l'IHM réelle jusqu'au Controller](v0.1.3-controller-install.md) :
+  passages des 19 et 20 août 2026. Le rejeu complet depuis le candidat
+  reconstruit rend « Le Controller est actif sur la machine. », et l'unité l'est
+  réellement — plus aucune fixture sur le trajet, l'écran réel est piloté
+  jusqu'au bout. Limites nommées : la sélection d'identité d'agent au clavier
+  reste hors de ce pilotage (couverte côté transport par `#52-#54`), et aucun
+  mécanisme n'atteste qu'un œil humain ait lu quoi que ce soit — les instruments
+  attestent ce que les surfaces rendent, jamais une lecture.
+- [`v0.1.3` — le lot embarqué, trouvé et jugé par l'Assistant installé](v0.1.3-embedded-bundle.md) :
+  passage du 15 août 2026. L'Assistant **installé** trouve le lot serveur que
+  son propre paquet transporte, depuis sa position attestée par `/proc/self/exe`,
+  et le juge contre l'ancre scellée dans son binaire : `VERIFIED`, puis trois
+  refus nommés — un octet de manifeste altéré, un octet d'artefact altéré, le
+  même binaire copié ailleurs. Ferme les deux premières limites déclarées du
+  palier précédent : l'ancre n'est plus déposée par un harnais, et le lot n'est
+  plus embarqué par autre chose que l'empaquetage du produit.
+
 - [`v0.2.0` — la publication du renommage, depuis la page Releases](v0.2.0-from-releases.md) :
   passage du 21 août 2026 sur `lab-vps` (le poste) et `lab-machine-1` (le
   serveur). Premier rejeu de cette preuve **sans aucun écart** : `ECARTS_README=0`,
