@@ -402,14 +402,14 @@ preuves, puis #35 porte leur intégration avec #43 et #45.
 
 ### Élévation, arrêt et risque résiduel
 
-Avec un compte non-root, le helper tente d'abord l'action exacte avec
-`sudo -n -- <chemin absolu autorisé>`. Si `sudo` exige une authentification, le
-mot de passe est recueilli dans le dialogue natif puis envoyé une seule fois,
-sans PTY, sur l'entrée chiffrée de la session SSH vers une commande fixe
-`sudo -k -S -p <sentinelle> -- <chemin absolu autorisé>`. Il n'existe ni relance
-automatique, ni shell, ni interpolation de commande. L'opération est refusée si
-la politique distante ne permet pas d'établir cette capacité exacte ou si sa
-journalisation d'entrée peut capturer le secret.
+Avec un compte non-root, le helper lit d'abord la politique sans rien dépenser
+— `sudo -N -n -l -l`, sans PTY, sous `LC_ALL=C` et à sortie bornée. Si `sudo`
+exige une authentification, le mot de passe est recueilli dans le dialogue natif
+puis envoyé une seule fois, sans PTY, sur l'entrée chiffrée de la session SSH
+vers une commande fixe `sudo -k -S -p <sentinelle> -- <chemin absolu autorisé>`.
+Il n'existe ni relance automatique, ni shell, ni interpolation de commande.
+L'opération est refusée si la politique distante ne permet pas d'établir cette
+capacité exacte.
 
 Sur une machine dont la politique n'autorise pas à lire le listing des droits
 sans mot de passe — **ce qui est la configuration par défaut de Debian** —
@@ -417,6 +417,41 @@ l'établissement de la capacité exacte exige d'envoyer le secret. **Ce contrat
 l'autorise**, à l'intérieur de la séquence approuvée et sous les bornes déjà
 posées : le secret a été prêté par l'humain dans le dialogue natif pour cette
 séquence, et il meurt avec elle.
+
+**Amendement du 22 août 2026 — la lecture payée, et ce qui la borne.** Ce
+paragraphe disait ce que le contrat autorise ; voici la forme sous laquelle le
+produit le fait. La politique est relue par une commande fixe de plus,
+`sudo -k -S -p <sentinelle> -l -l`, qui demande **le même listing** que le
+prévol non secret et le remet **au même juge** : seule la façon de l'obtenir
+change, jamais ce qui est jugé. Ses drapeaux sont ceux de l'élévation, et pour
+les mêmes raisons — `-k` jette l'horodatage, donc la lecture s'authentifie
+réellement au lieu de profiter de celle d'un autre ; `-S` lit le secret sur le
+canal ; `-p` impose la sentinelle, qui est ce qui rend toute autre invite
+reconnaissable.
+
+Quatre bornes, et aucune n'est nouvelle sauf la dernière :
+
+- **un seul envoi** — le secret part une fois pour la lecture, et l'élévation
+  qui suit dépense le même, jamais un second recueilli ailleurs ;
+- **pas de troisième tour** — une politique qui réclame encore une
+  authentification *après* avoir reçu le secret est un refus dur, nommé comme
+  tel ; il n'existe aucune boucle ;
+- **le terminal reste un refus** — une politique qui exige un tty est refusée
+  **avant** que le secret ne parte, parce qu'aucun secret n'en fabrique un.
+  C'est un refus voisin du précédent, et il ne tombe pas avec lui ;
+- **le budget de canaux passe de trois à quatre**, ce qui est le compte exact
+  de la conversation la plus longue : la sonde d'identité, le prévol non
+  secret, le prévol payé, et une des deux élévations. Un budget qui aurait pris
+  une marge cesserait de dire ce qu'il dit.
+
+**Ce que la lecture payée retire à un audit.** Le budget d'une session servait
+aussi une seconde garantie : une session d'audit dépensait exactement ses trois
+canaux d'observation, si bien qu'il ne lui en restait aucun pour élever. Cette
+garantie reposait sur une **égalité de chiffres** entre deux conversations sans
+rapport, et l'ajout d'un canal l'a défaite. Ce qui la remplace est plus faible
+et se tient seul : ce qui reste après un audit est plus court que la plus courte
+élévation. Un audit ne peut donc toujours pas élever — non plus par épuisement,
+mais par insuffisance — et c'est exercé en essayant plutôt qu'en comptant.
 
 Un état antérieur de ce contrat refusait ce pas — « ne pas envoyer un secret
 pour savoir si l'on a le droit de l'envoyer » — et en assumait la conséquence :
@@ -463,6 +498,56 @@ tenter à l'aveugle.
   compromise** verra ce secret. Elle l'aurait vu à l'acte suivant — le refus ne
   protégeait pas de cela. La borne de vie du secret est **inchangée** : il meurt
   à la fin de la séquence, sur succès comme sur échec.
+
+#### Justification de sécurité de la séparation des refus et du budget
+
+Cette seconde justification ne recouvre pas la précédente : celle-ci porte sur
+la **décision** d'autoriser la lecture payée, celle-là sur ce que sa mise en
+œuvre a dû séparer pour ne pas emporter autre chose avec elle.
+
+- **Scénario et actifs** : le mot de passe `sudo` d'un compte d'administration
+  ordinaire, et le nombre de commandes qu'une session d'accès personnel peut
+  faire exécuter sur la machine cible.
+- **Menace ou échec traité** : deux, distinctes. Qu'un refus rendu franchissable
+  en rende un autre franchissable **par la même ligne de code** — les deux
+  partageaient une table de marqueurs. Et qu'un budget desserré pour la
+  conversation nouvelle laisse à une conversation ancienne — l'audit — de quoi
+  faire ce qu'elle ne devait pas pouvoir faire.
+- **Alternatives réellement considérées** : *laisser les quatre marqueurs
+  ensemble et lever le refus commun* — écarté, il aurait envoyé le secret à une
+  politique qui exige un terminal, c'est-à-dire une dépense sans contrepartie
+  possible ; *garder un seul refus et le franchir seulement si aucun marqueur de
+  terminal n'est présent* — écarté, la condition aurait vécu chez l'appelant, où
+  rien ne la rend exerçable, alors qu'un nom de refus se teste ; *donner au
+  budget une marge plutôt qu'un compte exact* — écarté, un budget avec marge
+  cesse d'être le compte de ce qui peut s'ouvrir, et c'est cela seul qui en fait
+  une borne.
+- **Portée d'accès accordée et moindre privilège** : la portée des commandes est
+  **inchangée** — les cinq commandes fixes restent des constantes du crate, dont
+  le constructeur est interne, et la nouvelle demande le même listing que
+  l'ancienne. Le budget augmente d'exactement un, qui est le canal ajouté.
+- **OWASP** : valeur sûre par défaut — le marqueur de terminal est lu **avant**
+  celui du secret, si bien qu'une politique qui répond les deux reçoit celui
+  qu'aucun secret ne lève ; séparation des responsabilités — le module de
+  politique juge un listing, l'appelant décide seul si un prix se paie ;
+  réduction de surface — un refus reconnu par le message de `sudo` retombe sur
+  la garde d'invite si ce message change, plutôt que de s'ouvrir.
+- **NIS2** : contrôle d'accès — la conversation maximale est énumérée et non
+  dérivée d'une arithmétique ; développement sûr — les deux propriétés sont des
+  tests, pas des commentaires ; gestion d'incident — quatre refus nomment
+  désormais leur cause et leur geste correcteur, là où deux se taisaient.
+- **Tests normaux et hostiles** : la table des refus nommés, exercée hors LAB ;
+  les trois issues du prévol non secret sur les octets que `sudo` écrit
+  réellement ; le compte `requiretty` du périmètre, refusé **sans qu'aucun
+  secret ne parte** — deux canaux dépensés, aucune décision de mot de passe
+  prise ; le compte Debian ordinaire mené au terme en quatre canaux ; l'audit
+  qui essaie d'élever et se voit refuser.
+- **Risque résiduel, assumé et nommé** : le refus « mot de passe refusé » se
+  reconnaît sur un message de `sudo` qu'une configuration peut renommer. Dans ce
+  cas, le refus **subsiste** sous le nom d'invite inattendue et perd seulement sa
+  phrase ; il ne s'ouvre pas. Reste explicitement non garanti : qu'un audit
+  laissant un canal libre ne serve jamais à rien d'autre — ce qui est établi
+  est seulement qu'il ne suffit pas à élever.
 
 **Le nominal est le compte que Debian crée à son installation, tel quel** :
 membre du groupe `sudo`, protégé par mot de passe, sans aucune préparation. Le

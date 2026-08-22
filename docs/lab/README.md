@@ -555,7 +555,11 @@ dans [son README](../../tests/lab/v0.1.2/clean-removal/README.md).
   placé derrière le secret s'y retrouve, le secret jamais : c'est ce contrôle
   qui rend la mesure concluante plutôt qu'un `stdin` vide. Le refus
   `InputLoggingActive` est retiré au profit d'un invariant local des actes, dans
-  les deux sens. Bornes nommées : une autre version de `sudo`, une autre
+  les deux sens. **Seconde mesure le même jour, pour `#218`** : le prévol payé
+  `sudo -k -S -p … -l -l` n'ouvre **aucune** session de journal — établi par un
+  comptage avant/après, qui distingue « le secret n'y est pas » de « il n'y a
+  pas de journal ». La mesure vaut sous `Defaults use_pty`, le défaut de
+  Debian 13. Bornes nommées : une autre version de `sudo`, une autre
   distribution ou un acte futur allouant un PTY rouvriraient la question.
   Rejouable par `tests/lab/v0.3.0/sudo-io-logging/prove`.
 

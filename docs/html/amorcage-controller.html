@@ -1,4 +1,4 @@
-<!-- dérivé de ../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md @ sha256:e71ef8825739abeacc1f3176b30c2bc5c76689fb22d59eaeda31f59482e21378 -->
+<!-- dérivé de ../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md @ sha256:e026a33ecc0bea590505f3ad87eccb0c27842c47653b90306ee9f689516ccf8f -->
 <!doctype html>
 <html lang="fr">
 <head>
@@ -77,7 +77,7 @@
       </article>
       <article class="card warning">
         <h3>Repli et élévation bornés</h3>
-        <p>Le repli accepte seulement une clé <code>OPENSSH PRIVATE KEY</code> chiffrée avec bcrypt et <code>aes256-ctr</code>, Ed25519 ou RSA d’au moins 3072 bits. <code>sudo -n</code> est tenté d’abord ; un mot de passe éventuel passe une seule fois, sans PTY ni relance, vers la commande absolue autorisée.</p>
+        <p>Le repli accepte seulement une clé <code>OPENSSH PRIVATE KEY</code> chiffrée avec bcrypt et <code>aes256-ctr</code>, Ed25519 ou RSA d’au moins 3072 bits. La politique est lue d’abord sans rien dépenser (<code>sudo -N -n -l -l</code>). Quand la machine refuse de la dire sans mot de passe — la configuration par défaut de Debian — le secret déjà consenti paie cette lecture, puis l’élévation : un seul envoi, sans PTY ni relance, vers des commandes absolues autorisées. Une politique qui réclame encore une authentification après l’avoir reçu est un refus dur, et une politique qui exige un terminal est refusée <em>avant</em> que le secret ne parte.</p>
         <p>Les buffers propres au helper sont zéroïsés ; les protections anti-dump restent best effort. Root, administrateur, débogueur arbitraire, IME ou accessibilité hostile, copies internes des widgets et dumps noyau restent hors garantie.</p>
       </article>
     </div>

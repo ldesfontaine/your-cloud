@@ -84,10 +84,21 @@ pub const MAX_PROBE_STREAM_BYTES: usize = 4096;
 ///
 /// The budget belongs to the session rather than to whoever drives it: it is
 /// counted here, spent before a channel is opened rather than after it
-/// succeeded, and never replenished. Three is the whole conversation of #54 —
-/// the identity probe, the policy preflight, the single elevation — and a
-/// fourth request is refused instead of being negotiated.
-pub const MAX_EXEC_CHANNELS: usize = 3;
+/// succeeded, and never replenished. A request beyond it is refused instead of
+/// being negotiated.
+///
+/// **Passé de trois à quatre le 22 août 2026 (#218), et ce n'est pas un
+/// desserrage.** La conversation a gagné une étape, exactement une : le prévol
+/// que le secret paie, sans lequel le compte que Debian crée à son
+/// installation reste inatteignable. Le chiffre reste **le compte exact** de
+/// ce qui peut s'ouvrir, ce qui est toute la propriété — un budget qui aurait
+/// pris une marge cesserait de dire ce qu'il dit.
+///
+/// La conversation maximale, nommée pour qu'un cinquième canal se voie :
+/// la sonde d'identité, le prévol non secret, le prévol authentifié, et
+/// **une** des deux élévations. Les deux élévations s'excluent, si bien que
+/// cinq commandes existent pour quatre canaux.
+pub const MAX_EXEC_CHANNELS: usize = 4;
 
 /// Longest the polite disconnect may take once the session is over. The socket
 /// is released either way; this only bounds the courtesy.
@@ -1290,16 +1301,40 @@ mod tests {
         assert!(!PROBE_COMMAND.contains('\n'));
     }
 
-    /// The whole conversation of a session is three channels, and the budget is
-    /// declared here rather than counted by whoever drives one.
+    /// Le budget est **le compte exact** de la conversation maximale, et il est
+    /// déclaré ici plutôt que compté par qui conduit une session.
+    ///
+    /// La conversation est énumérée plutôt que dérivée d'une arithmétique sur
+    /// la longueur de la table : `CHANNEL_COMMANDS.len() == MAX + 1` resterait
+    /// vrai par coïncidence si l'on ajoutait à la fois une commande et une
+    /// exclusion, et un budget qui se vérifie par coïncidence ne se vérifie
+    /// pas. Ce test nomme donc les quatre canaux qui peuvent coexister, et la
+    /// seule paire qui s'exclut.
     #[test]
-    fn a_session_may_open_three_channels_and_no_more() {
+    fn the_budget_is_the_exact_count_of_the_longest_conversation() {
         use super::super::elevation;
 
-        assert_eq!(MAX_EXEC_CHANNELS, 3);
-        // The identity probe, the policy preflight, and exactly one of the two
-        // elevations: four commands exist, three of them ever run together.
-        assert_eq!(elevation::CHANNEL_COMMANDS.len(), MAX_EXEC_CHANNELS + 1);
+        let longest = [
+            elevation::IDENTITY,
+            elevation::PREFLIGHT,
+            elevation::PREFLIGHT_WITH_PASSWORD,
+            elevation::ELEVATE_WITH_PASSWORD,
+        ];
+        assert_eq!(MAX_EXEC_CHANNELS, longest.len());
+        // Toute commande de la table est soit dans cette conversation, soit
+        // l'élévation que celle-ci exclut. Une sixième commande rougit ici.
+        for command in elevation::CHANNEL_COMMANDS {
+            assert!(
+                longest.contains(&command) || command == elevation::ELEVATE_WITHOUT_PASSWORD,
+                "{} n'appartient à aucune conversation bornée",
+                command.as_str()
+            );
+        }
+        assert_eq!(
+            elevation::CHANNEL_COMMANDS.len(),
+            longest.len() + 1,
+            "les deux élévations s'excluent, et rien d'autre ne s'exclut"
+        );
         assert_eq!(elevation::IDENTITY.as_str(), PROBE_COMMAND);
     }
 

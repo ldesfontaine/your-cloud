@@ -399,11 +399,22 @@ export type LedgerItemView = {
 ///
 /// Le vocabulaire est clos des deux côtés : le protocole n'en émet pas
 /// d'autre, et la table des phrases de la vue est totale par construction du
-/// type. Ces deux refus rendaient « L'Assistant n'a pas pu conclure cette
+/// type. Ces refus rendaient « L'Assistant n'a pas pu conclure cette
 /// session » — la phrase de celui qui n'a rien décidé — là où une décision
 /// avait été prise (n°157).
+///
+/// Deux causes s'y ajoutent le 22 août 2026 (n°218), et aucune n'est neuve
+/// dans le produit : elles étaient **confondues** avec la première. « Il faut
+/// un mot de passe » et « il faut un terminal » partageaient une table de
+/// marqueurs, et le mot de passe refusé se taisait entièrement. Servir le
+/// compte Debian ordinaire exigeait de les séparer, et les séparer sans les
+/// nommer les aurait rendues muettes.
 export type RefusalView = {
-  cause: "policy_unreadable_without_secret" | "policy_ambiguous";
+  cause:
+    | "policy_unreadable_without_secret"
+    | "policy_needs_terminal"
+    | "sudo_password_refused"
+    | "policy_ambiguous";
   /// L'existant à lire : les entrées vues, pour une politique ambiguë. Vide
   /// quand la cause se suffit à elle-même.
   detail: string;

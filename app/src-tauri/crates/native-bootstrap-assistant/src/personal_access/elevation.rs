@@ -3,11 +3,20 @@
 //!
 //! The deciding half of the `sudo` policy already exists: [`super::sudo_policy`]
 //! reads a listing and answers whether a password may travel at all. This
-//! module is the half that *acts* on that answer. It owns the three fixed
-//! commands the session may ever run, reads what they answered, and holds the
-//! one gate that turns those answers into an [`Elevation`].
+//! module is the half that *acts* on that answer. It owns the fixed commands
+//! the session may ever run, reads what they answered, and holds the one gate
+//! that turns those answers into an [`Elevation`].
 //!
-//! Three rules shape everything below.
+//! **Le 22 août 2026 (#218), ce module a cessé de traduire un refus en fin de
+//! parcours.** Une politique qui ne se lit pas sans mot de passe — la
+//! configuration par défaut de Debian — recevait un refus ; elle reçoit
+//! désormais un **prix**, que [`read_policy`] nomme et que le contrat autorise
+//! à payer dans la séquence déjà consentie. Une cinquième commande fixe est
+//! née de là, [`PREFLIGHT_WITH_PASSWORD`], qui demande le même listing au même
+//! juge. Le refus voisin — une politique qui veut un terminal — ne bouge pas :
+//! aucun secret ne fabrique un terminal.
+//!
+//! Trois règles façonnent tout ce qui suit.
 //!
 //! The commands are constants. Not one of them is assembled from a name, a
 //! path, a fingerprint or anything else that crossed a process boundary, and
@@ -102,10 +111,28 @@ pub const ELEVATE_WITHOUT_PASSWORD: FixedCommand =
 pub const ELEVATE_WITH_PASSWORD: FixedCommand =
     FixedCommand::fixed("/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -- /usr/bin/id -u");
 
+/// Le prévol que le secret paie, pour les politiques qui refusent de se dire
+/// sans lui — c'est-à-dire le compte que Debian crée à son installation.
+///
+/// C'est le **même listing**, jugé par le **même juge** : seule la façon de
+/// l'obtenir change. Les drapeaux sont ceux de [`ELEVATE_WITH_PASSWORD`], et
+/// pour les mêmes raisons exactement — `-k` jette l'horodatage, donc la
+/// lecture s'authentifie réellement au lieu de profiter de celle d'un autre ;
+/// `-S` lit le secret sur le canal plutôt que sur un terminal qui n'existe
+/// pas ; `-p` impose la sentinelle, qui est ce qui rend toute autre invite
+/// reconnaissable.
+///
+/// **Il n'y a pas de troisième tour.** Ce prévol part une fois, avec le seul
+/// secret que la séquence détient ; un listing qui redemande à s'authentifier
+/// après lui est un refus dur.
+pub const PREFLIGHT_WITH_PASSWORD: FixedCommand =
+    FixedCommand::fixed("/usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -l -l");
+
 /// Every command a personal session may ever run, in the order it may run them.
-pub const CHANNEL_COMMANDS: [FixedCommand; 4] = [
+pub const CHANNEL_COMMANDS: [FixedCommand; 5] = [
     IDENTITY,
     PREFLIGHT,
+    PREFLIGHT_WITH_PASSWORD,
     ELEVATE_WITHOUT_PASSWORD,
     ELEVATE_WITH_PASSWORD,
 ];
@@ -196,6 +223,15 @@ pub enum ElevationRefusal {
     /// A prompt this palier never asked for, or its own sentinel a second
     /// time — which is `sudo` asking again, and there is no second answer.
     UnexpectedPrompt,
+    /// La machine a refusé le mot de passe qu'on vient de lui donner.
+    ///
+    /// Reconnu sur ce que `sudo 1.9.16p2` écrit lui-même, mot pour mot
+    /// (mesuré). Il n'existe pas de second essai : le secret a été prêté une
+    /// fois, pour cette séquence. Ce refus existe parce que le geste de
+    /// l'humain est ici évident et n'appartient qu'à lui — retaper le mot de
+    /// passe — et qu'un « indisponible » muet le lui cacherait, sur le chemin
+    /// devenu nominal.
+    IncorrectPassword,
     /// The policy wants a terminal. This session allocates none, on purpose.
     TerminalRequired,
     /// A stream exceeded the bound its reader holds.
@@ -377,6 +413,83 @@ pub fn attest_policy(
     })
 }
 
+/// Ce que le prévol **non secret** a établi, en trois issues et pas deux.
+///
+/// La troisième est tout le changement de #218. Jusque-là, « la politique ne se
+/// lit pas sans le secret » était un refus, et il rendait inatteignable le
+/// compte que Debian crée à son installation — membre du groupe `sudo`,
+/// protégé par un mot de passe, sans aucune préparation. C'est la posture la
+/// plus répandue au monde, et le contrat d'amorçage promet de s'adapter à la
+/// machine plutôt que d'exiger qu'on l'affaiblisse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreflightVerdict {
+    /// Le listing est attesté, et rien n'a coûté un secret.
+    Attested(AttestedPolicy),
+    /// Lire la politique coûte le secret que l'humain a prêté pour cette
+    /// séquence. Ce n'est pas un verdict sur la politique : c'est un prix.
+    CostsTheSecret,
+    /// Tout le reste, chaque refus avec sa raison propre — et notamment celui
+    /// qui veut un terminal, qu'aucun secret ne lève.
+    Refused(ElevationRefusal),
+}
+
+/// Lit la politique sans rien dépenser, et dit laquelle des trois issues.
+///
+/// Le juge est le même que partout ailleurs : cette fonction ne rejuge rien,
+/// elle **traduit** un seul de ses refus en un prix à payer. Écrite à part de
+/// l'orchestration pour être exerçable sans session ni fenêtre.
+pub fn read_policy(
+    succeeded: bool,
+    output: &[u8],
+    truncated: bool,
+    scope: RequiredScope,
+) -> PreflightVerdict {
+    match attest_policy(succeeded, output, truncated, scope) {
+        Ok(attested) => PreflightVerdict::Attested(attested),
+        Err(ElevationRefusal::Policy(SudoRefusal::AuthenticationRequired)) => {
+            PreflightVerdict::CostsTheSecret
+        }
+        Err(refusal) => PreflightVerdict::Refused(refusal),
+    }
+}
+
+/// Atteste la politique sur le listing que le secret vient de payer.
+///
+/// Le listing est le même objet, jugé par le même [`attest_policy`] : ce qui
+/// change est ce qui l'entoure. Trois gardes le précèdent, dans cet ordre, et
+/// l'ordre est la garde :
+///
+/// 1. **un terminal réclamé** — le secret est parti pour rien, et aucun
+///    troisième geste n'y changerait quoi que ce soit ;
+/// 2. **une authentification encore réclamée** — c'est ici, et seulement ici,
+///    que `AuthenticationRequired` redevient une fin de parcours : il n'existe
+///    pas de troisième tour, et une boucle qui redemanderait le secret serait
+///    exactement le mur que ce palier élimine ;
+/// 3. **l'invite elle-même** — la sentinelle une fois et pas deux, par
+///    [`prompt_free`], qui est aussi ce qui reconnaît un mot de passe refusé.
+///
+/// Le listing se lit sur la **sortie standard** : l'erreur ne porte que
+/// l'invite, et la juger reviendrait à juger la question au lieu de la réponse.
+pub fn attest_policy_after_secret(
+    succeeded: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+    truncated: bool,
+    scope: RequiredScope,
+) -> Result<AttestedPolicy, ElevationRefusal> {
+    let answered = bounded(stderr)?;
+    if sudo_policy::demands_a_terminal(answered) {
+        return Err(ElevationRefusal::Policy(SudoRefusal::TerminalRequired));
+    }
+    if sudo_policy::demands_a_secret(answered) {
+        return Err(ElevationRefusal::Policy(
+            SudoRefusal::AuthenticationRequired,
+        ));
+    }
+    prompt_free(stderr)?;
+    attest_policy(succeeded, stdout, truncated, scope)
+}
+
 /// The one gate. Nothing else in this crate builds an [`Elevation`].
 ///
 /// Both halves are read here, from the same channel, and both must hold: the
@@ -554,6 +667,15 @@ fn prompt_free(stderr: &[u8]) -> Result<(), ElevationRefusal> {
             return Err(ElevationRefusal::TerminalRequired);
         }
     }
+    // Lu AVANT la sentinelle répétée, parce que c'est lui qui la répète : un
+    // mot de passe refusé fait redemander `sudo`, et « invite inattendue »
+    // nommerait le symptôme là où la cause est connue. Le nom n'est qu'un
+    // confort : si une configuration renomme ce message, la sentinelle
+    // comptée deux fois refuse toujours, une ligne plus bas. Une garantie
+    // faible et vraie plutôt qu'une forte et fausse.
+    if lowered.contains(REFUSED_PASSWORD_MARKER) {
+        return Err(ElevationRefusal::IncorrectPassword);
+    }
     if text.matches(PROMPT_SENTINEL).count() > 1 {
         return Err(ElevationRefusal::UnexpectedPrompt);
     }
@@ -573,6 +695,12 @@ const TERMINAL_MARKERS: [&str; 3] = [
     "sorry, you must have a tty",
     "no tty present",
 ];
+
+/// Ce que `sudo` écrit lui-même quand il a refusé le mot de passe reçu, mot
+/// pour mot depuis `sudo 1.9.16p2` sur Debian 13 : « sudo: 1 incorrect
+/// password attempt ». Le compte est omis du marqueur — c'est le seul mot qui
+/// varie.
+const REFUSED_PASSWORD_MARKER: &str = "incorrect password attempt";
 
 /// Answers that are not this palier's own prompt.
 ///
@@ -657,15 +785,43 @@ mod tests {
                 .as_str()
                 .ends_with(&format!("-- {ELEVATED_ACTION}")));
         }
-        // Only one of the four ever carries a password, and only that one asks
-        // `sudo` to read the channel.
+        // Deux des cinq lisent le canal, et **exactement** ces deux-là : la
+        // lecture que le secret paie, et l'élévation qu'il paie. Toute
+        // commande qui prend `-S` prend aussi `-k` et la sentinelle — sans
+        // `-k` elle profiterait de l'authentification d'une autre, sans `-p`
+        // son invite ne serait plus reconnaissable.
+        let reading_the_channel: Vec<&str> = CHANNEL_COMMANDS
+            .iter()
+            .map(|command| command.as_str())
+            .filter(|command| command.contains(" -S "))
+            .collect();
         assert_eq!(
-            CHANNEL_COMMANDS
-                .iter()
-                .filter(|command| command.as_str().contains(" -S "))
-                .count(),
-            1
+            reading_the_channel,
+            vec![
+                PREFLIGHT_WITH_PASSWORD.as_str(),
+                ELEVATE_WITH_PASSWORD.as_str()
+            ]
         );
+        for spending in reading_the_channel {
+            assert!(
+                spending.contains(" -k "),
+                "{spending} n'a pas jeté l'horodatage"
+            );
+            assert!(
+                spending.contains(&format!(" -p {PROMPT_SENTINEL} ")),
+                "{spending} n'impose pas la sentinelle"
+            );
+        }
+        // Les deux prévols demandent le MÊME listing : c'est ce qui permet au
+        // même juge de les lire, et une divergence ici ferait juger deux
+        // choses différentes sous un seul nom.
+        for preflight in [PREFLIGHT, PREFLIGHT_WITH_PASSWORD] {
+            assert!(
+                preflight.as_str().ends_with("-l -l"),
+                "{} ne demande pas le listing long",
+                preflight.as_str()
+            );
+        }
     }
 
     /// The property `access_verified` rests on: neither half of the pair is

@@ -30,13 +30,23 @@ const LEDGER_KIND_WORDS: Record<LedgerItemView["kind"], string> = {
 /// marche aujourd'hui (n°157, mesuré par le parcours d'un inconnu n°149).
 const REFUSAL_SENTENCES: Record<RefusalView["cause"], string> = {
   policy_unreadable_without_secret:
-    "L’entrée sudoers du compte prêté ne peut pas être lue sans son mot de passe — et " +
-    "c’est cette lecture qui permet de vérifier qu’y envoyer un mot de passe est sûr. " +
-    "L’Assistant s’arrête donc plutôt que d’envoyer un secret à une politique qu’il n’a " +
-    "pas pu attester. Ce qui marche aujourd’hui : prêter un compte dont l’entrée sudoers " +
-    "ne demande pas de mot de passe (NOPASSWD) et qui n’appartient pas au groupe sudo, ou " +
-    "prêter un accès root direct. Servir un compte à mot de passe est une dette nommée du " +
-    "produit, et elle est ouverte.",
+    "La machine refuse de dire l’entrée sudoers du compte prêté, même après avoir reçu " +
+    "son mot de passe. L’Assistant ne redemande pas : le mot de passe a été prêté une " +
+    "fois, pour cette séquence, et un second envoi ne serait pas un second consentement. " +
+    "Ce qui marche : vérifier que le compte possède bien une entrée sudoers sur cette " +
+    "machine — « sudo -l » depuis une session ouverte dessus le dit — ou prêter un accès " +
+    "root direct.",
+  policy_needs_terminal:
+    "La politique sudo de la machine exige un terminal (« requiretty »), et cette " +
+    "session n’en alloue aucun — c’est délibéré : un terminal rendrait l’invite de mot " +
+    "de passe imitable. Aucun mot de passe n’a été envoyé, parce qu’aucun n’y changerait " +
+    "quoi que ce soit. Le geste exact : retirer « Defaults requiretty » du sudoers de la " +
+    "machine, ou prêter un accès root direct.",
+  sudo_password_refused:
+    "La machine a refusé le mot de passe sudo. Rien n’a été installé, et le mot de passe " +
+    "a été détruit. Le geste : relancer le parcours et le retaper — c’est le mot de passe " +
+    "du compte prêté sur la machine cible, qui n’est pas nécessairement celui de cette " +
+    "session.",
   policy_ambiguous:
     "Le compte prêté porte plusieurs entrées sudoers, et rien ne dit laquelle s’applique : " +
     "l’Assistant refuse de deviner. Le geste exact : retirer le compte du groupe qui lui " +

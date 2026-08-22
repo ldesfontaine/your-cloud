@@ -485,9 +485,28 @@ pub const MAX_ATTESTED_PERMITS_BYTES: usize = 512;
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssistantRefusalCauseV1 {
-    /// Lister la politique exigerait déjà le mot de passe que l'attestation
-    /// existe pour protéger : `sudo` refuse de la dire sans lui.
+    /// La politique refuse de se dire **même avec le secret**.
+    ///
+    /// Cette cause a changé de sens le 22 août 2026 (#218), et c'est un
+    /// durcissement : elle disait « lister exigerait le mot de passe, donc
+    /// l'Assistant s'arrête », ce qui refusait le compte que Debian crée à son
+    /// installation. Le produit paie désormais cette lecture avec le secret
+    /// déjà consenti. Ne reste sous ce nom que la machine qui réclame encore
+    /// une authentification **après** l'avoir reçu — et il n'y a pas de
+    /// troisième tour.
     PolicyUnreadableWithoutSecret,
+    /// La politique exige un terminal, et cette session n'en alloue aucun.
+    ///
+    /// Elle empruntait la cause ci-dessus jusqu'au 22 août 2026, les deux
+    /// partageant une table de marqueurs. Rendre la première franchissable
+    /// sans nommer celle-ci l'aurait rendue muette : aucun secret ne fabrique
+    /// un terminal, et le geste correcteur n'est pas le même.
+    PolicyNeedsTerminal,
+    /// La machine a refusé le mot de passe reçu.
+    ///
+    /// Le seul refus dont le geste n'appartient qu'à l'humain et ne touche à
+    /// aucune configuration. Il naît avec le chemin devenu nominal.
+    SudoPasswordRefused,
     /// Le listing porte plusieurs entrées, et le produit n'en juge qu'une.
     PolicyAmbiguous,
 }

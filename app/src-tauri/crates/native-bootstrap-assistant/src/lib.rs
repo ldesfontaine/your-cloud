@@ -1369,36 +1369,13 @@ fn prove_administrator_elevation(
     )
     .map_err(|_| PromptOutcome::Unavailable)?;
 
-    let preflight = live
-        .run_channel(elevation::PREFLIGHT, None, deadline, guard)
-        .map_err(|_| PromptOutcome::Unavailable)?;
-    // A listing that succeeded is on the standard output; the reason a listing
-    // failed — a password required, a terminal required — is on the standard
-    // error. Whichever stream carries the answer is the stream #51 judges, and
-    // handing it the empty one would turn an explicit refusal into a shrug.
-    let succeeded = preflight.exit_status == 0;
-    let capture = if succeeded {
-        &preflight.stdout
-    } else {
-        &preflight.stderr
-    };
     // La portée exigée suit l'action que l'humain a approuvée : auditer ne
-    // demande que la sonde, installer exige toute commande. L'attestation juge
-    // aussi, sur le même listing, ce que l'entrée permettrait à une
-    // INSTALLATION — et cette portée est EXPORTÉE, réussite comme refus
-    // étroit : c'est elle que la route d'audit rapporte pour qu'un refus de
-    // pose ultérieur tombe avant toute fenêtre, et elle que le refus d'une
-    // pose sans audit nomme au lieu de se taire (arbitrage du 19 août 2026 —
-    // le refus expurgé en Unavailable laissait l'humain deviner, et l'écran
-    // disait « n'a pas pu conclure » là où un contrôle avait jugé).
-    let attested = policy_outcome(
-        elevation::attest_policy(
-            succeeded,
-            capture,
-            false,
-            elevation::RequiredScope::for_action(resolved.actions[0]),
-        ),
-        exports,
+    // demande que la sonde, installer exige toute commande.
+    let scope = elevation::RequiredScope::for_action(resolved.actions[0]);
+    // La politique, et le secret qu'elle a coûté — zéro sur une machine qui se
+    // laisse lire, un sur le compte que Debian crée à son installation.
+    let (attested, mut retained) = attested_policy(
+        live, resolved, deadline, expired, lease, guard, exports, scope,
     )?;
 
     // Le secret est RETENU plutôt qu'effacé à la commande, et c'est la
@@ -1415,22 +1392,30 @@ fn prove_administrator_elevation(
     // Un compte `root` direct ou une politique sans mot de passe ne retient
     // rien du tout : le cas strict reste le meilleur cas, il cesse simplement
     // d'être le seul.
-    let mut retained = installation::sequence::SpentSecret::none();
     let elevated = if attested.password_required {
-        let password = ask_sudo_password(resolved, deadline, expired, lease)?;
-        // Le mot de passe est une RÉPONSE de terminal : `sudo -S` le lit
-        // jusqu'à la fin de ligne, et cette fin de ligne fait partie de la
-        // réponse — c'est sa nature, nommée ici où le secret est écrit.
-        let report = live.run_channel(
-            attested.command,
-            Some(personal_access::session::ChannelInput::TerminalAnswer(
-                password.bytes(),
-            )),
-            deadline,
-            guard,
-        );
-        retained = installation::sequence::SpentSecret::holding(password);
-        report
+        // Le secret est déjà là : c'est lui qui a payé le listing. Le
+        // redemander serait une seconde fenêtre pour une seule permission.
+        match retained.bytes(secret::ProtectedSecret::bytes) {
+            // Le mot de passe est une RÉPONSE de terminal : `sudo -S` le lit
+            // jusqu'à la fin de ligne, et cette fin de ligne fait partie de la
+            // réponse — c'est sa nature, nommée ici où le secret est écrit.
+            Some(password) => live.run_channel(
+                attested.command,
+                Some(personal_access::session::ChannelInput::TerminalAnswer(
+                    password,
+                )),
+                deadline,
+                guard,
+            ),
+            // Impossible par construction : `attested_policy` ne rend un
+            // secret détruit qu'avec une politique qui n'en veut pas. La
+            // branche existe quand même, et elle détruit — la borne du secret
+            // ne dépend d'aucune sortie de portée, sur aucun chemin.
+            None => {
+                retained.destroy();
+                return Err(PromptOutcome::Unavailable);
+            }
+        }
     } else {
         live.run_channel(attested.command, None, deadline, guard)
     };
@@ -1455,6 +1440,124 @@ fn prove_administrator_elevation(
     }
 }
 
+/// Établit la politique distante, et rend le secret que cela a coûté.
+///
+/// Deux chemins, et le second est ce que #218 ajoute.
+///
+/// Le prévol **non secret** d'abord, toujours : une machine qui se laisse lire
+/// est attestée sans qu'aucun secret n'existe, et c'est le meilleur cas. Il ne
+/// cesse pas d'être le premier parce qu'un second existe.
+///
+/// Quand ce prévol répond que **lire coûte le secret** — la réponse du compte
+/// que Debian crée à son installation — l'Assistant demande le mot de passe,
+/// puis relit la politique avec lui. Le contrat d'amorçage autorise ce pas
+/// explicitement, et sa justification de sécurité y est écrite : l'identité de
+/// la machine est **déjà** établie par l'empreinte de clé d'hôte relevée hors
+/// bande, si bien que ce qui restait inconnu n'était pas *à qui l'on parle*
+/// mais *quel privilège possède le compte prêté* — et le secret partait de
+/// toute façon vers cette même machine à l'acte suivant.
+///
+/// **Le secret ne repart pas d'une seconde fenêtre.** Il est rendu à
+/// l'appelant, qui le dépense pour l'élévation. Une seconde fenêtre pour une
+/// seule permission serait un consentement de plus sans une décision de plus.
+///
+/// Tout chemin d'erreur détruit ce qu'il détient avant de rendre la main.
+#[cfg(all(
+    not(feature = "delayed-start-contract-test"),
+    any(target_os = "linux", target_os = "windows")
+))]
+#[allow(clippy::too_many_arguments)]
+fn attested_policy(
+    live: &mut personal_access::session::LiveSession,
+    resolved: &AssistantScopeV1,
+    deadline: Instant,
+    expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lease: &LeaseState,
+    guard: &(dyn Fn() -> personal_access::session::GuardVerdict + Sync),
+    exports: &mut SessionExports,
+    scope: personal_access::elevation::RequiredScope,
+) -> Result<
+    (
+        personal_access::elevation::AttestedPolicy,
+        installation::sequence::SpentSecret<secret::ProtectedSecret>,
+    ),
+    PromptOutcome,
+> {
+    use personal_access::elevation::{self, PreflightVerdict};
+
+    let preflight = live
+        .run_channel(elevation::PREFLIGHT, None, deadline, guard)
+        .map_err(|_| PromptOutcome::Unavailable)?;
+    // A listing that succeeded is on the standard output; the reason a listing
+    // failed — a password required, a terminal required — is on the standard
+    // error. Whichever stream carries the answer is the stream #51 judges, and
+    // handing it the empty one would turn an explicit refusal into a shrug.
+    let succeeded = preflight.exit_status == 0;
+    let capture = if succeeded {
+        &preflight.stdout
+    } else {
+        &preflight.stderr
+    };
+
+    // L'attestation juge aussi, sur le même listing, ce que l'entrée
+    // permettrait à une INSTALLATION — et cette portée est EXPORTÉE, réussite
+    // comme refus étroit : c'est elle que la route d'audit rapporte pour qu'un
+    // refus de pose ultérieur tombe avant toute fenêtre, et elle que le refus
+    // d'une pose sans audit nomme au lieu de se taire (arbitrage du 19 août
+    // 2026 — le refus expurgé en Unavailable laissait l'humain deviner, et
+    // l'écran disait « n'a pas pu conclure » là où un contrôle avait jugé).
+    match elevation::read_policy(succeeded, capture, false, scope) {
+        PreflightVerdict::Attested(attested) => {
+            exports.installation_scope = Some(attested.installation.clone());
+            return Ok((attested, installation::sequence::SpentSecret::none()));
+        }
+        PreflightVerdict::Refused(refusal) => return Err(policy_refusal(refusal, exports)),
+        // Le seul verdict qui continue : la lecture a un prix, et le contrat
+        // autorise à le payer dans la séquence déjà consentie.
+        PreflightVerdict::CostsTheSecret => {}
+    }
+
+    let password = ask_sudo_password(resolved, deadline, expired, lease)?;
+    let read = live.run_channel(
+        elevation::PREFLIGHT_WITH_PASSWORD,
+        Some(personal_access::session::ChannelInput::TerminalAnswer(
+            password.bytes(),
+        )),
+        deadline,
+        guard,
+    );
+    let mut retained = installation::sequence::SpentSecret::holding(password);
+    let Ok(read) = read else {
+        retained.destroy();
+        return Err(PromptOutcome::Unavailable);
+    };
+
+    match elevation::attest_policy_after_secret(
+        read.exit_status == 0,
+        &read.stdout,
+        &read.stderr,
+        false,
+        scope,
+    ) {
+        Ok(attested) => {
+            exports.installation_scope = Some(attested.installation.clone());
+            // Une entrée qui renonce à l'authentification alors que la LISTER
+            // coûtait un mot de passe est possible — `listpw` et l'entrée sont
+            // deux réglages. Le secret devient alors inutile : il meurt ici
+            // plutôt qu'à la fin de la séquence. Le cas strict reste le
+            // meilleur cas partout où il est atteignable.
+            if !attested.password_required {
+                retained.destroy();
+            }
+            Ok((attested, retained))
+        }
+        Err(refusal) => {
+            retained.destroy();
+            Err(policy_refusal(refusal, exports))
+        }
+    }
+}
+
 /// La décision rendue sur le verdict de l'attestation de politique — pure,
 /// exprès, pour être exerçable sans session ni fenêtre.
 ///
@@ -1470,13 +1573,10 @@ fn prove_administrator_elevation(
     not(feature = "delayed-start-contract-test"),
     any(target_os = "linux", target_os = "windows")
 ))]
-fn policy_outcome(
-    verdict: Result<
-        personal_access::elevation::AttestedPolicy,
-        personal_access::elevation::ElevationRefusal,
-    >,
+fn policy_refusal(
+    refusal: personal_access::elevation::ElevationRefusal,
     exports: &mut SessionExports,
-) -> Result<personal_access::elevation::AttestedPolicy, PromptOutcome> {
+) -> PromptOutcome {
     use personal_access::elevation::{ElevationRefusal, InstallationScope};
     use personal_access::sudo_policy::SudoRefusal;
     use your_cloud_bootstrap_protocol::{AssistantRefusalCauseV1, AssistantRefusalV1};
@@ -1493,38 +1593,55 @@ fn policy_outcome(
         detail
     }
 
-    match verdict {
-        Ok(attested) => {
-            exports.installation_scope = Some(attested.installation.clone());
-            Ok(attested)
-        }
-        Err(ElevationRefusal::NarrowerThanTheActionRequires { permits }) => {
+    let mut named = |cause| {
+        exports.refusal = Some(AssistantRefusalV1 {
+            cause,
+            detail: String::new(),
+        });
+        PromptOutcome::Refused
+    };
+
+    match refusal {
+        ElevationRefusal::NarrowerThanTheActionRequires { permits } => {
             exports.installation_scope = Some(InstallationScope {
                 suffices: false,
                 permits,
             });
-            Err(PromptOutcome::Refused)
+            PromptOutcome::Refused
         }
-        // Les deux refus qui JUGENT, et qui s'expurgeaient en « indisponible » :
-        // la phrase disait « je n'ai pas pu conclure » là où un contrôle avait
+        // Les refus qui JUGENT, et qui s'expurgeaient en « indisponible » : la
+        // phrase disait « je n'ai pas pu conclure » là où un contrôle avait
         // décidé, et l'humain n'avait ni la cause ni le geste suivant. Mesuré
-        // par le parcours d'un inconnu (#149), corrigé ici (#157) sur le patron
+        // par le parcours d'un inconnu (#149), corrigé par #157 sur le patron
         // du refus d'entrée trop étroite.
-        Err(ElevationRefusal::Policy(SudoRefusal::AuthenticationRequired)) => {
-            exports.refusal = Some(AssistantRefusalV1 {
-                cause: AssistantRefusalCauseV1::PolicyUnreadableWithoutSecret,
-                detail: String::new(),
-            });
-            Err(PromptOutcome::Refused)
+        //
+        // Celui-ci dit désormais autre chose qu'en #157 : le secret est
+        // **parti**, et la politique refuse toujours de se dire. C'est la fin
+        // du parcours, sans troisième tour.
+        ElevationRefusal::Policy(SudoRefusal::AuthenticationRequired) => {
+            named(AssistantRefusalCauseV1::PolicyUnreadableWithoutSecret)
         }
-        Err(ElevationRefusal::AmbiguousPolicy { entries }) => {
+        // Le voisin qui ne tombe pas avec le premier, et qui doit rester
+        // **nommé** : jusqu'au 22 août 2026 il empruntait la cause ci-dessus,
+        // les deux partageant une table de marqueurs. Les séparer sans nommer
+        // celui-ci l'aurait rendu muet — une régression déguisée en nettoyage.
+        // Les deux étages qui le constatent — le listing, puis l'erreur de
+        // l'élévation — rendent le même fait, donc la même phrase.
+        ElevationRefusal::Policy(SudoRefusal::TerminalRequired)
+        | ElevationRefusal::TerminalRequired => named(AssistantRefusalCauseV1::PolicyNeedsTerminal),
+        // Le seul refus dont le geste correcteur n'appartient qu'à l'humain et
+        // ne touche à aucune configuration : retaper. Il naît avec le chemin
+        // devenu nominal — c'est la faute la plus probable d'un compte à mot
+        // de passe, et un « indisponible » muet la lui cacherait.
+        ElevationRefusal::IncorrectPassword => named(AssistantRefusalCauseV1::SudoPasswordRefused),
+        ElevationRefusal::AmbiguousPolicy { entries } => {
             exports.refusal = Some(AssistantRefusalV1 {
                 cause: AssistantRefusalCauseV1::PolicyAmbiguous,
                 detail: borne(entries),
             });
-            Err(PromptOutcome::Refused)
+            PromptOutcome::Refused
         }
-        Err(_) => Err(PromptOutcome::Unavailable),
+        _ => PromptOutcome::Unavailable,
     }
 }
 
@@ -1922,89 +2039,147 @@ mod tests {
         any(target_os = "linux", target_os = "windows")
     ))]
     #[test]
-    fn the_narrow_refusal_is_named_and_every_policy_verdict_exports_the_scope() {
-        use personal_access::elevation::{
-            AttestedPolicy, ElevationRefusal, InstallationScope, ELEVATE_WITHOUT_PASSWORD,
-        };
+    fn every_refusal_that_judged_is_named_under_its_own_cause() {
+        use personal_access::elevation::{ElevationRefusal, InstallationScope};
 
-        // La réussite exporte la portée qu'elle a jugée — c'est ce que la
-        // route d'audit rapporte.
+        use personal_access::sudo_policy::SudoRefusal;
+        use your_cloud_bootstrap_protocol::AssistantRefusalCauseV1 as Cause;
+
+        // La portée qu'une réussite exporte est jugée par `read_policy`, dont
+        // le succès porte l'attestation ; ici on n'exerce que les refus.
         let judged = InstallationScope {
             suffices: false,
             permits: "/usr/bin/id".into(),
         };
-        let mut exports = SessionExports::default();
-        // `PromptOutcome` n'a pas de `Debug`, et c'est délibéré — il peut
-        // porter un secret : le succès s'extrait par un match, jamais par un
-        // `expect` qui exigerait d'imprimer l'échec.
-        let Ok(attested) = policy_outcome(
-            Ok(AttestedPolicy {
-                command: ELEVATE_WITHOUT_PASSWORD,
-                password_required: false,
-                installation: judged.clone(),
-            }),
-            &mut exports,
-        ) else {
-            panic!("une politique attestée passe");
-        };
-        assert_eq!(attested.installation, judged);
-        assert_eq!(exports.installation_scope, Some(judged.clone()));
-        assert!(exports.refusal.is_none(), "une réussite n'a rien refusé");
 
         // Le refus étroit : REFUSÉ, et la portée exportée nomme ce que
         // l'entrée permet.
         let mut exports = SessionExports::default();
-        let refused = policy_outcome(
-            Err(ElevationRefusal::NarrowerThanTheActionRequires {
+        let refused = policy_refusal(
+            ElevationRefusal::NarrowerThanTheActionRequires {
                 permits: "/usr/bin/id".into(),
-            }),
+            },
             &mut exports,
         );
-        assert!(matches!(refused, Err(PromptOutcome::Refused)));
+        assert!(matches!(refused, PromptOutcome::Refused));
         assert_eq!(exports.installation_scope, Some(judged));
 
-        // Les deux refus qui JUGENT nomment leur cause au lieu de se taire —
-        // et le second rend les entrées vues, qui sont le geste à faire
-        // (#157). Une mutation qui les replie sur `Unavailable` rougit ici.
-        let mut exports = SessionExports::default();
-        let unreadable = policy_outcome(
-            Err(ElevationRefusal::Policy(
-                personal_access::sudo_policy::SudoRefusal::AuthenticationRequired,
-            )),
-            &mut exports,
-        );
-        assert!(matches!(unreadable, Err(PromptOutcome::Refused)));
-        assert_eq!(
-            exports.refusal,
-            Some(your_cloud_bootstrap_protocol::AssistantRefusalV1 {
-                cause: your_cloud_bootstrap_protocol::AssistantRefusalCauseV1::PolicyUnreadableWithoutSecret,
-                detail: String::new(),
-            })
-        );
+        // **Les quatre refus qui JUGENT, chacun sous SON nom.** Ce tableau est
+        // la garde du « voisin » : `TerminalRequired` et `AuthenticationRequired`
+        // partageaient une cause jusqu'au 22 août 2026, et une mutation qui les
+        // recollerait — ou qui replierait l'un d'eux sur `Unavailable` — rougit
+        // ici plutôt qu'à la passe LAB.
+        for (refusal, expected) in [
+            (
+                ElevationRefusal::Policy(SudoRefusal::AuthenticationRequired),
+                Cause::PolicyUnreadableWithoutSecret,
+            ),
+            (
+                ElevationRefusal::Policy(SudoRefusal::TerminalRequired),
+                Cause::PolicyNeedsTerminal,
+            ),
+            (
+                // Le même fait, constaté à l'étage de l'élévation : même
+                // phrase, parce que c'est la même machine qui le dit.
+                ElevationRefusal::TerminalRequired,
+                Cause::PolicyNeedsTerminal,
+            ),
+            (
+                ElevationRefusal::IncorrectPassword,
+                Cause::SudoPasswordRefused,
+            ),
+        ] {
+            let mut exports = SessionExports::default();
+            let outcome = policy_refusal(refusal.clone(), &mut exports);
+            assert!(
+                matches!(outcome, PromptOutcome::Refused),
+                "{refusal:?} a jugé : il refuse, il ne renonce pas"
+            );
+            assert_eq!(
+                exports.refusal,
+                Some(your_cloud_bootstrap_protocol::AssistantRefusalV1 {
+                    cause: expected,
+                    detail: String::new(),
+                }),
+                "{refusal:?} doit nommer sa propre cause"
+            );
+        }
 
         let mut exports = SessionExports::default();
-        let ambiguous = policy_outcome(
-            Err(ElevationRefusal::AmbiguousPolicy {
+        let ambiguous = policy_refusal(
+            ElevationRefusal::AmbiguousPolicy {
                 entries: "Sudoers entry: /etc/sudoers ; Sudoers entry: /etc/sudoers.d/90-x".into(),
-            }),
+            },
             &mut exports,
         );
-        assert!(matches!(ambiguous, Err(PromptOutcome::Refused)));
+        assert!(matches!(ambiguous, PromptOutcome::Refused));
         let carried = exports.refusal.expect("la cause voyage");
-        assert_eq!(
-            carried.cause,
-            your_cloud_bootstrap_protocol::AssistantRefusalCauseV1::PolicyAmbiguous
-        );
+        assert_eq!(carried.cause, Cause::PolicyAmbiguous);
         assert!(carried.detail.contains("/etc/sudoers.d/90-x"));
 
         // Un refus qui n'a pas jugé — le listing illisible pour une autre
         // raison — reste une indisponibilité muette : il ne parle pas du choix
         // de l'humain.
         let mut exports = SessionExports::default();
-        let mute = policy_outcome(Err(ElevationRefusal::DivergentCommand), &mut exports);
-        assert!(matches!(mute, Err(PromptOutcome::Unavailable)));
+        let mute = policy_refusal(ElevationRefusal::DivergentCommand, &mut exports);
+        assert!(matches!(mute, PromptOutcome::Unavailable));
         assert!(exports.refusal.is_none());
         assert_eq!(exports.installation_scope, None);
+    }
+
+    /// **Le prix d'une lecture n'est pas un refus, et le voisin reste un
+    /// refus.** Les trois issues du prévol non secret, exercées sur les octets
+    /// que `sudo 1.9.16p2` écrit réellement (mesurés sur `lab-machine-1` le
+    /// 22 août 2026).
+    ///
+    /// C'est le cœur de #218 : la première ligne était une fin de parcours, et
+    /// elle rendait inatteignable le compte que Debian crée à son
+    /// installation. La deuxième ne bouge pas — aucun secret ne fabrique un
+    /// terminal — et c'est elle qui échouerait si le refus voisin tombait avec
+    /// le premier.
+    #[cfg(all(
+        not(feature = "delayed-start-contract-test"),
+        any(target_os = "linux", target_os = "windows")
+    ))]
+    #[test]
+    fn the_price_of_a_reading_is_not_a_refusal_and_the_neighbour_stays_one() {
+        use personal_access::elevation::{
+            read_policy, ElevationRefusal, PreflightVerdict, RequiredScope,
+        };
+        use personal_access::sudo_policy::SudoRefusal;
+
+        let verdict =
+            |answer: &[u8]| read_policy(false, answer, false, RequiredScope::IdentityProbe);
+
+        assert!(
+            matches!(
+                verdict(b"sudo: a password is required\n"),
+                PreflightVerdict::CostsTheSecret
+            ),
+            "la posture Debian par défaut n'est plus une fin de parcours"
+        );
+        for terminal in [
+            &b"sudo: sorry, you must have a tty to run sudo\n"[..],
+            b"sudo: no tty present and no askpass program specified\n",
+        ] {
+            assert!(
+                matches!(
+                    verdict(terminal),
+                    PreflightVerdict::Refused(ElevationRefusal::Policy(
+                        SudoRefusal::TerminalRequired
+                    ))
+                ),
+                "{:?} reste un refus — aucun secret ne fabrique un terminal",
+                String::from_utf8_lossy(terminal)
+            );
+        }
+        assert!(
+            matches!(
+                verdict(b"quelque chose que personne ne reconnait\n"),
+                PreflightVerdict::Refused(ElevationRefusal::Policy(SudoRefusal::Unattestable))
+            ),
+            "un listing non reconnu reste illisible"
+        );
     }
 
     /// A consent is not an access, and neither is a secret. Nothing a window

@@ -46,12 +46,16 @@ held=${prefix}hold
 # combination. None of them is ever given a forced command: they must run the
 # three exact channels the client opens.
 #
-# `listpw=never` is what makes the single `sudo -S` reachable at all. Debian's
-# default is `listpw=any`, under which listing a password-protected policy
-# itself demands the password, and #51 refuses to send one to find out whether
-# it may send one. The two accounts below that really answer a password
-# therefore describe the one configuration in which a password may travel, and
-# the account without it is kept as the control that says so.
+# `listpw=never` décrit le compte dont le listing se lit SANS secret, et c'est
+# le meilleur cas — il reste nominal, et il est le seul à ne rien dépenser pour
+# être attesté. Debian, elle, laisse `listpw=any` : lister une politique
+# protégée par mot de passe coûte ce mot de passe.
+#
+# **Ce coût cessait d'être payable, et c'était le défaut de #158.** Depuis
+# #218, il est payé à l'intérieur de la séquence approuvée : le compte
+# `sudo_debian` ci-dessous est la posture par défaut de Debian, et il mène
+# désormais l'élévation à son terme. Les deux formes existent donc côte à côte,
+# parce que c'est leur asymétrie que la preuve doit constater.
 sudo_password=${prefix}sudp
 sudo_nopasswd=${prefix}sudn
 sudo_unlistable=${prefix}sudx
@@ -60,6 +64,13 @@ sudo_requiretty=${prefix}sudt
 sudo_divergent=${prefix}sudd
 sudo_ambiguous=${prefix}suda
 sudo_oversized=${prefix}sudb
+# Le compte que l'installateur Debian produit quand on répond « oui » à « cet
+# utilisateur peut-il administrer la machine » : membre du groupe `sudo`, un
+# mot de passe, et **aucune ligne de sudoers écrite pour lui**. C'est ce que
+# `%sudo ALL=(ALL:ALL) ALL` lui donne, et rien d'autre — écrire un drop-in ici
+# fabriquerait une seconde entrée, donc une politique ambiguë, donc un compte
+# qui ne serait plus celui de personne.
+sudo_debian=${prefix}sudg
 # Le compte qu'une installation exige, et le seul.
 #
 # Les comptes ci-dessus n'autorisent que la sonde d'identité : c'est assez pour
@@ -72,7 +83,7 @@ sudo_every_command=${prefix}sude
 sudo_accounts=(
   "$sudo_password" "$sudo_nopasswd" "$sudo_unlistable" "$sudo_log_input"
   "$sudo_requiretty" "$sudo_divergent" "$sudo_ambiguous" "$sudo_oversized"
-  "$sudo_every_command"
+  "$sudo_every_command" "$sudo_debian"
 )
 
 # The audit perimeter of #36. One account per synthetic machine profile, plus
@@ -289,6 +300,16 @@ sudo_password_value=$(openssl rand -hex 20)
 [[ ${#sudo_password_value} -eq 40 ]] \
   || { echo "the synthetic sudo password was not generated" >&2; exit 1; }
 printf '%s:%s\n' "$sudo_password" "$sudo_password_value" | chpasswd
+# Le compte Debian ordinaire porte le même secret synthétique, et son SEUL
+# privilège vient du groupe. Aucun `write_policy` ne le nomme : c'est la
+# définition de « sans préparation ».
+printf '%s:%s\n' "$sudo_debian" "$sudo_password_value" | chpasswd
+usermod -aG sudo "$sudo_debian" \
+  || { echo "the ordinary Debian account did not join the sudo group" >&2; exit 1; }
+# Le compte à entrée étroite et listing payant porte le même secret : sans lui,
+# le prévol authentifié n'aurait rien à dépenser et son refus parlerait du
+# mot de passe au lieu de la portée.
+printf '%s:%s\n' "$sudo_unlistable" "$sudo_password_value" | chpasswd
 
 write_policy() {
   local account=$1 body=$2 file="/etc/sudoers.d/90-$prefix-$1"
@@ -311,9 +332,11 @@ write_policy "$sudo_nopasswd" "$sudo_nopasswd ALL=(root) NOPASSWD: /usr/bin/id"
 # nommant `dpkg` n'aurait pas été plus étroite en pouvoir réel.
 write_policy "$sudo_every_command" "$sudo_every_command ALL=(root) NOPASSWD: ALL"
 
-# A policy that cannot be described without first authenticating. It is
-# deliberately the Debian default shape, and it is refused before any password
-# exists.
+# Une politique qui ne se décrit pas sans s'authentifier d'abord, portée par
+# une entrée DÉDIÉE plutôt que par le groupe. Elle est la forme du compte
+# Debian ordinaire, à une chose près qui compte : celle-ci n'autorise que la
+# sonde. Elle exerce donc le prévol authentifié sur une entrée étroite, là où
+# `sudo_debian` l'exerce sur l'entrée que le groupe donne.
 write_policy "$sudo_unlistable" "$sudo_unlistable ALL=(root) /usr/bin/id"
 
 # A policy that would write the standard input — the password — into the I/O
@@ -364,6 +387,21 @@ listing_of() {
   || { echo "the log_input policy does not log its input" >&2; exit 1; }
 [[ $(listing_of "$sudo_oversized" | wc -c) -gt "$bound" ]] \
   || { echo "the oversized listing fits inside the bound" >&2; exit 1; }
+
+# Le compte Debian ordinaire : sa politique ne se lit PAS sans secret, elle se
+# lit AVEC, et elle n'en porte qu'une entrée. Les trois faits sont vérifiés ici
+# plutôt que supposés — un périmètre qui ne se comporte pas comme il se décrit
+# est refusé avant la preuve et non à mi-parcours.
+[[ "$(listing_of "$sudo_debian")" == *"a password is required"* ]] \
+  || { echo "the ordinary Debian account can be listed without a secret" >&2; exit 1; }
+authenticated_listing=$(printf '%s\n' "$sudo_password_value" \
+  | su -s /bin/sh -c \
+      "LC_ALL=C /usr/bin/sudo -k -S -p your-cloud-sudo-prompt: -l -l" "$sudo_debian" 2>/dev/null)
+[[ "$authenticated_listing" == *"may run the following commands"* ]] \
+  || { echo "the ordinary Debian account does not list itself with its secret" >&2; exit 1; }
+[[ "$(grep -c 'Sudoers entry' <<<"$authenticated_listing")" -eq 1 ]] \
+  || { echo "the ordinary Debian account carries more than one sudoers entry" >&2; exit 1; }
+unset authenticated_listing
 
 # The server's own account of a session closing is what the suite reads, and
 # only a verbose journal writes it.
@@ -443,6 +481,7 @@ printf 'SUDO_REQUIRETTY_USERNAME=%s\n' "$sudo_requiretty"
 printf 'SUDO_DIVERGENT_USERNAME=%s\n' "$sudo_divergent"
 printf 'SUDO_AMBIGUOUS_USERNAME=%s\n' "$sudo_ambiguous"
 printf 'SUDO_OVERSIZED_USERNAME=%s\n' "$sudo_oversized"
+printf 'SUDO_DEBIAN_USERNAME=%s\n' "$sudo_debian"
 printf 'SUDO_UID=%s\n' "$(id -u "$sudo_password")"
 printf 'AUDIT_USERNAME=%s\n' "$audit_nominal"
 printf 'AUDIT_UID=%s\n' "$(id -u "$audit_nominal")"

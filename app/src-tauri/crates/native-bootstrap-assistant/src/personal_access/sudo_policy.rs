@@ -29,6 +29,21 @@
 //! produit, ni sur son entrée, ni sur sa sortie — et la sortie compte, parce
 //! qu'une machine qui journalise capture bien celle des commandes.
 //!
+//! **Ce module a cessé de porter une fin de parcours, le 22 août 2026
+//! (#218).** `AuthenticationRequired` disait « la politique ne se lit pas sans
+//! le secret », et le produit s'arrêtait là — ce qui rendait inatteignable le
+//! compte que Debian crée à son installation, c'est-à-dire la posture la plus
+//! répandue au monde. Le verdict reste le même ici : ce module n'a pas lu la
+//! politique, donc il ne l'atteste pas. Ce qui change est chez l'appelant, où
+//! le contrat d'amorçage autorise de payer cette lecture avec le secret déjà
+//! consenti — voir [`super::elevation::read_policy`].
+//!
+//! **La table des marqueurs a été coupée en deux pour cela**, et c'est la
+//! partie qui compte : « il faut un mot de passe » et « il faut un terminal »
+//! partageaient une seule liste, donc une seule ligne de code. Rendre le
+//! premier franchissable aurait emporté le second, alors qu'aucun secret ne
+//! fabrique un terminal.
+//!
 //! La décision ne s'appuie jamais sur le masquage de mot de passe de `sudo`.
 //! Cette réduction dépend de `passprompt_regex`, que la configuration peut
 //! changer, et ce palier passe son propre prompt sentinelle, que la regex par
@@ -47,24 +62,48 @@ pub const MAX_PREFLIGHT_OUTPUT_BYTES: usize = 4 * 1024;
 /// so a translated or absent anchor means the output cannot be attested.
 const DEFAULTS_ANCHOR: &str = "Matching Defaults entries for";
 const COMMANDS_ANCHOR: &str = "may run the following commands";
-/// What `sudo` answers instead of a listing. The first three are what it writes
-/// when the answer costs a secret or a terminal it has not got; the fourth is
-/// the one `requiretty` produces, captured verbatim from `sudo 1.9.16p2` on
-/// Debian 13 — that policy refuses even to *list* itself without a terminal,
-/// and a refusal that specific must not be read as a merely unrecognised
-/// listing.
-const AUTHENTICATION_MARKERS: [&str; 4] = [
-    "a password is required",
+/// Ce que `sudo` répond quand il veut un **terminal** que cette session
+/// n'alloue jamais, capturé mot pour mot depuis `sudo 1.9.16p2` sur Debian 13.
+///
+/// Ces trois-là se lisent **avant** le marqueur de secret, et c'est tout le
+/// contenu de la séparation : envoyer le secret ne fabriquerait aucun terminal,
+/// donc rien n'autorise à retenter. Une politique qui dit les deux est refusée
+/// ici plutôt que retentée là-bas.
+const TERMINAL_MARKERS: [&str; 3] = [
     "a terminal is required",
     "sudo: no tty present",
     "sorry, you must have a tty",
 ];
 
+/// Ce que `sudo` répond quand lire la politique **coûte le secret**.
+///
+/// C'est la réponse du compte que Debian crée à son installation, et ce n'est
+/// plus la même chose qu'un manque de terminal — les quatre marqueurs n'en
+/// faisaient qu'un seul refus jusqu'au 22 août 2026, ce qui aurait fait tomber
+/// `requiretty` avec lui.
+const SECRET_MARKERS: [&str; 1] = ["a password is required"];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SudoRefusal {
-    /// Listing the policy would itself require authenticating, so the policy
-    /// cannot be attested without first sending the secret it should protect.
+    /// Lire la politique coûte le secret que l'attestation existe pour
+    /// protéger.
+    ///
+    /// **Ce n'est plus un refus dur, et c'est le changement de #218.** Ce
+    /// module rend toujours ce verdict — un listing qu'on n'a pas lu n'est pas
+    /// un listing attesté — mais l'appelant a désormais un second geste :
+    /// [`super::elevation::read_policy`] le traduit en « lire coûtera le
+    /// secret », et le contrat d'amorçage autorise ce coût à l'intérieur de la
+    /// séquence approuvée. Sur le prévol **authentifié**, en revanche, il
+    /// redevient terminal : il n'existe pas de troisième tour.
     AuthenticationRequired,
+    /// La politique veut un terminal, et cette session n'en alloue aucun.
+    ///
+    /// Séparé de [`Self::AuthenticationRequired`] le 22 août 2026 : les deux
+    /// partageaient une table de marqueurs, si bien que rendre le premier
+    /// franchissable aurait rendu le second franchissable **aussi**, alors
+    /// qu'aucun secret ne fabrique un terminal. Lever un refus n'autorise pas
+    /// à lever son voisin.
+    TerminalRequired,
     OutputTooLarge,
     OutputNotAscii,
     /// Missing, translated or otherwise unrecognised listing.
@@ -98,11 +137,13 @@ pub fn evaluate(
         return Err(SudoRefusal::OutputNotAscii);
     }
     let text = std::str::from_utf8(output).map_err(|_| SudoRefusal::OutputNotAscii)?;
-    let lowered = text.to_ascii_lowercase();
-    if AUTHENTICATION_MARKERS
-        .iter()
-        .any(|marker| lowered.contains(marker))
-    {
+    // Le manque de terminal d'abord : il est le plus dur des deux, et une
+    // politique qui répond les deux doit recevoir celui qu'aucun secret ne
+    // lève.
+    if demands_a_terminal(text) {
+        return Err(SudoRefusal::TerminalRequired);
+    }
+    if demands_a_secret(text) {
         return Err(SudoRefusal::AuthenticationRequired);
     }
     if !succeeded {
@@ -123,6 +164,27 @@ pub fn evaluate(
         password_may_be_sent: true,
         relies_on_sudo_redaction: false,
     })
+}
+
+/// Ce flux réclame-t-il un terminal que la session n'alloue pas ?
+///
+/// Exporté pour que le prévol **authentifié** lise la même table que le prévol
+/// nu. Deux listes de marqueurs pour la même question finiraient par diverger,
+/// et la divergence tomberait du côté qui a déjà dépensé le secret.
+pub fn demands_a_terminal(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    TERMINAL_MARKERS
+        .iter()
+        .any(|marker| lowered.contains(marker))
+}
+
+/// Ce flux réclame-t-il une authentification ?
+///
+/// Avant que le secret parte, c'est le prix d'une lecture. Après, c'est la fin
+/// du parcours — la même phrase, et deux sens que seul l'appelant distingue.
+pub fn demands_a_secret(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    SECRET_MARKERS.iter().any(|marker| lowered.contains(marker))
 }
 
 /// Collects the comma-separated Defaults entries that follow the anchor.
@@ -187,8 +249,14 @@ mod tests {
         }
     }
 
+    /// Ce que répond le compte que Debian crée à son installation, mot pour
+    /// mot depuis `sudo 1.9.16p2` (mesuré le 22 août 2026 sur `lab-machine-1`).
+    ///
+    /// Le verdict reste un refus **de ce module** : il n'a pas lu la politique,
+    /// donc il ne l'atteste pas. Ce qu'il cesse d'être, c'est la fin du
+    /// parcours — voir [`super::elevation::read_policy`].
     #[test]
-    fn a_policy_that_cannot_be_listed_without_authenticating_is_refused() {
+    fn a_policy_that_costs_the_secret_to_list_says_so_by_its_own_name() {
         let output = b"sudo: a password is required\n";
         assert_eq!(
             evaluate(false, output, false),
@@ -196,21 +264,41 @@ mod tests {
         );
     }
 
+    /// **Le voisin qui ne tombe pas avec le premier.**
+    ///
+    /// Les quatre marqueurs ne faisaient qu'un seul refus jusqu'au 22 août
+    /// 2026. Rendre franchissable « il faut un mot de passe » aurait rendu
+    /// franchissable « il faut un terminal » par la même ligne — et le produit
+    /// aurait alors envoyé un secret à une politique qui, elle, ne peut de
+    /// toute façon rien en faire. Ce test échoue si les deux redeviennent un.
     #[test]
-    fn a_missing_tty_is_refused_rather_than_retried() {
+    fn a_missing_tty_is_refused_by_a_name_no_secret_can_lift() {
         for answer in [
             &b"sudo: no tty present and no askpass program specified\n"[..],
             // What `requiretty` really answers, on the very listing this
             // module was going to judge.
             b"sudo: sorry, you must have a tty to run sudo\n",
+            b"sudo: a terminal is required to read the password\n",
         ] {
             assert_eq!(
                 evaluate(false, answer, false),
-                Err(SudoRefusal::AuthenticationRequired),
-                "{:?} must be read as the policy refusing to describe itself",
+                Err(SudoRefusal::TerminalRequired),
+                "{:?} must be read as the policy wanting a terminal",
                 String::from_utf8_lossy(answer)
             );
         }
+    }
+
+    /// Une politique qui répond **les deux** reçoit celui qu'aucun secret ne
+    /// lève. L'ordre de lecture est la garde, et il est asserté ici.
+    #[test]
+    fn a_policy_that_answers_both_is_refused_on_the_terminal() {
+        let answer =
+            b"sudo: a password is required\nsudo: sorry, you must have a tty to run sudo\n";
+        assert_eq!(
+            evaluate(false, answer, false),
+            Err(SudoRefusal::TerminalRequired)
+        );
     }
 
     #[test]

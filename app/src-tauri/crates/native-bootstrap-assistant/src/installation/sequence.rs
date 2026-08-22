@@ -149,7 +149,15 @@ impl<S> SpentSecret<S> {
         Self { secret: None }
     }
 
-    fn bytes<'a>(&'a self, borrow: impl Fn(&'a S) -> &'a [u8]) -> Option<&'a [u8]> {
+    /// Le secret emprunté le temps d'un canal, jamais rendu par valeur.
+    ///
+    /// L'emprunt passe par une fermeture plutôt que par un accesseur direct :
+    /// l'appelant nomme comment lire SON type, et rien ici ne suppose une
+    /// représentation. `pub(crate)` depuis #218, parce que le prévol
+    /// authentifié dépense le secret **avant** la séquence — et que le
+    /// redemander à l'humain pour l'élévation qui suit serait une seconde
+    /// fenêtre pour une seule permission.
+    pub(crate) fn bytes<'a>(&'a self, borrow: impl Fn(&'a S) -> &'a [u8]) -> Option<&'a [u8]> {
         self.secret.as_ref().map(borrow)
     }
 

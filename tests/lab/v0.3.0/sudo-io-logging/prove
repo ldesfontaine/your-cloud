@@ -103,6 +103,29 @@ esac
 
 [ -d /var/log/sudo-io ] || { echo "ECHEC: aucun journal d'E/S produit"; exit 1; }
 
+# --- Le prevol AUTHENTIFIE, deuxieme forme qui depense le secret (#218) ------
+#
+# `sudo -l -l` ne lance aucune commande : il n'y a donc, en principe, aucune
+# E/S de commande a journaliser. « En principe » est exactement ce que ce
+# fichier existe pour ne pas croire. La mesure est un COMPTAGE avant/apres :
+# si `sudo` ouvrait une session de journal pour un listing, le nombre
+# augmenterait.
+avant=$(find /var/log/sudo-io -name log -type f 2>/dev/null | wc -l)
+listing=$(printf '%s\n' "$SECRET" | runuser -u "$COMPTE" -- env LC_ALL=C \
+  /usr/bin/sudo -k -S -p "$SENTINELLE" -l -l 2>/dev/null) || {
+  echo "ECHEC: le prevol authentifie n'a pas abouti"; exit 1; }
+case "$listing" in
+  *"$SECRET"*) echo "ECHEC: le secret ressort sur le listing"; exit 1 ;;
+  *"may run the following commands"*) echo "PREVOL_PAYE_OK: la politique se lit avec le secret" ;;
+  *) echo "ECHEC: le prevol authentifie n'a pas rendu de listing"; exit 1 ;;
+esac
+apres=$(find /var/log/sudo-io -name log -type f 2>/dev/null | wc -l)
+[ "$apres" -eq "$avant" ] \
+  || { echo "ECHEC: le prevol authentifie a ouvert $((apres - avant)) session(s) de journal"; exit 1; }
+echo "PREVOL_PAYE_SANS_JOURNAL: le listing n'ouvre aucune session de journal ($avant inchange)"
+
+# La recherche court APRÈS les deux formes qui dépensent le secret — l'acte et
+# le listing payé — de sorte qu'un octet laissé par l'une ou l'autre tombe ici.
 secret_trouve=0
 temoin_trouve=0
 while IFS= read -r f; do
@@ -125,9 +148,11 @@ sortie=$("$labctl" ssh "$cible_vm" -- 'bash /tmp/yc-iolog-controle.sh; rm -f /tm
   fail "le contrôle distant a échoué :\n$sortie"
 printf '%s\n' "$sortie"
 
-# Un contrôle muet n'est pas un contrôle vert. Les trois marqueurs sont exigés
-# explicitement : sans eux, un script vide ou tronqué passerait pour un succès.
-for marqueur in TEMOIN_PRESENT SECRET_ABSENT CONTROLE_OK DEMONTAGE_PROUVE; do
+# Un contrôle muet n'est pas un contrôle vert. Les marqueurs sont exigés
+# explicitement, un par un : sans eux, un script vide ou tronqué passerait pour
+# un succès.
+for marqueur in TEMOIN_PRESENT SECRET_ABSENT PREVOL_PAYE_OK PREVOL_PAYE_SANS_JOURNAL \
+                CONTROLE_OK DEMONTAGE_PROUVE; do
   case "$sortie" in
     *"$marqueur"*) ;;
     *) fail "marqueur $marqueur absent — le contrôle n'a pas prouvé ce qu'il annonce" ;;

@@ -167,6 +167,10 @@ const SUDO_PASSWORD_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_PASSWORD_USERNAME";
 const SUDO_NOPASSWD_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_NOPASSWD_USERNAME";
 /// Account whose policy cannot be listed without first authenticating.
 const SUDO_UNLISTABLE_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_UNLISTABLE_USERNAME";
+/// Le compte que l'installateur Debian produit, sans aucune préparation :
+/// membre du groupe `sudo`, un mot de passe, pas une ligne de sudoers écrite
+/// pour lui. C'est le nominal du contrat depuis #218.
+const SUDO_DEBIAN_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_DEBIAN_USERNAME";
 /// Account whose policy would write the standard input into the I/O log.
 const SUDO_LOG_INPUT_USERNAME: &str = "YOUR_CLOUD_LAB_SUDO_LOG_INPUT_USERNAME";
 /// Account whose policy demands a terminal this session never allocates.
@@ -4237,6 +4241,21 @@ struct ElevationRun {
     password_required: Option<bool>,
 }
 
+/// Ce que dépense une élévation dont le listing se lit **sans** secret : la
+/// sonde d'identité, le prévol, l'élévation.
+///
+/// C'était toute la conversation jusqu'au 22 août 2026, et c'est resté le
+/// meilleur cas — le plus court, et le seul qui n'a rien à dépenser pour être
+/// attesté. Ce qui a changé est qu'il a cessé d'être le seul : le compte que
+/// Debian crée à son installation en ouvre un quatrième, celui du prévol que
+/// le secret paie (#218). Nommé ici pour que chaque cas dise LEQUEL des deux
+/// il exerce, plutôt que de comparer au plafond de la session.
+const READABLE_LISTING_CHANNELS: usize = 3;
+
+/// La conversation du compte Debian ordinaire : les trois ci-dessus, plus la
+/// lecture payée. C'est le plafond de la session, et il l'atteint exactement.
+const PAID_LISTING_CHANNELS: usize = MAX_EXEC_CHANNELS;
+
 fn sudo_password() -> Vec<u8> {
     let password = fs::read(required(SUDO_PASSWORD)).expect("the sudo password must be readable");
     assert!(
@@ -4335,13 +4354,33 @@ fn drive_elevation(
     // Cette suite exerce l'accès personnel et son élévation, jamais une
     // installation : la portée qu'elle exige est donc celle de l'audit, et
     // le durcissement des actions d'installation a sa preuve ailleurs.
-    let attested = elevation::attest_policy(
-        succeeded,
-        capture,
-        false,
-        elevation::RequiredScope::IdentityProbe,
-    )
-    .map_err(Stop::Policy)?;
+    let scope = elevation::RequiredScope::IdentityProbe;
+    // Les trois issues du prévol, conduites dans l'ordre du helper. La
+    // troisième est celle de #218 : lire coûte le secret, et ce coût se paie
+    // à l'intérieur de la séquence déjà consentie.
+    let attested = match elevation::read_policy(succeeded, capture, false, scope) {
+        elevation::PreflightVerdict::Attested(attested) => attested,
+        elevation::PreflightVerdict::Refused(refusal) => return Err(Stop::Policy(refusal)),
+        elevation::PreflightVerdict::CostsTheSecret => {
+            let secret = password.expect("this case must offer the password its listing demands");
+            let read = live
+                .run_channel(
+                    elevation::PREFLIGHT_WITH_PASSWORD,
+                    Some(ChannelInput::TerminalAnswer(secret)),
+                    lease(),
+                    &always_continue(),
+                )
+                .map_err(Stop::Transport)?;
+            elevation::attest_policy_after_secret(
+                read.exit_status == 0,
+                &read.stdout,
+                &read.stderr,
+                false,
+                scope,
+            )
+            .map_err(Stop::Policy)?
+        }
+    };
     *command = Some(attested.command);
     *password_required = Some(attested.password_required);
 
@@ -4414,8 +4453,8 @@ fn a_password_protected_policy_spends_exactly_one_password_and_proves_the_elevat
     assert_eq!(run.password_required, Some(true));
     assert_eq!(run.command, Some(ELEVATE_WITH_PASSWORD));
     assert_eq!(
-        run.channels_spent, MAX_EXEC_CHANNELS,
-        "the whole conversation is three channels, and it used all three"
+        run.channels_spent, READABLE_LISTING_CHANNELS,
+        "un listing lisible sans secret ne paie pas de quatrième canal"
     );
 }
 
@@ -4431,7 +4470,7 @@ fn a_policy_that_waives_authentication_elevates_without_any_password() {
     );
     assert_eq!(run.password_required, Some(false));
     assert_eq!(run.command, Some(ELEVATE_WITHOUT_PASSWORD));
-    assert_eq!(run.channels_spent, MAX_EXEC_CHANNELS);
+    assert_eq!(run.channels_spent, READABLE_LISTING_CHANNELS);
 }
 
 /// The same elevation, on the fallback of #53. It is the same three channels of
@@ -4450,7 +4489,7 @@ fn the_encrypted_key_file_reaches_the_same_proven_elevation() {
         run.outcome
     );
     assert_eq!(run.command, Some(ELEVATE_WITH_PASSWORD));
-    assert_eq!(run.channels_spent, MAX_EXEC_CHANNELS);
+    assert_eq!(run.channels_spent, READABLE_LISTING_CHANNELS);
 }
 
 /// Une machine qui journalise ses E/S mène l'élévation à son terme.
@@ -4474,20 +4513,95 @@ fn a_machine_that_logs_its_io_reaches_the_end() {
     );
 }
 
+/// **Le compte que Debian crée à son installation mène l'élévation à son
+/// terme.** C'est le résultat de #218, et il se lit sur une machine réelle.
+///
+/// Le compte est celui de l'installateur, tel quel : membre du groupe `sudo`,
+/// un mot de passe, et **aucune ligne de sudoers écrite pour lui** — son seul
+/// privilège vient du groupe. Le périmètre vérifie cette posture avant la
+/// preuve : son listing ne se lit pas sans secret, il se lit avec, et il ne
+/// porte qu'une entrée.
+///
+/// Le quatrième canal est l'objet du test autant que l'issue : c'est lui qui
+/// dit que la lecture a bien été **payée** plutôt que devinée.
+#[test]
+fn the_ordinary_debian_account_reaches_the_end() {
+    let run = elevate_as(&required(SUDO_DEBIAN_USERNAME), Some(&sudo_password()));
+    assert!(
+        run.outcome.is_ok(),
+        "la posture par défaut de Debian est servie depuis #218 : {:?}",
+        run.outcome
+    );
+    assert_eq!(run.outcome.unwrap().route(), AccessRoute::Administrator);
+    assert_eq!(run.password_required, Some(true));
+    assert_eq!(run.command, Some(ELEVATE_WITH_PASSWORD));
+    assert_eq!(
+        run.channels_spent, PAID_LISTING_CHANNELS,
+        "la lecture de la politique a été payée, et le canal qui l'a payée se compte"
+    );
+}
+
+/// La même lecture payée, sur une entrée **dédiée et étroite** plutôt que sur
+/// celle du groupe.
+///
+/// Ce compte était un cas hostile jusqu'au 22 août 2026. Il est ici pour que
+/// le prévol authentifié soit exercé sur les deux formes d'entrée qui existent
+/// dans le périmètre : la lecture payée ne doit rien devoir à la largeur de ce
+/// qu'elle finit par lire.
+#[test]
+fn a_narrow_entry_whose_listing_costs_the_secret_still_elevates() {
+    let run = elevate_as(&required(SUDO_UNLISTABLE_USERNAME), Some(&sudo_password()));
+    assert!(
+        run.outcome.is_ok(),
+        "une entrée étroite au listing payant est servie depuis #218 : {:?}",
+        run.outcome
+    );
+    assert_eq!(run.command, Some(ELEVATE_WITH_PASSWORD));
+    assert_eq!(run.channels_spent, PAID_LISTING_CHANNELS);
+}
+
+/// **Le mot de passe refusé sur le chemin devenu nominal.**
+///
+/// La faute la plus probable d'un compte à mot de passe est une faute de
+/// frappe, et elle tombe désormais au PRÉVOL — avant toute élévation, donc
+/// avant qu'aucun privilège ne soit demandé. Le refus la nomme, et le contrôle
+/// qui suit établit que le compte lui-même n'était pas en cause.
+#[test]
+fn a_wrong_password_on_the_debian_account_is_refused_at_the_reading() {
+    let username = required(SUDO_DEBIAN_USERNAME);
+    let run = elevate_as(&username, Some(b"synthetic-wrong-password"));
+    assert_eq!(
+        run.outcome,
+        Err(Stop::Policy(ElevationRefusal::IncorrectPassword)),
+        "la machine a refusé le secret pendant la LECTURE de la politique"
+    );
+    assert_eq!(
+        run.password_required, None,
+        "aucune décision d'élévation n'a été prise sur une politique non lue"
+    );
+    assert_eq!(
+        run.channels_spent, 3,
+        "le refus tombe au prévol payé, sans ouvrir le canal d'élévation"
+    );
+
+    let control = elevate_as(&username, Some(&sudo_password()));
+    assert!(control.outcome.is_ok(), "{:?}", control.outcome);
+}
+
 /// The password is sent once and never again. `sudo` answers a wrong one by
 /// printing the sentinel a second time, and that second prompt is exactly what
 /// this client refuses: there is no answer left to give it.
 #[test]
-fn a_wrong_password_is_refused_on_its_second_prompt_and_never_retried() {
+fn a_wrong_password_is_refused_by_name_and_never_retried() {
     let username = required(SUDO_PASSWORD_USERNAME);
     let run = elevate_as(&username, Some(b"synthetic-wrong-password"));
     assert_eq!(
         run.outcome,
-        Err(Stop::Elevation(ElevationRefusal::UnexpectedPrompt)),
-        "a second prompt is sudo asking again, and there is no second answer"
+        Err(Stop::Elevation(ElevationRefusal::IncorrectPassword)),
+        "la machine a refusé le secret, et c'est ce que le refus doit dire"
     );
     assert_eq!(
-        run.channels_spent, MAX_EXEC_CHANNELS,
+        run.channels_spent, READABLE_LISTING_CHANNELS,
         "the refusal must not have cost a fourth channel"
     );
 
@@ -4504,23 +4618,26 @@ fn a_wrong_password_is_refused_on_its_second_prompt_and_never_retried() {
 /// listed — fails this test instead of passing it.
 #[test]
 fn every_hostile_policy_fails_closed_at_the_stage_that_judged_it() {
-    // `SUDO_LOG_INPUT_USERNAME` n'est plus ici : depuis #217 une politique
-    // journalisante est **servie**, et le compte du périmètre qui la porte est
-    // exercé par `a_machine_that_logs_its_io_reaches_the_end` ci-dessous. Le
-    // compte reste monté par le harnais — il est devenu un cas nominal, pas un
-    // cas disparu.
-    let hostile: [(&str, Stop); 4] = [
-        (
-            SUDO_UNLISTABLE_USERNAME,
-            Stop::Policy(ElevationRefusal::Policy(
-                SudoRefusal::AuthenticationRequired,
-            )),
-        ),
+    // Deux comptes ont quitté cette table sans quitter le périmètre, et c'est
+    // la même histoire deux fois : une politique que le produit refusait est
+    // devenue une politique qu'il sert.
+    //
+    // `SUDO_LOG_INPUT_USERNAME` d'abord (#217) — la journalisation d'entrée,
+    // mesurée inoffensive pour la forme de commande du produit. Puis
+    // `SUDO_UNLISTABLE_USERNAME` (#218) — le listing qui coûte le secret,
+    // c'est-à-dire la posture par défaut de Debian. Les deux sont exercés en
+    // cas NOMINAUX ci-dessous.
+    //
+    // **`SUDO_REQUIRETTY_USERNAME`, lui, ne bouge pas**, et c'est le voisin
+    // qui devait rester debout : il partageait la table de marqueurs de
+    // `AuthenticationRequired`, si bien que rendre celui-ci franchissable
+    // l'aurait emporté. Il porte désormais son propre nom, et la boucle
+    // ci-dessous prouve qu'aucun secret ne part chez lui : deux canaux
+    // dépensés, et aucune décision prise sur un mot de passe.
+    let hostile: [(&str, Stop); 3] = [
         (
             SUDO_REQUIRETTY_USERNAME,
-            Stop::Policy(ElevationRefusal::Policy(
-                SudoRefusal::AuthenticationRequired,
-            )),
+            Stop::Policy(ElevationRefusal::Policy(SudoRefusal::TerminalRequired)),
         ),
         (
             SUDO_DIVERGENT_USERNAME,
@@ -4582,10 +4699,13 @@ fn every_hostile_policy_fails_closed_at_the_stage_that_judged_it() {
 /// A session that has spent its three channels opens no fourth one, and the
 /// refusal is the budget's rather than the server's.
 #[test]
-fn a_fourth_channel_is_refused_by_the_session_budget() {
-    let username = required(SUDO_NOPASSWD_USERNAME);
+fn a_channel_past_the_budget_is_refused_by_the_session() {
+    // Le compte au listing payant est celui qui atteint le plafond : il
+    // dépense les quatre canaux, là où un listing lisible sans secret en laisse
+    // un. Prendre celui-là est ce qui rend le refus suivant certain.
+    let username = required(SUDO_DEBIAN_USERNAME);
     let mut live = establish_as(&username).expect("the LAB session must open");
-    let run = elevate(&mut live, None);
+    let run = elevate(&mut live, Some(&sudo_password()));
     assert!(run.outcome.is_ok(), "{:?}", run.outcome);
     assert_eq!(live.channels_spent(), MAX_EXEC_CHANNELS);
 
@@ -4852,21 +4972,57 @@ fn no_byte_of_the_sent_password_survives_on_the_server() {
         logged.contains("/usr/bin/id"),
         "sudo must really have logged the one command it ran: {logged}"
     );
-    let io_logs = server("ls -AR /var/log/sudo-io 2>/dev/null | head -50 || true");
+    // **Le témoin, sans lequel ce qui suit ne prouve rien.** Le compte du
+    // périmètre dont la politique journalise ses E/S est mené au terme ICI, et
+    // non espéré d'un autre cas : l'ordre des tests n'est pas garanti, et
+    // « le mot de passe est absent du journal » ne se distingue pas de « il
+    // n'y a pas de journal ».
+    let logging = elevate_as(&required(SUDO_LOG_INPUT_USERNAME), Some(&password));
+    assert!(logging.outcome.is_ok(), "{:?}", logging.outcome);
+
+    // Le journal d'E/S EXISTE désormais, et c'est un fait du produit depuis
+    // #217 : une politique qui journalise est **servie**, et le journal capte
+    // bien la sortie des commandes. L'assertion d'avant — « aucun journal » —
+    // nommait un refus qui n'existe plus, et elle a survécu à son refus parce
+    // que la pull request de #217 a *construit* cette suite sans l'exécuter.
+    //
+    // Ce qui la remplace est ce que le cas annonce depuis toujours : aucun
+    // octet du mot de passe, dans le contenu du journal et pas seulement dans
+    // ses noms de fichiers. Le contenu revient en **hexadécimal** pour deux
+    // raisons : il traverse les fichiers binaires du journal — `timing`,
+    // `ttyin` — sans rien perdre, et il rend le mot de passe cherchable ici
+    // sans jamais le poser sur la ligne de commande du serveur, qui est la
+    // fuite même dont ce cas parle.
+    let io_hex = server(
+        "find /var/log/sudo-io -type f -exec zcat -f {} + 2>/dev/null \
+         | od -An -tx1 -v | tr -d ' \n' || true",
+    );
     assert!(
-        io_logs.is_empty(),
-        "an I/O log exists for a policy this palier attested: {io_logs}"
+        !io_hex.is_empty(),
+        "aucun journal d'E/S à fouiller : l'absence du mot de passe ne prouverait rien"
     );
 
-    for haystack in [&logged, &io_logs] {
-        assert!(
-            !haystack
-                .as_bytes()
-                .windows(password.len())
-                .any(|window| window == password.as_slice()),
-            "the password survived on the server"
-        );
-    }
+    // Ce que ce cas établit : sur le périmètre réel, rien de ce que le produit
+    // a envoyé ne se retrouve dans les journaux d'une machine qui journalise.
+    // Ce qu'il n'établit PAS : le comportement d'un compte qui journaliserait
+    // ses E/S **et** exigerait un mot de passe — aucun compte du périmètre ne
+    // fait les deux. Cette mesure-là est celle du pilote LAB `sudo-io-logging`,
+    // qui la rejoue avec son propre témoin, sur les deux formes qui dépensent
+    // le secret : l'acte et le prévol payé. (Son chemin n'est pas écrit ici :
+    // le contrat de sources refuse un littéral de version de livraison dans une
+    // source d'exécution, et ce chemin en porte un.)
+    let needle: String = password.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert!(
+        !io_hex.contains(&needle),
+        "le mot de passe survit dans le journal d'E/S du serveur"
+    );
+    assert!(
+        !logged
+            .as_bytes()
+            .windows(password.len())
+            .any(|window| window == password.as_slice()),
+        "the password survived on the server"
+    );
 }
 
 // --------------------------------------------------------------- the audit
@@ -4961,7 +5117,8 @@ fn a_compatible_declared_endpoint_is_audited_and_proposed_before_any_mutation() 
         "a fresh machine declares no installation at the fixed path"
     );
     assert_eq!(
-        channels, MAX_EXEC_CHANNELS,
+        channels,
+        audit::OBSERVATION_CHANNELS,
         "an audit is three reads, and it spends the session's whole budget"
     );
 
@@ -4993,11 +5150,29 @@ fn an_audit_leaves_the_session_no_channel_to_elevate_with() {
     let mut live = establish_as(&required(AUDIT_USERNAME)).expect("the LAB session must open");
     let machine = audit::observe(&mut live, lease(), &always_continue());
     assert!(machine.distribution.is_known());
-    assert_eq!(live.channels_spent(), MAX_EXEC_CHANNELS);
-    assert_eq!(
-        live.run_channel(elevation::PREFLIGHT, None, lease(), &always_continue()),
-        Err(TransportRefusal::ChannelBudgetSpent),
-        "an audited session must not be able to go on and elevate"
+    assert_eq!(live.channels_spent(), audit::OBSERVATION_CHANNELS);
+
+    // **La propriété est « aucune élévation après un audit », et elle se
+    // prouve en l'essayant.** Jusqu'au 22 août 2026 elle reposait sur une
+    // coïncidence de chiffres — l'observation ouvrait exactement autant de
+    // canaux que le budget en portait — et #218 a défait cette coïncidence en
+    // ajoutant le prévol payé. Ce qui reste vrai est plus faible et se tient
+    // seul : ce qui reste après un audit est **plus court que la plus courte
+    // élévation**, qui est de trois canaux. La sonde passe donc, et le prévol
+    // qui la suit est refusé — l'élévation n'aboutit jamais.
+    assert!(
+        MAX_EXEC_CHANNELS - audit::OBSERVATION_CHANNELS < READABLE_LISTING_CHANNELS,
+        "un audit laisserait de quoi élever : la garde n'est plus tenue par les bornes"
+    );
+    let mut refusals = Vec::new();
+    for command in [elevation::IDENTITY, elevation::PREFLIGHT] {
+        refusals.push(live.run_channel(command, None, lease(), &always_continue()));
+    }
+    assert!(
+        refusals
+            .iter()
+            .any(|verdict| verdict == &Err(TransportRefusal::ChannelBudgetSpent)),
+        "an audited session must not be able to go on and elevate: {refusals:?}"
     );
     live.close();
 }
@@ -5071,7 +5246,8 @@ fn a_machine_that_answers_nothing_is_refused_for_not_having_answered() {
     let account = required(AUDIT_SILENT_USERNAME);
     let (machine, channels) = audit_as(&account);
     assert_eq!(
-        channels, MAX_EXEC_CHANNELS,
+        channels,
+        audit::OBSERVATION_CHANNELS,
         "the three channels really ran against it"
     );
     assert_eq!(
@@ -5268,7 +5444,7 @@ fn no_endpoint_that_was_never_declared_receives_any_traffic() {
     for name in AUDITED_ACCOUNTS {
         let account = required(name);
         let (machine, channels) = audit_as(&account);
-        assert_eq!(channels, MAX_EXEC_CHANNELS, "{account}");
+        assert_eq!(channels, audit::OBSERVATION_CHANNELS, "{account}");
         // The audit really happened: a case where nothing ran would keep the
         // canary silent for the wrong reason.
         assert!(
@@ -5340,7 +5516,7 @@ fn no_audit_writes_anything_on_the_machine_it_audits() {
     for name in AUDITED_ACCOUNTS {
         let account = required(name);
         let (_, channels) = audit_as(&account);
-        assert_eq!(channels, MAX_EXEC_CHANNELS, "{account}");
+        assert_eq!(channels, audit::OBSERVATION_CHANNELS, "{account}");
     }
 
     assert_eq!(
