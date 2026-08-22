@@ -7,10 +7,11 @@ qui s'est produit : jamais un bouton qui cache ce qu'il déclenche.
 > ## ⚠️ Pré-version — en cours de développement.
 >
 > **Une pre-release existe** ([Releases](https://github.com/ldesfontaine/your-cloud/releases)) :
-> la `v0.2.0` installe et met en service un Controller — le programme qui
-> pilotera vos machines — sur une machine Debian 13 `amd64`. Chaque étape est
-> approuvée dans une fenêtre, chaque issue est une phrase, chaque refus dit sa
-> cause. **Elle n'héberge encore aucun service : ne lui confiez pas de données
+> la `v0.3.0` installe et met en service un Controller — le programme qui
+> pilotera vos machines — sur une machine Debian 13 `amd64`, **sans aucune
+> préparation du compte que vous prêtez**. Deux approbations suffisent, chaque
+> issue est une phrase, chaque refus dit sa cause et le geste qui la lève.
+> **Elle n'héberge encore aucun service : ne lui confiez pas de données
 > réelles.**
 
 ## Ce qui existe
@@ -56,7 +57,7 @@ chiffres et de lettres qui change entièrement si un seul caractère du fichier
 a été modifié en route.
 
 ```bash
-sha256sum your-cloud_0.2.0_amd64.deb
+sha256sum your-cloud_0.3.0_amd64.deb
 ```
 
 Comparez ce qu'elle affiche à l'empreinte donnée sur la page de la release.
@@ -70,7 +71,7 @@ fonctionner. Votre mot de passe vous sera demandé, puis une confirmation.
 
 ```bash
 sudo apt update
-sudo apt install ./your-cloud_0.2.0_amd64.deb
+sudo apt install ./your-cloud_0.3.0_amd64.deb
 ```
 
 Comptez quelques minutes : les composants à télécharger pèsent environ
@@ -92,38 +93,26 @@ n'allez pas plus loin.
 **5. Ouvrir l'application.** Elle s'appelle **Your Cloud** dans le menu des
 applications.
 
-### Préparer la machine que vous voulez installer
+### Ce que l'application vous demandera sur cette machine
 
-L'application vous demandera trois choses au sujet de cette machine : un
-compte pour s'y connecter, son empreinte, et trois adresses.
+Trois choses : un compte pour s'y connecter, son empreinte, et trois adresses.
+**Rien n'est à préparer sur le serveur.**
 
-**Le compte.** L'application se connecte à votre serveur avec un compte que
-vous lui prêtez, et ce compte doit pouvoir y installer des logiciels. Il doit
-aujourd'hui remplir deux conditions précises, qui ne sont pas celles d'un
-compte d'administrateur habituel :
+**Le compte.** Le compte d'administration ordinaire suffit — celui que
+l'installateur Debian crée quand vous répondez « oui » à la question « cet
+utilisateur peut-il administrer la machine ». Il appartient au groupe `sudo`,
+il a un mot de passe, et vous n'avez **aucune ligne à ajouter** nulle part.
 
-- pouvoir tout faire sans qu'on lui redemande son mot de passe ;
-- ne pas appartenir au groupe `sudo` — sinon il reçoit deux autorisations
-  différentes, et l'application ne sait pas laquelle s'applique.
+L'application vous demandera ce mot de passe dans une fenêtre, au moment de se
+connecter. Il sert à lire les droits du compte puis à installer, et il est
+détruit quand la session se termine — succès comme échec. Le produit ne touche
+jamais à la configuration de votre serveur pour se faciliter la tâche : il ne
+retire pas le compte d'un groupe, n'ajoute pas de règle permanente, et ne
+désactive aucun mot de passe.
 
-Les commandes ci-dessous mettent le compte dans cette forme. Elles se tapent
-**sur la machine que vous voulez installer**, et vous y remplacez `<compte>`
-par le nom du compte, partout où il apparaît.
-
-```bash
-sudo deluser <compte> sudo
-echo '<compte> ALL=(ALL:ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/90-<compte>
-sudo chmod 0440 /etc/sudoers.d/90-<compte>
-sudo visudo -c
-```
-
-La dernière ligne relit ce qui vient d'être écrit et doit répondre
-`parsed OK` : c'est ce qui vous protège d'une faute de frappe.
-
-Cette exigence ne nous satisfait pas et elle est ouverte — voir
-[l'issue 158](https://github.com/ldesfontaine/your-cloud/issues/158). Si vous
-vous trompez, rien n'est posé sur votre serveur, et l'application vous dit
-laquelle des deux conditions manque et quelle commande la corrige.
+Un accès `root` direct fonctionne aussi, si votre hébergeur ne donne que cela,
+de même qu'un compte déjà configuré sans mot de passe. Ces formes sont
+servies ; aucune n'est exigée.
 
 **L'empreinte de la machine.** Elle permet à l'application de reconnaître
 votre serveur, et de refuser de parler à une autre machine qui prendrait sa

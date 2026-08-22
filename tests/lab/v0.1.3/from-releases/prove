@@ -61,7 +61,7 @@ result_root="$root/tests/artifacts/proofs/from-releases/$run_id"
 
 # La page, et rien qu'elle. Le tag est la seule chose que ce harnais sait du
 # dépôt : c'est ce qu'un inconnu lit dans l'URL de la release.
-release_tag=v0.2.0
+release_tag=v0.3.0
 release_api="https://api.github.com/repos/ldesfontaine/your-cloud/releases/tags/$release_tag"
 # Le README que voit un inconnu qui arrive sur le dépôt : celui de la branche
 # par défaut, pas celui figé dans le tag.
@@ -155,11 +155,12 @@ cat /root/mot-de-passe-inconnu')
   # C'est ce que l'installateur Debian produit quand on répond « oui » à
   # « cet utilisateur peut-il administrer la machine ».
   #
-  # La POLITIQUE sudoers, elle, n'est pas écrite ici : elle est LUE dans le
-  # README publié, section « Préparer la machine », et jouée telle quelle —
-  # exactement comme la phase `installer` lit les commandes d'installation.
-  # Le harnais n'invente donc aucune configuration : il applique celle que le
-  # produit documente, et si elle est fausse, la mesure le dit.
+  # **Aucune politique sudoers n'est écrite, ni ici ni ailleurs.** Ce harnais
+  # en lisait une dans le README et la jouait ; #158 l'a fermée, et le compte
+  # reste donc exactement tel que `useradd` et `usermod -aG sudo` le laissent.
+  # `rm -f /etc/sudoers.d/90-inconnu` ci-dessous n'ajoute rien : il défait ce
+  # qu'un passage antérieur aurait pu poser, pour que la posture soit celle
+  # d'une machine neuve et non celle d'un reste.
   "$labctl" ssh "$serveur_vm" -- "
 set -e
 id inconnu >/dev/null 2>&1 || useradd --create-home --shell /bin/bash inconnu
@@ -171,24 +172,40 @@ printf '%s\n' '$public' > /home/inconnu/.ssh/authorized_keys
 chown inconnu:inconnu /home/inconnu/.ssh/authorized_keys
 chmod 0600 /home/inconnu/.ssh/authorized_keys
 sudo -l -U inconnu 2>/dev/null | tail -2"
-  # Ce que le README demande de faire SUR LA MACHINE CIBLE, lu chez lui.
+  # **Ce que le README demande de faire sur la cible : PLUS RIEN.** Cette
+  # phase jouait la recette de préparation lue dans le README publié —
+  # retirer le compte du groupe `sudo`, lui écrire une entrée `NOPASSWD`.
+  # #158 l'a fermée : le produit sert le compte que l'installateur Debian
+  # produit, et le README a cessé de demander une préparation.
+  #
+  # La phase ne joue donc plus rien, et elle CONSTATE que rien n'est à
+  # jouer — ce qui est une mesure, pas une omission. Un README qui
+  # redemanderait une préparation la ferait rougir, et c'est exactement le
+  # critère de #158 : la page n'exige plus rien.
   "$labctl" ssh "$serveur_vm" -- "
 set -e
 curl -sSL -o /root/README.md '$readme_raw'
-python3 - <<'PY' > /root/preparer-la-machine
+python3 - <<'PY'
 import re, pathlib
 texte = pathlib.Path('/root/README.md').read_text()
-debut = texte.index('### Préparer la machine')
+debut = texte.index('### Ce que l'application vous demandera')
 blocs = re.findall(r'\`\`\`bash\n(.*?)\`\`\`', texte[debut:], re.S)
-# Le premier bloc est la politique du compte prêté ; les suivants se jouent
-# ailleurs (l'empreinte se RELÈVE, elle ne se pose pas).
-lignes = [l for l in blocs[0].strip().split('\n') if l.strip()]
-print('\n'.join(lignes).replace('<compte>', 'inconnu'))
+mutations = [b.strip() for b in blocs
+             if re.search(r'sudoers|deluser|usermod|visudo|chmod|tee /etc', b)]
+if mutations:
+    print('FAILED: le README demande encore de préparer la cible :')
+    for m in mutations:
+        print('   ', m.replace(chr(10), ' ; '))
+    raise SystemExit(1)
+print(f'  aucune préparation demandée — {len(blocs)} bloc(s), tous en lecture')
+
 PY
-echo '  ce que le README demande sur la cible :'
-sed 's/^/    /' /root/preparer-la-machine
-bash -e /root/preparer-la-machine
-sudo -l -U inconnu | tail -1"
+# La posture réellement obtenue, dite par la machine elle-même.
+id -nG inconnu | tr ' ' '\n' | grep -qx sudo \\
+  || { echo 'FAILED: le compte n'\\''est pas dans le groupe sudo' >&2; exit 1; }
+[ -e /etc/sudoers.d/90-inconnu ] \\
+  && { echo 'FAILED: une entrée sudoers a été écrite pour le compte' >&2; exit 1; }
+echo '  posture de la cible : groupe sudo, mot de passe, aucune ligne de sudoers'"
   echo "SERVEUR_OK"
 }
 
@@ -258,9 +275,9 @@ installer() {
   # arrivant sur le dépôt, et jouées dans son ordre. Un harnais qui porterait
   # sa propre copie mesurerait sa fidélité à lui-même, pas celle du README.
   #
-  # Seuls les blocs de « Installer (Linux) » avant « Préparer la machine »
-  # sont joués : les suivants s'exécutent sur la MACHINE CIBLE, et la phase
-  # `parcours` les emploie là où ils vivent.
+  # Seuls les blocs de « Installer (Linux) » antérieurs à la section qui
+  # décrit la machine cible sont joués : les suivants s'exécutent sur la
+  # MACHINE CIBLE, et la phase `parcours` les emploie là où ils vivent.
   "$labctl" ssh "$poste_vm" -- "
 set -e
 cd /root
@@ -269,7 +286,7 @@ python3 - <<'PY'
 import re, pathlib
 texte = pathlib.Path('/root/README.md').read_text()
 debut = texte.index('## Installer (Linux)')
-fin = texte.index('### Préparer la machine', debut)
+fin = texte.index('### Ce que l'application vous demandera', debut)
 blocs = re.findall(r'\`\`\`bash\n(.*?)\`\`\`', texte[debut:fin], re.S)
 lignes = [ligne for bloc in blocs for ligne in bloc.strip().split('\n') if ligne.strip()]
 if not lignes:
@@ -331,11 +348,13 @@ done
 dpkg-query -W your-cloud-server >/dev/null 2>&1 \
   && { echo "FAILED: le lot est déjà posé sur la cible" >&2; exit 1; }
 exit 0'
-  # Aucun mot de passe sudo n'est passé : la forme que le README documente
-  # est une entrée `NOPASSWD`, donc le produit n'en demande pas — et l'oracle
-  # attendrait en vain une fenêtre que rien n'ouvre. Le fichier reste écrit
-  # sur le poste : il servira à #158, quand la posture à mot de passe sera
-  # servie.
+  # **Le mot de passe voyage désormais, et c'est #158 qui ferme.** Ce
+  # commentaire disait « le fichier reste écrit sur le poste : il servira à
+  # #158, quand la posture à mot de passe sera servie ». Ce moment est
+  # arrivé : le compte est celui que l'installateur Debian produit, sa
+  # politique ne renonce à rien, et le produit demande donc le secret dans
+  # une fenêtre — une par consentement. La feuille de cible le nomme ; sans
+  # elle, la fenêtre resterait sans réponse jusqu'à l'expiration.
   #
   # L'empreinte de la clé d'hôte : relevée SUR le serveur, comme un
   # utilisateur la relèverait avant de la porter dans le formulaire. Le
@@ -352,6 +371,7 @@ TARGET_HOST_KEY=$host_key
 TARGET_LISTEN=$serveur_ip:9443
 TARGET_ALLOWED_SOURCE=192.168.240.9/32
 TARGET_RELAY_ENDPOINT=192.168.240.9:8444
+TARGET_SUDO_PASSWORD_FILE=/root/mot-de-passe-inconnu
 TARGET"
   local start finish
   start=$(date +%s)
