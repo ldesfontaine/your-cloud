@@ -80,7 +80,7 @@ actions sur ses machines, ses services et ses plateformes. Your Cloud orchestre
 ces actions ; il ne transforme pas chaque machine en serveur d'administration
 général et ne réimplémente pas les API d'OpenStack ou de K3s.
 
-<!-- coherence: V1-APP-ACCESS:start -->
+<!-- coherence: APP-ACCESS:start -->
 ### Une App installée distincte d'un Controller privé
 
 Your Cloud désigne le produit, mais pas une autorité unique. L'**App** est une
@@ -185,7 +185,7 @@ d'administration ne doit pas interrompre, par elle-même, les services hébergé
 sur d'autres machines. La perte d'un hôte peut interrompre les services qui y
 cohabitent. Les services destinés à Internet restent accessibles par leur HTTPS
 normal, sans imposer WireGuard à leurs utilisateurs.
-<!-- coherence: V1-APP-ACCESS:end -->
+<!-- coherence: APP-ACCESS:end -->
 
 <!-- coherence: BOOTSTRAP-RECOVERY:start -->
 ### Amorcer une fois, remplacer sans nouvelle autorité
@@ -728,7 +728,7 @@ autorisation envers les autres appareils.
   protégée avant de quitter sa machine.
 - Un service déjà déployé ne s'arrête pas uniquement parce que l'App, le
   Controller ou le Relay est indisponible.
-<!-- coherence: V1-OBSERVATION:start -->
+<!-- coherence: OBSERVATION-CHAIN:start -->
 - Chaque Daemon enrôlé reçoit un endpoint Relay approuvé qui borne la route, le
   port et l'identité cryptographique attendue. Le Relay n'exige pas d'adresse
   publique lorsqu'un routage privé autorisé le rend joignable aux Daemons et au
@@ -758,7 +758,7 @@ autorisation envers les autres appareils.
 - L'extension future de l'observation repose sur des collecteurs versionnés, à
   sortie typée et aux privilèges déclarés, jamais sur un shell distant, un
   chemin libre ou un plugin téléchargé silencieusement.
-<!-- coherence: V1-OBSERVATION:end -->
+<!-- coherence: OBSERVATION-CHAIN:end -->
 - Les changements sont rejouables, vérifiables et réversibles dans les limites
   annoncées.
 - Le projet est exécuté et éprouvé dans le LAB ; le laptop reste réservé à

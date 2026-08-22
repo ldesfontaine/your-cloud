@@ -79,7 +79,7 @@
     </section>
     <!-- coherence: AGENT-AUTHORITY:end -->
 
-    <!-- coherence: V1-APP-ACCESS:start -->
+    <!-- coherence: APP-ACCESS:start -->
     <section>
       <h2>Chemin Controller–Relay–App</h2>
       <p class="note">Le Relay reçoit les observations des Daemons sur une frontière et rend un instantané au Controller sur une autre. L'App appelle le Controller ; elle n'appelle jamais directement le Relay.</p>
@@ -108,9 +108,9 @@
       <p class="note">La projection App rend seulement les machines attendues sous 128 Kio. Transport, enrôlement, fraîcheur et continuité restent séparés : une panne ne devient ni ancienne ni absente. Une observation fiable est récente jusqu'à 90 secondes incluses ; un écart absolu déclaré/reçu supérieur à 30 secondes est seulement signalé. Toutes les lacunes contribuent à un résumé exact et aucune plage n'est tronquée silencieusement.</p>
       <p class="note">Le cœur courant contient un seul chemin Daemon–Relay. Les anciennes preuves de présence restent consultables sans maintenir leur sender ou leur serveur dans <code>internal/</code>. L’inventaire, la projection et la fraîcheur appartiennent au Controller.</p>
     </section>
-    <!-- coherence: V1-APP-ACCESS:end -->
+    <!-- coherence: APP-ACCESS:end -->
 
-    <!-- coherence: V1-OBSERVATION:start -->
+    <!-- coherence: OBSERVATION-CHAIN:start -->
     <section>
       <h2>Trajet durable d'une observation</h2>
       <div class="flow"><div class="step">Noyau Linux</div><div class="step">Collector</div><div class="step">tampon + séquence</div><div class="step">POST mTLS</div><div class="step">Relay + fsync</div><div class="step">accusé puis retrait</div></div>
@@ -206,7 +206,7 @@
         <article class="card"><h3>Conformité</h3><p>Les contrôles aident OWASP/NIS2 sans suffire à une déclaration.</p></article>
       </div>
     </section>
-    <!-- coherence: V1-OBSERVATION:end -->
+    <!-- coherence: OBSERVATION-CHAIN:end -->
 
     <footer><p>Source canonique : <a href="../architecture/CHAINE-D-OBSERVATION.md">CHAINE-D-OBSERVATION.md</a> · Preuves : <a href="../lab/v0.0.2-observation.md">Daemon–Relay</a> et <a href="../lab/v0.0.3-console-controller-linux.md">App–Controller Linux</a> · Automatisation : <a href="../contribution/TESTS.md">registre des tests</a>.</p><p><a href="index.html">← Documentation visuelle</a></p></footer>
   </main>

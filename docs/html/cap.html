@@ -22,7 +22,7 @@
     <p>L'administrateur pilote par l'app, sur un canal qui ne sert qu'à lui. Les autres humains utilisent les services par le web, derrière un portail quand le service est privé — ils n'installent rien et ne voient jamais l'infrastructure. Une clé d'app compromise ne donne aucune route vers les services ; un service compromis n'en a aucune vers le Controller. C'est une frontière que le réseau applique, pas une convention d'usage.</p>
     <h2>Sans terminal, jamais silencieux</h2>
     <p>L'utilisateur ne tape aucune commande sur ses machines : ce que le produit sait faire, il le fait depuis ses écrans. Et aucune action ne s'exécute sans une approbation qui la nomme, dépliable jusqu'aux commandes réellement jouées. Épargner un terminal ne signifie pas cacher ce qui se passe — c'est l'inverse.</p>
-    <!-- coherence: V1-APP-ACCESS:start -->
+    <!-- coherence: APP-ACCESS:start -->
     <h2>Une App installée distincte d'un Controller privé</h2>
     <p>Your Cloud est le produit. L'<strong>App</strong> est une application cliente installée et signée qui embarque son frontend sans serveur local ; le <strong>Controller</strong> est le backend sans frontend et l'autorité d'une seule infrastructure. Une App peut être associée à plusieurs Controllers indépendants sans conserver leurs secrets de machine. Seul l'Assistant temporaire décrit plus bas utilise en mémoire l'accès personnel pendant l'amorçage. La distribution signée, les identités d'appareil et les sessions séparées devront prouver cette isolation.</p>
     <p>Les chemins restent séparés : utilisateur → App → Controller ; Daemon → Relay → Controller ; Controller → exécution contrôlée → machine ; Internet → services publiés. L'App ne contacte jamais le Relay et le Daemon ne connaît aucun Controller.</p>
@@ -31,7 +31,7 @@
     <p>Pour <code>v0.1.0</code>, six mots français aléatoires dérivés avec Argon2id déverrouillent un coffre Tauri Stronghold commun à Linux et Windows. Les clés d'appareil et humaines restent distinctes par Controller ; le frontend voit brièvement la phrase mais ne reçoit jamais clé dérivée, clé privée, contenu du coffre ou session. L'appairage et la récupération exigent un listener TLS ouvert par l'autorité locale sur l'adresse privée exacte du Controller, puis réellement fermé. Le certificat P-256 de 180 jours se remplace sans double autorité et la session expire après 30 minutes d'inactivité ou huit heures absolues. Un code global de récupération de 256 bits reste hors ligne et dérive une clé différente par Controller. Dans <code>v0.0.3</code> seulement, un seul humain et un seul appareil sont actifs par Controller. Windows Hello, passkeys, FIDO2 et SSO/OIDC restent postérieurs à <code>v0.1.0</code>.</p>
     <p>L'App vise d'abord Linux et Windows avec le même frontend responsive. La preuve <code>v0.0.3</code> s'exécute dans le LAB ou un runner isolé et ne lance jamais le produit sur le laptop de développement. Le téléphone puis un éventuel mode navigateur demanderont leurs propres preuves de signature, stockage sécurisé, distribution et isolation ; aucun Controller ne fournit leur code.</p>
     <div class="notice"><strong>Décision <code>v0.1.0</code> :</strong> l'App est installée sur l'appareil administrateur ; le Controller reste un backend privé dans l'environnement d'administration. Aucun frontend n'est hébergé dans l'infrastructure et aucune page <code>localhost</code> n'est ouverte.</div>
-    <!-- coherence: V1-APP-ACCESS:end -->
+    <!-- coherence: APP-ACCESS:end -->
     <!-- coherence: BOOTSTRAP-RECOVERY:start -->
     <h2>Amorcer puis remplacer le Controller sans autorité de secours</h2>
     <p>L'utilisateur installe seulement l'App. Son Assistant natif et temporaire propose les parcours explicites « Créer une infrastructure » et « Remplacer un Controller ». Il utilise pendant l'opération l'accès SSH personnel que l'utilisateur possède déjà, de préférence par son agent SSH, sans livrer la clé au frontend, au Controller ou aux journaux. Passphrase, mot de passe <code>sudo</code> et consentement <code>root</code> passent par une fenêtre du cœur natif hors WebView qui répète cibles, actions et expiration ; le frontend ne peut ni fournir le secret, ni approuver, ni obtenir une primitive SSH ou de signature générale.</p>
@@ -95,10 +95,10 @@
     <p>Your Cloud n'impose ni topologie type, ni catalogue à installer. Un profil de service décrit seulement un parcours pris en charge : sa présence dans l'App ne crée aucune ressource sans déclaration, placement, plan et approbation explicites. Les services nommés dans une preuve LAB rendent ce scénario reproductible ; ils ne deviennent pas des prérequis de l'infrastructure réelle.</p>
     <h2>Un inventaire local, jamais un scan</h2>
     <p>Sur une machine enrôlée, Your Cloud peut relever en lecture seule les services, conteneurs, ports et passages qu'il sait interpréter. Il ne scanne pas le LAN : les autres appareils ne sont ni inventoriés ni considérés fiables par leur seule présence réseau.</p>
-    <!-- coherence: V1-OBSERVATION:start -->
+    <!-- coherence: OBSERVATION-CHAIN:start -->
     <h2>Observation choisie, jamais une commande distante</h2>
     <p>L'utilisateur choisit des observations nommées et voit leurs données, privilèges et coûts. Le Daemon n'ouvre aucun port réseau : il conserve un tampon local borné puis envoie lui-même les données en mTLS. Le Relay accuse réception sans pouvoir donner d'ordre. Les extensions futures restent versionnées et typées ; aucun shell, chemin libre ou plugin silencieux ne devient un collecteur.</p>
-    <!-- coherence: V1-OBSERVATION:end -->
+    <!-- coherence: OBSERVATION-CHAIN:end -->
     <h2>Confiance bornée</h2>
     <p>Seules les machines explicitement enrôlées participent au réseau privé de Your Cloud. L'enrôlement donne une identité, pas une autorisation générale : chaque pair, destination, port et protocole reste limité au besoin approuvé, et les données Your Cloud sont chiffrées avant de quitter leur machine.</p>
     <h2>Rythme de construction</h2>
