@@ -211,7 +211,10 @@ pub struct InstallPayload<'a> {
 /// Une séquence d'installation, du budget adopté au secret détruit.
 pub struct Sequence<'a, C: Channel> {
     channel: &'a mut C,
-    action: BootstrapAction,
+    /// La portée que l'humain a approuvée, dans l'ordre où ses actes se
+    /// jouent. Une portée et non un acte depuis #219 : la seconde fenêtre en
+    /// nomme deux, et la séquence joue exactement ce qu'elle a nommé.
+    actions: &'a [BootstrapAction],
     password_required: bool,
     /// Le refus qu'un juge vient de prononcer, conservé le temps de le porter
     /// à l'appelant sous son propre nom.
@@ -219,14 +222,18 @@ pub struct Sequence<'a, C: Channel> {
 }
 
 impl<'a, C: Channel> Sequence<'a, C> {
-    /// Prépare la séquence d'une action approuvée.
+    /// Prépare la séquence d'une portée approuvée.
     ///
     /// `password_required` vient de l'attestation de politique et de rien
     /// d'autre : c'est elle qui a lu le listing distant.
-    pub fn new(channel: &'a mut C, action: BootstrapAction, password_required: bool) -> Self {
+    pub fn new(
+        channel: &'a mut C,
+        actions: &'a [BootstrapAction],
+        password_required: bool,
+    ) -> Self {
         Self {
             channel,
-            action,
+            actions,
             password_required,
             last_refusal: String::new(),
         }
@@ -275,12 +282,12 @@ impl<'a, C: Channel> Sequence<'a, C> {
         ledger: &mut Ledger,
         pending: &mut Vec<Step>,
     ) -> Result<(), SequenceStop> {
-        let budget = acts::channel_budget(self.action);
+        let budget = acts::channel_budget(self.actions);
         self.channel
             .adopt_budget(budget)
             .map_err(|_| SequenceStop::BudgetRefused)?;
 
-        for step in super::plan::authorized_steps(self.action) {
+        for step in super::plan::authorized_steps_for(self.actions) {
             // Ce que l'étape fait traverser, avant tout privilège. L'ordre est
             // une propriété et non une commodité : `dpkg` installe le lot que
             // la cible détient déjà, donc le dépôt précède l'acte, et l'acte
@@ -1074,12 +1081,10 @@ mod tests {
         let mut channel = ScriptedChannel::in_the_announced_state();
         let mut secret = SpentSecret::holding(b"phrase".to_vec());
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], true)
+            .run(&plan(), &carried.payload(), &mut secret, |held| {
+                held.as_slice()
+            });
 
         assert!(outcome.succeeded());
         assert!(secret.is_destroyed(), "le secret survit à une réussite");
@@ -1092,12 +1097,10 @@ mod tests {
         let mut channel = ScriptedChannel::failing_acts();
         let mut secret = SpentSecret::holding(b"phrase".to_vec());
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], true)
+            .run(&plan(), &carried.payload(), &mut secret, |held| {
+                held.as_slice()
+            });
 
         assert!(!outcome.succeeded());
         assert!(secret.is_destroyed(), "le secret survit à un échec");
@@ -1113,12 +1116,10 @@ mod tests {
         let mut channel = ScriptedChannel::mute();
         let mut secret = SpentSecret::holding(b"phrase".to_vec());
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], true)
+            .run(&plan(), &carried.payload(), &mut secret, |held| {
+                held.as_slice()
+            });
 
         assert!(matches!(
             outcome.stopped,
@@ -1162,7 +1163,7 @@ mod tests {
                 ScriptedChannel::in_the_announced_state()
             };
             let mut secret = SpentSecret::holding(protected);
-            Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, true).run(
+            Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], true).run(
                 &plan(),
                 &carried.payload(),
                 &mut secret,
@@ -1185,7 +1186,7 @@ mod tests {
         let mut channel = ScriptedChannel::in_the_announced_state();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
+        Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false).run(
             &plan(),
             &carried.payload(),
             &mut secret,
@@ -1194,7 +1195,9 @@ mod tests {
 
         assert_eq!(
             *channel.adopted.borrow(),
-            Some(acts::channel_budget(BootstrapAction::InstallServerBundle))
+            Some(acts::channel_budget(&[
+                BootstrapAction::InstallServerBundle
+            ]))
         );
     }
 
@@ -1214,17 +1217,18 @@ mod tests {
         let carried = Held::new();
         let mut channel = ScriptedChannel::in_the_announced_state();
         // La session a été préparée pour l'autre action du protocole.
-        channel.budget_carried = Some(acts::channel_budget(
+        channel.budget_carried = Some(acts::channel_budget(&[
             BootstrapAction::ActivateApprovedController,
-        ));
+        ]));
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
 
         assert_eq!(outcome.stopped, Some(SequenceStop::BudgetRefused));
         // Rien n'a couru : ni acte, ni dépôt, ni constat. Le refus tombe avant
@@ -1240,15 +1244,21 @@ mod tests {
 
         // Et le contrôle positif : le même canal, portant le bon budget, passe.
         let mut agreeing = ScriptedChannel::in_the_announced_state();
-        agreeing.budget_carried = Some(acts::channel_budget(BootstrapAction::InstallServerBundle));
+        agreeing.budget_carried = Some(acts::channel_budget(&[
+            BootstrapAction::InstallServerBundle,
+        ]));
         let mut secret = SpentSecret::<Vec<u8>>::none();
-        let outcome = Sequence::new(&mut agreeing, BootstrapAction::InstallServerBundle, false)
-            .run(
-                &plan(),
-                &carried.payload(),
-                &mut secret,
-                |held: &Vec<u8>| held.as_slice(),
-            );
+        let outcome = Sequence::new(
+            &mut agreeing,
+            &[BootstrapAction::InstallServerBundle],
+            false,
+        )
+        .run(
+            &plan(),
+            &carried.payload(),
+            &mut secret,
+            |held: &Vec<u8>| held.as_slice(),
+        );
         assert!(
             outcome.succeeded(),
             "le contrôle positif a été arrêté : {outcome:?}"
@@ -1268,7 +1278,7 @@ mod tests {
             };
             let mut secret = SpentSecret::<Vec<u8>>::none();
 
-            Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
+            Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false).run(
                 &plan(),
                 &carried.payload(),
                 &mut secret,
@@ -1299,12 +1309,13 @@ mod tests {
         let mut channel = ScriptedChannel::in_the_announced_state();
         channel.hostile_identity_output = true;
         let mut secret = SpentSecret::<Vec<u8>>::none();
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
         let Some(SequenceStop::Refused { step, reason }) = outcome.stopped else {
             panic!("une sortie non canonique doit être un refus nommé : {outcome:?}");
         };
@@ -1371,7 +1382,7 @@ mod tests {
 
         let mut with = ScriptedChannel::in_the_announced_state();
         let mut held = SpentSecret::holding(SECRET.to_vec());
-        Sequence::new(&mut with, BootstrapAction::InstallServerBundle, true).run(
+        Sequence::new(&mut with, &[BootstrapAction::InstallServerBundle], true).run(
             &plan(),
             &carried.payload(),
             &mut held,
@@ -1406,7 +1417,7 @@ mod tests {
         // secret — pas même les dépôts, qui reçoivent pourtant une entrée.
         let mut without = ScriptedChannel::in_the_announced_state();
         let mut none = SpentSecret::<Vec<u8>>::none();
-        Sequence::new(&mut without, BootstrapAction::InstallServerBundle, false).run(
+        Sequence::new(&mut without, &[BootstrapAction::InstallServerBundle], false).run(
             &plan(),
             &carried.payload(),
             &mut none,
@@ -1438,12 +1449,13 @@ mod tests {
         .into_bytes();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
 
         let Some(SequenceStop::Refused { step, reason }) = outcome.stopped else {
             panic!("un état qui dément l'annonce doit refuser : {outcome:?}");
@@ -1538,8 +1550,8 @@ mod tests {
             channel.failing = vec![last_refusable(*stop_at).expect("l'étape a un geste refusable")];
             let mut secret = SpentSecret::<Vec<u8>>::none();
 
-            let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false)
-                .run(
+            let outcome =
+                Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false).run(
                     &plan(),
                     &carried.payload(),
                     &mut secret,
@@ -1596,12 +1608,13 @@ mod tests {
         let mut channel = ScriptedChannel::failing_acts();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
 
         assert!(matches!(outcome.ledger.unwind(), Unwind::Incomplete { .. }));
     }
@@ -1623,12 +1636,10 @@ mod tests {
             configuration: None,
             ..carried.payload()
         };
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &bare,
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(&plan(), &bare, &mut secret, |held: &Vec<u8>| {
+                held.as_slice()
+            });
 
         let Some(SequenceStop::Refused { step, reason }) = &outcome.stopped else {
             panic!("une pose sans configuration doit refuser : {outcome:?}");
@@ -1655,12 +1666,13 @@ mod tests {
         let mut channel = ScriptedChannel::in_the_announced_state();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
         assert!(
             outcome.succeeded(),
             "la séquence a été arrêtée : {outcome:?}"
@@ -1716,12 +1728,13 @@ mod tests {
         channel.staging_status = 1;
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
 
         let Some(SequenceStop::Refused { step, reason }) = &outcome.stopped else {
             panic!("un répertoire qui n'est pas le nôtre doit refuser : {outcome:?}");
@@ -1762,12 +1775,13 @@ mod tests {
         };
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
 
         let Some(SequenceStop::Refused { step, reason }) = &outcome.stopped else {
             panic!("un lot altéré doit refuser : {outcome:?}");
@@ -1811,12 +1825,13 @@ mod tests {
         let mut channel = ScriptedChannel::in_the_announced_state();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
         assert!(
             outcome.succeeded(),
             "la séquence a été arrêtée : {outcome:?}"
@@ -1879,12 +1894,13 @@ mod tests {
         let mut channel = ScriptedChannel::in_the_announced_state();
         let mut secret = SpentSecret::<Vec<u8>>::none();
 
-        let outcome = Sequence::new(&mut channel, BootstrapAction::InstallServerBundle, false).run(
-            &plan(),
-            &carried.payload(),
-            &mut secret,
-            |held: &Vec<u8>| held.as_slice(),
-        );
+        let outcome = Sequence::new(&mut channel, &[BootstrapAction::InstallServerBundle], false)
+            .run(
+                &plan(),
+                &carried.payload(),
+                &mut secret,
+                |held: &Vec<u8>| held.as_slice(),
+            );
 
         let Unwind::Complete(removals) = outcome.ledger.unwind() else {
             panic!("une séquence entièrement constatée doit rendre un déroulé complet");

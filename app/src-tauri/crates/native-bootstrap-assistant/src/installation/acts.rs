@@ -318,8 +318,11 @@ pub const fn channels_for(step: Step) -> usize {
 /// « ce que l'accès personnel dépense » finiraient par diverger. Rien n'est
 /// allégé : l'adoption reste unique, antérieure au premier canal, et une
 /// demande au-delà reste refusée.
-pub fn channel_budget(action: your_cloud_bootstrap_protocol::BootstrapAction) -> usize {
-    let opened: usize = super::plan::authorized_steps(action)
+pub fn channel_budget(actions: &[your_cloud_bootstrap_protocol::BootstrapAction]) -> usize {
+    // La somme court sur la PORTÉE, pas sur un acte : une approbation qui
+    // couvre la pose et l'activation ouvre les canaux des deux, et un budget
+    // qui n'aurait compté que le premier serait épuisé au milieu du second.
+    let opened: usize = super::plan::authorized_steps_for(actions)
         .iter()
         .map(|step| channels_for(*step))
         .sum();
@@ -786,7 +789,7 @@ mod tests {
         use crate::personal_access::session::MAX_EXEC_CHANNELS;
         use your_cloud_bootstrap_protocol::BootstrapAction;
 
-        assert_eq!(channel_budget(BootstrapAction::AuditTargetReadOnly), 0);
+        assert_eq!(channel_budget(&[BootstrapAction::AuditTargetReadOnly]), 0);
 
         let install: usize =
             super::super::plan::authorized_steps(BootstrapAction::InstallServerBundle)
@@ -794,7 +797,7 @@ mod tests {
                 .map(|step| channels_for(*step))
                 .sum();
         assert_eq!(
-            channel_budget(BootstrapAction::InstallServerBundle),
+            channel_budget(&[BootstrapAction::InstallServerBundle]),
             MAX_EXEC_CHANNELS + OBSERVATION_CHANNELS + install + 1,
             "le canal de fermeture est compté une fois, et une seule"
         );
@@ -805,7 +808,7 @@ mod tests {
                 .map(|step| channels_for(*step))
                 .sum();
         assert_eq!(
-            channel_budget(BootstrapAction::ActivateApprovedController),
+            channel_budget(&[BootstrapAction::ActivateApprovedController]),
             MAX_EXEC_CHANNELS + OBSERVATION_CHANNELS + activate + 1
         );
     }
@@ -820,7 +823,7 @@ mod tests {
     /// la session ; un budget qui ne compterait que les étapes serait donc
     /// adopté avant la sonde, puis épuisé au milieu de l'installation.
     ///
-    /// Mesuré avant correction : `channel_budget(InstallServerBundle)` rendait
+    /// Mesuré avant correction : `channel_budget(&[InstallServerBundle])` rendait
     /// 15, la session en dépensait 3 pour s'élever, et la séquence branchée sur
     /// elle s'arrêtait sur `BudgetRefused` à tous les coups.
     #[test]
@@ -838,7 +841,7 @@ mod tests {
                 .map(|step| channels_for(*step))
                 .sum();
             assert_eq!(
-                channel_budget(action),
+                channel_budget(&[action]),
                 MAX_EXEC_CHANNELS + OBSERVATION_CHANNELS + opened + 1,
                 "le budget de {action:?} n'ouvre pas la conversation de la session entière"
             );
@@ -846,14 +849,14 @@ mod tests {
             // ne dépasserait pas ce que l'accès personnel a déjà dépensé
             // laisserait la séquence sans un seul canal.
             assert!(
-                channel_budget(action) > MAX_EXEC_CHANNELS,
+                channel_budget(&[action]) > MAX_EXEC_CHANNELS,
                 "{action:?} n'a aucun canal une fois l'élévation prouvée"
             );
         }
 
         // L'audit ne substitue rien : sa conversation est déjà celle que la
         // session porte, et lui donner un budget serait lui en donner un second.
-        assert_eq!(channel_budget(BootstrapAction::AuditTargetReadOnly), 0);
+        assert_eq!(channel_budget(&[BootstrapAction::AuditTargetReadOnly]), 0);
     }
 
     /// Chaque acte déclaré tient dans le budget de son étape.

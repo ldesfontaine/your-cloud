@@ -762,6 +762,84 @@ l'irréversible : supprimer un service avec ses données, retirer une machine. L
 reste possède un filet mécanique — instantané préalable, fenêtre de retour — et
 le doubler serait un rituel, pas une sécurité.
 
+**Amendement du 22 août 2026 — ce que la fusion a coûté au type, et ce qui le
+remplace.** La portée d'approbation d'une session était un **tuple d'exactement
+un** des deux côtés du pont. Le type portait donc à lui seul, gratuitement,
+« une approbation ne couvre qu'un acte » : aucune session ne pouvait en
+transporter deux, parce qu'aucune valeur ne pouvait les exprimer. Fusionner deux
+fenêtres retire cette garantie du type — c'est un changement de portée
+d'approbation sur une frontière de sécurité, pas une refonte d'interface.
+
+Ce qui la remplace n'est pas une **borne** mais une **liste positive**. Au lieu
+de vérifier qu'une portée est courte, le produit vérifie qu'elle est **l'une de
+celles qu'une fenêtre sait nommer** — et il n'en existe que deux, qui sont les
+deux consentements ci-dessus. Une portée vide, surnuméraire, réordonnée,
+dupliquée, ou simplement composée d'actes qui existent chacun sans que leur
+combinaison ait de fenêtre, est refusée à la désérialisation, avant qu'aucune
+fenêtre ne s'ouvre. Côté interface, la même liste est un type fermé : elle s'y
+vérifie à la compilation.
+
+**Et le frontend ne compose aucune liste.** Il nomme l'acte qu'il veut ; la
+portée en est dérivée d'un seul endroit, du côté natif. Une WebView n'a donc
+pas de champ pour demander une approbation plus large que ce qu'une fenêtre
+affiche.
+
+**La fenêtre énumère, et compte.** Le document de consentement nomme ses actes
+**un par un** et écrit leur nombre — « Actes approuvés, et eux seuls (2) : ».
+Une phrase globale aurait fait approuver un mot ; l'énumération fait approuver
+des actes, et le compte rend l'énumération vérifiable d'un coup d'œil. Rien
+n'autorise « la suite » : ce que la fenêtre n'a pas affiché n'est pas couvert.
+
+**La première fenêtre dit désormais ce qu'elle coûte.** « Rien ne sera écrit sur
+la machine » reste exact pour l'étape de lecture, et serait incomplet tout
+seul : depuis que le produit sert le compte Debian ordinaire, l'audit **prouve
+l'élévation**, donc il paie la lecture de la politique. Sur cette posture, le
+secret part au **premier** consentement. La fenêtre d'accès personnel le dit, et
+elle seule — celle du mot de passe demande déjà le secret, et la route `root`
+n'a aucun `sudo` à lire.
+
+#### Justification de sécurité de la portée d'approbation à plusieurs actes
+
+- **Scénario et actifs** : l'approbation qu'un humain donne dans la fenêtre
+  native, et les actes privilégiés qu'un Assistant peut jouer sous elle sur la
+  machine cible.
+- **Menace ou échec traité** : qu'une session joue un acte que la fenêtre n'a
+  pas affiché. Le tuple d'exactement un l'interdisait par construction ; le
+  retirer sans le remplacer laisserait « l'approbation ne couvre que ce qui a
+  été affiché » à la charge de chaque site d'appel.
+- **Alternatives réellement considérées** : *garder trois fenêtres* — écarté,
+  demander deux fois ce que l'humain a compris comme un seul geste fabrique
+  l'habitude d'approuver sans lire, qui retire une protection au lieu d'en
+  ajouter ; *une liste seulement bornée* — écarté, une borne laisse passer les
+  combinaisons réordonnées, dupliquées et inconnues, dont aucune n'a de
+  fenêtre ; *laisser le frontend composer la liste* — écarté, la portée serait
+  alors demandée par la surface la moins digne de confiance du produit ;
+  *fusionner aussi la séquence* — écarté, c'est le consentement qui fusionne :
+  la machine reçoit exactement les mêmes actes, dans le même ordre.
+- **Portée d'accès accordée et moindre privilège** : les actes joués sont
+  **inchangés**, et leur ordre aussi. Ce qui change est le nombre de fenêtres,
+  et l'exigence que la politique distante doit satisfaire — désormais la plus
+  stricte de la portée, jamais une moyenne.
+- **OWASP** : liste positive plutôt que liste de refus ; réduction de surface —
+  deux portées existent, et le frontend n'en compose aucune ; valeur sûre par
+  défaut — une portée vide exige le privilège le plus strict, et n'autorise
+  aucune étape.
+- **NIS2** : contrôle d'accès — l'approbation est liée à une énumération
+  vérifiable ; développement sûr — la liste positive est un test, et le type
+  fermé de l'interface une erreur de compilation ; gestion des actifs — la
+  fenêtre nomme les actes qu'elle couvre, un par un.
+- **Tests normaux et hostiles** : les huit portées refusées par la liste
+  positive ; les deux portées acceptées ; le document de consentement qui
+  énumère et compte, tenu sur les **deux** surfaces par la garde de sources ;
+  la divulgation présente sur la première fenêtre et absente de la seconde ;
+  le trajet complet à deux consentements.
+- **Risque résiduel, assumé et nommé** : la garantie n'est plus dans le type du
+  champ mais dans une fonction et dans une garde de sources, donc elle dépend
+  d'un contrôle qui s'exécute plutôt que d'un compilateur qui refuse. Reste
+  explicitement non garanti : qu'un troisième acte ajouté un jour à une portée
+  reçoive sa phrase — la liste positive le refusera, mais c'est un refus, pas
+  une phrase.
+
 ### Les trois questions d'adresses disparaissent
 
 L'amorçage ne demande plus l'adresse d'écoute, la source autorisée en `/32` ni

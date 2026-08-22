@@ -140,7 +140,7 @@ fn scope(issued_at_monotonic_nanos: u64) -> AssistantScopeV1 {
             access_kind: BootstrapAccessKind::Administrator,
         },
         step: BootstrapStep::PersonalAccess,
-        actions: [BootstrapAction::AuditTargetReadOnly],
+        actions: vec![BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::ConfirmPersonalAccess,
         target_addresses: Vec::new(),
         machine_configuration: None,

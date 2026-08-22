@@ -1276,7 +1276,7 @@ fn supervised_personal_access_scope() -> AssistantScopeV1 {
             access_kind: BootstrapAccessKind::Administrator,
         },
         step: BootstrapStep::PersonalAccess,
-        actions: [BootstrapAction::AuditTargetReadOnly],
+        actions: vec![BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::ConfirmPersonalAccess,
         target_addresses: Vec::new(),
         machine_configuration: None,

@@ -203,6 +203,30 @@ struct BootstrapSession {
     cause: Option<your_cloud_bootstrap_protocol::AssistantRefusalV1>,
 }
 
+/// La portée d'approbation que l'acte demandé implique.
+///
+/// **Le frontend ne compose aucune liste.** Il nomme l'acte qu'il veut, et
+/// c'est ici — une seule fois, du côté Rust — que la portée en est dérivée.
+/// C'est ce qui empêche une WebView de demander une approbation qui couvrirait
+/// plus que ce qu'une fenêtre sait afficher : elle n'a pas de champ pour le
+/// dire.
+///
+/// Poser et activer voyagent ensemble depuis #219 parce que la fenêtre les
+/// nomme ensemble. Demander l'un rend donc les deux — et un frontend qui
+/// demande l'activation reçoit la même portée, la seule que le contrat
+/// approuve.
+fn approved_scope_of(action: BootstrapAction) -> Vec<BootstrapAction> {
+    match action {
+        BootstrapAction::AuditTargetReadOnly => vec![BootstrapAction::AuditTargetReadOnly],
+        BootstrapAction::InstallServerBundle | BootstrapAction::ActivateApprovedController => {
+            vec![
+                BootstrapAction::InstallServerBundle,
+                BootstrapAction::ActivateApprovedController,
+            ]
+        }
+    }
+}
+
 /// Une demande de démarrage validée en forme, prête à devenir une session.
 struct PreparedStart {
     mode: BootstrapMode,
@@ -309,7 +333,7 @@ impl BootstrapState {
                 // cohérence a une seule maison — la validation du scope, que le
                 // lancement impose — et ce lanceur ne fait que porter ce que la
                 // session a retenu.
-                actions: [active.action],
+                actions: approved_scope_of(active.action),
                 prompt,
                 // The launcher never resolves a name and therefore never freezes an
                 // address. Only the assistant's single resolution fills this, and only
@@ -545,7 +569,7 @@ impl BootstrapState {
             mode: active.mode,
             target: active.target.clone(),
             step: initial_native_step(active.target.access_kind).0,
-            actions: [active.action],
+            actions: approved_scope_of(active.action),
             lifecycle: active
                 .concluded
                 .unwrap_or(BootstrapLifecycle::AwaitingNativeAssistant),
@@ -960,12 +984,26 @@ mod tests {
         let view = state
             .start_at(request, now, REQUEST_ONE.into())
             .expect("une demande de pose démarre");
-        assert_eq!(view.actions, [BootstrapAction::InstallServerBundle]);
+        // La demande nomme la pose ; la portée que le produit en dérive
+        // couvre les DEUX actes que la seconde fenêtre nomme (n°219).
+        assert_eq!(
+            view.actions,
+            [
+                BootstrapAction::InstallServerBundle,
+                BootstrapAction::ActivateApprovedController
+            ]
+        );
 
         let launch = state
             .assistant_scope_at(REQUEST_ONE, now + Duration::from_secs(1))
             .expect("le scope se construit");
-        assert_eq!(launch.scope.actions, [BootstrapAction::InstallServerBundle]);
+        assert_eq!(
+            launch.scope.actions,
+            [
+                BootstrapAction::InstallServerBundle,
+                BootstrapAction::ActivateApprovedController
+            ]
+        );
         assert_eq!(
             launch.scope.declared_target,
             Some(DeclaredTarget {
@@ -1132,6 +1170,51 @@ mod tests {
         assert_eq!(scope.issued_at_monotonic_nanos, 0);
         assert_eq!(scope.remaining_millis, 299_000);
         assert_eq!(launch.expires_at, now + BOOTSTRAP_TTL);
+    }
+
+    /// **Le frontend ne compose aucune portée d'approbation.**
+    ///
+    /// Il nomme un acte ; la portée en est dérivée ici, du côté natif, et d'un
+    /// seul endroit. C'est ce qui remplace, côté App, la garantie que le tuple
+    /// d'exactement un donnait : une WebView n'a pas de champ pour demander une
+    /// approbation plus large que ce qu'une fenêtre affiche, parce que le champ
+    /// qu'elle possède ne porte qu'un mot du vocabulaire clos.
+    ///
+    /// Les deux actes d'installation rendent la **même** portée : la seconde
+    /// fenêtre les nomme ensemble, et il n'existe pas d'approbation qui pose
+    /// sans activer.
+    #[test]
+    fn the_frontend_names_an_act_and_never_composes_a_scope() {
+        assert_eq!(
+            approved_scope_of(BootstrapAction::AuditTargetReadOnly),
+            vec![BootstrapAction::AuditTargetReadOnly]
+        );
+        for named in [
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ] {
+            assert_eq!(
+                approved_scope_of(named),
+                vec![
+                    BootstrapAction::InstallServerBundle,
+                    BootstrapAction::ActivateApprovedController
+                ],
+                "{named:?} doit rendre la portée que la seconde fenêtre nomme"
+            );
+        }
+        // Et toute portée dérivée ici est l'une de celles que le protocole
+        // approuve : une dérivation qui inventerait une combinaison serait
+        // refusée au lancement, donc invisible jusqu'à la fenêtre.
+        for named in [
+            BootstrapAction::AuditTargetReadOnly,
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ] {
+            assert!(
+                your_cloud_bootstrap_protocol::approved_scope(&approved_scope_of(named)),
+                "{named:?} dérive une portée qu'aucune fenêtre ne sait nommer"
+            );
+        }
     }
 
     #[test]

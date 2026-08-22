@@ -222,6 +222,38 @@ pub const fn authorized_steps(action: BootstrapAction) -> &'static [Step] {
     }
 }
 
+/// La tranche que la **portée** d'approbation autorise : la concaténation, dans
+/// l'ordre, de ce que chacun de ses actes autorise.
+///
+/// C'est ici que « le consentement fusionne, pas la séquence » devient
+/// exécutable. La séquence ne gagne pas un acte : elle joue la même suite
+/// d'étapes, sous une approbation qui en couvre deux. Et parce que les deux
+/// tranches d'installation sont contiguës et se concatènent en [`STEPS`], une
+/// portée qui les porte toutes deux rend exactement `STEPS` — jamais une
+/// tranche recomposée à la main.
+///
+/// Une portée inconnue rend une tranche **vide** plutôt qu'une tranche
+/// devinée : le protocole la refuse déjà avant toute fenêtre, et le geste sûr
+/// ici est de n'autoriser aucun acte.
+pub fn authorized_steps_for(actions: &[BootstrapAction]) -> &'static [Step] {
+    match actions {
+        // La portée que la seconde fenêtre nomme. Les deux tranches étant
+        // contiguës, leur concaténation EST `STEPS` — rendu tel quel plutôt
+        // que recomposé, pour qu'aucune main ne puisse en changer l'ordre ici.
+        [BootstrapAction::InstallServerBundle, BootstrapAction::ActivateApprovedController] => {
+            &STEPS
+        }
+        // Un acte seul rend sa propre tranche : ce n'est plus une portée que le
+        // protocole approuve, mais c'est ce que cet acte autorise, et les
+        // juges de tranche s'exercent sur lui.
+        [only] => authorized_steps(*only),
+        // Vide, ou toute autre combinaison : aucune étape. Le protocole refuse
+        // déjà ces portées avant toute fenêtre, et le geste sûr ici est de
+        // n'autoriser aucun acte plutôt que d'en deviner un.
+        _ => &[],
+    }
+}
+
 /// Why an installation was not authorised.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlanRefusal {

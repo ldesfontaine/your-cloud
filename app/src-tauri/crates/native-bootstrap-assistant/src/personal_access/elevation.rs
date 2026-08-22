@@ -193,6 +193,35 @@ impl RequiredScope {
             }
         }
     }
+
+    /// Ce que la **portée** approuvée exige : la plus stricte de ses exigences.
+    ///
+    /// Le pli est un maximum et jamais une moyenne : une approbation qui
+    /// couvre l'audit et une pose exige ce que la pose exige. Une portée vide
+    /// exigerait le moins, ce qui serait le mauvais sens du défaut — elle rend
+    /// donc [`Self::EveryCommand`], et le protocole l'a de toute façon refusée
+    /// avant d'arriver ici.
+    pub fn for_actions(actions: &[BootstrapAction]) -> Self {
+        actions
+            .iter()
+            .map(|action| Self::for_action(*action))
+            .fold(Self::IdentityProbe, |strictest, required| {
+                match (strictest, required) {
+                    (Self::EveryCommand, _) | (_, Self::EveryCommand) => Self::EveryCommand,
+                    _ => Self::IdentityProbe,
+                }
+            })
+            .strictest_when_empty(actions)
+    }
+
+    /// Une portée vide ne relâche rien : elle prend la plus stricte.
+    fn strictest_when_empty(self, actions: &[BootstrapAction]) -> Self {
+        if actions.is_empty() {
+            Self::EveryCommand
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1073,7 +1073,7 @@ fn serve_personal_access(
     // Une action qui n'installe rien rend zéro, et zéro veut dire « rien à
     // substituer » : la session garde alors la conversation que #54 lui donne,
     // intacte. C'est le cas de l'audit, qui n'ouvre aucune étape.
-    let session_budget = installation::acts::channel_budget(resolved.actions[0]);
+    let session_budget = installation::acts::channel_budget(&resolved.actions);
     if session_budget != 0 && live.adopt_derived_budget(session_budget).is_err() {
         live.close();
         return PromptOutcome::Unavailable;
@@ -1081,27 +1081,31 @@ fn serve_personal_access(
     let proven = prove_administrator_elevation(
         &mut live, &resolved, deadline, &expired, &lease, &guard, exports,
     );
+    // La route se choisit sur la PORTÉE, et sur ce qu'elle **couvre** — jamais
+    // sur son premier acte. Une portée qui ne couvre aucune pose ne peut rien
+    // installer, et c'est ce que la question pose littéralement.
+    let installs = your_cloud_bootstrap_protocol::scope_covers(
+        &resolved.actions,
+        your_cloud_bootstrap_protocol::BootstrapAction::InstallServerBundle,
+    );
     let outcome = match proven {
-        Ok(proof) => match resolved.actions[0] {
-            // L'audit s'arrête à l'accès prouvé : c'est toute sa conversation.
-            your_cloud_bootstrap_protocol::BootstrapAction::AuditTargetReadOnly => {
-                let ProvenElevation {
-                    witness, secret, ..
-                } = proof;
-                let mut secret = secret;
-                secret.destroy();
-                PromptOutcome::Verified(witness)
-            }
-            // Les deux actions d'installation continuent dans la même session :
-            // c'est elle qui a prouvé l'élévation, et une seconde connexion
-            // serait une seconde authentification, une seconde attestation de
-            // clé d'hôte, une seconde signature.
-            your_cloud_bootstrap_protocol::BootstrapAction::InstallServerBundle
-            | your_cloud_bootstrap_protocol::BootstrapAction::ActivateApprovedController => {
-                let ledger = &mut exports.install_ledger;
-                run_installation(&mut live, &resolved, proof, deadline, &guard, ledger)
-            }
-        },
+        // Les deux actions d'installation continuent dans la même session :
+        // c'est elle qui a prouvé l'élévation, et une seconde connexion serait
+        // une seconde authentification, une seconde attestation de clé d'hôte,
+        // une seconde signature.
+        Ok(proof) if installs => {
+            let ledger = &mut exports.install_ledger;
+            run_installation(&mut live, &resolved, proof, deadline, &guard, ledger)
+        }
+        // L'audit s'arrête à l'accès prouvé : c'est toute sa conversation.
+        Ok(proof) => {
+            let ProvenElevation {
+                witness, secret, ..
+            } = proof;
+            let mut secret = secret;
+            secret.destroy();
+            PromptOutcome::Verified(witness)
+        }
         // Every refusal of the elevation is already expurgated into an outcome
         // by the function above; a cancelled or expired window keeps its own.
         Err(outcome) => outcome,
@@ -1259,13 +1263,12 @@ fn run_installation(
         configuration: composed.as_ref(),
     };
     let mut channel = transport::SessionChannel::new(live, deadline, guard);
-    let outcome = sequence::Sequence::new(&mut channel, resolved.actions[0], password_required)
-        .run(
-            &authorised,
-            &payload,
-            &mut secret,
-            |held: &secret::ProtectedSecret| held.bytes(),
-        );
+    let outcome = sequence::Sequence::new(&mut channel, &resolved.actions, password_required).run(
+        &authorised,
+        &payload,
+        &mut secret,
+        |held: &secret::ProtectedSecret| held.bytes(),
+    );
     // Le déroulé est EXPORTÉ dans les deux cas, succès comme arrêt : c'est
     // l'arbitrage du 19 août 2026 — le registre calculé puis abandonné
     // laissait les constats n°6 et n°7 sans surface, et la phrase de la vue
@@ -1371,7 +1374,7 @@ fn prove_administrator_elevation(
 
     // La portée exigée suit l'action que l'humain a approuvée : auditer ne
     // demande que la sonde, installer exige toute commande.
-    let scope = elevation::RequiredScope::for_action(resolved.actions[0]);
+    let scope = elevation::RequiredScope::for_actions(&resolved.actions);
     // La politique, et le secret qu'elle a coûté — zéro sur une machine qui se
     // laisse lire, un sur le compte que Debian crée à son installation.
     let (attested, mut retained) = attested_policy(
@@ -1912,7 +1915,7 @@ mod tests {
                 access_kind: BootstrapAccessKind::Administrator,
             },
             step: BootstrapStep::PersonalAccess,
-            actions: [BootstrapAction::InstallServerBundle],
+            actions: vec![BootstrapAction::InstallServerBundle],
             prompt: NativePromptKind::ConfirmPersonalAccess,
             target_addresses: Vec::new(),
             machine_configuration: None,
@@ -2259,7 +2262,7 @@ mod tests {
                 access_kind: BootstrapAccessKind::Administrator,
             },
             step: BootstrapStep::PersonalAccess,
-            actions: [BootstrapAction::InstallServerBundle],
+            actions: vec![BootstrapAction::InstallServerBundle],
             prompt: NativePromptKind::ConfirmPersonalAccess,
             target_addresses: Vec::new(),
             machine_configuration: None,

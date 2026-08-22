@@ -2077,7 +2077,15 @@ for (const [source, body] of [
 for (const expected of [
   'export type BootstrapMode = "create" | "replace";',
   'step: "personal_access" | "root_access";',
-  "actions: readonly [BootstrapActionName];",
+  // Le schéma de fil de la portée d'approbation, depuis n°219 : une union
+  // FERMÉE des deux consentements, et non un tuple d'exactement un. Côté Rust
+  // la liste positive se vérifie à la désérialisation ; ici elle se vérifie à
+  // la compilation, et cette garde tient que le type n'a pas été relâché en
+  // `readonly BootstrapActionName[]` — ce qui rendrait « la suite » exprimable.
+  "  actions: ApprovedActions;",
+  'export type ApprovedActions =',
+  '  | readonly ["audit_target_read_only"]',
+  '  | readonly ["install_server_bundle", "activate_approved_controller"];',
   // Le cycle de vie nomme désormais les issues terminales — la clôture
   // d'affaires de #146 — et cette garde tient l'ALIGNEMENT : chaque variante
   // que le protocole Rust sérialise doit être lisible du TS, sans quoi une
@@ -3796,7 +3804,7 @@ for (const expected of [
   "audit::observe(live, deadline, guard)",
   "plan::authorize(&verified, &placement, &witness, plan::Origin::Creation)",
   "transport::SessionChannel::new(live, deadline, guard)",
-  "sequence::Sequence::new(&mut channel, resolved.actions[0], password_required)",
+  "sequence::Sequence::new(&mut channel, &resolved.actions, password_required)",
 ]) {
   if (!nativeAssistantHelperRuntime.includes(expected)) {
     failures.push(
@@ -3816,7 +3824,18 @@ for (const sentence of [
   'format!("Route d’accès : {access}")',
   'format!("Empreinte hôte : {}", scope.target.host_key_sha256)',
   'format!("Étape : {step}")',
-  'format!("Action : {action}")',
+  // Le document ÉNUMÈRE ses actes au lieu d'en nommer un seul (n°219), et le
+  // compte est ce qui rend l'énumération vérifiable d'un coup d'œil. Les deux
+  // fenêtres doivent le faire ensemble : une surface qui rendrait la portée
+  // fusionnée d'un seul trait ferait approuver un mot là où l'autre fait
+  // approuver des actes.
+  '1 => "Acte approuvé, et lui seul :".to_owned(),',
+  'count => format!("Actes approuvés, et eux seuls ({count}) :"),',
+  'lines.extend(acts.iter().map(|act| format!("  · {act}")));',
+  // La divulgation du premier consentement : sur une posture à mot de passe,
+  // l'audit paie la lecture de la politique, donc le secret part dès la
+  // première fenêtre. Elle est portée par les deux surfaces ou par aucune.
+  'lines.push("Rien ne sera écrit sur la machine.".to_owned());',
   "lines.extend(configuration_lines(scope));",
   '"Configuration : écoute {}, source autorisée {}, relais {}"',
   '"Empreinte de la configuration : {}", composed.sha256()',

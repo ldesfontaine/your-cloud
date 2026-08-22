@@ -79,7 +79,7 @@ fn scope(remaining_millis: u64) -> AssistantScopeV1 {
             access_kind: BootstrapAccessKind::Administrator,
         },
         step: BootstrapStep::PrivilegeEscalation,
-        actions: [BootstrapAction::AuditTargetReadOnly],
+        actions: vec![BootstrapAction::AuditTargetReadOnly],
         prompt: NativePromptKind::SudoPassword,
         target_addresses: Vec::new(),
         machine_configuration: None,

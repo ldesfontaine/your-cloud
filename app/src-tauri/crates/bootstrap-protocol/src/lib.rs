@@ -232,7 +232,7 @@ pub struct BootstrapSessionView {
     pub mode: BootstrapMode,
     pub target: BootstrapTarget,
     pub step: BootstrapStep,
-    pub actions: [BootstrapAction; 1],
+    pub actions: Vec<BootstrapAction>,
     pub lifecycle: BootstrapLifecycle,
     pub expires_in_seconds: u64,
     /// Le déroulé du registre, quand la session conclue en a rendu un : ce que
@@ -335,7 +335,17 @@ pub struct AssistantScopeV1 {
     pub mode: BootstrapMode,
     pub target: BootstrapTarget,
     pub step: BootstrapStep,
-    pub actions: [BootstrapAction; 1],
+    /// Les actes que **cette** approbation couvre, dans l'ordre où ils sont
+    /// joués.
+    ///
+    /// C'était un tuple d'exactement un jusqu'au 22 août 2026, et le type
+    /// portait à lui seul « une approbation ne couvre qu'un acte ». La fusion
+    /// des deux dernières fenêtres en une (#219) le lui retire, et
+    /// [`approved_scope`] le reprend : la liste n'est pas seulement bornée,
+    /// elle est **positive** — une combinaison que la fenêtre ne sait pas
+    /// nommer est refusée à la désérialisation, avant toute fenêtre. « La
+    /// suite » n'est donc pas une valeur que ce champ peut prendre.
+    pub actions: Vec<BootstrapAction>,
     pub prompt: NativePromptKind,
     /// The numeric addresses the single name resolution froze, in resolution
     /// order. The launcher never freezes anything and always emits this empty:
@@ -368,8 +378,12 @@ impl AssistantScopeV1 {
             || !(1..=MAX_ASSISTANT_REMAINING_MILLIS).contains(&self.remaining_millis)
             || !prompt_matches_scope(self.prompt, self.step, self.target.access_kind)
             || !valid_target_addresses(&self.target_addresses)
-            || !configuration_matches_action(self.machine_configuration.as_ref(), self.actions[0])
-            || !declaration_matches_action(self.declared_target, self.actions[0])
+            // La portée d'abord : les deux règles qui suivent se lisent sur
+            // elle, et les lire sur une portée inconnue reviendrait à juger ce
+            // qu'aucune fenêtre ne peut afficher.
+            || !approved_scope(&self.actions)
+            || !configuration_matches_scope(self.machine_configuration.as_ref(), &self.actions)
+            || !declaration_matches_scope(self.declared_target, &self.actions)
         {
             return Err(ProtocolError::InvalidInput);
         }
@@ -669,26 +683,83 @@ pub fn canonical_request_id(request_id: &str) -> bool {
 /// configuration : absente, l'Assistant n'aurait rien à rejuger et le
 /// consentement couvrirait une déclaration que personne n'a faite ; présente à
 /// côté d'un audit, elle annoncerait un jugement que l'action ne rend pas.
-fn declaration_matches_action(
-    declaration: Option<DeclaredTarget>,
-    action: BootstrapAction,
-) -> bool {
-    match (declaration, action) {
-        (Some(_), BootstrapAction::InstallServerBundle)
-        | (Some(_), BootstrapAction::ActivateApprovedController)
-        | (None, BootstrapAction::AuditTargetReadOnly) => true,
-        _ => false,
-    }
+/// Le plus grand nombre d'actes qu'une seule approbation peut couvrir.
+///
+/// Deux, et ce n'est pas une marge : c'est le nombre d'actes que la seconde
+/// fenêtre **nomme**. Un troisième n'aurait pas de phrase à lui dans le
+/// document de consentement, et une approbation qui couvre ce qu'elle n'a pas
+/// affiché n'est plus une approbation.
+pub const MAX_APPROVED_ACTIONS: usize = 2;
+
+/// Les portées d'approbation que ce parcours connaît, et rien d'autre.
+///
+/// **Liste positive.** C'est ce qui remplace la garantie que le tuple
+/// d'exactement un donnait gratuitement : au lieu de vérifier qu'une liste est
+/// courte, on vérifie qu'elle est **l'une de celles qu'une fenêtre sait
+/// nommer**. Les deux entrées sont les deux consentements du contrat :
+///
+/// 1. se connecter et examiner la machine — lecture seule, et elle reste
+///    séparée parce que c'est le premier usage de l'accès SSH personnel prêté ;
+/// 2. installer et mettre en service le Controller — la pose et le démarrage
+///    en une seule approbation, qui les nomme **tous les deux**.
+///
+/// Poser sans activer, ou activer sans poser, ne sont plus des approbations :
+/// aucune fenêtre ne les affiche, donc aucune portée ne les porte.
+const APPROVED_SCOPES: [&[BootstrapAction]; 2] = [
+    &[BootstrapAction::AuditTargetReadOnly],
+    &[
+        BootstrapAction::InstallServerBundle,
+        BootstrapAction::ActivateApprovedController,
+    ],
+];
+
+/// Cette portée est-elle l'une de celles qu'une fenêtre sait nommer ?
+///
+/// Une portée vide, surnuméraire, réordonnée, dupliquée ou simplement inconnue
+/// répond non — l'égalité de tranches les refuse toutes d'un coup, sans qu'une
+/// règle par cas puisse en oublier une.
+pub fn approved_scope(actions: &[BootstrapAction]) -> bool {
+    APPROVED_SCOPES.iter().any(|scope| *scope == actions)
 }
 
-fn configuration_matches_action(
-    configuration: Option<&MachineConfigurationValues>,
-    action: BootstrapAction,
+/// La portée contient-elle cet acte ?
+///
+/// Nommé plutôt qu'écrit en `contains` sur chaque site : « l'acte est-il
+/// couvert par ce que l'humain a approuvé » est une question de sécurité, et
+/// elle se pose au même endroit partout.
+pub fn scope_covers(actions: &[BootstrapAction], action: BootstrapAction) -> bool {
+    actions.contains(&action)
+}
+
+/// La déclaration voyage exactement avec les portées qui jugent un placement.
+///
+/// La règle n'a pas changé de sens en passant de l'acte à la portée : elle
+/// s'énonce désormais sur « la portée contient-elle un acte qui juge un
+/// placement », et les deux actes d'installation en jugent un.
+fn declaration_matches_scope(
+    declaration: Option<DeclaredTarget>,
+    actions: &[BootstrapAction],
 ) -> bool {
-    match (configuration, action) {
-        (Some(values), BootstrapAction::InstallServerBundle) => values.valid(),
-        (None, BootstrapAction::AuditTargetReadOnly)
-        | (None, BootstrapAction::ActivateApprovedController) => true,
+    let judges_a_placement = scope_covers(actions, BootstrapAction::InstallServerBundle)
+        || scope_covers(actions, BootstrapAction::ActivateApprovedController);
+    declaration.is_some() == judges_a_placement
+}
+
+/// La configuration voyage exactement avec les portées qui POSENT.
+///
+/// L'activation n'écrit aucune configuration, mais elle voyage désormais dans
+/// la même approbation que la pose : la règle se lit donc sur la portée, où
+/// « pose » est présent, et non sur un acte pris isolément.
+fn configuration_matches_scope(
+    configuration: Option<&MachineConfigurationValues>,
+    actions: &[BootstrapAction],
+) -> bool {
+    match (
+        configuration,
+        scope_covers(actions, BootstrapAction::InstallServerBundle),
+    ) {
+        (Some(values), true) => values.valid(),
+        (None, false) => true,
         _ => false,
     }
 }
@@ -854,7 +925,7 @@ mod tests {
             mode: BootstrapMode::Create,
             target: target(access_kind),
             step,
-            actions: [BootstrapAction::AuditTargetReadOnly],
+            actions: vec![BootstrapAction::AuditTargetReadOnly],
             prompt,
             target_addresses: Vec::new(),
             machine_configuration: None,
@@ -874,9 +945,14 @@ mod tests {
     }
 
     /// Un scope de pose, complet et licite.
+    /// La portée d'installation, telle que la seconde fenêtre la nomme : la
+    /// pose ET l'activation, sous une seule approbation (#219).
     fn install_scope() -> AssistantScopeV1 {
         AssistantScopeV1 {
-            actions: [BootstrapAction::InstallServerBundle],
+            actions: vec![
+                BootstrapAction::InstallServerBundle,
+                BootstrapAction::ActivateApprovedController,
+            ],
             machine_configuration: Some(configuration_values()),
             declared_target: Some(DeclaredTarget {
                 private: true,
@@ -889,14 +965,81 @@ mod tests {
         }
     }
 
-    /// **La configuration voyage exactement avec l'action qui l'écrit**, dans
+    /// **Rien n'autorise « la suite ».**
+    ///
+    /// C'est la garde qui remplace celle que le type donnait gratuitement
+    /// jusqu'au 22 août 2026 : `actions` était un tuple d'exactement un, et
+    /// aucune approbation ne pouvait couvrir deux actes. La liste est
+    /// désormais **positive** plutôt que seulement bornée — on ne vérifie pas
+    /// qu'elle est courte, on vérifie qu'elle est l'une de celles qu'une
+    /// fenêtre sait nommer.
+    ///
+    /// Les huit refus ci-dessous sont les huit manières de mentir qu'une borne
+    /// simple aurait laissé passer : vide, trop longue, réordonnée, dupliquée,
+    /// ou composée d'actes qui existent chacun mais dont la combinaison
+    /// n'a pas de fenêtre.
+    #[test]
+    fn nothing_but_a_scope_a_window_can_name_is_approved() {
+        for refused in [
+            vec![],
+            vec![BootstrapAction::InstallServerBundle],
+            vec![BootstrapAction::ActivateApprovedController],
+            vec![
+                BootstrapAction::ActivateApprovedController,
+                BootstrapAction::InstallServerBundle,
+            ],
+            vec![
+                BootstrapAction::AuditTargetReadOnly,
+                BootstrapAction::InstallServerBundle,
+            ],
+            vec![
+                BootstrapAction::InstallServerBundle,
+                BootstrapAction::InstallServerBundle,
+            ],
+            vec![
+                BootstrapAction::AuditTargetReadOnly,
+                BootstrapAction::AuditTargetReadOnly,
+            ],
+            vec![
+                BootstrapAction::InstallServerBundle,
+                BootstrapAction::ActivateApprovedController,
+                BootstrapAction::AuditTargetReadOnly,
+            ],
+        ] {
+            assert!(
+                !approved_scope(&refused),
+                "{refused:?} n'a pas de fenêtre qui la nomme, et passe pourtant"
+            );
+        }
+
+        // Les deux qui existent, et elles seules.
+        assert!(approved_scope(&[BootstrapAction::AuditTargetReadOnly]));
+        assert!(approved_scope(&[
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ]));
+        // La borne écrite est bien celle que la plus longue atteint : un
+        // troisième acte n'aurait pas de phrase dans le document de
+        // consentement.
+        assert_eq!(
+            APPROVED_SCOPES
+                .iter()
+                .map(|scope| scope.len())
+                .max()
+                .expect("la liste positive n'est pas vide"),
+            MAX_APPROVED_ACTIONS
+        );
+    }
+
+    /// **La configuration voyage exactement avec la portée qui l'écrit**, dans
     /// les deux sens.
     ///
-    /// Le contrôle positif d'abord : une pose la porte et passe. Puis les deux
-    /// manières de mentir — une pose sans elle, qui n'aurait rien à composer et
-    /// ferait approuver l'empreinte de rien ; une action qui n'écrit pas et la
-    /// porte quand même, ce qui annoncerait une écriture que sa tranche du plan
-    /// ne contient pas.
+    /// La règle est passée de l'acte à la portée (#219) sans changer de sens :
+    /// la seule portée qui pose est celle qui contient la pose. Le contrôle
+    /// positif d'abord — cette portée la porte et passe — puis les deux
+    /// manières de mentir : poser sans elle, ce qui ferait approuver
+    /// l'empreinte de rien ; et la porter sur la portée d'audit, ce qui
+    /// annoncerait une écriture qu'aucune de ses étapes ne fera.
     #[test]
     fn the_machine_configuration_travels_exactly_with_the_action_that_writes_it() {
         install_scope()
@@ -910,25 +1053,20 @@ mod tests {
         };
         assert_eq!(orphan.validate().unwrap_err(), ProtocolError::InvalidInput);
 
-        // Annoncer une écriture que l'action ne fera pas.
-        for action in [
-            BootstrapAction::AuditTargetReadOnly,
-            BootstrapAction::ActivateApprovedController,
-        ] {
-            let overreaching = AssistantScopeV1 {
-                actions: [action],
-                machine_configuration: Some(configuration_values()),
-                ..scope(
-                    NativePromptKind::ConfirmPersonalAccess,
-                    BootstrapAccessKind::Administrator,
-                )
-            };
-            assert_eq!(
-                overreaching.validate().unwrap_err(),
-                ProtocolError::InvalidInput,
-                "{action:?} porte une configuration qu'elle n'écrira jamais"
-            );
-        }
+        // Annoncer une écriture que la portée ne fera pas.
+        let overreaching = AssistantScopeV1 {
+            actions: vec![BootstrapAction::AuditTargetReadOnly],
+            machine_configuration: Some(configuration_values()),
+            ..scope(
+                NativePromptKind::ConfirmPersonalAccess,
+                BootstrapAccessKind::Administrator,
+            )
+        };
+        assert_eq!(
+            overreaching.validate().unwrap_err(),
+            ProtocolError::InvalidInput,
+            "un audit porte une configuration qu'il n'écrira jamais"
+        );
     }
 
     /// **La déclaration voyage exactement avec les actions qui jugent un
@@ -941,47 +1079,23 @@ mod tests {
     /// personne n'a faite.
     #[test]
     fn the_declaration_travels_exactly_with_the_actions_that_judge_a_placement() {
-        // Les deux contrôles positifs : la pose (déjà couverte par
-        // `install_scope`) et l'activation, qui porte la déclaration sans la
-        // configuration.
-        AssistantScopeV1 {
-            actions: [BootstrapAction::ActivateApprovedController],
-            machine_configuration: None,
-            declared_target: Some(DeclaredTarget {
-                private: true,
-                normally_on: true,
-            }),
-            ..scope(
-                NativePromptKind::ConfirmPersonalAccess,
-                BootstrapAccessKind::Administrator,
-            )
-        }
-        .validate()
-        .expect("une activation qui porte sa déclaration doit passer");
+        // Le contrôle positif : la portée d'installation, qui porte sa
+        // déclaration — et qui juge DEUX placements sous une seule
+        // approbation depuis #219.
+        install_scope()
+            .validate()
+            .expect("une installation qui porte sa déclaration doit passer");
 
         // Installer sans déclaration : rien à rejuger.
-        for action in [
-            BootstrapAction::InstallServerBundle,
-            BootstrapAction::ActivateApprovedController,
-        ] {
-            let undeclared = AssistantScopeV1 {
-                actions: [action],
-                machine_configuration: match action {
-                    BootstrapAction::InstallServerBundle => Some(configuration_values()),
-                    _ => None,
-                },
-                declared_target: None,
-                ..scope(
-                    NativePromptKind::ConfirmPersonalAccess,
-                    BootstrapAccessKind::Administrator,
-                )
-            };
-            assert_eq!(
-                undeclared.validate().unwrap_err(),
-                ProtocolError::InvalidInput,
-                "{action:?} passe sans déclaration"
-            );
-        }
+        let undeclared = AssistantScopeV1 {
+            declared_target: None,
+            ..install_scope()
+        };
+        assert_eq!(
+            undeclared.validate().unwrap_err(),
+            ProtocolError::InvalidInput,
+            "une installation passe sans déclaration"
+        );
 
         // Auditer avec une déclaration : un jugement annoncé que l'action ne
         // rend pas.

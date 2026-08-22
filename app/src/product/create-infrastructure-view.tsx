@@ -75,11 +75,19 @@ import { nativeApp } from "./native";
 /// nomme ce qu'elle a rendu, et l'écran final nomme ce qui est fait — posé,
 /// activé — et ce qui reste — l'association, qui est le parcours voisin.
 
-/// Les trois étapes d'amorçage, dans l'ordre que le contrat fixe. Chacune est
-/// une session : l'audit n'écrit rien, la pose laisse la machine inerte,
-/// l'activation met la seule unité approuvée en écoute.
+/// Les **deux** consentements d'amorçage, dans l'ordre que le contrat fixe.
+///
+/// Ils étaient trois jusqu'au 22 août 2026, et ce qui a fusionné est le
+/// CONSENTEMENT, pas la séquence : la machine reçoit exactement les mêmes actes,
+/// dans le même ordre, et la seconde fenêtre les nomme tous les deux. Demander
+/// deux fois ce que l'humain a compris comme un seul geste fabrique l'habitude
+/// d'approuver sans lire (n°219).
+///
+/// « Se connecter et examiner » reste séparée, et ce n'est pas une hésitation :
+/// c'est le **premier usage de l'accès SSH personnel prêté**, et consentir à
+/// regarder n'est pas consentir à agir. L'humain peut s'arrêter là.
 const BOOTSTRAP_STEPS: readonly {
-  key: "audit" | "install" | "activate";
+  key: "audit" | "commission";
   action: BootstrapActionName | null;
   title: string;
   /// Ce que l'humain s'apprête à approuver — dit AVANT que la fenêtre s'ouvre.
@@ -90,26 +98,18 @@ const BOOTSTRAP_STEPS: readonly {
   {
     key: "audit",
     action: null,
-    title: "Audit en lecture seule",
+    title: "Se connecter et examiner la machine",
     announce:
-      "La fenêtre de l’Assistant va s’ouvrir pour un audit en lecture seule : la machine est observée, rien n’y est écrit.",
+      "La fenêtre de l’Assistant va s’ouvrir pour se connecter et examiner la machine : elle est observée, rien n’y est écrit. Si sa politique sudo ne se lit pas sans mot de passe, celui que vous donnerez sert à la lire, puis meurt avec cette session.",
     achieved: "La machine a été auditée en lecture seule. Rien n’a été écrit.",
   },
   {
-    key: "install",
+    key: "commission",
     action: "install_server_bundle",
-    title: "Pose du lot serveur",
+    title: "Installer et mettre en service le Controller",
     announce:
-      "La fenêtre de l’Assistant va s’ouvrir pour poser le lot vérifié. À la fin de cette étape, rien n’écoute encore.",
-    achieved: "Le lot est posé et vérifié sur la machine. Rien n’écoute encore.",
-  },
-  {
-    key: "activate",
-    action: "activate_approved_controller",
-    title: "Activation du Controller",
-    announce:
-      "La fenêtre de l’Assistant va s’ouvrir pour activer la seule unité approuvée du plan.",
-    achieved: "Le Controller est actif sur la machine.",
+      "La fenêtre de l’Assistant va s’ouvrir pour deux actes, et elle les nomme tous les deux : poser le lot vérifié, puis activer la seule unité approuvée du plan. Rien d’autre n’est approuvé par cette fenêtre.",
+    achieved: "Le lot est posé et vérifié, et le Controller est actif sur la machine.",
   },
 ];
 

@@ -1351,13 +1351,22 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
         BootstrapStep::PrivilegeEscalation => "élévation sudo",
         BootstrapStep::RootAccess => "accès root",
     };
-    let action = match scope.actions {
-        [BootstrapAction::AuditTargetReadOnly] => "audit de la cible en lecture seule",
-        [BootstrapAction::InstallServerBundle] => "pose du lot serveur vérifié, rien n'écoute",
-        [BootstrapAction::ActivateApprovedController] => {
-            "activation du Controller approuvé, association et prévol"
-        }
-    };
+    // Chaque acte de la portée est nommé, un par un, exactement comme sur la
+    // fenêtre GTK. Une portée rendue par une phrase globale ferait approuver
+    // un mot, pas des actes — et la ferait approuver plus faiblement d'un seul
+    // côté, ce qu'aucun test ne verrait : les deux surfaces ne compilent pas
+    // ensemble.
+    let acts: Vec<&str> = scope
+        .actions
+        .iter()
+        .map(|action| match action {
+            BootstrapAction::AuditTargetReadOnly => "audit de la cible en lecture seule",
+            BootstrapAction::InstallServerBundle => "pose du lot serveur vérifié, rien n'écoute",
+            BootstrapAction::ActivateApprovedController => {
+                "activation du Controller approuvé, association et prévol"
+            }
+        })
+        .collect();
     let mut lines = vec![
         format!("Parcours : {mode}"),
         format!(
@@ -1375,8 +1384,24 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
         format!("Route d’accès : {access}"),
         format!("Empreinte hôte : {}", scope.target.host_key_sha256),
         format!("Étape : {step}"),
-        format!("Action : {action}"),
     ]);
+    lines.push(match acts.len() {
+        1 => "Acte approuvé, et lui seul :".to_owned(),
+        count => format!("Actes approuvés, et eux seuls ({count}) :"),
+    });
+    lines.extend(acts.iter().map(|act| format!("  · {act}")));
+    // La divulgation du premier consentement, mot pour mot celle de la fenêtre
+    // GTK : sur un compte dont la politique `sudo` ne se lit pas sans mot de
+    // passe, l'audit PAIE cette lecture, et le secret part donc dès ici.
+    if scope.step == BootstrapStep::PersonalAccess
+        && scope.actions == [BootstrapAction::AuditTargetReadOnly]
+    {
+        lines.push("Rien ne sera écrit sur la machine.".to_owned());
+        lines.push(
+            "Si sa politique sudo ne se lit pas sans mot de passe, celui que vous donnerez sert à la lire, puis meurt avec cette session."
+                .to_owned(),
+        );
+    }
     // La même ligne que la fenêtre GTK, pour la même raison : ce que l'humain
     // approuve doit porter l'empreinte des octets qui seront déposés. Les deux
     // surfaces ne partagent aucun type, mais elles doivent dire la même chose —
@@ -1478,7 +1503,7 @@ mod tests {
                 access_kind,
             },
             step,
-            actions: [BootstrapAction::AuditTargetReadOnly],
+            actions: vec![BootstrapAction::AuditTargetReadOnly],
             prompt,
             target_addresses: Vec::new(),
             machine_configuration: None,
@@ -1519,7 +1544,8 @@ mod tests {
                 "Route d’accès : administrateur",
                 "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "Étape : accès personnel",
-                "Action : audit de la cible en lecture seule",
+                "Acte approuvé, et lui seul :",
+                "  · audit de la cible en lecture seule",
             ]
         );
         let rendered = scope_text(&scope);
@@ -1908,7 +1934,8 @@ mod tests {
                 "Route d’accès : administrateur",
                 "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "Étape : accès personnel",
-                "Action : audit de la cible en lecture seule",
+                "Acte approuvé, et lui seul :",
+                "  · audit de la cible en lecture seule",
             ]
         );
         assert!(

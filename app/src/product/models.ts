@@ -375,6 +375,23 @@ export type BootstrapStartInput = {
   };
 };
 
+/// Les portées d'approbation que ce parcours connaît, et rien d'autre.
+///
+/// C'était `readonly [BootstrapActionName]` — un tuple d'exactement un — et le
+/// type portait à lui seul « une approbation ne couvre qu'un acte ». La fusion
+/// des deux dernières fenêtres en une (n°219) le lui retire, et cette union le
+/// reprend **en plus fort** : côté Rust la liste positive est vérifiée à la
+/// désérialisation, ici elle est vérifiée à la compilation. Une portée vide,
+/// surnuméraire, réordonnée ou simplement inconnue n'est pas une valeur que ce
+/// type peut prendre.
+///
+/// « La suite » n'existe donc nulle part : les deux seules portées sont les
+/// deux consentements que le contrat décrit, et chacune est la liste EXACTE
+/// des actes que sa fenêtre nomme.
+export type ApprovedActions =
+  | readonly ["audit_target_read_only"]
+  | readonly ["install_server_bundle", "activate_approved_controller"];
+
 export type BootstrapActionName =
   | "audit_target_read_only"
   | "install_server_bundle"
@@ -426,7 +443,7 @@ export type BootstrapSessionView = {
   mode: BootstrapMode;
   target: BootstrapTarget;
   step: "personal_access" | "root_access";
-  actions: readonly [BootstrapActionName];
+  actions: ApprovedActions;
   lifecycle:
     | "awaiting_native_assistant"
     // Les issues terminales que la clôture d'affaires nomme : la vue en fait

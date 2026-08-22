@@ -1,4 +1,4 @@
-<!-- dérivé de ../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md @ sha256:e026a33ecc0bea590505f3ad87eccb0c27842c47653b90306ee9f689516ccf8f -->
+<!-- dérivé de ../architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md @ sha256:0a413f288bcd79286de729d8fc1abe1e967e50d7f464219bbef71b828dde0047 -->
 <!doctype html>
 <html lang="fr">
 <head>
@@ -113,6 +113,8 @@
     <h2>Deux consentements, et deux choses à fournir</h2>
     <p>« Se connecter et examiner la machine » reste séparé — c'est le premier usage de l'accès SSH prêté, et consentir à regarder n'est pas consentir à agir. « Installer et mettre en service le Controller » fusionne la pose et le démarrage, détail dépliable. C'est le consentement qui fusionne, pas la séquence : demander deux fois ce que l'humain a compris comme un seul geste fabrique l'habitude d'approuver sans lire.</p>
     <p class="boundary">La double confirmation est réservée à l'irréversible — supprimer un service avec ses données, retirer une machine. Le reste a un filet mécanique ; le doubler serait un rituel.</p>
+    <p>La portée d'approbation était un <em>tuple d'exactement un</em> : le type interdisait à lui seul qu'une approbation couvre deux actes. La fusion le lui retire, et ce qui la remplace n'est pas une borne mais une <strong>liste positive</strong> — deux portées existent, et une combinaison qu'aucune fenêtre ne sait nommer est refusée avant qu'aucune fenêtre ne s'ouvre. Le frontend, lui, ne compose aucune liste : il nomme l'acte, la portée en est dérivée du côté natif.</p>
+    <p>La fenêtre <strong>énumère et compte</strong> — « Actes approuvés, et eux seuls (2) : » — parce qu'une phrase globale ferait approuver un mot là où l'énumération fait approuver des actes. Rien n'autorise « la suite ». Et la première fenêtre dit ce qu'elle coûte : sur un compte dont la politique <code>sudo</code> ne se lit pas sans mot de passe, l'audit paie cette lecture, donc le secret part dès le premier consentement.</p>
     <p>Les trois questions d'adresses disparaissent : écoute, source autorisée et endpoint du Relay se dérivent du plan d'adressage. Restent un compte pour se connecter et l'empreinte de clé d'hôte relevée sur le serveur — celle-ci ne se dérive pas, elle distingue la machine attendue d'un imposteur et doit venir hors bande.</p>
     <p>Le nominal est le compte que Debian crée à son installation, tel quel : groupe <code>sudo</code>, mot de passe, aucune préparation. <code>root</code> direct et <code>NOPASSWD</code> restent servis sans être demandés. Servir <code>root</code> n'est pas l'accepter silencieusement : prêt ponctuel consenti, jamais conservé, plus jamais utilisé après l'installation, et le produit ne crée ni ne renforce jamais un accès <code>root</code>.</p>
     <h2>Création et transfert d’autorité</h2>

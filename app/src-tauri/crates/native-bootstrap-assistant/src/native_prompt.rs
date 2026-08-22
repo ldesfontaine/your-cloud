@@ -620,13 +620,22 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
         BootstrapStep::PrivilegeEscalation => "élévation sudo",
         BootstrapStep::RootAccess => "accès root",
     };
-    let action = match scope.actions {
-        [BootstrapAction::AuditTargetReadOnly] => "audit de la cible en lecture seule",
-        [BootstrapAction::InstallServerBundle] => "pose du lot serveur vérifié, rien n'écoute",
-        [BootstrapAction::ActivateApprovedController] => {
-            "activation du Controller approuvé, association et prévol"
-        }
-    };
+    // **Chaque acte de la portée est nommé, un par un.** C'est la propriété que
+    // #219 devait ne pas perdre : l'approbation ne couvre que ce que la fenêtre
+    // a AFFICHÉ. Une portée rendue par une phrase globale — « installer et
+    // mettre en service » — aurait fait approuver un mot, pas des actes ; le
+    // document énumère donc, et la ligne « Actes » les compte.
+    let acts: Vec<&str> = scope
+        .actions
+        .iter()
+        .map(|action| match action {
+            BootstrapAction::AuditTargetReadOnly => "audit de la cible en lecture seule",
+            BootstrapAction::InstallServerBundle => "pose du lot serveur vérifié, rien n'écoute",
+            BootstrapAction::ActivateApprovedController => {
+                "activation du Controller approuvé, association et prévol"
+            }
+        })
+        .collect();
     let mut lines = vec![
         format!("Parcours : {mode}"),
         format!(
@@ -644,8 +653,42 @@ fn logical_scope_lines(scope: &AssistantScopeV1) -> Vec<String> {
         format!("Route d’accès : {access}"),
         format!("Empreinte hôte : {}", scope.target.host_key_sha256),
         format!("Étape : {step}"),
-        format!("Action : {action}"),
     ]);
+    // Le compte est écrit, et il est ce qui rend l'énumération vérifiable :
+    // « Actes (2) » suivi d'une seule ligne se lit comme une anomalie, là où
+    // deux lignes sans compte se lisent comme un paragraphe.
+    lines.push(match acts.len() {
+        1 => "Acte approuvé, et lui seul :".to_owned(),
+        count => format!("Actes approuvés, et eux seuls ({count}) :"),
+    });
+    lines.extend(acts.iter().map(|act| format!("  · {act}")));
+    // La divulgation que la mesure de #217 a rendue nécessaire, et que #218 a
+    // rendue vraie DÈS LA PREMIÈRE FENÊTRE.
+    //
+    // « Rien ne sera écrit sur la machine » reste exact pour un audit, et
+    // serait incomplet tout seul : sur un compte dont la politique `sudo` ne se
+    // lit pas sans mot de passe, l'audit prouve l'élévation, donc il PAIE cette
+    // lecture. Le secret part alors au premier consentement, et le taire ferait
+    // de cette fenêtre une vérité partielle.
+    //
+    // Elle est portée par la fenêtre d'ACCÈS PERSONNEL et par elle seule :
+    // c'est celle où l'humain décide de se connecter, donc le seul moment où
+    // l'avertir change encore quelque chose. La fenêtre de mot de passe demande
+    // déjà le secret — l'y répéter serait du bruit — et la route `root` n'a
+    // aucun `sudo` à lire.
+    //
+    // Deux lignes et non une phrase longue : la première est ce que l'humain
+    // vérifie, la seconde ce qu'il doit savoir en plus. Les fondre les rendrait
+    // toutes deux survolables.
+    if scope.step == BootstrapStep::PersonalAccess
+        && scope.actions == [BootstrapAction::AuditTargetReadOnly]
+    {
+        lines.push("Rien ne sera écrit sur la machine.".to_owned());
+        lines.push(
+            "Si sa politique sudo ne se lit pas sans mot de passe, celui que vous donnerez sert à la lire, puis meurt avec cette session."
+                .to_owned(),
+        );
+    }
     // Le seul contenu du palier dont les octets ne sont pas une constante :
     // ils dépendent de la machine approuvée. Ce qui transforme « des octets
     // choisis ailleurs » en « des octets dont l'humain a vu l'empreinte avant
@@ -816,7 +859,7 @@ mod tests {
                 access_kind,
             },
             step,
-            actions: [BootstrapAction::AuditTargetReadOnly],
+            actions: vec![BootstrapAction::AuditTargetReadOnly],
             prompt,
             target_addresses: Vec::new(),
             machine_configuration: None,
@@ -873,7 +916,10 @@ mod tests {
                     "Route d’accès : administrateur",
                     "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                     "Étape : accès personnel",
-                    "Action : audit de la cible en lecture seule",
+                    "Acte approuvé, et lui seul :",
+                    "  · audit de la cible en lecture seule",
+                    "Rien ne sera écrit sur la machine.",
+                    "Si sa politique sudo ne se lit pas sans mot de passe, celui que vous donnerez sert à la lire, puis meurt avec cette session.",
                 ],
             ),
             (
@@ -884,7 +930,8 @@ mod tests {
                     "Route d’accès : administrateur",
                     "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                     "Étape : déverrouillage de la clé personnelle",
-                    "Action : audit de la cible en lecture seule",
+                    "Acte approuvé, et lui seul :",
+                    "  · audit de la cible en lecture seule",
                 ],
             ),
             (
@@ -895,7 +942,8 @@ mod tests {
                     "Route d’accès : administrateur",
                     "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                     "Étape : élévation sudo",
-                    "Action : audit de la cible en lecture seule",
+                    "Acte approuvé, et lui seul :",
+                    "  · audit de la cible en lecture seule",
                 ],
             ),
             (
@@ -906,7 +954,8 @@ mod tests {
                     "Route d’accès : root",
                     "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                     "Étape : accès root",
-                    "Action : audit de la cible en lecture seule",
+                    "Acte approuvé, et lui seul :",
+                    "  · audit de la cible en lecture seule",
                 ],
             ),
         ] {
@@ -915,31 +964,94 @@ mod tests {
         }
     }
 
-    /// Chaque action du vocabulaire porte sa propre phrase, et la fenêtre la
-    /// rend mot pour mot : l'humain approuve une action nommée, jamais un
-    /// libellé générique. Le `match` est total — une action ajoutée sans sa
-    /// phrase ne compile pas — et ce test fige les phrases elles-mêmes.
+    /// Chaque acte du vocabulaire porte sa propre phrase, et la fenêtre la rend
+    /// mot pour mot : l'humain approuve des actes nommés, jamais un libellé
+    /// générique. Le `match` est total — un acte ajouté sans sa phrase ne
+    /// compile pas — et ce test fige les phrases elles-mêmes.
     #[test]
     fn each_action_of_the_vocabulary_carries_its_own_sentence() {
         for (action, sentence) in [
             (
                 BootstrapAction::AuditTargetReadOnly,
-                "Action : audit de la cible en lecture seule",
+                "  · audit de la cible en lecture seule",
             ),
             (
                 BootstrapAction::InstallServerBundle,
-                "Action : pose du lot serveur vérifié, rien n'écoute",
+                "  · pose du lot serveur vérifié, rien n'écoute",
             ),
             (
                 BootstrapAction::ActivateApprovedController,
-                "Action : activation du Controller approuvé, association et prévol",
+                "  · activation du Controller approuvé, association et prévol",
             ),
         ] {
             let mut with_action = scope(NativePromptKind::SudoPassword);
-            with_action.actions = [action];
+            with_action.actions = vec![action];
             let lines = logical_scope_lines(&with_action);
-            assert_eq!(lines.last().map(String::as_str), Some(sentence));
+            assert!(
+                lines.iter().any(|line| line == sentence),
+                "{action:?} n'a pas été nommé : {lines:?}"
+            );
         }
+    }
+
+    /// **La portée fusionnée nomme SES DEUX actes, un par un, et les compte.**
+    ///
+    /// C'est la propriété que #219 devait ne pas perdre en retirant du type la
+    /// garantie « une approbation ne couvre qu'un acte ». Une fenêtre qui
+    /// aurait rendu « installer et mettre en service » d'un seul trait aurait
+    /// fait approuver un mot ; celle-ci énumère, et le compte rend
+    /// l'énumération vérifiable d'un coup d'œil.
+    #[test]
+    fn the_merged_scope_names_both_of_its_acts_and_counts_them() {
+        let mut merged = scope(NativePromptKind::ConfirmPersonalAccess);
+        merged.actions = vec![
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ];
+        merged.declared_target = Some(your_cloud_bootstrap_protocol::DeclaredTarget {
+            private: true,
+            normally_on: true,
+        });
+        merged.machine_configuration =
+            Some(your_cloud_bootstrap_protocol::MachineConfigurationValues {
+                listen: "192.168.240.115:9443".into(),
+                allowed_source: "192.168.240.0/24".into(),
+                relay_endpoint: "192.168.240.9:9444".into(),
+            });
+        let merged = merged.validate().expect("la portée fusionnée est licite");
+
+        let lines = logical_scope_lines(&merged);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Actes approuvés, et eux seuls (2) :"),
+            "la portée fusionnée doit compter ses actes : {lines:?}"
+        );
+        for act in [
+            "  · pose du lot serveur vérifié, rien n'écoute",
+            "  · activation du Controller approuvé, association et prévol",
+        ] {
+            assert!(
+                lines.iter().any(|line| line == act),
+                "{act} n'est pas nommé : {lines:?}"
+            );
+        }
+        // Rien n'autorise « la suite » : le document ne porte aucune promesse
+        // au-delà des deux actes qu'il vient de nommer.
+        assert!(
+            !lines.iter().any(|line| line.contains("et la suite")
+                || line.contains("puis")
+                || line.contains("etc")),
+            "le document laisse entendre plus que ce qu'il nomme : {lines:?}"
+        );
+        // Et la divulgation du secret n'est PAS ici : elle appartient à la
+        // première fenêtre, celle où l'humain décide de se connecter.
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.starts_with("Rien ne sera écrit")),
+            "la divulgation du premier consentement a fui sur le second : {lines:?}"
+        );
     }
 
     /// **L'empreinte de la configuration est dans ce que l'humain approuve**,
@@ -956,7 +1068,10 @@ mod tests {
         use your_cloud_bootstrap_protocol::MachineConfigurationValues;
 
         let mut posing = scope(NativePromptKind::ConfirmPersonalAccess);
-        posing.actions = [BootstrapAction::InstallServerBundle];
+        posing.actions = vec![
+            BootstrapAction::InstallServerBundle,
+            BootstrapAction::ActivateApprovedController,
+        ];
         // Une pose licite porte aussi sa déclaration : le protocole refuse
         // désormais l'une sans l'autre, et ce test valide le scope entier.
         posing.declared_target = Some(your_cloud_bootstrap_protocol::DeclaredTarget {
@@ -1024,7 +1139,7 @@ mod tests {
             BootstrapAction::ActivateApprovedController,
         ] {
             let mut without = scope(NativePromptKind::ConfirmPersonalAccess);
-            without.actions = [action];
+            without.actions = vec![action];
             let lines = logical_scope_lines(&without);
             assert!(
                 !lines.iter().any(|line| line.starts_with("Configuration : ")
@@ -1080,7 +1195,10 @@ mod tests {
                 "Route d’accès : administrateur",
                 "Empreinte hôte : SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "Étape : accès personnel",
-                "Action : audit de la cible en lecture seule",
+                "Acte approuvé, et lui seul :",
+                "  · audit de la cible en lecture seule",
+                "Rien ne sera écrit sur la machine.",
+                "Si sa politique sudo ne se lit pas sans mot de passe, celui que vous donnerez sert à la lire, puis meurt avec cette session.",
             ]
         );
 
