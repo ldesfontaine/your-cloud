@@ -1,41 +1,36 @@
 // The approval path is signed here and verified by the Auxiliary end to end.
 // This module also holds the two halves of the consent that must precede a
 // signature: the document a native window is given, and the reading of the
-// document it answers with. What is still missing is the window itself and the
-// command that opens it, and both belong to the palier that adds them. Nothing
-// in the command surface below reaches this module, which is exactly what "no
-// free signature is exposed to the frontend" means for now.
-#[allow(dead_code)]
+// document it answers with. `submit_plan_decision` reaches it through
+// `publication_plan`, the only caller allowed to sign, which is what "no free
+// signature is exposed to the frontend" means: nothing here takes bytes chosen
+// by its caller, and the source contract refuses an approval command in the
+// surface below.
 mod approval;
 mod bootstrap;
-// The six plans of the private passage are verified, displayed and signed here,
-// for the same reason `approval` above and the two plan modules below are not
-// reachable from a command: the window that must render a plan before it is
-// approved belongs to the palier that adds the command, and the source contract
-// holds the command surface against that.
-#[allow(dead_code)]
+// The six plans of the private passage are verified, displayed and signed here.
+// No command reaches this module: the screens that read, consent to and sign a
+// link plan belong to chantier 6 « Le réseau interne » of
+// `docs/projet/DIRECTION.md`.
 mod link_plan;
 mod native_helper;
 mod network;
-// The probe plan is verified, displayed and signed here for the same reason the
-// module above is not reachable from a command: the window that must render a
-// plan before it is approved belongs to the palier that adds the command, and
-// the source contract holds the command surface against that.
-#[allow(dead_code)]
+// The probe plan is verified, displayed and signed here. No command reaches
+// this module: the optional « Vérifier cette machine » action that posts then
+// withdraws the pinned probe belongs to chantier 3 « Le parc » of
+// `docs/projet/DIRECTION.md`.
 mod probe_plan;
-// The three plans of the public profile are verified, displayed and signed
-// here, for the same reason the three modules above are not reachable from a
-// command: the window that must render a plan before it is approved belongs to
-// the palier that adds the command, and the source contract holds the command
-// surface against that.
-#[allow(dead_code)]
+// The session that carries one plan to the native window and brings back one
+// answer. `open_plan_consent` opens it, `submit_plan_decision` reads the answer
+// back, and the grammar that holds the answer against what was consented to
+// lives in `publication_plan`.
 mod plan_consent;
 mod publication_plan;
-// The third door on the side that writes its one document. Unlike the plan
-// modules above, this one *is* reachable from a command, and it may be: freezing
-// a definition mints no envelope, signs nothing and reaches no native window —
-// the document is inert, and the route that freezes it is a business route like
-// the others.
+// The third door on the side that writes its one document. Unlike `link_plan`
+// and `probe_plan`, this one *is* reachable from a command, and it may be:
+// freezing a definition mints no envelope, signs nothing and reaches no native
+// window — the document is inert, and the route that freezes it is a business
+// route like the others.
 mod service_definition;
 mod vault;
 #[cfg(windows)]

@@ -55,8 +55,10 @@ use your_cloud_bootstrap_protocol::{
 };
 
 /// The one schema of the pairs this palier reads.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 const LINK_PLAN_SCHEMA_VERSION: u8 = 3;
 
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 #[derive(Debug, thiserror::Error)]
 pub enum LinkPlanError {
     #[error("the plan pair is not the one its own digests name")]
@@ -70,6 +72,7 @@ pub enum LinkPlanError {
 }
 
 impl LinkPlanError {
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn public_code(&self) -> &'static str {
         // Trois refus, trois codes — le même geste que `publication_plan`, et
         // pour la même raison, sur du code que personne n'appelle encore.
@@ -100,6 +103,7 @@ impl LinkPlanError {
 /// same bytes rather than three encodings that happen to agree. The digests
 /// travel beside them and are not an authority — they are the claim this module
 /// refuses or accepts.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LinkPlanPairView {
@@ -112,6 +116,7 @@ pub struct LinkPlanPairView {
 
 /// A pair that has been held against its own digests, and the digests this side
 /// computed rather than the ones it was handed.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentedLinkPlan {
     plan: PlanDocumentV3,
@@ -125,6 +130,7 @@ pub struct PresentedLinkPlan {
 /// A confirmation names the two digests it was given for. It is therefore not a
 /// permission to sign "the current plan": it is a permission to sign those two
 /// documents, and it stops meaning anything the moment either of them moves.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkPlanConfirmation {
     Confirmed {
@@ -139,6 +145,7 @@ pub enum LinkPlanConfirmation {
 /// The machine, the operation and the infrastructure are absent on purpose:
 /// they are read from the plan and from the association below, so a caller
 /// cannot aim a confirmed plan at another machine or another installation.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 #[derive(Clone, Copy, Debug)]
 pub struct LinkApprovalRequest {
     pub approval_epoch: u64,
@@ -159,6 +166,7 @@ impl PresentedLinkPlan {
     /// groups therefore fails here, before anything of it is rendered. A pair
     /// that fails any of the three is refused whole: there is no partially
     /// verified plan a window could render "most of".
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn verify(view: &LinkPlanPairView) -> Result<Self, LinkPlanError> {
         if view.schema_version != LINK_PLAN_SCHEMA_VERSION {
             return Err(LinkPlanError::UnverifiedPlan);
@@ -187,22 +195,27 @@ impl PresentedLinkPlan {
         })
     }
 
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn machine_id(&self) -> &str {
         self.plan.machine_id()
     }
 
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn operation(&self) -> PlanV3Operation {
         self.plan.operation()
     }
 
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn group(&self) -> PlanV3Group {
         self.plan.group()
     }
 
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn plan_sha256(&self) -> &str {
         &self.plan_sha256
     }
 
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn rollback_sha256(&self) -> &str {
         &self.rollback_sha256
     }
@@ -234,6 +247,7 @@ impl PresentedLinkPlan {
     /// The rollback is named as the plan it is, with what it shares with the
     /// plan spelled out, because a return path a human did not read is a return
     /// path nobody approved.
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn confirmation_lines(&self) -> Vec<String> {
         let mut lines = vec![
             format!("Machine : {}", self.plan.machine_id()),
@@ -310,6 +324,7 @@ impl PresentedLinkPlan {
     /// It can only be built from a pair that was verified, and it carries the
     /// two digests of that pair, so a confirmation collected on one plan can
     /// never be presented for another.
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn confirmed(&self) -> LinkPlanConfirmation {
         LinkPlanConfirmation::Confirmed {
             plan_sha256: self.plan_sha256.clone(),
@@ -324,6 +339,7 @@ impl PresentedLinkPlan {
     /// stays here, where it was verified. A plan of another infrastructure never
     /// reaches a window at all, for the same reason it never reaches a
     /// signature.
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn consent(
         &self,
         association: &AssociationRecord,
@@ -354,6 +370,7 @@ impl PresentedLinkPlan {
     /// The consent is held against this presentation before the answer is even
     /// looked at, so an answer to a window opened on another pair cannot be
     /// laundered through a presentation of this one.
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn confirmed_by(
         &self,
         consent: &ApprovalConsentV1,
@@ -377,6 +394,7 @@ impl PresentedLinkPlan {
     /// What is handed to the signing path as the plan is the exact bytes the
     /// plan digest is taken over, so the envelope names the digest that was
     /// displayed rather than a second digest of the same idea.
+    #[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
     pub fn sign(
         &self,
         association: &AssociationRecord,
@@ -441,6 +459,7 @@ impl PresentedLinkPlan {
 /// The closed bridge between what a plan describes and what an envelope
 /// authorises. Each side has its own closed list, and this is the only place
 /// they are mapped onto one another for schema 3.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 fn approval_operation(operation: PlanV3Operation) -> ApprovalOperation {
     match operation {
         PlanV3Operation::PrepareLink => ApprovalOperation::PrepareLink,
@@ -452,6 +471,7 @@ fn approval_operation(operation: PlanV3Operation) -> ApprovalOperation {
     }
 }
 
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 fn operation_text(operation: PlanV3Operation) -> &'static str {
     match operation {
         PlanV3Operation::PrepareLink => "préparer le lien privé de cette machine",
@@ -465,6 +485,7 @@ fn operation_text(operation: PlanV3Operation) -> &'static str {
 
 /// The two sides of the passage, named as what they do rather than by their
 /// wire spelling: the role is what decides every constant displayed beside it.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 fn role_text(role: LinkRole) -> &'static str {
     match role {
         LinkRole::Listener => "écouteur, le côté qui écoute le port du contrat",
@@ -474,6 +495,7 @@ fn role_text(role: LinkRole) -> &'static str {
 
 /// What a rollback shares with the plan it undoes, group by group. It is the
 /// whole of what "exact inverse" means on screen: everything but the operation.
+#[allow(dead_code)] // chantier 6 « Le réseau interne » (DIRECTION.md)
 fn rollback_scope_text(group: PlanV3Group) -> &'static str {
     match group {
         PlanV3Group::Link => "sur la même machine et le même rôle",

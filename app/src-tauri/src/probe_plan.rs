@@ -44,8 +44,10 @@ use your_cloud_bootstrap_protocol::{
 };
 
 /// The one schema of the pair this palier reads.
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 const PROBE_PLAN_SCHEMA_VERSION: u8 = 1;
 
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 #[derive(Debug, thiserror::Error)]
 pub enum ProbePlanError {
     #[error("the probe plan pair is not the one its own digests name")]
@@ -59,6 +61,7 @@ pub enum ProbePlanError {
 }
 
 impl ProbePlanError {
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn public_code(&self) -> &'static str {
         // Trois refus, trois codes — le même geste que `publication_plan`, et
         // pour la même raison, sur du code que personne n'appelle encore.
@@ -86,6 +89,7 @@ impl ProbePlanError {
 /// will later receive are the same bytes rather than three encodings that
 /// happen to agree. The digests travel beside them and are not an authority —
 /// they are the claim this module refuses or accepts.
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProbePlanView {
@@ -98,6 +102,7 @@ pub struct ProbePlanView {
 
 /// A pair that has been held against its own digests, and the digests this side
 /// computed rather than the ones it was handed.
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentedProbePlan {
     plan: PlanDocumentV1,
@@ -111,6 +116,7 @@ pub struct PresentedProbePlan {
 /// A confirmation names the two digests it was given for. It is therefore not a
 /// permission to sign "the current plan": it is a permission to sign those two
 /// documents, and it stops meaning anything the moment either of them moves.
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbePlanConfirmation {
     Confirmed {
@@ -125,6 +131,7 @@ pub enum ProbePlanConfirmation {
 /// The machine, the operation and the infrastructure are absent on purpose:
 /// they are read from the plan and from the association below, so a caller
 /// cannot aim a confirmed plan at another machine or another installation.
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 #[derive(Clone, Copy, Debug)]
 pub struct ProbeApprovalRequest {
     pub approval_epoch: u64,
@@ -142,6 +149,7 @@ impl PresentedProbePlan {
     /// same machine, same image, same port, inverse operation. A pair that
     /// fails any of the three is refused whole: there is no partially verified
     /// plan a window could render "most of".
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn verify(view: &ProbePlanView) -> Result<Self, ProbePlanError> {
         if view.schema_version != PROBE_PLAN_SCHEMA_VERSION {
             return Err(ProbePlanError::UnverifiedPlan);
@@ -170,18 +178,22 @@ impl PresentedProbePlan {
         })
     }
 
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn machine_id(&self) -> &str {
         &self.plan.machine_id
     }
 
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn operation(&self) -> PlanOperation {
         self.plan.operation
     }
 
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn plan_sha256(&self) -> &str {
         &self.plan_sha256
     }
 
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn rollback_sha256(&self) -> &str {
         &self.rollback_sha256
     }
@@ -199,6 +211,7 @@ impl PresentedProbePlan {
     /// The rollback is named as the plan it is, with what it shares with the
     /// plan spelled out, because a return path a human did not read is a return
     /// path nobody approved.
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn confirmation_lines(&self) -> Vec<String> {
         vec![
             format!("Machine : {}", self.plan.machine_id),
@@ -223,6 +236,7 @@ impl PresentedProbePlan {
     /// It can only be built from a pair that was verified, and it carries the
     /// two digests of that pair, so a confirmation collected on one plan can
     /// never be presented for another.
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn confirmed(&self) -> ProbePlanConfirmation {
         ProbePlanConfirmation::Confirmed {
             plan_sha256: self.plan_sha256.clone(),
@@ -237,6 +251,7 @@ impl PresentedProbePlan {
     /// stays here, where it was verified. A plan of another infrastructure never
     /// reaches a window at all, for the same reason it never reaches a
     /// signature.
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn consent(
         &self,
         association: &AssociationRecord,
@@ -269,6 +284,7 @@ impl PresentedProbePlan {
     /// laundered through a presentation of this one. What comes back is the
     /// ordinary [`ProbePlanConfirmation`], which [`Self::sign`] already refuses
     /// unless it names these exact two digests.
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn confirmed_by(
         &self,
         consent: &ApprovalConsentV1,
@@ -292,6 +308,7 @@ impl PresentedProbePlan {
     /// does not happen. What is handed to the signing path as the plan is the
     /// exact bytes the plan digest is taken over, so the envelope names the
     /// digest that was displayed rather than a second digest of the same idea.
+    #[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
     pub fn sign(
         &self,
         association: &AssociationRecord,
@@ -356,6 +373,7 @@ impl PresentedProbePlan {
 /// The closed bridge between what a plan describes and what an envelope
 /// authorises. Each side has its own closed list, and this is the only place
 /// they are mapped onto one another.
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 fn approval_operation(operation: PlanOperation) -> ApprovalOperation {
     match operation {
         PlanOperation::DeployOciProbe => ApprovalOperation::DeployOciProbe,
@@ -363,6 +381,7 @@ fn approval_operation(operation: PlanOperation) -> ApprovalOperation {
     }
 }
 
+#[allow(dead_code)] // chantier 3 « Le parc » (DIRECTION.md)
 fn operation_text(operation: PlanOperation) -> &'static str {
     match operation {
         PlanOperation::DeployOciProbe => "déployer la sonde de validation",
