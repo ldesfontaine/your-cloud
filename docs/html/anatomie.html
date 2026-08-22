@@ -23,7 +23,6 @@
     <div class="convergence" aria-label="Les Daemons du LAN et du VPS ouvrent chacun une connexion mTLS vers l'unique Relay du VPS"><div class="convergence-sources"><div class="convergence-node"><strong>Daemon LAN</strong><br>tampon et identité propres</div><div class="convergence-node"><strong>Daemon VPS</strong><br>tampon et identité propres</div></div><div class="convergence-links"><span>mTLS :8443 →</span><span>mTLS local →</span></div><div class="convergence-node relay-target"><strong>Relay VPS unique</strong><br>identité, registre, état durable et lacunes propres</div></div>
     <p class="boundary">Les mêmes octets vivent sur les deux machines. Le VPS lance Daemon et Relay avec comptes, credentials, états et politiques systemd séparés ; la machine du LAN n'a aucun manifeste candidat Relay. Le <a href="../lab/v0.0.2-observation.md">rapport LAB</a> prouve mTLS, révocation, saturation, lacune, reprise et réinstallation.</p>
 
-    <!-- coherence: V1-NETWORK:start -->
     <h2>Topologie de référence pour la preuve de <code>v0.1.0</code></h2>
     <section class="architecture" aria-label="Architecture v0.1.0">
       <article class="machine public">
@@ -54,7 +53,6 @@
     <h2>Une IP publique, deux noms de service</h2>
     <div class="flow" aria-label="Accès aux services publiés"><div class="step">Nom PDF ou Vault</div><div class="step">DNS</div><div class="step">IP VPS :443</div><div class="step">Traefik</div><div class="step">Route par nom</div><div class="step">Backend privé</div></div>
     <p class="boundary">Dans le scénario de référence, les profils BentoPDF et Vaultwarden ne publient jamais leurs ports internes. Une requête directe vers l'IP sans nom déclaré n'a aucune route applicative par défaut.</p>
-    <!-- coherence: V1-NETWORK:end -->
 
     <!-- coherence: BOOTSTRAP-RECOVERY:start -->
     <h2>Créer puis remplacer le Controller</h2>

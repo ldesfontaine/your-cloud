@@ -90,7 +90,8 @@ ci-dessous sert seulement à reconnaître son sujet.
 | `BOOTSTRAP-RECOVERY` | Assistant temporaire, accès personnel conservé, approbation signée, identités par machine et remplacement explicite de toutes les autorités du Controller | `docs/architecture/AMORCAGE-ET-REMPLACEMENT-DU-CONTROLLER.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/README.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 | `V1-OBSERVATION` | Collecteurs nommés, sortie mTLS, Relay sans ordre, tampon borné et lacunes visibles | `docs/architecture/CHAINE-D-OBSERVATION.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/architecture/ANATOMIE.md` |
 | `V1-APP-ACCESS` | App cliente installée et signée, Controller backend sans frontend qui n'écoute que sur son adresse du réseau d'accès, pair WireGuard par appareil et services publiés indépendants | `docs/projet/CAP.md` | `CONTEXT.md`, `docs/architecture/ANATOMIE.md`, `docs/architecture/CHAINE-D-OBSERVATION.md` |
-| `V1-NETWORK` | Machines enrôlées, flux bornés, WireGuard, mTLS, HTTPS et zone d'exposition sans fausse DMZ | `docs/objectifs/v1/README.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
+| `INTERNAL-NETWORK` | Machines enrôlées seules pairs, transport qui n'autorise rien, flux nommés et bornés, aucune route générale vers le LAN | `docs/architecture/RESEAU.md` | `CONTEXT.md` |
+| `PUBLIC-EXPOSURE` | Point d'entrée unique, expositions nommées, en-têtes d'identité écrasés, zone d'exposition sans fausse DMZ | `docs/architecture/POINT-D-ENTREE.md` | `CONTEXT.md`, `docs/projet/CAP.md` |
 | `SERVICE-LIFECYCLE` | Réseau préparé fermé, service vérifié avant publication, bascule observable et retour honnête | `docs/architecture/CYCLE-DE-VIE-DES-SERVICES.md` | `CONTEXT.md`, `docs/projet/CAP.md`, `docs/objectifs/v1/ROADMAP.md`, `docs/architecture/ANATOMIE.md` |
 <!-- coherence-registry:end -->
 

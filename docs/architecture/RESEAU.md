@@ -75,6 +75,14 @@ pour les besoins que le produit ne connaît pas.
 L'application est faite par la table `nftables` du produit, celle qui **ne peut
 que retirer** — jamais accorder au-delà de ce qu'un plan approuvé a nommé.
 
+**Pourquoi zéro et non « ce dont les services ont besoin ».** Un réseau de
+confiance entre toutes les machines enrôlées donnerait trop de droits : la
+compromission d'une seule ouvrirait toutes les autres. Le défaut n'est donc pas
+un réglage prudent qu'on pourrait desserrer, c'est la propriété qui rend la
+liste des flux **exhaustive** — si l'on pouvait circuler sans y figurer, la
+lister ne prouverait rien. La justification d'ensemble des mécanismes vit au
+[cap](../projet/CAP.md) ; celle-ci opère ici.
+
 Deux vues permanentes rendent cela lisible, et elles ne sont pas la même :
 
 - **la carte des liens** — qui est relié à qui, par quel transport, dernière
@@ -112,6 +120,63 @@ création de l'infrastructure.
 **Le tunnel est un transport, jamais une authentification.** L'identité
 d'appareil et la session humaine restent exigées par-dessus, et le
 [cap](../projet/CAP.md) le dit avant ce contrat.
+
+<!-- coherence: INTERNAL-NETWORK:start -->
+## Ce que ce contrat fixe, et que l'objectif `v0.1.0` fixait déjà
+
+Seules les machines explicitement enrôlées peuvent devenir des pairs du passage
+privé. L'enrôlement prouve une identité ; il n'autorise pas une machine à parler
+librement à toutes les autres. `v0.1.0` n'est donc pas un réseau maillé de confiance
+mais un ensemble de flux minimaux approuvés.
+
+La règle « seules les machines enrôlées communiquent » concerne le réseau privé
+de Your Cloud. Elle n'interdit pas les flux explicitement attendus vers un
+navigateur, l'App, le Controller, le DNS, l'heure ou un registre
+d'artefacts. Ces exceptions restent déclarées, limitées et vérifiables. Le
+chiffrement protège le contenu,
+pas les métadonnées nécessaires au routage telles que les adresses IP, les ports
+et les horaires de communication.
+
+## Ce que « ne pas exposer le LAN » signifie
+
+- Le DNS public désigne le VPS, jamais l'adresse du site privé.
+- Aucun port entrant n'est transféré vers la machine du LAN.
+- Le service du LAN n'accepte que le trafic nécessaire provenant du passage
+  privé.
+- Un contrôle extérieur ne trouve aucun port Your Cloud exposé sur le site
+  privé.
+
+Le VPS voit nécessairement l'adresse source utilisée par la connexion sortante.
+`v0.1.0` ne promet donc pas qu'elle soit inconnue du VPS ; elle promet qu'elle
+n'est ni publiée comme destination, ni rendue directement joignable par une
+ouverture créée par Your Cloud.
+
+## Frontière WireGuard retenue
+
+WireGuard sert de transport chiffré entre le VPS et la machine privée, jamais
+de VPN général vers le LAN :
+
+- une paire de clés distincte par machine, sans secret de flotte partagé ;
+- les clés privées sont générées et conservées sur leur machine ;
+- une adresse de tunnel `/32` par pair ;
+- aucune route vers le sous-réseau du LAN et aucun `0.0.0.0/0` ;
+- aucun forwarding du tunnel vers les autres machines du LAN ;
+- politique `nftables` en refus par défaut sur l'interface WireGuard ;
+- autorisation limitée aux ports des services explicitement publiés ;
+- aucun accès depuis le VPS vers SSH, l'administration ou les autres ports de
+  la machine privée.
+
+Le Daemon ne scanne aucun voisin et ne contacte que le Relay approuvé. Un
+service géré déclare ses besoins réseau ; son environnement d'exécution refuse
+par défaut les communications vers les autres appareils du LAN. Les flux
+nécessaires à l'administration, au DNS, à l'heure, au téléchargement pendant le
+déploiement ou à une fonction propre au service restent des exceptions
+explicites et vérifiables, jamais une confiance générale dans le LAN.
+
+WireGuard authentifie le pair et chiffre le transport. Il ne remplace ni
+l'autorisation par service, ni HTTPS, ni le suivi des clés, ni les preuves de
+révocation. Your Cloud porte ces responsabilités supplémentaires.
+<!-- coherence: INTERNAL-NETWORK:end -->
 
 ## Ce que la preuve devra constater
 
